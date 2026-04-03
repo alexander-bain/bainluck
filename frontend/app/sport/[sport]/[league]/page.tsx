@@ -249,6 +249,8 @@ export default function LeagueShowcasePage() {
           <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
             <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
             <span>/</span>
+            <Link href="/sport" className="hover:text-text-primary transition-colors">Sports</Link>
+            <span>/</span>
             <Link href={`/sport/${sportSlug}`} className="hover:text-text-primary transition-colors">
               {hierarchy?.name || sportSlug}
             </Link>
