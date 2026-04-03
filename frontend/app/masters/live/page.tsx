@@ -1,16 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { fetchGolfLeaderboard } from "@/lib/api";
-import type { GolfLeaderboardResponse, GolfLeaderboardPlayer } from "@/lib/types";
+import { fetchGolfLeaderboard, fetchGolfTournament } from "@/lib/api";
+import type { GolfLeaderboardResponse, GolfLeaderboardPlayer, GolfTournamentDetailResponse } from "@/lib/types";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
 
 // ============================================================================
-// Ultra-low-data Masters Leaderboard
-// No charts, no images, no heavy JS. Loads fast on any connection.
-// Auto-refreshes every 60s.
+// Masters Leaderboard — live during tournament, pre-tournament odds otherwise
 // ============================================================================
 
 const ROUND_LABELS: Record<number, string> = {
@@ -26,30 +24,48 @@ export default function MastersLivePage() {
   useEngagementTime({ pageType: "masters_live" });
 
   const [data, setData] = useState<GolfLeaderboardResponse | null>(null);
+  const [preData, setPreData] = useState<GolfTournamentDetailResponse | null>(null);
+  const [isMastersLive, setIsMastersLive] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     try {
       const result = await fetchGolfLeaderboard("pga");
-      setData(result);
+      const mastersLive = result.status === "live" && result.event_name
+        ? /masters/i.test(result.event_name)
+        : false;
+
+      setIsMastersLive(mastersLive);
+
+      if (mastersLive) {
+        setData(result);
+      } else {
+        // Not Masters live — fetch pre-tournament odds
+        try {
+          const tournamentData = await fetchGolfTournament("the-masters");
+          setPreData(tournamentData);
+        } catch {
+          // Tournament data might not exist yet
+        }
+      }
       setError(null);
       setLastRefresh(new Date());
     } catch {
-      setError("Failed to load leaderboard");
+      setError("Failed to load data");
     }
   }, []);
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 60_000); // Auto-refresh every 60s
+    const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
   }, [load]);
 
-  if (error && !data) {
+  if (error && !data && !preData) {
     return (
       <div className="max-w-2xl mx-auto p-4 pt-8">
-        <h1 className="text-lg font-bold mb-2">Masters Leaderboard</h1>
+        <h1 className="text-lg font-bold mb-2">Masters Tournament</h1>
         <p className="text-sm text-text-secondary">{error}</p>
         <button onClick={load} className="mt-2 text-sm text-blue-600 font-medium">
           Retry
@@ -58,10 +74,10 @@ export default function MastersLivePage() {
     );
   }
 
-  if (!data) {
+  if (isMastersLive === null) {
     return (
       <div className="max-w-2xl mx-auto p-4 pt-8">
-        <h1 className="text-lg font-bold mb-2">Loading leaderboard…</h1>
+        <h1 className="text-lg font-bold mb-2">Loading Masters…</h1>
         <div className="space-y-2">
           {Array.from({ length: 10 }).map((_, i) => (
             <div key={i} className="h-7 bg-gray-100 rounded animate-pulse" />
@@ -71,24 +87,13 @@ export default function MastersLivePage() {
     );
   }
 
-  // Check if the returned event is actually the Masters
-  const isMasters = data.status === "live" && data.event_name
-    ? /masters/i.test(data.event_name)
-    : false;
-
-  if (data.status === "no_event" || (data.status === "live" && !isMasters)) {
-    return (
-      <div className="max-w-2xl mx-auto p-4 pt-8">
-        <h1 className="text-lg font-bold mb-2">Masters Tournament</h1>
-        <p className="text-sm text-text-secondary">
-          The Masters hasn&apos;t started yet. The tournament runs April 9–12, 2026 at Augusta National.
-        </p>
-        <p className="text-sm text-text-tertiary mt-2">
-          Check back during the tournament for live leaderboard with win probabilities and position changes.
-        </p>
-      </div>
-    );
+  // ========== PRE-TOURNAMENT VIEW ==========
+  if (!isMastersLive) {
+    return <PreTournamentView data={preData} />;
   }
+
+  // ========== LIVE TOURNAMENT VIEW ==========
+  if (!data) return null;
 
   const roundLabel = data.current_round ? ROUND_LABELS[data.current_round] || `Round ${data.current_round}` : "";
   const updatedTime = data.last_updated ? formatTime(data.last_updated) : "";
@@ -153,7 +158,91 @@ export default function MastersLivePage() {
 }
 
 // ============================================================================
-// Leaderboard Row
+// Pre-Tournament View — shows odds field before the Masters starts
+// ============================================================================
+
+function PreTournamentView({ data }: { data: GolfTournamentDetailResponse | null }) {
+  const startDate = data?.tournament.start_date
+    ? new Date(data.tournament.start_date)
+    : null;
+  const endDate = data?.tournament.end_date
+    ? new Date(data.tournament.end_date)
+    : null;
+
+  const dateRange = startDate && endDate
+    ? `${startDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}–${endDate.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`
+    : "April 9–12, 2026";
+
+  const golfers = data?.golfers || [];
+
+  return (
+    <div className="max-w-2xl mx-auto p-4 pt-6 pb-20">
+      {/* Header */}
+      <div className="mb-3">
+        <div className="flex justify-between items-baseline">
+          <h1 className="text-[15px] font-bold">The Masters</h1>
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-500 uppercase tracking-wide shrink-0">
+            <span className="w-[7px] h-[7px] rounded-full bg-amber-400" />
+            Upcoming
+          </span>
+        </div>
+        <p className="text-xs text-text-tertiary mt-0.5">
+          {dateRange} · {data?.tournament.venue || "Augusta National Golf Club"}
+        </p>
+      </div>
+
+      {golfers.length > 0 ? (
+        <>
+          {/* Pre-tournament odds table */}
+          <div className="bg-white border border-border rounded-[10px] overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b-2 border-border">
+                  <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Rank</th>
+                  <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Player</th>
+                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Score</th>
+                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Thru</th>
+                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Win%</th>
+                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Odds</th>
+                </tr>
+              </thead>
+              <tbody>
+                {golfers.map((golfer, i) => (
+                  <tr key={`${golfer.name}-${i}`} className="border-b border-border-light hover:bg-gray-50">
+                    <td className="px-2 py-1.5 font-semibold text-text-tertiary tabular-nums">{golfer.rank ?? i + 1}</td>
+                    <td className="px-2 py-1.5 font-medium">{golfer.name}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-text-quaternary">—</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-text-quaternary">—</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums font-bold">{(golfer.probability * 100).toFixed(1)}%</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-text-secondary">
+                      {golfer.american_odds != null
+                        ? `+${golfer.american_odds}`
+                        : "—"
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-center text-[11px] text-text-quaternary mt-2">
+            Pre-tournament win probabilities from sportsbook and prediction market odds.
+            <br />
+            Live leaderboard with scores and position changes will appear when the tournament starts.
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-text-secondary">
+          Odds will appear as the tournament approaches. Check back closer to {dateRange}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Leaderboard Row (live tournament)
 // ============================================================================
 
 function LeaderboardRow({ player }: { player: GolfLeaderboardPlayer }) {
@@ -168,7 +257,7 @@ function LeaderboardRow({ player }: { player: GolfLeaderboardPlayer }) {
   let posDisplay: string;
   let posColor: string;
   if (posChange == null || posChange === 0) {
-    posDisplay = posChange === 0 ? "—" : "—";
+    posDisplay = "—";
     posColor = "text-text-quaternary";
   } else if (posChange > 0) {
     posDisplay = `▲${posChange}`;
@@ -183,7 +272,7 @@ function LeaderboardRow({ player }: { player: GolfLeaderboardPlayer }) {
   let wpDisplay: string;
   let wpColor: string;
   if (wpChange == null || Math.abs(wpChange) < 0.1) {
-    wpDisplay = wpChange != null && Math.abs(wpChange) < 0.1 ? "—" : "—";
+    wpDisplay = "—";
     wpColor = "text-text-quaternary";
   } else if (wpChange > 0) {
     wpDisplay = `+${wpChange.toFixed(1)}`;
