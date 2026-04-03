@@ -71,11 +71,21 @@ export default function MastersLivePage() {
     );
   }
 
-  if (data.status === "no_event") {
+  // Check if the returned event is actually the Masters
+  const isMasters = data.status === "live" && data.event_name
+    ? /masters/i.test(data.event_name)
+    : false;
+
+  if (data.status === "no_event" || (data.status === "live" && !isMasters)) {
     return (
       <div className="max-w-2xl mx-auto p-4 pt-8">
-        <h1 className="text-lg font-bold mb-2">Masters Leaderboard</h1>
-        <p className="text-sm text-text-secondary">No tournament currently in play. Check back when the tournament starts.</p>
+        <h1 className="text-lg font-bold mb-2">Masters Tournament</h1>
+        <p className="text-sm text-text-secondary">
+          The Masters hasn&apos;t started yet. The tournament runs April 9–12, 2026 at Augusta National.
+        </p>
+        <p className="text-sm text-text-tertiary mt-2">
+          Check back during the tournament for live leaderboard with win probabilities and position changes.
+        </p>
       </div>
     );
   }
