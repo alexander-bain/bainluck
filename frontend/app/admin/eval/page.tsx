@@ -161,12 +161,14 @@ function GridMatchCard({
   column,
   cell,
   league,
+  gridName,
   onDecision,
 }: {
   team: string;
   column: string;
   cell: GridCell;
   league: string;
+  gridName: string;
   onDecision: (decision: "correct" | "wrong" | "skip") => void;
 }) {
   const [acting, setActing] = useState(false);
@@ -174,9 +176,16 @@ function GridMatchCard({
   const handle = async (d: "correct" | "wrong" | "skip") => {
     setActing(true);
     onDecision(d);
-    // Brief delay for visual feedback
     setTimeout(() => setActing(false), 300);
   };
+
+  // Calculate source disagreement
+  const probs = cell.sources.map((s) => s.probability);
+  const spread = Math.max(...probs) - Math.min(...probs);
+  const spreadPct = (spread * 100).toFixed(0);
+  const highSource = cell.sources.reduce((a, b) => (a.probability > b.probability ? a : b));
+  const lowSource = cell.sources.reduce((a, b) => (a.probability < b.probability ? a : b));
+  const columnLabel = column.replace(/_/g, " ");
 
   return (
     <div
@@ -185,59 +194,91 @@ function GridMatchCard({
         borderRadius: 14,
         padding: 20,
         marginBottom: 12,
-        border: "1px solid #30363d",
+        border: spread > 0.3 ? "1px solid #dc2626" : spread > 0.15 ? "1px solid #d97706" : "1px solid #30363d",
       }}
     >
       {/* Header */}
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
-          {team}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span
-            style={{
-              padding: "3px 10px",
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: 600,
-              background: "#1e3a5f",
-              color: "#93c5fd",
-            }}
-          >
-            {column.replace(/_/g, " ").toUpperCase()}
-          </span>
-          <span style={{ fontSize: 12, color: "#64748b" }}>
-            {league.toUpperCase()} Grid
-          </span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
+              {team}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: "#1e3a5f",
+                  color: "#93c5fd",
+                }}
+              >
+                {columnLabel.toUpperCase()}
+              </span>
+              <span style={{ fontSize: 12, color: "#64748b" }}>
+                {gridName || league.toUpperCase()}
+              </span>
+            </div>
+          </div>
+          {/* Disagreement badge */}
+          {spread > 0.15 && (
+            <span
+              style={{
+                padding: "4px 10px",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                background: spread > 0.3 ? "#7f1d1d" : "#78350f",
+                color: spread > 0.3 ? "#fca5a5" : "#fcd34d",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {spreadPct}pp gap
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Sources */}
+      {/* Source comparison — visual bar */}
       <div style={{ marginBottom: 16 }}>
         {cell.sources.map((s) => (
           <div
             key={s.source}
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "6px 0",
-              borderBottom: "1px solid #21262d",
+              marginBottom: 8,
             }}
           >
-            <span style={{ fontSize: 13, color: "#8b949e", textTransform: "capitalize" }}>
-              {s.source}
-            </span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
-              {(s.probability * 100).toFixed(1)}%
-            </span>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: 13, color: "#8b949e", textTransform: "capitalize" }}>
+                {s.source}
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
+                {(s.probability * 100).toFixed(1)}%
+              </span>
+            </div>
+            {/* Probability bar */}
+            <div style={{ height: 6, borderRadius: 3, background: "#21262d", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: `${Math.min(s.probability * 100, 100)}%`,
+                  borderRadius: 3,
+                  background: s === highSource && spread > 0.15 ? "#3b82f6" : s === lowSource && spread > 0.15 ? "#ef4444" : "#3b82f6",
+                }}
+              />
+            </div>
           </div>
         ))}
+        {/* Merged result */}
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             padding: "8px 0 0",
+            borderTop: "1px solid #21262d",
+            marginTop: 4,
           }}
         >
           <span style={{ fontSize: 13, fontWeight: 700, color: "#93c5fd" }}>Merged</span>
@@ -247,13 +288,45 @@ function GridMatchCard({
         </div>
       </div>
 
-      {/* Eval question */}
-      <div style={{ fontSize: 14, color: "#8b949e", marginBottom: 12, textAlign: "center" }}>
-        Is <strong style={{ color: "#e2e8f0" }}>{team}</strong> correctly matched to{" "}
-        <strong style={{ color: "#93c5fd" }}>{column.replace(/_/g, " ")}</strong>?
+      {/* Eval question — reworded to be actionable */}
+      <div style={{
+        fontSize: 14,
+        color: "#8b949e",
+        marginBottom: 12,
+        padding: "10px 12px",
+        background: "#0d1117",
+        borderRadius: 8,
+        lineHeight: 1.5,
+      }}>
+        {spread > 0.3 ? (
+          <>
+            <span style={{ color: "#fca5a5", fontWeight: 600 }}>Big disagreement: </span>
+            <span style={{ textTransform: "capitalize" }}>{highSource.source}</span> says{" "}
+            <strong style={{ color: "#e2e8f0" }}>{(highSource.probability * 100).toFixed(0)}%</strong> but{" "}
+            <span style={{ textTransform: "capitalize" }}>{lowSource.source}</span> says{" "}
+            <strong style={{ color: "#e2e8f0" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
+            {" "}Are both about <strong style={{ color: "#e2e8f0" }}>{team}</strong> to <strong style={{ color: "#93c5fd" }}>{columnLabel}</strong> at the same event?
+          </>
+        ) : spread > 0.15 ? (
+          <>
+            <span style={{ color: "#fcd34d", fontWeight: 600 }}>Notable gap: </span>
+            <span style={{ textTransform: "capitalize" }}>{highSource.source}</span>{" "}
+            <strong style={{ color: "#e2e8f0" }}>{(highSource.probability * 100).toFixed(0)}%</strong> vs{" "}
+            <span style={{ textTransform: "capitalize" }}>{lowSource.source}</span>{" "}
+            <strong style={{ color: "#e2e8f0" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
+            {" "}Should these be merged for <strong style={{ color: "#e2e8f0" }}>{team}</strong>?
+          </>
+        ) : (
+          <>
+            Sources agree within {spreadPct}pp for{" "}
+            <strong style={{ color: "#e2e8f0" }}>{team}</strong> to{" "}
+            <strong style={{ color: "#93c5fd" }}>{columnLabel}</strong>.
+            {" "}Look right?
+          </>
+        )}
       </div>
 
-      {/* Big action buttons */}
+      {/* Action buttons */}
       <div style={{ display: "flex", gap: 10 }}>
         <button
           onClick={() => handle("correct")}
@@ -272,7 +345,7 @@ function GridMatchCard({
             opacity: acting ? 0.5 : 1,
           }}
         >
-          ✓ Correct
+          Merge OK
         </button>
         <button
           onClick={() => handle("wrong")}
@@ -291,7 +364,7 @@ function GridMatchCard({
             opacity: acting ? 0.5 : 1,
           }}
         >
-          ✗ Wrong
+          Bad Match
         </button>
         <button
           onClick={() => handle("skip")}
@@ -631,7 +704,7 @@ function GridMatchingTab() {
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [candidates, setCandidates] = useState<
-    { team: string; column: string; cell: GridCell }[]
+    { team: string; column: string; cell: GridCell; gridName: string }[]
   >([]);
 
   useEffect(() => {
@@ -644,7 +717,7 @@ function GridMatchingTab() {
 
         // Build eval candidates: team×column combos with multiple sources (disagreement opportunity)
         const seen = getSeenIds();
-        const items: { team: string; column: string; cell: GridCell }[] = [];
+        const items: { team: string; column: string; cell: GridCell; gridName: string }[] = [];
         for (const team of data.teams || []) {
           for (const col of data.columns || []) {
             const cell = team.cells?.[col.key];
@@ -654,7 +727,7 @@ function GridMatchingTab() {
             // Prioritize disagreements
             const probs = cell.sources.map((s) => s.probability);
             const spread = Math.max(...probs) - Math.min(...probs);
-            items.push({ team: team.name, column: col.key, cell });
+            items.push({ team: team.name, column: col.key, cell, gridName: data.name || league.toUpperCase() });
             // Attach spread for sorting
             (items[items.length - 1] as Record<string, unknown>)._spread = spread;
           }
@@ -727,6 +800,7 @@ function GridMatchingTab() {
             column={current.column}
             cell={current.cell}
             league={league}
+            gridName={current.gridName}
             onDecision={handleDecision}
           />
         </>
