@@ -316,12 +316,18 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 - **Phase 1 cleanup needed before Masters** (April 9-12): fix tour classification, fix LIVE badge logic, filter non-winner markets from cards, add "to win" labels
 
 ### Backlog
+
+**Data Quality / Blending**
+- **Freshness-weighted source blending** — During live tournaments, stale prediction market prices (e.g., Kalshi 5h old) get equal weight with fresh model data (DataGolf updated minutes ago), making merged probabilities LESS accurate. Need time-decay weighting. Key complications: (1) `last_updated` reflects poll time, not last price change — need to detect actual price movement; (2) staleness is context-dependent (2h stale during live round vs 12h pre-tournament is very different); (3) if decay drops a source to near-zero, cells become single-source — need to surface that; (4) applies to all grids, not just golf. Gathering eval data before implementing. See `.claude/projects/-Users-bain-bainluck/memory/project_freshness_blending.md` for full design notes (CLI only).
 - Sport-specific EI normalization (different ceilings per sport)
-- Hockey win probability model research (lit search for better models)
+
+**Features**
+- H2H matchups section (Option B compact rows) — golf tournament detail page
 - TV Mode v2 (designed, prototype at `tv-mode-prototype.jsx`, plan at `docs/tv-mode-plan.md`)
 - Non-sports category display (politics, entertainment tabs)
 - "The Market Was Wrong" v2 — AI narrative + personalization
 - "Your Team's Season at a Glance" dashboard
+- Hockey win probability model research (lit search for better models)
 
 See `docs/completed-features.md` for shipped features.
 See Ideas Backlog in `docs/PRD.md` for longer-term ideas.
