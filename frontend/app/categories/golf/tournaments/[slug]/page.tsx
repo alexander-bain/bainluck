@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchGolfTournament, fetchFuturesHistory } from "@/lib/api";
+import { fetchGolfTournament, fetchGolfLeaderboard, fetchFuturesHistory } from "@/lib/api";
 import type {
   GolfTournamentDetailResponse,
   GolfGolfer,
-  GolfMover,
-  GolfMarketGroup,
+  GolfLeaderboardResponse,
+  GolfLeaderboardPlayer,
 } from "@/lib/types";
 import { TOURNAMENT_EMOJI } from "@/lib/golfData";
 import { EvolutionView } from "@/components/EvolutionView";
@@ -33,6 +33,7 @@ function EvolutionViewWithFallback({
 
   useEffect(() => {
     setCurrentIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketIds.join(",")]);
 
   const marketId = marketIds[currentIndex];
@@ -87,15 +88,15 @@ function EvolutionViewWithCallback({
           onEmpty();
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketId, hours]);
 
   if (hasData === null) {
-    return (
-      <div className="h-64 bg-surface-card rounded-xl border border-surface-border animate-pulse" />
-    );
+    return <div className="h-64 bg-gray-50 rounded-xl border border-gray-200 animate-pulse" />;
   }
-
   if (!hasData) return null;
 
   return (
@@ -106,6 +107,107 @@ function EvolutionViewWithCallback({
       hours={hours}
     />
   );
+}
+
+// ============================================================================
+// Data merging — combine tournament odds with live leaderboard scores
+// ============================================================================
+
+interface MergedGolfer {
+  position: string;
+  name: string;
+  score: string;
+  totalScoreRaw: number | null;
+  today: string;
+  todayRaw: number | null;
+  thru: string;
+  hole: string;
+  winProb: number; // 0-100 percentage
+  winProbChange: number | null;
+  top5Prob: number | null;
+  top10Prob: number | null;
+  top20Prob: number | null;
+  makeCutProb: number | null;
+  movement24h: number | null; // decimal (0-1)
+  rank: number;
+  hasLiveData: boolean;
+}
+
+function normalizeGolferName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .trim();
+}
+
+function buildMergedGolfers(
+  oddsGolfers: GolfGolfer[],
+  leaderboard: GolfLeaderboardResponse | null
+): MergedGolfer[] {
+  if (leaderboard && leaderboard.status === "live" && leaderboard.players.length > 0) {
+    const oddsMap = new Map<string, GolfGolfer>();
+    for (const g of oddsGolfers) {
+      oddsMap.set(normalizeGolferName(g.name), g);
+    }
+
+    return leaderboard.players.map((p, i) => {
+      const oddsGolfer = oddsMap.get(normalizeGolferName(p.name));
+      return {
+        position: p.position,
+        name: p.name,
+        score: p.score,
+        totalScoreRaw: p.total_score_raw,
+        today: p.today,
+        todayRaw: p.today_raw,
+        thru: p.thru,
+        hole: p.hole,
+        winProb: p.win_prob,
+        winProbChange: p.win_prob_change,
+        top5Prob: p.top_5_prob,
+        top10Prob: p.top_10_prob,
+        top20Prob: p.top_20_prob,
+        makeCutProb: p.make_cut_prob,
+        movement24h: oddsGolfer?.movement_24h ?? null,
+        rank: i + 1,
+        hasLiveData: true,
+      };
+    });
+  }
+
+  return oddsGolfers.map((g, i) => ({
+    position: String(g.rank ?? i + 1),
+    name: g.name,
+    score: "\u2014",
+    totalScoreRaw: null,
+    today: "\u2014",
+    todayRaw: null,
+    thru: "\u2014",
+    hole: "",
+    winProb: g.probability * 100,
+    winProbChange: null,
+    top5Prob: null,
+    top10Prob: null,
+    top20Prob: null,
+    makeCutProb: null,
+    movement24h: g.movement_24h,
+    rank: g.rank ?? i + 1,
+    hasLiveData: false,
+  }));
+}
+
+function isTournamentLive(
+  tournament: GolfTournamentDetailResponse["tournament"],
+  leaderboard: GolfLeaderboardResponse | null
+): boolean {
+  if (!leaderboard || leaderboard.status !== "live" || !leaderboard.event_name) return false;
+  const tName = tournament.name.toLowerCase();
+  const eName = leaderboard.event_name.toLowerCase();
+  if (eName.includes("masters") && tName.includes("masters")) return true;
+  if (eName.includes("pga championship") && tName.includes("pga championship")) return true;
+  if (eName.includes("u.s. open") && tName.includes("u.s. open")) return true;
+  if (eName.includes("open championship") && tName.includes("open")) return true;
+  const tWords = tName.split(/\s+/).filter((w) => w.length > 3);
+  return tWords.some((w) => eName.includes(w));
 }
 
 // ============================================================================
@@ -121,101 +223,195 @@ export default function GolfTournamentPage() {
   useEngagementTime({ pageType: "golf_tournament" });
 
   const [data, setData] = useState<GolfTournamentDetailResponse | null>(null);
+  const [leaderboard, setLeaderboard] = useState<GolfLeaderboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!slug) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await fetchGolfTournament(slug);
-        if (!cancelled) setData(result);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load tournament");
-      } finally {
-        if (!cancelled) setLoading(false);
+    try {
+      const [tResult, lbResult] = await Promise.allSettled([
+        fetchGolfTournament(slug),
+        fetchGolfLeaderboard("pga"),
+      ]);
+
+      if (tResult.status === "fulfilled") {
+        setData(tResult.value);
+      } else {
+        setError("Failed to load tournament");
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+
+      if (lbResult.status === "fulfilled") {
+        setLeaderboard(lbResult.value);
+      }
+
+      setError(null);
+      setLastRefresh(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
   }, [slug]);
 
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
   if (loading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message={error} />;
+  if (error && !data) return <ErrorState message={error} />;
   if (!data) return <ErrorState message="Tournament not found" />;
 
-  const { tournament, golfers, markets, evolution_market_id, biggest_movers } = data;
+  const { tournament, golfers, markets, evolution_market_id } = data;
   const emoji = TOURNAMENT_EMOJI[tournament.key || ""] || "\u26F3";
+  const isMasters = /masters/i.test(tournament.name);
+  const accentColor = isMasters ? "#006747" : "#059669";
 
-  // Determine status badge
+  const isLive = isTournamentLive(tournament, leaderboard);
+  const currentRound = isLive && leaderboard ? leaderboard.current_round : null;
+  const showBubbleWatch = isLive && currentRound != null && currentRound <= 2;
+
+  // Tournament status badge
   let statusLabel = "";
-  let statusColor = "";
-  if (tournament.start_date && tournament.end_date) {
+  let statusBg = "";
+  if (isLive) {
+    statusLabel = currentRound ? `Round ${currentRound}` : "In Progress";
+  } else if (tournament.start_date && tournament.end_date) {
+    const now = new Date();
     const start = new Date(tournament.start_date);
     const end = new Date(tournament.end_date);
-    const now = new Date();
-    if (now >= start && now <= end) {
-      statusLabel = "In Progress";
-      statusColor = "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400";
-    } else if (now > end) {
+    if (now > end) {
       statusLabel = "Completed";
-      statusColor = "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+      statusBg = "bg-gray-100 text-gray-500 border-gray-200";
     } else {
       const days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
-      statusLabel = days <= 7 ? `Starts ${start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}` : "Coming Up";
-      statusColor = "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400";
+      statusLabel =
+        days <= 7
+          ? `Starts ${start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`
+          : "Upcoming";
+      statusBg = "bg-blue-50 text-blue-700 border-blue-200";
     }
-  } else if (tournament.schedule_status) {
-    statusLabel = tournament.schedule_status;
-    statusColor = "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
   }
 
-  // Collect all winner market IDs for evolution chart
+  const mergedGolfers = buildMergedGolfers(golfers, isLive ? leaderboard : null);
+
   const winnerGroup = markets.find((g) => g.type === "winner");
   const evolutionMarketIds = winnerGroup?.market_ids || (evolution_market_id ? [evolution_market_id] : []);
 
+  // Collect sources for attribution
+  const sources: string[] = [];
+  if (isLive) sources.push("DataGolf");
+  if (golfers.length > 0) {
+    const allSources = new Set<string>();
+    golfers.forEach((g) => Object.keys(g.sources).forEach((s) => allSources.add(s)));
+    if (allSources.has("kalshi")) sources.push("Kalshi");
+    if (allSources.has("polymarket")) sources.push("Polymarket");
+    const sbCount = [...allSources].filter(
+      (s) => !["kalshi", "polymarket", "datagolf"].includes(s)
+    ).length;
+    if (sbCount > 0) sources.push("Sportsbooks");
+  }
+
   return (
-    <main className="min-h-screen bg-surface-primary">
+    <main className="min-h-screen bg-white">
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
         {/* Breadcrumb */}
-        <nav className="text-xs text-text-muted">
-          <Link href="/categories/golf" className="hover:text-text-primary hover:underline">
+        <nav className="text-xs text-gray-400">
+          <Link href="/categories/golf" className="hover:text-gray-700 hover:underline">
             Golf
           </Link>
           <span className="mx-1.5">/</span>
-          <span className="text-text-primary">{tournament.name}</span>
+          <span className="text-gray-700">{tournament.name}</span>
         </nav>
 
         {/* Tournament Header */}
-        <header className="space-y-2">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-2xl">{emoji}</span>
-            <h1 className="text-2xl font-bold text-text-primary">{tournament.name}</h1>
-            {statusLabel && (
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColor}`}>
-                {statusLabel}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-4 text-sm text-text-muted flex-wrap">
-            {tournament.venue && <span>{tournament.venue}</span>}
-            {tournament.location && <span>{tournament.location}</span>}
-            {tournament.start_date && tournament.end_date && (
-              <span>
-                {new Date(tournament.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                {" \u2013 "}
-                {new Date(tournament.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-              </span>
-            )}
+        <header className="border border-gray-200 rounded-xl p-5">
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                {isMasters ? (
+                  <span
+                    className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full text-white uppercase tracking-wider"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    The Masters
+                  </span>
+                ) : (
+                  <span className="text-xl">{emoji}</span>
+                )}
+                {isLive && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
+                    <span className="w-[6px] h-[6px] rounded-full bg-green-500 animate-pulse" />
+                    {statusLabel}
+                  </span>
+                )}
+                {!isLive && statusLabel && (
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${statusBg}`}>
+                    {statusLabel}
+                  </span>
+                )}
+              </div>
+              <h1 className="text-xl font-bold text-gray-900">{tournament.name}</h1>
+              <div className="flex items-center gap-2 text-sm text-gray-500 mt-0.5 flex-wrap">
+                {tournament.venue && <span>{tournament.venue}</span>}
+                {tournament.start_date && tournament.end_date && (
+                  <>
+                    <span className="text-gray-300">&middot;</span>
+                    <span>
+                      {new Date(tournament.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {"\u2013"}
+                      {new Date(tournament.end_date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="text-right">
+              {sources.length > 0 && (
+                <div className="flex gap-1.5 flex-wrap justify-end">
+                  {sources.map((src) => (
+                    <span
+                      key={src}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200"
+                    >
+                      {src}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {isLive && lastRefresh && (
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Updated {lastRefresh.toLocaleTimeString()}
+                </p>
+              )}
+            </div>
           </div>
         </header>
 
+        {/* Bubble Watch — Rounds 1-2 only */}
+        {showBubbleWatch && leaderboard && (
+          <BubbleWatch players={leaderboard.players} currentRound={currentRound} />
+        )}
+
+        {/* Leaderboard Grid */}
+        <LeaderboardGrid
+          golfers={mergedGolfers}
+          accentColor={accentColor}
+          isLive={isLive}
+          hasSnapshot={leaderboard?.has_snapshot || false}
+        />
+
         {/* Evolution Chart */}
         {evolutionMarketIds.length > 0 && (
-          <section className="bg-surface-card rounded-xl border border-surface-border p-4">
-            <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-3">
-              Odds Trend
-            </h2>
+          <section>
             <EvolutionViewWithFallback
               marketIds={evolutionMarketIds}
               marketName={`${tournament.name} - Winner`}
@@ -225,280 +421,506 @@ export default function GolfTournamentPage() {
           </section>
         )}
 
-        {/* Biggest Movers */}
-        {biggest_movers.length > 0 && <MoversStrip movers={biggest_movers} />}
-
-        {/* Market Sections */}
-        {markets.map((group) => (
-          <MarketGroupSection
-            key={group.type}
-            group={group}
-            golfers={golfers}
-            tournamentKey={tournament.key || slug}
-          />
-        ))}
+        {/* Footer */}
+        <p className="text-center text-[11px] text-gray-400">
+          Probabilities from {isLive ? "DataGolf in-play model" : "sportsbook consensus"}.
+          {isLive && " Auto-refreshes every 60s."}
+          {isLive && lastRefresh && <> Last: {lastRefresh.toLocaleTimeString()}</>}
+        </p>
       </div>
     </main>
   );
 }
 
 // ============================================================================
-// Market Group Section
+// Leaderboard Grid
 // ============================================================================
 
-function MarketGroupSection({
-  group,
+function LeaderboardGrid({
   golfers,
-  tournamentKey,
+  accentColor,
+  isLive,
+  hasSnapshot,
 }: {
-  group: GolfMarketGroup;
-  golfers: GolfGolfer[];
-  tournamentKey: string;
+  golfers: MergedGolfer[];
+  accentColor: string;
+  isLive: boolean;
+  hasSnapshot: boolean;
 }) {
-  const isWinner = group.type === "winner";
-  const [expanded, setExpanded] = useState(isWinner);
   const [showAll, setShowAll] = useState(false);
-  const INITIAL_SHOW = isWinner ? 30 : 10;
-
+  const INITIAL_SHOW = 30;
   const displayGolfers = showAll ? golfers : golfers.slice(0, INITIAL_SHOW);
 
   return (
-    <section className="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-surface-elevated/50 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-text-primary">{group.label}</h2>
-          <span className="text-xs text-text-muted">
-            {golfers.length} golfer{golfers.length !== 1 ? "s" : ""}
-          </span>
-        </div>
-        <span className="text-text-muted text-xs">{expanded ? "\u25B2" : "\u25BC"}</span>
-      </button>
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+          {isLive ? "Leaderboard" : "Field & Odds"}
+        </h2>
+        <span className="text-[10px] text-gray-400">
+          {golfers.length} golfer{golfers.length !== 1 ? "s" : ""}
+        </span>
+      </div>
 
-      {expanded && isWinner && (
-        <div className="border-t border-surface-border overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="border-b-2 border-surface-border">
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">#</th>
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">Player</th>
-                <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">Win%</th>
-                <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">24h</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayGolfers.map((golfer, i) => {
-                const pct = (golfer.probability * 100).toFixed(1);
-                const mv = golfer.movement_24h;
-                const hasMv = mv !== null && mv !== undefined && Math.abs(mv) >= 0.005;
-                const mvDelta = hasMv ? Math.abs(Math.round(mv! * 100)) : 0;
-                const mvUp = hasMv && mv! > 0;
-                return (
-                  <tr key={`${golfer.name}-${i}`} className="border-b border-surface-border/50 hover:bg-surface-elevated/30">
-                    <td className="px-3 py-1.5 font-semibold text-text-muted tabular-nums">{golfer.rank ?? i + 1}</td>
-                    <td className="px-3 py-1.5 font-medium text-text-primary">{golfer.name}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-bold">{pct}%</td>
-                    <td className={`px-3 py-1.5 text-right tabular-nums ${hasMv ? (mvUp ? "text-green-600 font-semibold" : "text-red-500 font-semibold") : "text-text-muted"}`}>
-                      {hasMv ? (mvUp ? `\u25B2${mvDelta}%` : `\u25BC${mvDelta}%`) : "\u2014"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {golfers.length > INITIAL_SHOW && (
-            <div className="px-3 py-2 border-t border-surface-border/50">
-              <button
-                onClick={() => setShowAll((s) => !s)}
-                className="text-xs font-medium text-[#006747] hover:underline"
+      {/* ── Desktop table ── */}
+      <div className="hidden sm:block border border-gray-200 rounded-xl overflow-hidden">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b-2 border-gray-200 bg-gray-50/80">
+              <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-3 py-2.5 w-10">
+                Pos
+              </th>
+              <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-3 py-2.5">
+                Golfer
+              </th>
+              {isLive && (
+                <>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
+                    Score
+                  </th>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-12">
+                    Today
+                  </th>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-10">
+                    Thru
+                  </th>
+                </>
+              )}
+              <th
+                className="text-center text-[10px] font-semibold uppercase tracking-wide px-2 py-2.5 w-20"
+                style={{ color: accentColor }}
               >
-                {showAll ? "Show top 30" : `Show all ${golfers.length} golfers`}
-              </button>
-            </div>
-          )}
-          {group.market_names && group.market_names.length > 0 && (
-            <div className="px-3 py-2 border-t border-surface-border/50">
-              <p className="text-[10px] text-text-muted">
-                Sources: {group.market_names.join(" \u00B7 ")}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {expanded && !isWinner && (
-        <div className="px-4 pb-4 space-y-1.5 border-t border-surface-border pt-3">
-          {displayGolfers.map((golfer) => (
-            <GolferRow key={golfer.name} golfer={golfer} tournamentKey={tournamentKey} showSourceBreakdown />
-          ))}
-          {golfers.length > INITIAL_SHOW && !showAll && (
-            <button onClick={() => setShowAll(true)} className="text-xs font-medium text-[#006747] hover:underline mt-2">
-              Show all {golfers.length} golfers
+                Win
+              </th>
+              {isLive && (
+                <>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
+                    Top 5
+                  </th>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
+                    Top 10
+                  </th>
+                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
+                    Top 20
+                  </th>
+                </>
+              )}
+              {!isLive && (
+                <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
+                  24h
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {displayGolfers.map((golfer, i) => (
+              <DesktopRow
+                key={`${golfer.name}-${i}`}
+                golfer={golfer}
+                isLeader={i === 0}
+                accentColor={accentColor}
+                isLive={isLive}
+                hasSnapshot={hasSnapshot}
+              />
+            ))}
+          </tbody>
+        </table>
+        {golfers.length > INITIAL_SHOW && (
+          <div className="px-3 py-2 border-t border-gray-100 text-center">
+            <button
+              onClick={() => setShowAll((s) => !s)}
+              className="text-xs font-medium hover:underline"
+              style={{ color: accentColor }}
+            >
+              {showAll ? "Show top 30" : `Show all ${golfers.length} golfers`}
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Mobile layout ── */}
+      <div className="sm:hidden space-y-0.5">
+        <div className="flex items-center text-[9px] text-gray-400 uppercase tracking-wider font-medium px-1 mb-1">
+          <div className="w-7">Pos</div>
+          <div className="flex-1">Golfer</div>
+          {isLive && (
+            <>
+              <div className="w-10 text-center">Tot</div>
+              <div className="w-10 text-center">Tdy</div>
+            </>
           )}
-          {group.market_names && group.market_names.length > 0 && (
-            <div className="mt-3 pt-2 border-t border-surface-border">
-              <p className="text-[11px] text-text-muted">
-                Markets: {group.market_names.join(" \u00B7 ")}
-              </p>
-            </div>
-          )}
+          <div className="w-14 text-center font-semibold" style={{ color: accentColor }}>
+            Win
+          </div>
+          {isLive && <div className="w-9 text-center">T5</div>}
+          {!isLive && <div className="w-9 text-center">24h</div>}
         </div>
-      )}
+
+        {displayGolfers.map((golfer, i) => (
+          <MobileRow
+            key={`m-${golfer.name}-${i}`}
+            golfer={golfer}
+            isLeader={i === 0}
+            accentColor={accentColor}
+            isLive={isLive}
+          />
+        ))}
+
+        {golfers.length > INITIAL_SHOW && (
+          <div className="text-center py-2">
+            <button
+              onClick={() => setShowAll((s) => !s)}
+              className="text-xs font-medium hover:underline"
+              style={{ color: accentColor }}
+            >
+              {showAll ? "Show top 30" : `Show all ${golfers.length}`}
+            </button>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-// ============================================================================
-// Golfer Row (duplicated from golf page for self-containment)
-// ============================================================================
+// ── Desktop row ──
 
-function GolferRow({
+function DesktopRow({
   golfer,
-  tournamentKey,
-  showSourceBreakdown,
+  isLeader,
+  accentColor,
+  isLive,
+  hasSnapshot,
 }: {
-  golfer: GolfGolfer;
-  tournamentKey: string;
-  showSourceBreakdown?: boolean;
+  golfer: MergedGolfer;
+  isLeader: boolean;
+  accentColor: string;
+  isLive: boolean;
+  hasSnapshot: boolean;
 }) {
-  const pct = Math.round(golfer.probability * 100);
-  const barWidth = Math.max(pct, 2);
+  const scoreColor =
+    golfer.totalScoreRaw != null && golfer.totalScoreRaw < 0
+      ? "text-green-600 font-semibold"
+      : golfer.totalScoreRaw != null && golfer.totalScoreRaw > 0
+        ? "font-semibold"
+        : "";
+
+  const todayColor =
+    golfer.todayRaw != null && golfer.todayRaw < 0
+      ? "text-green-600"
+      : golfer.todayRaw != null && golfer.todayRaw > 0
+        ? "text-red-500"
+        : "text-gray-400";
+
+  // Win prob change indicator
+  const wpc = golfer.winProbChange;
+  let wpcDisplay = "";
+  let wpcColor = "";
+  if (hasSnapshot && wpc != null && Math.abs(wpc) >= 0.1) {
+    wpcDisplay = wpc > 0 ? `\u2191${wpc.toFixed(1)}` : `\u2193${Math.abs(wpc).toFixed(1)}`;
+    wpcColor = wpc > 0 ? "text-green-600" : "text-red-500";
+  }
+
+  // 24h movement for pre-tournament
+  const mv = golfer.movement24h;
+  const hasMv = mv != null && Math.abs(mv) >= 0.005;
+  const mvDelta = hasMv ? Math.abs(Math.round(mv! * 100)) : 0;
+  const mvUp = hasMv && mv! > 0;
 
   return (
-    <div className="flex items-center gap-2 group">
-      {/* Rank */}
-      <span className="text-[11px] text-text-muted w-5 text-right shrink-0">
-        {golfer.rank ?? ""}
-      </span>
-
-      {/* Name */}
-      <span className="text-sm text-text-primary truncate flex-1 min-w-0">
-        {golfer.name}
-      </span>
-
-      {/* Movement badge */}
-      {golfer.movement_24h !== null && golfer.movement_24h !== undefined && Math.abs(golfer.movement_24h) >= 0.005 && (
-        <MovementBadge movement={golfer.movement_24h} />
+    <tr
+      className={`border-b border-gray-100 ${isLeader ? "border-l-2" : "hover:bg-gray-50/50"}`}
+      style={
+        isLeader
+          ? { borderLeftColor: accentColor, backgroundColor: `${accentColor}08` }
+          : undefined
+      }
+    >
+      <td
+        className="px-3 py-2.5 font-semibold tabular-nums"
+        style={{ color: isLeader ? accentColor : "#9ca3af" }}
+      >
+        {golfer.position}
+      </td>
+      <td className="px-3 py-2.5 font-medium text-gray-900">{golfer.name}</td>
+      {isLive && (
+        <>
+          <td className={`px-2 py-2.5 text-center font-mono text-sm tabular-nums ${scoreColor}`}>
+            {golfer.score}
+          </td>
+          <td className={`px-2 py-2.5 text-center font-mono text-xs tabular-nums ${todayColor}`}>
+            {golfer.today}
+          </td>
+          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-400">
+            {golfer.thru}
+          </td>
+        </>
       )}
-
-      {/* Probability bar */}
-      <div className="w-20 sm:w-28 h-4 bg-surface-elevated rounded-full overflow-hidden shrink-0 relative">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{
-            width: `${barWidth}%`,
-            backgroundColor: "#006747",
-            opacity: 0.6 + (pct / 100) * 0.4,
-          }}
-        />
-        <span className="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-text-primary">
-          {pct}%
+      <td className="px-2 py-2.5 text-center tabular-nums">
+        <span
+          className="text-sm font-bold"
+          style={isLeader ? { color: accentColor } : undefined}
+        >
+          {golfer.winProb.toFixed(1)}%
         </span>
-      </div>
+        {wpcDisplay && (
+          <span className={`text-[9px] ml-0.5 ${wpcColor}`}>{wpcDisplay}</span>
+        )}
+      </td>
+      {isLive && (
+        <>
+          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+            {golfer.top5Prob != null ? `${Math.round(golfer.top5Prob)}%` : "\u2014"}
+          </td>
+          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+            {golfer.top10Prob != null ? `${Math.round(golfer.top10Prob)}%` : "\u2014"}
+          </td>
+          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+            {golfer.top20Prob != null ? `${Math.round(golfer.top20Prob)}%` : "\u2014"}
+          </td>
+        </>
+      )}
+      {!isLive && (
+        <td
+          className={`px-2 py-2.5 text-center tabular-nums text-xs ${
+            hasMv
+              ? mvUp
+                ? "text-green-600 font-semibold"
+                : "text-red-500 font-semibold"
+              : "text-gray-300"
+          }`}
+        >
+          {hasMv ? (mvUp ? `\u25B2${mvDelta}%` : `\u25BC${mvDelta}%`) : "\u2014"}
+        </td>
+      )}
+    </tr>
+  );
+}
 
-      {/* Source breakdown */}
-      {showSourceBreakdown && golfer.sources && Object.keys(golfer.sources).length > 0 && (
-        <div className="hidden sm:flex gap-0.5 items-center shrink-0">
-          {Object.entries(golfer.sources).map(([source, prob]) => (
-            <span
-              key={source}
-              title={`${source}: ${Math.round((prob as number) * 100)}%`}
-              className="w-1.5 h-1.5 rounded-full inline-block"
-              style={{ backgroundColor: SOURCE_COLORS[source] || "#6b7280" }}
-            />
-          ))}
+// ── Mobile row ──
+
+function MobileRow({
+  golfer,
+  isLeader,
+  accentColor,
+  isLive,
+}: {
+  golfer: MergedGolfer;
+  isLeader: boolean;
+  accentColor: string;
+  isLive: boolean;
+}) {
+  const scoreColor =
+    golfer.totalScoreRaw != null && golfer.totalScoreRaw < 0
+      ? "text-green-600 font-bold"
+      : "text-gray-700 font-bold";
+
+  const todayColor =
+    golfer.todayRaw != null && golfer.todayRaw < 0
+      ? "text-green-600"
+      : golfer.todayRaw != null && golfer.todayRaw > 0
+        ? "text-red-500"
+        : "text-gray-400";
+
+  const mv = golfer.movement24h;
+  const hasMv = mv != null && Math.abs(mv) >= 0.005;
+  const mvDelta = hasMv ? Math.abs(Math.round(mv! * 100)) : 0;
+  const mvUp = hasMv && mv! > 0;
+
+  const lastName = golfer.name.split(" ").pop() || golfer.name;
+
+  return (
+    <div
+      className={`flex items-center px-2 py-2.5 rounded-lg ${
+        isLeader ? "border" : ""
+      }`}
+      style={
+        isLeader
+          ? { backgroundColor: `${accentColor}08`, borderColor: `${accentColor}30` }
+          : undefined
+      }
+    >
+      <div
+        className="w-7 text-xs font-bold tabular-nums"
+        style={{ color: isLeader ? accentColor : "#9ca3af" }}
+      >
+        {golfer.position}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold text-gray-900 truncate">{lastName}</div>
+        {isLive && (
+          <div className="text-[9px] text-gray-400">
+            {golfer.thru === "F" ? "F" : `Thru ${golfer.thru}`}
+          </div>
+        )}
+      </div>
+      {isLive && (
+        <>
+          <div className={`w-10 text-center font-mono text-sm tabular-nums ${scoreColor}`}>
+            {golfer.score}
+          </div>
+          <div className={`w-10 text-center font-mono text-xs tabular-nums ${todayColor}`}>
+            {golfer.today}
+          </div>
+        </>
+      )}
+      <div className="w-14 text-center">
+        <div
+          className="text-sm font-bold tabular-nums"
+          style={isLeader ? { color: accentColor } : undefined}
+        >
+          {golfer.winProb.toFixed(1)}%
+        </div>
+        {isLive && golfer.winProbChange != null && Math.abs(golfer.winProbChange) >= 0.1 && (
+          <div
+            className={`text-[8px] ${golfer.winProbChange > 0 ? "text-green-600" : "text-red-500"}`}
+          >
+            {golfer.winProbChange > 0 ? "\u2191" : "\u2193"}
+            {Math.abs(golfer.winProbChange).toFixed(1)}
+          </div>
+        )}
+      </div>
+      {isLive && (
+        <div className="w-9 text-center font-mono text-xs tabular-nums text-gray-500">
+          {golfer.top5Prob != null ? `${Math.round(golfer.top5Prob)}%` : "\u2014"}
+        </div>
+      )}
+      {!isLive && (
+        <div
+          className={`w-9 text-center text-[10px] tabular-nums ${
+            hasMv
+              ? mvUp
+                ? "text-green-600 font-semibold"
+                : "text-red-500 font-semibold"
+              : "text-gray-300"
+          }`}
+        >
+          {hasMv ? (mvUp ? `\u25B2${mvDelta}` : `\u25BC${mvDelta}`) : "\u2014"}
         </div>
       )}
     </div>
   );
 }
 
-const SOURCE_COLORS: Record<string, string> = {
-  draftkings: "#53b94d",
-  fanduel: "#1493ff",
-  bovada: "#cc0000",
-  betmgm: "#c4a55e",
-  betonlineag: "#2d2d2d",
-  pointsbetus: "#00a4e4",
-  betrivers: "#1a3c6e",
-  unibet_us: "#147b45",
-  superbook: "#ef4444",
-  kalshi: "#22c55e",
-  polymarket: "#3b82f6",
-  williamhill_us: "#00385e",
-  betus: "#d4a843",
-  mybookieag: "#1e3a5f",
-  lowvig: "#6366f1",
-  espnbet: "#cc0000",
-  fliff: "#f59e0b",
-};
-
 // ============================================================================
-// Movement Badge
+// Bubble Watch — Cut Line Tracker (R1-R2 only)
 // ============================================================================
 
-function MovementBadge({ movement }: { movement: number }) {
-  const isUp = movement > 0;
-  const delta = Math.abs(Math.round(movement * 100));
-  if (delta === 0) return null;
+function BubbleWatch({
+  players,
+  currentRound,
+}: {
+  players: GolfLeaderboardPlayer[];
+  currentRound: number | null;
+}) {
+  const bubblePlayers = players
+    .filter((p) => p.make_cut_prob != null && p.make_cut_prob >= 15 && p.make_cut_prob <= 85)
+    .sort((a, b) => (b.make_cut_prob ?? 0) - (a.make_cut_prob ?? 0));
+
+  if (bubblePlayers.length === 0) return null;
+
+  // Estimate projected cut from the median bubble player
+  const midIdx = Math.floor(bubblePlayers.length / 2);
+  const projectedCut = bubblePlayers[midIdx]?.score || "+4";
+
+  const safe = bubblePlayers.filter((p) => (p.make_cut_prob ?? 0) >= 50).slice(-3);
+  const bubble = bubblePlayers.filter((p) => (p.make_cut_prob ?? 0) < 50).slice(0, 3);
 
   return (
-    <span
-      className={`text-[10px] font-medium px-1 py-0.5 rounded shrink-0 ${
-        isUp
-          ? "text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-900/30"
-          : "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-900/30"
-      }`}
-    >
-      {isUp ? "\u25B2" : "\u25BC"}
-      {delta}%
-    </span>
+    <section className="border border-amber-200 rounded-xl overflow-hidden bg-amber-50/30">
+      <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
+        <span className="text-base">{"\u2702\uFE0F"}</span>
+        <h2 className="text-xs font-semibold text-amber-700 uppercase tracking-wider">
+          Bubble Watch
+        </h2>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+          Projected Cut: {projectedCut}
+        </span>
+        {currentRound && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100/50 text-amber-600 border border-amber-200/50">
+            Round {currentRound} in progress
+          </span>
+        )}
+      </div>
+
+      <div className="px-4 pb-4 space-y-1">
+        {/* Safe side label */}
+        <div className="text-[9px] text-gray-400 uppercase tracking-wider font-medium px-2 mb-0.5">
+          Safe &mdash; will make cut
+        </div>
+
+        {safe.map((p) => (
+          <BubbleRow key={p.name} player={p} side="safe" />
+        ))}
+
+        {/* Cut line */}
+        <div className="relative my-2.5">
+          <div className="border-t-2 border-dashed border-amber-400" />
+          <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-0.5 bg-white border border-amber-300 rounded-full">
+            <span className="text-[10px] font-bold text-amber-600">
+              {"\u2702\uFE0F"} CUT LINE &middot; {projectedCut}
+            </span>
+          </div>
+        </div>
+
+        {/* Bubble side label */}
+        <div className="text-[9px] text-gray-400 uppercase tracking-wider font-medium px-2 mb-0.5">
+          On the bubble
+        </div>
+
+        {bubble.map((p) => (
+          <BubbleRow key={p.name} player={p} side="bubble" />
+        ))}
+
+        <p className="text-[10px] text-amber-600/70 text-center mt-2">
+          {safe.length + bubble.length} golfers near the cut
+        </p>
+      </div>
+    </section>
   );
 }
 
-// ============================================================================
-// Movers Strip
-// ============================================================================
+function BubbleRow({
+  player,
+  side,
+}: {
+  player: GolfLeaderboardPlayer;
+  side: "safe" | "bubble";
+}) {
+  const prob = player.make_cut_prob ?? 0;
+  const probColor = prob >= 70 ? "text-green-600" : prob >= 40 ? "text-amber-600" : "text-red-500";
+  const barColor = prob >= 70 ? "bg-green-500" : prob >= 40 ? "bg-amber-500" : "bg-red-500";
 
-function MoversStrip({ movers }: { movers: GolfMover[] }) {
   return (
-    <section>
-      <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-3">
-        Biggest Movers (24h)
-      </h2>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0">
-        {movers.map((mover, i) => {
-          const isUp = mover.movement_24h > 0;
-          const delta = Math.abs(Math.round(mover.movement_24h * 100));
-          const pct = Math.round(mover.probability * 100);
-          return (
-            <div
-              key={`${mover.name}-${i}`}
-              className={`flex-shrink-0 w-36 rounded-lg border p-3 ${
-                isUp
-                  ? "border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/20"
-                  : "border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-900/20"
-              }`}
-            >
-              <p className="text-xs font-medium text-text-primary truncate">{mover.name}</p>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-lg font-bold text-text-primary">{pct}%</span>
-                <span
-                  className={`text-xs font-medium ${
-                    isUp ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-                  }`}
-                >
-                  {isUp ? "+" : "-"}{delta}%
-                </span>
-              </div>
-            </div>
-          );
-        })}
+    <div
+      className={`flex items-center justify-between rounded-lg px-3 py-2 ${
+        side === "bubble" ? "bg-red-50/50 border border-red-100" : "bg-white"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <span className="text-xs font-bold text-gray-400 w-6">{player.position}</span>
+        <span className="text-sm font-medium text-gray-900">{player.name}</span>
       </div>
-    </section>
+      <div className="flex items-center gap-4">
+        <span
+          className={`font-mono text-sm ${
+            player.total_score_raw != null && player.total_score_raw > 0
+              ? "text-gray-700"
+              : "text-green-600"
+          }`}
+        >
+          {player.score}
+        </span>
+        <div className="w-24">
+          <div className="flex items-center justify-between text-xs mb-0.5">
+            <span className={`font-semibold ${probColor}`}>{Math.round(prob)}%</span>
+            <span className="text-[9px] text-gray-400">make cut</span>
+          </div>
+          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${prob}%` }} />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -508,17 +930,20 @@ function MoversStrip({ movers }: { movers: GolfMover[] }) {
 
 function LoadingSkeleton() {
   return (
-    <main className="min-h-screen bg-surface-primary">
+    <main className="min-h-screen bg-white">
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-        <div className="h-4 w-24 bg-surface-elevated rounded animate-pulse" />
-        <div className="space-y-2">
-          <div className="h-8 w-64 bg-surface-elevated rounded animate-pulse" />
-          <div className="h-4 w-48 bg-surface-elevated rounded animate-pulse" />
+        <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
+        <div className="border border-gray-200 rounded-xl p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="h-5 w-20 bg-gray-100 rounded-full animate-pulse" />
+            <div className="h-5 w-16 bg-gray-100 rounded-full animate-pulse" />
+          </div>
+          <div className="h-7 w-64 bg-gray-100 rounded animate-pulse" />
+          <div className="h-4 w-48 bg-gray-100 rounded animate-pulse" />
         </div>
-        <div className="h-64 bg-surface-card rounded-xl border border-surface-border animate-pulse" />
-        <div className="space-y-3">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-10 bg-surface-elevated rounded animate-pulse" />
+        <div className="space-y-1">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            <div key={i} className="h-10 bg-gray-50 rounded animate-pulse" />
           ))}
         </div>
       </div>
@@ -528,12 +953,13 @@ function LoadingSkeleton() {
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <main className="min-h-screen bg-surface-primary flex items-center justify-center">
+    <main className="min-h-screen bg-white flex items-center justify-center">
       <div className="text-center space-y-4">
-        <p className="text-lg text-text-muted">{message}</p>
+        <p className="text-lg text-gray-500">{message}</p>
         <Link
           href="/categories/golf"
-          className="inline-block text-sm text-[#006747] hover:underline"
+          className="inline-block text-sm hover:underline"
+          style={{ color: "#006747" }}
         >
           &larr; Back to Golf
         </Link>

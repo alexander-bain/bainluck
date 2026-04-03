@@ -1430,6 +1430,7 @@ async def get_golf_leaderboard(
             "position_change": position_change,
             "top_5_prob": round(p.top_5 * 100, 1) if p.top_5 else None,
             "top_10_prob": round(p.top_10 * 100, 1) if p.top_10 else None,
+            "top_20_prob": round(p.top_20 * 100, 1) if p.top_20 else None,
             "make_cut_prob": round(p.make_cut * 100, 1) if p.make_cut else None,
             "current_round": p.current_round,
         })

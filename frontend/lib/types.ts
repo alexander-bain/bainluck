@@ -1203,6 +1203,7 @@ export interface GolfLeaderboardPlayer {
   position_change: number | null;
   top_5_prob: number | null;
   top_10_prob: number | null;
+  top_20_prob: number | null;
   make_cut_prob: number | null;
   current_round: number | null;
 }
