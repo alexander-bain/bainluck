@@ -6,7 +6,7 @@ import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { getCategoryByKey, SPORT_CATEGORIES } from "@/lib/sportCategories";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
@@ -200,6 +200,8 @@ export default function CategoryPage({
                             const key =
                               item.type === "event"
                                 ? `cat-event-${(item.data as FeedEventData).id}`
+                                : item.type === "tournament"
+                                ? `cat-tournament-${(item.data as FeedTournamentData).key}`
                                 : `cat-futures-${(item.data as FeedFuturesData).id}`;
                             return <FeedCard key={key} item={item} />;
                           })}

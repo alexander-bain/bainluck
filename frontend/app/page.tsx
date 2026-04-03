@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { fetchEventsByIds, fetchFuturesByIds, fetchFeed, fetchGroupedFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { staggerContainer, staggerItem } from "@/lib/animations";
-import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData, GroupedFeedResponse } from "@/lib/types";
+import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, GroupedFeedResponse } from "@/lib/types";
 import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -425,9 +425,13 @@ export default function HomePage() {
                           section.items.map((item, itemIndex) => {
                             const key = item.type === "event"
                               ? `feed-event-${(item.data as FeedEventData).id}`
+                              : item.type === "tournament"
+                              ? `feed-tournament-${(item.data as FeedTournamentData).key}`
                               : `feed-futures-${(item.data as FeedFuturesData).id}`;
                             const category = item.type === "event"
                               ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                              : item.type === "tournament"
+                              ? "golf"
                               : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                             return (
                               <motion.div

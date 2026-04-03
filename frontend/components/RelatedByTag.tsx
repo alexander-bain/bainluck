@@ -41,6 +41,8 @@ export default function RelatedByTag({
       const id =
         item.type === "event"
           ? (item.data as FeedEventData).id
+          : item.type === "tournament"
+          ? null
           : (item.data as FeedFuturesData).id;
       return !(item.type === excludeType && id === excludeId);
     })
@@ -87,6 +89,9 @@ export default function RelatedByTag({
               </Link>
             );
           }
+
+          // Tournament — skip in related-by-tag (these are full cards elsewhere)
+          if (item.type === "tournament") return null;
 
           // Futures
           const d = item.data as FeedFuturesData;

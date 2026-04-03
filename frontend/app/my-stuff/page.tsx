@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
 import { preloadFirebaseAuth } from "@/lib/firebase";
 import { fetchFeed, fetchMyTeamFutures } from "@/lib/api";
-import type { FeedItem, FeedEventData, FeedFuturesData, TeamFutureItem } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, TeamFutureItem } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -220,6 +220,16 @@ function MyTeamsFeed() {
         // Skip futures from feed — team futures section handles them
         continue;
       }
+      if (item.type === "tournament") {
+        // Tournaments go into live or upcoming based on schedule_status
+        const td = item.data as FeedTournamentData;
+        if (td.schedule_status === "in-progress") {
+          liveNow.push(item);
+        } else {
+          upcoming.push(item);
+        }
+        continue;
+      }
       const data = item.data as FeedEventData;
       if (data.status === "live") {
         liveNow.push(item);
@@ -374,9 +384,13 @@ function MyTeamsFeed() {
                     {section.items.map((item) => {
                       const key = item.type === "event"
                         ? `my-event-${(item.data as FeedEventData).id}`
+                        : item.type === "tournament"
+                        ? `my-tournament-${(item.data as FeedTournamentData).key}`
                         : `my-futures-${(item.data as FeedFuturesData).id}`;
                       const category = item.type === "event"
                         ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                        : item.type === "tournament"
+                        ? "golf"
                         : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                       return (
                         <FeedCard
