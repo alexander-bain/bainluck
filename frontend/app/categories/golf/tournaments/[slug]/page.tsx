@@ -255,8 +255,12 @@ function MarketGroupSection({
   golfers: GolfGolfer[];
   tournamentKey: string;
 }) {
-  const [expanded, setExpanded] = useState(group.type === "winner");
-  const MAX_COLLAPSED = 10;
+  const isWinner = group.type === "winner";
+  const [expanded, setExpanded] = useState(isWinner);
+  const [showAll, setShowAll] = useState(false);
+  const INITIAL_SHOW = isWinner ? 30 : 10;
+
+  const displayGolfers = showAll ? golfers : golfers.slice(0, INITIAL_SHOW);
 
   return (
     <section className="bg-surface-card rounded-xl border border-surface-border overflow-hidden">
@@ -267,21 +271,72 @@ function MarketGroupSection({
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-text-primary">{group.label}</h2>
           <span className="text-xs text-text-muted">
-            {group.market_ids.length} market{group.market_ids.length !== 1 ? "s" : ""}
+            {golfers.length} golfer{golfers.length !== 1 ? "s" : ""}
           </span>
         </div>
         <span className="text-text-muted text-xs">{expanded ? "\u25B2" : "\u25BC"}</span>
       </button>
 
-      {expanded && (
+      {expanded && isWinner && (
+        <div className="border-t border-surface-border overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b-2 border-surface-border">
+                <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">#</th>
+                <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">Player</th>
+                <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">Win%</th>
+                <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-muted px-3 py-1.5">24h</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayGolfers.map((golfer, i) => {
+                const pct = (golfer.probability * 100).toFixed(1);
+                const mv = golfer.movement_24h;
+                const hasMv = mv !== null && mv !== undefined && Math.abs(mv) >= 0.005;
+                const mvDelta = hasMv ? Math.abs(Math.round(mv! * 100)) : 0;
+                const mvUp = hasMv && mv! > 0;
+                return (
+                  <tr key={`${golfer.name}-${i}`} className="border-b border-surface-border/50 hover:bg-surface-elevated/30">
+                    <td className="px-3 py-1.5 font-semibold text-text-muted tabular-nums">{golfer.rank ?? i + 1}</td>
+                    <td className="px-3 py-1.5 font-medium text-text-primary">{golfer.name}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-bold">{pct}%</td>
+                    <td className={`px-3 py-1.5 text-right tabular-nums ${hasMv ? (mvUp ? "text-green-600 font-semibold" : "text-red-500 font-semibold") : "text-text-muted"}`}>
+                      {hasMv ? (mvUp ? `\u25B2${mvDelta}%` : `\u25BC${mvDelta}%`) : "\u2014"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {golfers.length > INITIAL_SHOW && (
+            <div className="px-3 py-2 border-t border-surface-border/50">
+              <button
+                onClick={() => setShowAll((s) => !s)}
+                className="text-xs font-medium text-[#006747] hover:underline"
+              >
+                {showAll ? "Show top 30" : `Show all ${golfers.length} golfers`}
+              </button>
+            </div>
+          )}
+          {group.market_names && group.market_names.length > 0 && (
+            <div className="px-3 py-2 border-t border-surface-border/50">
+              <p className="text-[10px] text-text-muted">
+                Sources: {group.market_names.join(" \u00B7 ")}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {expanded && !isWinner && (
         <div className="px-4 pb-4 space-y-1.5 border-t border-surface-border pt-3">
-          {golfers.slice(0, MAX_COLLAPSED).map((golfer) => (
+          {displayGolfers.map((golfer) => (
             <GolferRow key={golfer.name} golfer={golfer} tournamentKey={tournamentKey} showSourceBreakdown />
           ))}
-          {golfers.length > MAX_COLLAPSED && (
-            <p className="text-xs text-text-muted mt-2">
-              +{golfers.length - MAX_COLLAPSED} more golfers
-            </p>
+          {golfers.length > INITIAL_SHOW && !showAll && (
+            <button onClick={() => setShowAll(true)} className="text-xs font-medium text-[#006747] hover:underline mt-2">
+              Show all {golfers.length} golfers
+            </button>
           )}
           {group.market_names && group.market_names.length > 0 && (
             <div className="mt-3 pt-2 border-t border-surface-border">
