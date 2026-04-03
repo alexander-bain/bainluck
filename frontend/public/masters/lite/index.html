@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Masters 2026</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;background:#fff;color:#111;padding:12px;max-width:480px;margin:0 auto}
+h1{font-size:15px;font-weight:700}
+.sub{font-size:11px;color:#888;margin-top:2px}
+.ts{font-size:10px;color:#aaa;margin-top:1px}
+.hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.live{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#ef4444;flex-shrink:0}
+.live .dot{width:7px;height:7px;border-radius:50%;background:#ef4444;animation:pulse 2s infinite}
+.pre{color:#d97706}
+.pre .dot{background:#fbbf24;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#999;padding:4px 6px;border-bottom:2px solid #e5e5e5}
+th.r{text-align:right}
+td{padding:5px 6px;border-bottom:1px solid #f0f0f0}
+td.r{text-align:right;font-variant-numeric:tabular-nums}
+td.name{font-weight:500}
+td.pos{font-weight:600;color:#999}
+td.pct{font-weight:700}
+td.dim{color:#bbb}
+td.score-neg{color:#dc2626;font-weight:600}
+td.score-pos{font-weight:600}
+td.up{color:#16a34a;font-weight:600}
+td.dn{color:#ef4444;font-weight:600}
+tr:active{background:#f9f9f9}
+.bar{margin-top:10px;display:flex;justify-content:space-between;align-items:center}
+.btn{font-size:12px;font-weight:600;color:#2563eb;background:none;border:none;padding:4px 0;cursor:pointer}
+.btn:active{opacity:.5}
+.age{font-size:10px;color:#aaa}
+.err{text-align:center;padding:40px 0;color:#999;font-size:13px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #ddd;border-top-color:#2563eb;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cached{font-size:10px;color:#d97706;text-align:center;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="app"><div class="err"><span class="spin"></span> Loading…</div></div>
+<script>
+(function(){
+var API="https://api.bainluck.com";
+var CACHE_KEY="masters_lite_v1";
+var $=document.getElementById("app");
+
+function fmt(d){
+  try{
+    var now=new Date(),diff=now-d,s=Math.floor(diff/1000);
+    if(s<60)return s+"s ago";
+    if(s<3600)return Math.floor(s/60)+"m ago";
+    if(s<86400)return Math.floor(s/3600)+"h ago";
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"})+
+      " "+d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  }catch(e){return""}
+}
+
+function save(data,ts){
+  try{localStorage.setItem(CACHE_KEY,JSON.stringify({data:data,ts:ts}));}catch(e){}
+}
+
+function load(){
+  try{
+    var c=JSON.parse(localStorage.getItem(CACHE_KEY));
+    if(c&&c.data)return c;
+  }catch(e){}
+  return null;
+}
+
+function render(state,fromCache){
+  var h="";
+  if(fromCache)h+='<div class="cached">Showing cached data — refreshing…</div>';
+
+  if(state.live){
+    // Live tournament
+    var d=state.data;
+    var round=d.current_round?"Round "+d.current_round:"";
+    var days={1:"Thursday",2:"Friday",3:"Saturday",4:"Sunday"};
+    var day=d.current_round?days[d.current_round]||"":"";
+    h+='<div class="hdr"><div><h1>'+(d.event_name||"The Masters")+" — "+round+"</h1>";
+    h+='<div class="sub">'+(day?day+" · ":"")+"Augusta National</div>";
+    h+='<div class="ts">Data: '+fmt(new Date(state.ts))+"</div>";
+    h+='</div><div class="live"><span class="dot"></span>Live</div></div>';
+    h+="<table><thead><tr><th>Pos</th><th>Player</th><th class=r>Score</th><th class=r>Thru</th><th class=r>Win%</th>";
+    if(d.has_snapshot)h+="<th class=r>Pos</th><th class=r>Win</th>";
+    h+="</tr></thead><tbody>";
+    var players=d.players||[];
+    for(var i=0;i<Math.min(players.length,30);i++){
+      var p=players[i];
+      var sc=p.total_score_raw!=null&&p.total_score_raw<0?"score-neg":
+             p.total_score_raw!=null&&p.total_score_raw>0?"score-pos":"";
+      var pc=p.position_change,pd="—",pcl="dim";
+      if(pc!=null&&pc>0){pd="▲"+pc;pcl="up";}
+      else if(pc!=null&&pc<0){pd="▼"+Math.abs(pc);pcl="dn";}
+      var wc=p.win_prob_change,wd="—",wcl="dim";
+      if(wc!=null&&Math.abs(wc)>=0.1){
+        wd=wc>0?"+"+wc.toFixed(1):wc.toFixed(1);
+        wcl=wc>0?"up":"dn";
+      }
+      h+="<tr><td class=pos>"+p.position+"</td><td class=name>"+p.name+
+        "</td><td class='r "+(sc)+"'>"+p.score+"</td><td class='r dim'>"+p.thru+
+        "</td><td class='r pct'>"+p.win_prob.toFixed(1)+"%</td>";
+      if(d.has_snapshot)h+="<td class='r "+pcl+"'>"+pd+"</td><td class='r "+wcl+"'>"+wd+"</td>";
+      h+="</tr>";
+    }
+    h+="</tbody></table>";
+  }else{
+    // Pre-tournament
+    var golfers=state.golfers||[];
+    var t=state.tournament||{};
+    var dates="April 9–12, 2026";
+    if(t.start_date&&t.end_date){
+      var sd=new Date(t.start_date),ed=new Date(t.end_date);
+      dates=sd.toLocaleDateString("en-US",{month:"long",day:"numeric"})+"–"+
+        ed.toLocaleDateString("en-US",{day:"numeric",year:"numeric"});
+    }
+    h+='<div class="hdr"><div><h1>The Masters</h1>';
+    h+='<div class="sub">'+dates+" · "+(t.venue||"Augusta National Golf Club")+"</div>";
+    h+='<div class="ts">Data: '+fmt(new Date(state.ts))+"</div>";
+    h+='</div><div class="live pre"><span class="dot"></span>Upcoming</div></div>';
+    h+="<table><thead><tr><th>#</th><th>Player</th><th class=r>Win%</th></tr></thead><tbody>";
+    for(var i=0;i<golfers.length;i++){
+      var g=golfers[i];
+      h+="<tr><td class=pos>"+(g.rank||i+1)+"</td><td class=name>"+g.name+
+        "</td><td class='r pct'>"+(g.probability*100).toFixed(1)+"%</td></tr>";
+    }
+    h+="</tbody></table>";
+  }
+  h+='<div class="bar"><span class="age" id="age"></span><button class="btn" onclick="R()">Refresh</button></div>';
+  $.innerHTML=h;
+  tick(state.ts);
+}
+
+var ageTimer;
+function tick(ts){
+  clearInterval(ageTimer);
+  var el=document.getElementById("age");
+  function up(){if(el)el.textContent="Updated "+fmt(new Date(ts));}
+  up();
+  ageTimer=setInterval(up,10000);
+}
+
+function fetchData(){
+  // Try leaderboard first to see if Masters is live
+  fetch(API+"/api/golf/leaderboard/pga").then(function(r){return r.json();}).then(function(lb){
+    var isLive=lb.status==="live"&&lb.event_name&&/masters/i.test(lb.event_name);
+    if(isLive){
+      var state={live:true,data:lb,ts:new Date().toISOString()};
+      save(state,state.ts);
+      render(state,false);
+    }else{
+      // Fetch pre-tournament odds
+      fetch(API+"/api/golf/tournaments/the-masters").then(function(r){return r.json();}).then(function(t){
+        var state={live:false,golfers:t.golfers||[],tournament:t.tournament||{},ts:new Date().toISOString()};
+        save(state,state.ts);
+        render(state,false);
+      }).catch(function(){
+        var state={live:false,golfers:[],tournament:{},ts:new Date().toISOString()};
+        render(state,false);
+      });
+    }
+  }).catch(function(e){
+    var c=load();
+    if(c)render(c.data,true);
+    else $.innerHTML='<div class="err">No connection. Pull down to retry.</div>';
+  });
+}
+
+// Show cached data instantly, then refresh
+var cached=load();
+if(cached&&cached.data){
+  render(cached.data,true);
+}
+fetchData();
+
+// Expose refresh globally for the button
+window.R=fetchData;
+})();
+</script>
+</body>
+</html>
