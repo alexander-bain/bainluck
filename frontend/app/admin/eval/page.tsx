@@ -45,6 +45,26 @@ interface GridData {
   };
 }
 
+// Diagnostic context for eval cards
+interface CrossColumnEntry {
+  column: string;
+  label: string;
+  probability: number;
+  market_name?: string;
+}
+
+interface PeerEntry {
+  name: string;
+  probability: number;
+}
+
+interface DiagnosticContext {
+  // What other columns does each source have for this player?
+  crossColumns: Record<string, CrossColumnEntry[]>;
+  // What do top peers look like in the same column from each source?
+  peers: Record<string, PeerEntry[]>;
+}
+
 interface FuturesMarket {
   id: number;
   name: string;
@@ -268,6 +288,7 @@ function GridMatchCard({
   thru,
   tournamentStatus,
   currentRound,
+  diagnostics,
 }: {
   team: string;
   column: string;
@@ -280,6 +301,7 @@ function GridMatchCard({
   thru?: string | null;
   tournamentStatus?: string;
   currentRound?: number | null;
+  diagnostics?: DiagnosticContext;
 }) {
   const [acting, setActing] = useState(false);
 
@@ -451,6 +473,89 @@ function GridMatchCard({
           </span>
         </div>
       </div>
+
+      {/* ── Diagnostic context ── */}
+      {diagnostics && (spread > 0.15) && (
+        <div style={{ marginBottom: 14 }}>
+          {/* Cross-column: what does each source say about this player in OTHER columns? */}
+          {Object.keys(diagnostics.crossColumns).length > 0 && (
+            <div style={{
+              padding: "8px 10px",
+              background: "#0d1117",
+              borderRadius: 8,
+              marginBottom: 8,
+              borderLeft: "3px solid #8b5cf6",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Same player, other columns
+              </div>
+              {cell.sources.map((s) => {
+                const otherCols = diagnostics.crossColumns[s.source];
+                if (!otherCols || otherCols.length === 0) return null;
+                return (
+                  <div key={s.source} style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "capitalize" }}>
+                      {s.source}:
+                    </span>{" "}
+                    {otherCols.map((oc, i) => {
+                      const probPct = (oc.probability * 100).toFixed(1);
+                      // Highlight if probability is suspiciously close to the disputed value
+                      const currentProb = s.probability;
+                      const isSuspicious = Math.abs(oc.probability - currentProb) < 0.02;
+                      return (
+                        <span key={oc.column}>
+                          {i > 0 && <span style={{ color: "#334155" }}> · </span>}
+                          <span style={{
+                            fontSize: 11,
+                            color: isSuspicious ? "#f97316" : "#cbd5e1",
+                            fontWeight: isSuspicious ? 700 : 400,
+                          }}>
+                            {oc.label} {probPct}%
+                            {isSuspicious && " ⚠️"}
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Peer context: what do top players look like in this column from each source? */}
+          {Object.keys(diagnostics.peers).length > 0 && (
+            <div style={{
+              padding: "8px 10px",
+              background: "#0d1117",
+              borderRadius: 8,
+              borderLeft: "3px solid #6366f1",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Top peers in same column
+              </div>
+              {cell.sources.map((s) => {
+                const peers = diagnostics.peers[s.source];
+                if (!peers || peers.length === 0) return null;
+                return (
+                  <div key={s.source} style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "capitalize" }}>
+                      {s.source}:
+                    </span>{" "}
+                    {peers.slice(0, 4).map((p, i) => (
+                      <span key={p.name}>
+                        {i > 0 && <span style={{ color: "#334155" }}> · </span>}
+                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>
+                          {p.name.split(" ").pop()} {(p.probability * 100).toFixed(0)}%
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Eval question — reworded to be actionable */}
       <div style={{
@@ -991,7 +1096,7 @@ function GridMatchingTab() {
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [candidates, setCandidates] = useState<
-    { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null }[]
+    { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null; diagnostics?: DiagnosticContext }[]
   >([]);
 
   useEffect(() => {
@@ -1010,7 +1115,10 @@ function GridMatchingTab() {
         setGridData(data);
 
         // Build eval candidates: team×column combos with multiple sources (disagreement opportunity)
-        const items: { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null }[] = [];
+        const items: { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null; diagnostics?: DiagnosticContext }[] = [];
+        const colLabels: Record<string, string> = {};
+        for (const col of data.columns || []) colLabels[col.key] = col.label;
+
         for (const team of data.teams || []) {
           for (const col of data.columns || []) {
             const cell = team.cells?.[col.key];
@@ -1020,10 +1128,54 @@ function GridMatchingTab() {
             // Prioritize disagreements
             const probs = cell.sources.map((s) => s.probability);
             const spread = Math.max(...probs) - Math.min(...probs);
+
+            // Build diagnostic context
+            const diagnostics: DiagnosticContext = { crossColumns: {}, peers: {} };
+
+            // 1. Cross-column context: for each source in this cell, show what
+            //    OTHER columns this player has from the same source
+            const sourcesInCell = new Set(cell.sources.map((s) => s.source));
+            for (const src of sourcesInCell) {
+              const entries: CrossColumnEntry[] = [];
+              for (const otherCol of data.columns || []) {
+                if (otherCol.key === col.key) continue; // skip current column
+                const otherCell = team.cells?.[otherCol.key];
+                if (!otherCell?.sources) continue;
+                const match = otherCell.sources.find((s) => s.source === src);
+                if (match) {
+                  entries.push({
+                    column: otherCol.key,
+                    label: otherCol.label,
+                    probability: match.probability,
+                    market_name: match.market_name,
+                  });
+                }
+              }
+              if (entries.length > 0) diagnostics.crossColumns[src] = entries;
+            }
+
+            // 2. Peer context: for each source in this cell, show top 5 other
+            //    players from the same source in the same column
+            for (const src of sourcesInCell) {
+              const peerList: PeerEntry[] = [];
+              for (const otherTeam of data.teams || []) {
+                if (otherTeam.name === team.name) continue;
+                const otherCell = otherTeam.cells?.[col.key];
+                if (!otherCell?.sources) continue;
+                const match = otherCell.sources.find((s) => s.source === src);
+                if (match) {
+                  peerList.push({ name: otherTeam.name, probability: match.probability });
+                }
+              }
+              peerList.sort((a, b) => b.probability - a.probability);
+              diagnostics.peers[src] = peerList.slice(0, 5);
+            }
+
             items.push({
               team: team.name, column: col.key, cell, gridName: data.name || league.toUpperCase(),
               position: team.position, totalScore: team.total_score, thru: team.thru,
               tournamentStatus: data.tournament?.status, currentRound: data.tournament?.current_round,
+              diagnostics,
             });
             // Attach spread for sorting
             (items[items.length - 1] as Record<string, unknown>)._spread = spread;
@@ -1165,6 +1317,7 @@ function GridMatchingTab() {
             thru={current.thru}
             tournamentStatus={current.tournamentStatus}
             currentRound={current.currentRound}
+            diagnostics={current.diagnostics}
           />
         </>
       )}
