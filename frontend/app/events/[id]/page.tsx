@@ -15,6 +15,7 @@ const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: f
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsGrid = dynamic(() => import("@/components/PlayerPropsGrid"), { ssr: false });
+const SourceComparison = dynamic(() => import("@/components/SourceComparison"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -1339,6 +1340,20 @@ export default function EventPage({ params }: EventPageProps) {
           </>
         )}
       </div>
+
+      {/* Source Comparison — how different probability sources see this game */}
+      <SourceComparison
+        homeProb={homeProb}
+        awayProb={awayProb}
+        homeTeam={event.home_team}
+        awayTeam={event.away_team}
+        homeTeamColor={event.home_team_data?.primary_color || undefined}
+        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        bookmakerHistory={historyData?.bookmaker_history}
+        winProbHistory={historyData?.win_prob_history}
+        winProbSources={historyData?.win_prob_sources}
+        openingHomeProb={openingHomeProb}
+      />
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData && ((historyData.history?.length ?? 0) > 0 || (historyData.score_history?.length ?? 0) > 0 || (historyData.espn_history?.length ?? 0) > 0) && (

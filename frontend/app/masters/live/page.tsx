@@ -130,7 +130,10 @@ export default function MastersLivePage() {
 
       {/* Footer */}
       <p className="text-center text-[11px] text-text-quaternary mt-2">
-        Position and probability changes are since the start of {roundLabel.split(" — ")[0] || "today&apos;s round"} play today.
+        {data.has_snapshot
+          ? <>Position and probability changes are since the start of {roundLabel.split(" — ")[0] || "today\u2019s round"} play today.</>
+          : <>Deltas will appear once today&apos;s round begins (snapshot taken at ~6am ET).</>
+        }
         <br />
         Auto-refreshes every 60 seconds.
         {lastRefresh && <> Last: {lastRefresh.toLocaleTimeString()}</>}
@@ -150,6 +153,36 @@ function LeaderboardRow({ player }: { player: GolfLeaderboardPlayer }) {
     ? "text-text-primary font-semibold"
     : "";
 
+  // Position change: positive = climbed (green ▲), negative = dropped (red ▼)
+  const posChange = player.position_change;
+  let posDisplay: string;
+  let posColor: string;
+  if (posChange == null || posChange === 0) {
+    posDisplay = posChange === 0 ? "—" : "—";
+    posColor = "text-text-quaternary";
+  } else if (posChange > 0) {
+    posDisplay = `▲${posChange}`;
+    posColor = "text-green-600 font-semibold";
+  } else {
+    posDisplay = `▼${Math.abs(posChange)}`;
+    posColor = "text-red-500 font-semibold";
+  }
+
+  // Win probability change: positive = gained (green), negative = lost (red)
+  const wpChange = player.win_prob_change;
+  let wpDisplay: string;
+  let wpColor: string;
+  if (wpChange == null || Math.abs(wpChange) < 0.1) {
+    wpDisplay = wpChange != null && Math.abs(wpChange) < 0.1 ? "—" : "—";
+    wpColor = "text-text-quaternary";
+  } else if (wpChange > 0) {
+    wpDisplay = `+${wpChange.toFixed(1)}`;
+    wpColor = "text-green-600 font-semibold";
+  } else {
+    wpDisplay = wpChange.toFixed(1);
+    wpColor = "text-red-500 font-semibold";
+  }
+
   return (
     <tr className="border-b border-border-light hover:bg-gray-50">
       <td className="px-2 py-1.5 font-semibold text-text-tertiary tabular-nums">{player.position}</td>
@@ -157,8 +190,8 @@ function LeaderboardRow({ player }: { player: GolfLeaderboardPlayer }) {
       <td className={`px-2 py-1.5 text-right tabular-nums ${scoreColor}`}>{player.score}</td>
       <td className="px-2 py-1.5 text-right tabular-nums text-text-tertiary">{player.thru}</td>
       <td className="px-2 py-1.5 text-right tabular-nums font-bold">{player.win_prob.toFixed(1)}%</td>
-      <td className="px-2 py-1.5 text-right tabular-nums">—</td>
-      <td className="px-2 py-1.5 text-right tabular-nums">—</td>
+      <td className={`px-2 py-1.5 text-right tabular-nums ${posColor}`}>{posDisplay}</td>
+      <td className={`px-2 py-1.5 text-right tabular-nums ${wpColor}`}>{wpDisplay}</td>
     </tr>
   );
 }
