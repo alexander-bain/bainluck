@@ -108,6 +108,29 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
               ))}
             </div>
           )}
+
+          {/* Prop markets — captain picks, "will they play", etc. */}
+          {tournament.prop_markets && tournament.prop_markets.length > 0 && (
+            <div className="border-t border-border-light pt-2 mt-1 space-y-1.5">
+              {tournament.prop_markets.slice(0, 3).map((pm) => (
+                <div key={pm.name} className="px-0.5">
+                  <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-0.5">
+                    {_cleanPropLabel(pm.name, tournament.name)}
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    {pm.outcomes.slice(0, 3).map((o) => (
+                      <span key={o.name} className="text-[11px] text-text-primary">
+                        {o.name}{" "}
+                        <span className="font-semibold tabular-nums">
+                          {(o.probability * 100).toFixed(0)}%
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </Link>
@@ -184,6 +207,25 @@ function _currentRound(tournament: GolfTournament): string {
 function _lastName(name: string): string {
   const parts = name.split(" ");
   return parts.length > 1 ? parts[parts.length - 1] : name;
+}
+
+function _cleanPropLabel(marketName: string, tournamentName: string): string {
+  // Strip tournament name from the market label for brevity
+  let label = marketName;
+  // Remove "at 2027 Ryder Cup", "in 2026", "in the 2026 Masters" etc.
+  label = label.replace(/\s+(?:at|in|for)\s+(?:the\s+)?(?:20\d{2}\s+)?/i, " · ");
+  // Remove trailing "?"
+  label = label.replace(/\s*\?\s*$/, "");
+  // Remove leading year
+  label = label.replace(/^20\d{2}\s+/, "");
+  // If the label still contains the tournament name, strip it
+  if (tournamentName) {
+    const tn = tournamentName.replace(/^The\s+/i, "");
+    label = label.replace(new RegExp(tn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
+    // Clean up leftover separators
+    label = label.replace(/^\s*·\s*/, "").replace(/\s*·\s*$/, "").trim();
+  }
+  return label || marketName;
 }
 
 function _formatTournamentDate(start: string | null, end: string | null): string {

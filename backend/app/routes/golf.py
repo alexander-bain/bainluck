@@ -703,6 +703,7 @@ async def get_golf(
 
     for tourn_key, tourn_markets in tournament_markets.items():
         golfer_data: dict[str, dict] = {}  # match_key -> aggregated data
+        prop_markets_list: list[dict] = []  # Non-winner markets shown separately
 
         market_ids = []
         market_sources = []
@@ -724,10 +725,30 @@ async def get_golf(
                 if latest_resolution is None or market.resolution_date > latest_resolution:
                     latest_resolution = market.resolution_date
 
-            # Only include outright winner markets in golfer probability aggregation.
-            # Skip placement (Top 5/10/20), participation ("compete in", "will play"),
-            # make cut, and other non-winner markets to avoid polluting win odds.
+            # Non-winner markets (captain, participation, placement, etc.)
+            # are shown separately with proper labels — not mixed into winner odds.
             if _NON_WINNER_MARKET_RE.search(market.name):
+                prop_outcomes = []
+                for outcome in market.outcomes:
+                    if outcome.current_probability is None:
+                        continue
+                    p = float(outcome.current_probability)
+                    if source == "kalshi" and p == 0.5:
+                        continue
+                    raw = outcome.name.strip()
+                    if raw.lower() in ("tie", "field", "other", "the field"):
+                        continue
+                    prop_outcomes.append({
+                        "name": _normalize_golfer_name(raw),
+                        "probability": round(p, 3),
+                    })
+                if prop_outcomes:
+                    prop_outcomes.sort(key=lambda x: x["probability"], reverse=True)
+                    prop_markets_list.append({
+                        "name": market.name,
+                        "source": source_label,
+                        "outcomes": prop_outcomes[:5],
+                    })
                 continue
 
             for outcome in market.outcomes:
@@ -884,6 +905,7 @@ async def get_golf(
             "market_sources": market_sources,
             "market_names": market_names,
             "golfers": golfers,
+            "prop_markets": prop_markets_list,
             "_all_golfers": all_golfers,  # Full list for detail endpoint
         })
 

@@ -1101,6 +1101,13 @@ export interface GolfTournament {
   market_names?: string[];
   market_sources?: string[];
   golfers: GolfGolfer[];
+  prop_markets?: GolfPropMarket[];
+}
+
+export interface GolfPropMarket {
+  name: string;
+  source: string;
+  outcomes: { name: string; probability: number }[];
 }
 
 export interface GolfMover {
