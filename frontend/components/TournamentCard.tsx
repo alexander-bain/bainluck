@@ -38,35 +38,18 @@ interface TournamentCardData {
   broadcast?: string | null;
 }
 
-export type TournamentCardVariant = "hero" | "compact" | "ultra-compact";
-
 interface TournamentCardProps {
   tournament: TournamentCardData;
-  variant?: TournamentCardVariant;
+  /** Override link destination (default: /categories/golf/tournaments/{slug}) */
+  href?: string;
 }
 
 // ============================================================================
-// Main Component
+// Main Component — Feed-Native Hero Card
 // ============================================================================
 
-export default function TournamentCard({ tournament, variant = "hero" }: TournamentCardProps) {
-  const href = `/categories/golf/tournaments/${tournament.slug}`;
-
-  switch (variant) {
-    case "hero":
-      return <HeroCard tournament={tournament} href={href} />;
-    case "compact":
-      return <CompactCard tournament={tournament} href={href} />;
-    case "ultra-compact":
-      return <UltraCompactCard tournament={tournament} href={href} />;
-  }
-}
-
-// ============================================================================
-// Variant 3: Feed-Native Hero (Preferred)
-// ============================================================================
-
-function HeroCard({ tournament, href }: { tournament: TournamentCardData; href: string }) {
+export default function TournamentCard({ tournament, href: hrefOverride }: TournamentCardProps) {
+  const href = hrefOverride || `/categories/golf/tournaments/${tournament.slug}`;
   const isLive = tournament.schedule_status === "in-progress";
   const leader = tournament.leaderboard?.[0] || (tournament.golfers[0] ? {
     position: "1",
@@ -171,107 +154,6 @@ function HeroCard({ tournament, href }: { tournament: TournamentCardData; href: 
 }
 
 // ============================================================================
-// Variant 1: Compact Leaderboard
-// ============================================================================
-
-function CompactCard({ tournament, href }: { tournament: TournamentCardData; href: string }) {
-  const isLive = tournament.schedule_status === "in-progress";
-  const leaders = tournament.leaderboard
-    ? tournament.leaderboard.slice(0, 3)
-    : tournament.golfers.slice(0, 3).map((g) => ({
-        position: String(g.rank),
-        name: g.name,
-        score: "—",
-        hole: "—",
-        win_prob: g.probability * 100,
-      }));
-
-  return (
-    <Link href={href} className="block">
-      <div className="bg-white border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-gray-300 transition-all cursor-pointer p-3.5 px-4">
-        {/* Header */}
-        <div className="flex justify-between items-start mb-2.5">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[15px] font-bold">{tournament.name}</span>
-              {isLive && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
-                  <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
-                  R{tournament.current_round || "?"}
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-text-tertiary mt-0.5">{tournament.venue || ""}</div>
-          </div>
-        </div>
-
-        {/* Leaders grid */}
-        <div className="grid gap-y-0.5 text-[13px]" style={{ gridTemplateColumns: "auto 1fr auto auto auto" }}>
-          {leaders.map((l) => (
-            <div key={l.name} className="contents">
-              <span className="font-semibold text-text-tertiary tabular-nums w-5">{l.position}</span>
-              <span className="font-medium">{l.name}</span>
-              <span className="tabular-nums font-semibold text-right" style={{ color: l.score.startsWith("-") ? "var(--red, #dc2626)" : undefined }}>
-                {l.score}
-              </span>
-              <span className="text-[11px] text-text-tertiary tabular-nums text-right">{l.hole}</span>
-              <span className="tabular-nums font-bold text-sm text-right">{l.win_prob.toFixed(1)}%</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-between items-center mt-2.5">
-          <span className="text-[11px] text-text-quaternary">{tournament.golfers.length} players</span>
-          <span className="text-xs font-medium text-blue-600">Full leaderboard →</span>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-// ============================================================================
-// Variant 4: Ultra-Compact
-// ============================================================================
-
-function UltraCompactCard({ tournament, href }: { tournament: TournamentCardData; href: string }) {
-  const isLive = tournament.schedule_status === "in-progress";
-  const leader = tournament.golfers[0];
-
-  return (
-    <Link href={href} className="block">
-      <div className="bg-white border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-gray-300 transition-all cursor-pointer flex items-center gap-3 py-2.5 px-3.5">
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-bold flex items-center gap-1.5 truncate">
-            {tournament.name}
-            {isLive && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-500 uppercase">
-                <span className="w-[5px] h-[5px] rounded-full bg-red-500 animate-pulse" />
-                R{tournament.current_round || "?"}
-              </span>
-            )}
-          </div>
-          <div className="text-[11px] text-text-tertiary truncate">
-            {tournament.venue}
-            {tournament.start_date && !isLive && (
-              <> · {formatTournamentDate(tournament.start_date, tournament.end_date)}</>
-            )}
-          </div>
-        </div>
-        <div className="text-right shrink-0">
-          <div className="text-xs font-medium text-text-secondary">
-            {leader ? lastName(leader.name) : "—"}
-          </div>
-          <div className="text-lg font-extrabold tabular-nums">
-            {leader ? `${(leader.probability * 100).toFixed(1)}%` : "—"}
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -296,3 +178,6 @@ function formatTournamentDate(start: string | null, end: string | null): string 
     return "";
   }
 }
+
+// Re-export types for use by other components
+export type { TournamentCardData, TournamentGolfer };
