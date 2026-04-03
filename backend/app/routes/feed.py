@@ -1206,6 +1206,7 @@ def _ensure_feed_diversity(
 
     events = [i for i in items if i["type"] == "event"]
     futures = [i for i in items if i["type"] == "futures"]
+    other = [i for i in items if i["type"] not in ("event", "futures")]
 
     # If one type is empty, nothing to balance
     if not events or not futures:
@@ -1225,22 +1226,24 @@ def _ensure_feed_diversity(
 
     # Need to promote events. Take top events that aren't already in top N,
     # and interleave them with the existing top items.
+    # Merge futures + other (tournaments, etc.) into one pool sorted by score.
+    non_events = sorted(futures + other, key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
     result = []
     event_idx = 0
-    futures_idx = 0
+    non_event_idx = 0
     events_placed = 0
 
     for slot in range(min(target_size, len(items))):
         need_event = events_placed < min_event_slots and event_idx < len(events)
 
         # Every 2-3 items, prefer an event if we need more
-        if need_event and (slot % 3 != 2 or futures_idx >= len(futures)):
+        if need_event and (slot % 3 != 2 or non_event_idx >= len(non_events)):
             result.append(events[event_idx])
             event_idx += 1
             events_placed += 1
-        elif futures_idx < len(futures):
-            result.append(futures[futures_idx])
-            futures_idx += 1
+        elif non_event_idx < len(non_events):
+            result.append(non_events[non_event_idx])
+            non_event_idx += 1
         elif event_idx < len(events):
             result.append(events[event_idx])
             event_idx += 1
@@ -1250,12 +1253,12 @@ def _ensure_feed_diversity(
     placed_ids = set()
     for item in result:
         data = item.get("data", {})
-        key = (item["type"], data.get("id"))
+        key = (item["type"], data.get("id") or data.get("key"))
         placed_ids.add(key)
 
     for item in items:
         data = item.get("data", {})
-        key = (item["type"], data.get("id"))
+        key = (item["type"], data.get("id") or data.get("key"))
         if key not in placed_ids:
             result.append(item)
 
