@@ -1627,3 +1627,29 @@ export interface MarchMadnessResponse {
   alma_mater_teams: string[] | null;
   bracket_buster_insights: BracketBusterInsight[];
 }
+
+// ============================================================================
+// Sport Hierarchy Types (for /sport/ page architecture)
+// ============================================================================
+
+export interface SportLeague {
+  slug: string;
+  name: string;
+  sport_keys: string[];
+}
+
+export interface SportShowcaseEvent {
+  name: string;
+  type: string;
+}
+
+export interface SportHierarchy {
+  slug: string;
+  name: string;
+  leagues: SportLeague[];
+  showcase_events: SportShowcaseEvent[];
+}
+
+export interface SportHierarchyListResponse {
+  sports: SportHierarchy[];
+}

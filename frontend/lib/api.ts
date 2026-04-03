@@ -39,6 +39,8 @@ import type {
   ChampionshipGridResponse,
   GolfScheduleResponse,
   TeamProgressionResponse,
+  SportHierarchyListResponse,
+  SportHierarchy,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -1033,6 +1035,20 @@ export async function revealOscarsBonus(
 // ============================================================================
 // Golf API
 // ============================================================================
+
+/**
+ * Fetch sport hierarchy — all sports with leagues and showcase events
+ */
+export async function fetchSportHierarchy(): Promise<SportHierarchyListResponse> {
+  return apiFetch<SportHierarchyListResponse>("/api/sports/hierarchy");
+}
+
+/**
+ * Fetch hierarchy for a single sport — leagues + showcase events
+ */
+export async function fetchSportHierarchyDetail(sportSlug: string): Promise<SportHierarchy> {
+  return apiFetch<SportHierarchy>(`/api/sports/hierarchy/${encodeURIComponent(sportSlug)}`);
+}
 
 /**
  * Fetch Golf landing page data — all tournaments with aggregated odds

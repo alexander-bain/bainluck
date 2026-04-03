@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport
 from app.services import get_db, OddsAPIService
+from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
 
 router = APIRouter()
 
@@ -148,6 +149,43 @@ async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
             status_code=503,
             detail=f"Unable to sync sports from API: {str(e)}"
         )
+
+
+@router.get("/hierarchy")
+async def get_sport_hierarchy_endpoint():
+    """
+    Get the sport → league navigation tree.
+
+    Returns all sports with their leagues and cross-league showcase events.
+    Used by /sport/{sport} hub pages and navigation.
+    """
+    sports = []
+    for slug, data in SPORT_HIERARCHY.items():
+        sports.append({
+            "slug": data["slug"],
+            "name": data["name"],
+            "leagues": data["leagues"],
+            "showcase_events": data.get("showcase_events", []),
+        })
+    return {"sports": sports}
+
+
+@router.get("/hierarchy/{sport_slug}")
+async def get_sport_hierarchy_detail(sport_slug: str):
+    """
+    Get hierarchy data for a single sport.
+
+    Returns leagues and showcase events for the sport hub page.
+    """
+    hierarchy = get_sport_hierarchy(sport_slug)
+    if not hierarchy:
+        raise HTTPException(status_code=404, detail=f"Sport '{sport_slug}' not found")
+    return {
+        "slug": hierarchy["slug"],
+        "name": hierarchy["name"],
+        "leagues": hierarchy["leagues"],
+        "showcase_events": hierarchy.get("showcase_events", []),
+    }
 
 
 @router.get("/{sport_key}")

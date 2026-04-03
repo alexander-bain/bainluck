@@ -962,6 +962,146 @@ LLM_CATEGORY_TO_SPORT_KEYS: dict[str, list[str]] = {
 
 
 # =============================================================================
+# 11. SPORT_HIERARCHY — Sport → league page architecture
+#
+# Defines the /sport/{sport} → /sport/{sport}/{league} navigation tree.
+# Each sport has leagues (with display metadata) and optional cross-league
+# showcase events (majors, cups) that live on the sport hub page.
+# =============================================================================
+
+SPORT_HIERARCHY: dict[str, dict] = {
+    "golf": {
+        "name": "Golf",
+        "slug": "golf",
+        "leagues": [
+            {"slug": "pga", "name": "PGA Tour", "sport_keys": ["golf_pga"]},
+            {"slug": "dpworld", "name": "DP World Tour", "sport_keys": []},
+            {"slug": "lpga", "name": "LPGA", "sport_keys": ["golf_lpga"]},
+            {"slug": "liv", "name": "LIV Golf", "sport_keys": []},
+            {"slug": "kft", "name": "Korn Ferry Tour", "sport_keys": []},
+        ],
+        "showcase_events": [
+            # Men's majors
+            {"name": "The Masters", "type": "major"},
+            {"name": "PGA Championship", "type": "major"},
+            {"name": "U.S. Open", "type": "major"},
+            {"name": "The Open Championship", "type": "major"},
+            # Women's majors
+            {"name": "Chevron Championship", "type": "womens_major"},
+            {"name": "KPMG Women's PGA Championship", "type": "womens_major"},
+            {"name": "U.S. Women's Open", "type": "womens_major"},
+            {"name": "AIG Women's Open", "type": "womens_major"},
+            {"name": "The Evian Championship", "type": "womens_major"},
+            # Cups
+            {"name": "Ryder Cup", "type": "cup"},
+            {"name": "Presidents Cup", "type": "cup"},
+            {"name": "Walker Cup", "type": "cup"},
+            {"name": "Solheim Cup", "type": "cup"},
+        ],
+    },
+    "basketball": {
+        "name": "Basketball",
+        "slug": "basketball",
+        "leagues": [
+            {"slug": "nba", "name": "NBA", "sport_keys": ["basketball_nba"]},
+            {"slug": "wnba", "name": "WNBA", "sport_keys": ["basketball_wnba"]},
+            {"slug": "ncaab", "name": "NCAA Men's Basketball", "sport_keys": ["basketball_ncaab"]},
+            {"slug": "wncaab", "name": "NCAA Women's Basketball", "sport_keys": ["basketball_wncaab"]},
+        ],
+        "showcase_events": [
+            {"name": "March Madness (Men's)", "type": "tournament"},
+            {"name": "March Madness (Women's)", "type": "tournament"},
+        ],
+    },
+    "football": {
+        "name": "Football",
+        "slug": "football",
+        "leagues": [
+            {"slug": "nfl", "name": "NFL", "sport_keys": ["americanfootball_nfl"]},
+            {"slug": "ncaaf", "name": "NCAA Football", "sport_keys": ["americanfootball_ncaaf"]},
+            {"slug": "cfl", "name": "CFL", "sport_keys": ["americanfootball_cfl"]},
+            {"slug": "ufl", "name": "UFL", "sport_keys": ["americanfootball_ufl"]},
+        ],
+        "showcase_events": [
+            {"name": "Super Bowl", "type": "championship"},
+            {"name": "College Football Playoff", "type": "championship"},
+        ],
+    },
+    "hockey": {
+        "name": "Hockey",
+        "slug": "hockey",
+        "leagues": [
+            {"slug": "nhl", "name": "NHL", "sport_keys": ["icehockey_nhl"]},
+        ],
+        "showcase_events": [
+            {"name": "Stanley Cup", "type": "championship"},
+        ],
+    },
+    "baseball": {
+        "name": "Baseball",
+        "slug": "baseball",
+        "leagues": [
+            {"slug": "mlb", "name": "MLB", "sport_keys": ["baseball_mlb"]},
+            {"slug": "ncaa", "name": "College Baseball", "sport_keys": ["baseball_ncaa"]},
+        ],
+        "showcase_events": [
+            {"name": "World Series", "type": "championship"},
+            {"name": "College World Series", "type": "championship"},
+        ],
+    },
+    "soccer": {
+        "name": "Soccer",
+        "slug": "soccer",
+        "leagues": [
+            {"slug": "epl", "name": "Premier League", "sport_keys": ["soccer_epl"]},
+            {"slug": "mls", "name": "MLS", "sport_keys": ["soccer_usa_mls"]},
+            {"slug": "laliga", "name": "La Liga", "sport_keys": ["soccer_spain_la_liga"]},
+            {"slug": "bundesliga", "name": "Bundesliga", "sport_keys": ["soccer_germany_bundesliga"]},
+            {"slug": "seriea", "name": "Serie A", "sport_keys": ["soccer_italy_serie_a"]},
+            {"slug": "ligue1", "name": "Ligue 1", "sport_keys": ["soccer_france_ligue_one"]},
+            {"slug": "ucl", "name": "Champions League", "sport_keys": ["soccer_uefa_champs_league"]},
+        ],
+        "showcase_events": [
+            {"name": "Champions League", "type": "championship"},
+            {"name": "FIFA World Cup", "type": "championship"},
+        ],
+    },
+    "tennis": {
+        "name": "Tennis",
+        "slug": "tennis",
+        "leagues": [
+            {"slug": "atp", "name": "ATP Tour", "sport_keys": ["tennis_atp"]},
+            {"slug": "wta", "name": "WTA Tour", "sport_keys": ["tennis_wta"]},
+        ],
+        "showcase_events": [
+            {"name": "Australian Open", "type": "grand_slam"},
+            {"name": "French Open", "type": "grand_slam"},
+            {"name": "Wimbledon", "type": "grand_slam"},
+            {"name": "US Open", "type": "grand_slam"},
+        ],
+    },
+    "mma": {
+        "name": "MMA",
+        "slug": "mma",
+        "leagues": [
+            {"slug": "ufc", "name": "UFC", "sport_keys": ["mma_mixed_martial_arts"]},
+        ],
+        "showcase_events": [],
+    },
+}
+
+
+def get_sport_hierarchy(sport_slug: str) -> Optional[dict]:
+    """Get hierarchy data for a sport by its URL slug."""
+    return SPORT_HIERARCHY.get(sport_slug)
+
+
+def get_all_sport_slugs() -> list[str]:
+    """Get all sport slugs that have hierarchy data."""
+    return list(SPORT_HIERARCHY.keys())
+
+
+# =============================================================================
 # Accessor functions
 # =============================================================================
 
