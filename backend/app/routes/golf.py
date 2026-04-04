@@ -523,6 +523,23 @@ _NAME_ALIASES: dict[str, str] = {
     "sepp": "josef",
 }
 
+# Golfer key aliases for cross-source dedup.
+# Maps abbreviated/alternate match keys to their canonical form.
+# Primarily handles Odds API single-initial abbreviations (e.g., "J. Spaun")
+# vs full initials from DataGolf/Kalshi/Polymarket (e.g., "J.J. Spaun").
+_GOLFER_KEY_ALIASES: dict[str, str] = {
+    "j spaun": "jj spaun",
+    "j poston": "jt poston",
+    "c pan": "ct pan",
+    "s kim": "sh kim",
+    "b lee": "bh lee",
+    "h lee": "hj lee",
+    "m kim": "mj kim",
+    "s noh": "sy noh",
+    "b an": "bj an",
+    "y noh": "yh noh",
+}
+
 
 def _match_key(name: str) -> str:
     """
@@ -535,6 +552,7 @@ def _match_key(name: str) -> str:
     - Odds API: "S. Scheffler" → "s scheffler"
     - Diacritics: "Skarsgård" → "skarsgard"
     - Aliases: "Matt Fitzpatrick" → "matthew fitzpatrick"
+    - Multi-initial: "J. Spaun" (Odds API) → "jj spaun" (matches "J.J. Spaun")
     """
     clean = _normalize_golfer_name(name)
     clean = re.split(r"\s+[-\u2013]\s+|\s+for\s+", clean, maxsplit=1)[0]
@@ -551,6 +569,9 @@ def _match_key(name: str) -> str:
     if parts and parts[0] in _NAME_ALIASES:
         parts[0] = _NAME_ALIASES[parts[0]]
         clean = " ".join(parts)
+    # Resolve golfer-specific key aliases (abbreviated initials, etc.)
+    if clean in _GOLFER_KEY_ALIASES:
+        clean = _GOLFER_KEY_ALIASES[clean]
     return clean
 
 
