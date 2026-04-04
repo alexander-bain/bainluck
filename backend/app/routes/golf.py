@@ -481,7 +481,9 @@ def _normalize_golfer_name(name: str) -> str:
     name = re.sub(r'^"(.*)"$', r"\1", name)
     # Convert "Last, First" to "First Last" (DataGolf format)
     # Unicode \w handles accented capitals (Højgaard, Müller, Skarsgård)
-    comma_match = re.match(r"^(\w[\w'-]+),\s+(\w[\w'-]+.*)$", name, flags=re.UNICODE)
+    # The first-name group uses [\w.'"-] to handle initials like "J.J." and
+    # hyphenated names.
+    comma_match = re.match(r"^(\w[\w'-]+),\s+([\w.]['.\w-]+.*)$", name, flags=re.UNICODE)
     if comma_match:
         name = f"{comma_match.group(2)} {comma_match.group(1)}"
     return name
