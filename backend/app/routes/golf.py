@@ -479,6 +479,9 @@ def _normalize_golfer_name(name: str) -> str:
     name = re.sub(r"^(Yes|No)\s*[-:]\s*", "", name, flags=re.I)
     # Strip wrapping quotes (Polymarket NegRisk format)
     name = re.sub(r'^"(.*)"$', r"\1", name)
+    # Strip suffixes BEFORE comma reversal so "Love III, Davis" →
+    # "Love, Davis" → "Davis Love" (not "Davis Love III, Love" order bug).
+    name = re.sub(r"\s+(?:Jr|Sr|III|II|IV)\.?(?=\s*,|\s*$)", "", name, flags=re.I)
     # Convert "Last, First" to "First Last" (DataGolf format)
     # Unicode \w handles accented capitals (Højgaard, Müller, Skarsgård)
     # The first-name group uses [\w.'"-] to handle initials like "J.J." and
@@ -530,16 +533,17 @@ _NAME_ALIASES: dict[str, str] = {
 # Primarily handles Odds API single-initial abbreviations (e.g., "J. Spaun")
 # vs full initials from DataGolf/Kalshi/Polymarket (e.g., "J.J. Spaun").
 _GOLFER_KEY_ALIASES: dict[str, str] = {
+    # Multi-initial golfers: Odds API "X. Last" → canonical "XY Last"
     "j spaun": "jj spaun",
     "j poston": "jt poston",
     "c pan": "ct pan",
-    "s kim": "sh kim",
-    "b lee": "bh lee",
-    "h lee": "hj lee",
-    "m kim": "mj kim",
     "s noh": "sy noh",
-    "b an": "bj an",
     "y noh": "yh noh",
+    "k lee": "kh lee",
+    # NOTE: aliases for common last names (Kim, Lee, An) with single initials
+    # are intentionally omitted — "S. Kim" could be S.H. Kim OR Si Woo Kim,
+    # "B. Lee" could be B.H. Lee OR someone else. The DataGolf invitee filter
+    # handles these ambiguous cases by removing non-DataGolf entries.
 }
 
 
