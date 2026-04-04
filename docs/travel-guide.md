@@ -8,6 +8,9 @@
 
 | What | Link |
 |------|------|
+| Sports hub | [bainluck.com/sport](https://bainluck.com/sport) |
+| NBA league page | [bainluck.com/sport/basketball/nba](https://bainluck.com/sport/basketball/nba) |
+| Golf (sport hub) | [bainluck.com/sport/golf](https://bainluck.com/sport/golf) |
 | Golf home | [bainluck.com/categories/golf](https://bainluck.com/categories/golf) |
 | Masters detail | [bainluck.com/categories/golf/tournaments/masters](https://bainluck.com/categories/golf/tournaments/masters) |
 | Golf grid | [bainluck.com/playoffs/golf](https://bainluck.com/playoffs/golf) |
@@ -16,6 +19,22 @@
 | Health check | [api.bainluck.com/health](https://api.bainluck.com/health) |
 | GitHub repo | [github.com/alexander-bain/bainluck](https://github.com/alexander-bain/bainluck) |
 | Claude.ai | [claude.ai](https://claude.ai) |
+
+---
+
+## Shipped (April 4, 2026 session — PR #405)
+
+| What | Details |
+|------|---------|
+| `/sport` page hierarchy | 3-level URL: `/sport` index → `/sport/{sport}` hub → `/sport/{sport}/{league}` showcase. All 8 sports, light mode, SEO metadata |
+| Men's/women's major separation | Backend `golf.py` appends `_womens` suffix to tournament keys. Scheffler no longer appears in women's majors |
+| Ryder Cup card layout | CupCard component: teams left/right with colored probability bar (blue USA, amber Europe) |
+| Championship grid inline data bars | Replaced traffic-light heat map with MoneyPuck-style horizontal bars. Sqrt scaling, font weight tiers |
+| Evolution chart on NBA/team sports | Grid response includes `championship_market_id`. League page passes it to EvolutionView |
+| Evolution chart stage pills | Grid columns include `market_id`. UI pills: Make Playoffs / Conference / Championship |
+| Evolution chart time range fix | "Season" = 4320h (180 days). 7d/24h/today share SWR cache (no blank on switch). Spinner loading state |
+| Evolution chart sidebar fix | `top_n=50` (was 30). `entityLabel` prop ("Teams" vs "Players"). "Find team..." dropdown |
+| Design system enforcement | Added CLAUDE.md rules: never use dark Tailwind classes, always use design tokens |
 
 ---
 
