@@ -23,18 +23,18 @@ type SortConfig = {
 
 /**
  * Color-coded cell background based on probability value.
- * Single-hue green gradient calibrated for championship odds where
- * even favorites are typically 15-35%. Deeper green = higher probability.
+ * Green (high) → yellow (medium) → red (low) gradient.
  */
 function cellBgClass(probability: number | null, status?: "clinched" | "eliminated" | null): string {
   if (status === "clinched") return "bg-emerald-500/30";
   if (status === "eliminated") return "bg-red-500/15";
-  if (probability === null || probability === undefined) return "";
-  if (probability >= 0.30) return "bg-emerald-500/30";
-  if (probability >= 0.15) return "bg-emerald-500/20";
-  if (probability >= 0.08) return "bg-emerald-500/12";
-  if (probability >= 0.03) return "bg-emerald-500/6";
-  return "";
+  if (probability === null || probability === undefined) return "bg-gray-800/20";
+  if (probability >= 0.8) return "bg-emerald-500/25";
+  if (probability >= 0.6) return "bg-emerald-500/15";
+  if (probability >= 0.4) return "bg-yellow-500/15";
+  if (probability >= 0.2) return "bg-orange-500/10";
+  if (probability >= 0.05) return "bg-red-500/8";
+  return "bg-gray-800/10";
 }
 
 /**
@@ -198,14 +198,12 @@ export default function TournamentProgressionTable({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5">
         {/* Color legend */}
         <div className="flex items-center gap-1.5 text-[10px] text-text-secondary/50">
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/30" />
-          <span>30%+</span>
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/20" />
-          <span>15%+</span>
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/12" />
-          <span>8%+</span>
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/6" />
-          <span>3%+</span>
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/25" />
+          <span>High</span>
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-yellow-500/15" />
+          <span>Mid</span>
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-red-500/8" />
+          <span>Low</span>
         </div>
         {/* Source legend */}
         {hasSources && uniqueSources.length > 1 && (
