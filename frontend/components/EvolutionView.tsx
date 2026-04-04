@@ -21,6 +21,8 @@ interface EvolutionViewProps {
   hours?: number;
   className?: string;
   positionOptions?: PositionOption[];
+  /** Label for sidebar — "Teams", "Players", etc. Defaults to "Players" */
+  entityLabel?: string;
 }
 
 export function EvolutionView({
@@ -30,6 +32,7 @@ export function EvolutionView({
   hours = 168,
   className,
   positionOptions,
+  entityLabel = "Players",
 }: EvolutionViewProps) {
   const [highlightedOutcomeId, setHighlightedOutcomeId] = useState<number | null>(null);
   const [selectedOutcomeIds, setSelectedOutcomeIds] = useState<Set<number> | null>(null);
@@ -76,7 +79,7 @@ export function EvolutionView({
   // so switching between 7d/24h/today doesn't trigger a new fetch
   const { data, error, isLoading } = useSWR(
     `futures-evolution-${activeMarketId}-${timeRange === "full" ? "full" : "week"}`,
-    () => fetchFuturesHistory(activeMarketId, fetchHours, undefined, 30),
+    () => fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
     { refreshInterval: 60_000, keepPreviousData: true }
   );
 
@@ -165,6 +168,7 @@ export function EvolutionView({
           highlightedOutcomeId={highlightedOutcomeId}
           onHoverOutcome={setHighlightedOutcomeId}
           leaderboard={data.leaderboard}
+          entityLabel={entityLabel}
         />
       </div>
     </>

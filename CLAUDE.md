@@ -88,8 +88,17 @@ bainluck/
 │   ├── alembic/                 # Database migrations
 │   └── tests/                   # 2747 pytest items
 ├── frontend/
-│   ├── app/                     # Next.js app router (26 pages)
+│   ├── app/                     # Next.js app router (30+ pages)
+│   │   ├── sport/               # Sport hierarchy pages
+│   │   │   ├── page.tsx         # /sport — all sports index
+│   │   │   ├── [sport]/page.tsx # /sport/{sport} — sport hub (leagues + showcase events)
+│   │   │   └── [sport]/[league]/page.tsx  # /sport/{sport}/{league} — league showcase (grid + evolution + tournaments)
 │   ├── components/              # React components
+│   │   ├── TournamentProgressionTable.tsx  # Championship grid with inline data bars
+│   │   ├── TournamentCard.tsx   # Golf/cup tournament cards (includes CupCard variant)
+│   │   ├── EvolutionView.tsx    # Evolution chart container (time ranges, stage pills, sidebar)
+│   │   ├── EvolutionChart.tsx   # Recharts line chart for probability timelines
+│   │   └── EvolutionLeaderboard.tsx  # Sidebar with team/player selection
 │   ├── lib/                     # API client, types, utilities
 │   └── hooks/                   # Custom React hooks
 ├── ios/Bain Luck/               # iOS app (SwiftUI, 54 Swift files)
@@ -156,11 +165,14 @@ For detailed documentation of each feature, see `docs/feature-reference.md`.
 | **Multi-Source Win Probability** | `config/win_prob_sources.py`, `OddsChart.tsx` | Betting odds, ESPN, Kalshi, Polymarket, MLB, stat model, DataGolf |
 | **Prediction Market Matching** | `utils/prediction_market_matching.py`, `tasks/prediction_market_matching.py` | Links Kalshi/Polymarket game markets to events |
 | **Auth & Personalization** | `firebase_auth.py`, `utils/personalization.py` | Google + Apple Sign-In, onboarding, team favorites, sport affinities, personalized feed scoring |
-| **Championship Grids** | `config/league_configs.py`, `routes/playoffs.py` | NBA, NHL, NCAA, Golf grids with Kalshi noise filter + monotonicity enforcement |
+| **Championship Grids** | `config/league_configs.py`, `routes/playoffs.py`, `TournamentProgressionTable.tsx` | NBA, NHL, NCAA, Golf grids with Kalshi noise filter + monotonicity enforcement. Inline data bars (MoneyPuck-style) with sqrt scaling. Per-column `market_id` for evolution chart stage switching |
 | **March Madness** | `routes/march_madness.py`, `tasks/march_madness.py` | NCAA Tournament pages (men's + women's) with bracket data, upset detection, seed matchups |
-| **Golf Integration** | `routes/golf.py`, `tasks/datagolf.py`, `services/datagolf_api.py` | DataGolf live in-play probabilities, leaderboards, schedule across 5 tours |
+| **Golf Integration** | `routes/golf.py`, `tasks/datagolf.py`, `services/datagolf_api.py` | DataGolf live in-play probabilities, leaderboards, schedule across 5 tours. Men's/women's major separation via `_womens` key suffix |
 | **Oscars Pool** | `routes/oscars_pool.py`, `routes/oscars.py` | Private prediction pools with odds-adjusted scoring |
 | **Related Futures** | `routes/events.py` (related-futures), `RelatedFutures.tsx` | "Bigger Picture" — championship/award/stat prop context |
+| **Sport Page Hierarchy** | `app/sport/`, `routes/sports.py`, `sport_keys.py:SPORT_HIERARCHY` | 3-level URL: `/sport/{sport}` hub → `/sport/{sport}/{league}` showcase → event detail. League pages embed championship grid + evolution chart with stage pills |
+| **Evolution Chart** | `EvolutionView.tsx`, `EvolutionChart.tsx`, `EvolutionLeaderboard.tsx` | Multi-outcome probability timeline. Time ranges (Season/7d/24h/Today). Stage pills for grid columns (Win/Conference/Playoffs). `entityLabel` prop for Teams vs Players. `keepPreviousData` prevents blank on range switch |
+| **Cup Cards** | `TournamentCard.tsx:CupCard` | Head-to-head layout for Ryder Cup, Presidents Cup etc. — teams left/right with colored probability bar |
 | **Snapshot Retention** | `tasks/retention.py` | Pure SQL collapse, constant memory. Write-time dedup |
 | **Canonical Identity** | `services/team_identity.py`, `utils/sport_keys.py` | 5-step resolution cascade, supplements fuzzy matching |
 | **Name Normalization** | `utils/name_normalization.py` | Single source of truth for team name matching. City abbreviation expansion (LA, NY, OKC, etc.) |
@@ -340,6 +352,16 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 - **Freshness-weighted source blending** — During live tournaments, stale prediction market prices (e.g., Kalshi 5h old) get equal weight with fresh model data (DataGolf updated minutes ago), making merged probabilities LESS accurate. Need time-decay weighting. Key complications: (1) `last_updated` reflects poll time, not last price change — need to detect actual price movement; (2) staleness is context-dependent (2h stale during live round vs 12h pre-tournament is very different); (3) if decay drops a source to near-zero, cells become single-source — need to surface that; (4) applies to all grids, not just golf. Gathering eval data before implementing. See `.claude/projects/-Users-bain-bainluck/memory/project_freshness_blending.md` for full design notes (CLI only).
 - Sport-specific EI normalization (different ceilings per sport)
 
+**Sport/League Pages (new, April 2026)**
+- **Win totals column in championship grid** — Add O/U win totals (e.g., "OKC O/U 58.5") as a column. Data from Odds API season win total futures. Grid is already team-indexed, natural fit.
+- **Awards/props cards on league pages** — MVP, DPOY, ROY, scoring leader as standalone cards (player-indexed, not team-indexed). Source: Kalshi + Odds API futures.
+- **Season props section** — Division winner, conference winner, O/U records below grid. Can reuse TournamentCard-style layout.
+- **Season state indicators on evolution chart** — Hardcode key dates (Trade Deadline, All-Star Break, Playoffs Start, Conference Finals, Finals) as vertical reference lines via `roundBoundaries`. Mechanism exists, just needs date data.
+- **Full-season futures history depth** — "Season" view limited by when polling started (~Feb 2026). Will improve as data accumulates.
+- **Team landing pages** — `/sport/basketball/nba/teams/celtics` with event cards + team futures. Clickable from grid team names.
+- **`/sport` index page improvements** — Live events across sports, trending movers, featured matchups.
+- **SEO: sitemap, structured data** — sitemap.xml for `/sport/*` routes, JSON-LD for events.
+
 **Features**
 - H2H matchups section (Option B compact rows) — golf tournament detail page
 - TV Mode v2 (designed, prototype at `tv-mode-prototype.jsx`, plan at `docs/tv-mode-plan.md`)
@@ -349,6 +371,7 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 - Hockey win probability model research (lit search for better models)
 
 See `docs/completed-features.md` for shipped features.
+See `docs/travel-guide.md` for the full numbered backlog with status tracking.
 See Ideas Backlog in `docs/PRD.md` for longer-term ideas.
 
 ---
@@ -587,9 +610,14 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 25. **`compute_aggregate_probability()` is the single source of truth** — Both feed API and event detail API must use it. Never display raw odds_snapshots without aggregate fallback.
 26. **Bash heredocs with Python** — When piping Python code via bash, use `python3 << 'PYEOF'` (quoted heredoc) to prevent shell variable expansion and `!=` escaping issues.
 27. **Golf market filtering** — `_NON_WINNER_MARKET_RE` in `routes/golf.py` filters out "compete in", "make the cut", "top N finishers" etc. from headline probabilities. Only outright winner/champion markets should appear in card hero probabilities.
-28. **Golf evolution chart** — `EvolutionView.tsx` supports `positionOptions` prop for switching between Kalshi markets (Win, Top 5, Top 10, Top 20). The categories page does NOT use this yet — only the tournament detail page does.
+28. **Evolution chart position/stage pills** — `EvolutionView.tsx` supports `positionOptions` prop for switching markets. Golf uses Top 20/10/5/Win from Kalshi. Team sports use grid column market_ids (Make Playoffs/Conference/Championship). Pass `entityLabel="Teams"` for team sports.
 29. **Golf tour classification** — Many events are mislabeled as "PGA Tour" when they're DP World Tour, Asian Tour, etc. DataGolf provides the correct `tour` field. Fix needed.
 30. **Golf "LIVE" badge** — `isTournamentLive()` in the tournament page checks DataGolf leaderboard status. Can false-positive when leaderboard data exists but tournament hasn't started. Needs date-based validation.
+31. **Men's/women's golf major separation** — `_normalize_tournament()` returns the same key for both. The grouping loop in `golf.py` appends `_womens` suffix when `_WOMENS_RE` matches the market name. `TOURNAMENT_DISPLAY_NAMES` and `TOURNAMENT_ORDER` have entries for both variants.
+32. **Championship grid inline data bars** — `TournamentProgressionTable.tsx` uses sqrt-scaled horizontal bars instead of background color heat maps. Bar width = `sqrt(prob) / sqrt(0.4) * 100%`. Font weight varies: semibold >10%, normal 1-10%, faded <1%.
+33. **Evolution chart SWR caching** — 7d/24h/today share the same SWR cache key (same fetched data, filtered client-side). Only "Season" triggers a separate fetch (4320h). `keepPreviousData: true` prevents blank during re-fetch.
+34. **Grid columns include market_id** — `playoffs.py` returns `market_id` on each column (most common market_id from that column's data). Frontend uses these to build stage pills for the evolution chart.
+35. **Cup card detection** — `TournamentCard.tsx:_isCupEvent()` checks tournament key for ryder/presidents/walker/solheim. When a cup has exactly 2 golfers (teams), renders `CupCard` with left/right layout + probability bar instead of leader/chasers.
 
 ---
 
@@ -599,15 +627,18 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 |------|-------|
 | API docs | https://api.bainluck.com/docs |
 | Admin dashboard | https://bainluck.com/admin |
-| EI Hall of Fame | https://bainluck.com/ei/hall-of-fame |
-| Oscars | https://bainluck.com/oscars |
+| Sports hub | https://bainluck.com/sport |
+| NBA league page | https://bainluck.com/sport/basketball/nba |
 | Golf | https://bainluck.com/categories/golf |
 | Golf strategy | `docs/golf-product-strategy.md` |
 | Playoffs | https://bainluck.com/playoffs |
 | March Madness | https://bainluck.com/march-madness |
+| EI Hall of Fame | https://bainluck.com/ei/hall-of-fame |
+| Oscars | https://bainluck.com/oscars |
 | Debug endpoints | `/api/events/debug/*` |
 | Admin endpoints | `/api/admin/*` |
 | Feature docs | `docs/feature-reference.md` |
 | Shipped features | `docs/completed-features.md` |
+| Travel guide / backlog | `docs/travel-guide.md` |
 | PRD / Roadmap | `docs/PRD.md` |
 | Championship grids | `docs/championship-grids-project.md` |

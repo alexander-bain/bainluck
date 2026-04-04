@@ -322,6 +322,7 @@ export default function LeagueShowcasePage() {
               defaultTopN={5}
               hours={168}
               positionOptions={evolutionPositionOptions}
+              entityLabel={sportSlug === "golf" ? "Players" : "Teams"}
             />
           </section>
         )}

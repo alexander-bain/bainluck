@@ -22,6 +22,8 @@ interface EvolutionLeaderboardProps {
   highlightedOutcomeId?: number | null;
   onHoverOutcome?: (outcomeId: number | null) => void;
   leaderboard?: DataGolfLeaderboardEntry[] | null;
+  /** Label for the sidebar header and search placeholder */
+  entityLabel?: string;
   className?: string;
 }
 
@@ -40,6 +42,7 @@ export function EvolutionLeaderboard({
   onAddOutcome,
   highlightedOutcomeId,
   onHoverOutcome,
+  entityLabel = "Players",
   className,
 }: EvolutionLeaderboardProps) {
   // Build sidebar rows: only show selected outcomes
@@ -75,7 +78,7 @@ export function EvolutionLeaderboard({
     <div className={`flex flex-col ${className || ""}`}>
       {/* Title */}
       <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
-        Players
+        {entityLabel}
       </div>
 
       {/* Add player dropdown */}
@@ -88,7 +91,7 @@ export function EvolutionLeaderboard({
             if (!isNaN(id)) onAddOutcome(id);
           }}
         >
-          <option value="">Find player...</option>
+          <option value="">Find {entityLabel.toLowerCase().replace(/s$/, "")}...</option>
           {unselected.map((o) => (
             <option key={o.outcome_id} value={o.outcome_id}>
               {shortName(o.name)} — {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
@@ -147,10 +150,10 @@ export function EvolutionLeaderboard({
   );
 }
 
-/** Extract last name or short display name */
+/** Extract short display name — last word for long names, full for short */
 function shortName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/);
-  if (parts.length <= 1) return fullName;
-  // Return last name only for golf players
+  if (parts.length <= 2) return fullName;
+  // For 3+ word names (e.g., "Oklahoma City Thunder"), use last word
   return parts[parts.length - 1];
 }
