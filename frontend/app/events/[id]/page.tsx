@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, fetchGameMarkets, formatProbability } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
 import type { GameMarketsResponse } from "@/lib/api";
+import type { TeamProgressionResponse } from "@/lib/types";
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
@@ -484,6 +485,13 @@ export default function EventPage({ params }: EventPageProps) {
     event ? ["game-markets", eventId] : null,
     () => fetchGameMarkets(eventId),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
+  );
+
+  // Team championship progression (playoff path from grid data — always available for both teams)
+  const { data: teamProgression } = useSWR<TeamProgressionResponse>(
+    event ? ["team-progression", eventId] : null,
+    () => fetchTeamProgression(eventId),
+    { revalidateOnFocus: false, dedupingInterval: 300000 }
   );
 
   // Compute real game start time: use earliest livescores data point when it's
@@ -1415,6 +1423,24 @@ export default function EventPage({ params }: EventPageProps) {
           {gameMarkets.totals.length >= 2 && (
             <TotalPointsSpectrum data={gameMarkets} />
           )}
+          {/* Standalone pace pill when spectrum has too few thresholds */}
+          {gameMarkets.totals.length < 2 && gameMarkets.pace && gameMarkets.pace.projected_total && (
+            <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-text-primary">Total Points Pace</span>
+                <span className="text-base font-extrabold text-blue-500 tracking-tight">
+                  {gameMarkets.pace.projected_total}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 mt-1 text-text-secondary text-micro">
+                <span>{gameMarkets.pace.total_scored} scored</span>
+                <span className="text-text-muted">&middot;</span>
+                <span>{gameMarkets.pace.time_remaining_display}</span>
+                <span className="text-text-muted">&middot;</span>
+                <span>{Math.round(gameMarkets.pace.fraction_elapsed * 100)}% elapsed</span>
+              </div>
+            </div>
+          )}
           {gameMarkets.player_props.length > 0 && (
             <PlayerPropsGrid
               data={gameMarkets}
@@ -1422,6 +1448,24 @@ export default function EventPage({ params }: EventPageProps) {
               awayColor={event.away_team_data?.primary_color || undefined}
             />
           )}
+        </div>
+      )}
+      {/* Standalone pace when no game markets section at all */}
+      {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (
+        <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-text-primary">Total Points Pace</span>
+            <span className="text-base font-extrabold text-blue-500 tracking-tight">
+              {gameMarkets.pace.projected_total}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mt-1 text-text-secondary text-micro">
+            <span>{gameMarkets.pace.total_scored} scored</span>
+            <span className="text-text-muted">&middot;</span>
+            <span>{gameMarkets.pace.time_remaining_display}</span>
+            <span className="text-text-muted">&middot;</span>
+            <span>{Math.round(gameMarkets.pace.fraction_elapsed * 100)}% elapsed</span>
+          </div>
         </div>
       )}
 
@@ -1470,6 +1514,7 @@ export default function EventPage({ params }: EventPageProps) {
         homeStandings={event.home_team_data?.standings || undefined}
         awayStandings={event.away_team_data?.standings || undefined}
         hasGameMarkets={!!gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.team_totals?.length ?? 0) > 0)}
+        teamProgression={teamProgression || undefined}
       />
 
       {/* Championship Grid link */}

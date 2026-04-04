@@ -239,6 +239,25 @@ async def _sync_espn_live_events():
             )
             live_sport_keys = [row[0] for row in live_sports_result.all()]
 
+            # Also include sports with recently-completed events to capture
+            # final win probability snapshots. The Odds API can mark events as
+            # "completed" before ESPN provides its final win probability data.
+            # Use commence_time to find games that started recently (last 6h).
+            recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+            recent_completed_result = await session.execute(
+                select(distinct(Sport.key))
+                .join(Event)
+                .where(
+                    Event.status.in_(["completed", "closed"]),
+                    Event.commence_time >= recently_completed_cutoff,
+                )
+            )
+            recently_completed_keys = [row[0] for row in recent_completed_result.all()]
+            # Merge into live keys so we fetch ESPN data for them too
+            for k in recently_completed_keys:
+                if k not in live_sport_keys:
+                    live_sport_keys.append(k)
+
             if not live_sport_keys:
                 return {"status": "no_live_games", **stats}
 
@@ -278,7 +297,7 @@ async def _sync_espn_live_events():
             finally:
                 await espn.close()
 
-            # Process live events
+            # Process live events (and recently-completed for final snapshots)
             for sport_key in live_sport_keys:
                 stats["sports_checked"] += 1
 
@@ -295,7 +314,15 @@ async def _sync_espn_live_events():
                         .options(selectinload(Event.sport))
                         .where(
                             Event.sport.has(key=sport_key),
-                            Event.status == "live",
+                            or_(
+                                Event.status == "live",
+                                # Include recently-completed events so we capture
+                                # final win probability data from ESPN
+                                and_(
+                                    Event.status.in_(["completed", "closed"]),
+                                    Event.commence_time >= recently_completed_cutoff,
+                                ),
+                            ),
                         )
                     )
                     our_events = events_result.scalars().all()
