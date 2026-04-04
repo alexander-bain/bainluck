@@ -521,7 +521,7 @@ _NAME_ALIASES: dict[str, str] = {
     "charlie": "charles",
     "max": "maximilian",
     "cam": "cameron",
-    "si": "simon",
+    # "si" omitted — conflicts with Korean names (Si Woo Kim)
     "sepp": "josef",
 }
 
@@ -566,11 +566,28 @@ def _match_key(name: str) -> str:
     clean = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", clean)
     clean = re.sub(r"[^a-z0-9\s]", "", clean).strip()
     clean = re.sub(r"\s+", " ", clean)
-    # Expand first-name aliases for cross-source dedup
+    # Collapse adjacent single-letter tokens into one token.
+    # "j j spaun" → "jj spaun", "c t pan" → "ct pan".
+    # This handles space-separated initials from sportsbooks ("J. J. Spaun").
     parts = clean.split()
+    collapsed: list[str] = []
+    i = 0
+    while i < len(parts):
+        if len(parts[i]) == 1 and parts[i].isalpha():
+            # Gather consecutive single-letter tokens
+            letters = parts[i]
+            while i + 1 < len(parts) and len(parts[i + 1]) == 1 and parts[i + 1].isalpha():
+                i += 1
+                letters += parts[i]
+            collapsed.append(letters)
+        else:
+            collapsed.append(parts[i])
+        i += 1
+    parts = collapsed
+    # Expand first-name aliases for cross-source dedup
     if parts and parts[0] in _NAME_ALIASES:
         parts[0] = _NAME_ALIASES[parts[0]]
-        clean = " ".join(parts)
+    clean = " ".join(parts)
     # Resolve golfer-specific key aliases (abbreviated initials, etc.)
     if clean in _GOLFER_KEY_ALIASES:
         clean = _GOLFER_KEY_ALIASES[clean]
