@@ -213,10 +213,13 @@ export default function LeagueShowcasePage() {
     return { liveTournaments: live, upcomingTournaments: upcoming, completedTournaments: completed };
   }, [golfData, leagueSlug]);
 
-  const evolutionMarketIds = useMemo(() => {
+  const evolutionMarketId = useMemo((): number | null => {
+    // Non-golf: use championship market ID from the grid
+    if (grid?.championship_market_id) return grid.championship_market_id;
+    // Golf: use the hero tournament's first market
     const hero = liveTournaments[0] || upcomingTournaments[0];
-    return hero?.market_ids || [];
-  }, [liveTournaments, upcomingTournaments]);
+    return hero?.market_ids?.[0] ?? null;
+  }, [grid, liveTournaments, upcomingTournaments]);
 
   if (loading) {
     return (
@@ -287,12 +290,12 @@ export default function LeagueShowcasePage() {
         )}
 
         {/* Evolution Chart */}
-        {evolutionMarketIds.length > 0 && (
+        {evolutionMarketId && (
           <section>
             <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Odds Movement</h2>
             <EvolutionView
-              marketId={evolutionMarketIds[0]}
-              marketName={heroTournament?.name || "Championship"}
+              marketId={evolutionMarketId}
+              marketName={heroTournament?.name || grid?.name || league.name}
               defaultTopN={10}
               hours={168}
             />

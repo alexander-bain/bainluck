@@ -1402,6 +1402,8 @@ export interface ChampionshipGridResponse {
   team_count: number;
   last_updated: string;
   sources_available: string[];
+  /** Championship column market ID for evolution chart */
+  championship_market_id?: number | null;
   /** Golf-specific fields */
   tournament?: ChampionshipGridTournament | null;
   field_count?: number;
