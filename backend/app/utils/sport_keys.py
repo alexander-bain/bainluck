@@ -495,6 +495,53 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxrecordnfl": "americanfootball_nfl",            # Best/worst record
     "kxtradeoffnfl": "americanfootball_nfl",          # Offseason trades
     "kxphilipriversnfl": "americanfootball_nfl",      # Philip Rivers novelty
+    # NBA futures
+    "kxnba": "basketball_nba",                          # NBA Champion (broad prefix catches all)
+    "kxnbamvp": "basketball_nba",                       # Regular season MVP
+    "kxnbadpoy": "basketball_nba",                      # Defensive Player of the Year
+    "kxnbadpoty": "basketball_nba",                     # DPOY (alt)
+    "kxnbaroy": "basketball_nba",                       # Rookie of the Year
+    "kxnbaroty": "basketball_nba",                      # ROY (alt)
+    "kxnba6moy": "basketball_nba",                      # 6th Man of the Year
+    "kxnba6moty": "basketball_nba",                     # 6MOY (alt)
+    "kxnbamip": "basketball_nba",                       # Most Improved Player
+    "kxnbamipy": "basketball_nba",                      # MIP (alt)
+    "kxnbacoty": "basketball_nba",                      # Coach of the Year
+    "kxnbacoach": "basketball_nba",                     # Coach of the Year (alt)
+    "kxnbaeast": "basketball_nba",                      # Eastern Conference Champion
+    "kxnbawest": "basketball_nba",                      # Western Conference Champion
+    "kxnbaatlantic": "basketball_nba",                  # Atlantic Division
+    "kxnbacentral": "basketball_nba",                   # Central Division
+    "kxnbasoutheast": "basketball_nba",                 # Southeast Division
+    "kxnbanorthwest": "basketball_nba",                 # Northwest Division
+    "kxnbapacific": "basketball_nba",                   # Pacific Division
+    "kxnbasouthwest": "basketball_nba",                 # Southwest Division
+    "kxnbaplayoff": "basketball_nba",                   # Playoff qualifiers
+    "kxnbawins": "basketball_nba",                      # Team win totals (all 30 teams)
+    "kxnbaexactwins": "basketball_nba",                 # Exact win totals
+    "kxnbaseries": "basketball_nba",                    # Playoff series
+    "kxnbafinalmvp": "basketball_nba",                  # Finals MVP
+    "kxnbafinalsmvp": "basketball_nba",                 # Finals MVP (alt)
+    "kxnbadraft": "basketball_nba",                     # Draft picks
+    "kxnbafirstpick": "basketball_nba",                 # First pick
+    "kxnbatrade": "basketball_nba",                     # Trades
+    "kxnbaallstar": "basketball_nba",                   # All-Star selections
+    "kxnbaasg": "basketball_nba",                       # All-Star Game
+    "kxnbaallnba": "basketball_nba",                    # All-NBA teams
+    "kxnbascoringtitle": "basketball_nba",              # Scoring title
+    "kxnbaassisttitle": "basketball_nba",               # Assists leader
+    "kxnbareboundtitle": "basketball_nba",              # Rebounds leader
+    "kxleadernba": "basketball_nba",                    # Stat leaders (all categories)
+    "kxrecordnba": "basketball_nba",                    # Best/worst record
+    "kxnextteamnba": "basketball_nba",                  # Player next team
+    "kxcoachoutba": "basketball_nba",                   # Coach fired
+    # WNBA futures
+    "kxwnba": "basketball_wnba",                        # WNBA Champion
+    "kxwnbamvp": "basketball_wnba",                     # WNBA MVP
+    "kxwnbaroy": "basketball_wnba",                     # WNBA ROY
+    "kxwnbaplayoff": "basketball_wnba",                 # WNBA Playoff qualifiers
+    "kxwnbawins": "basketball_wnba",                    # WNBA win totals
+    "kxwnbadraft": "basketball_wnba",                   # WNBA Draft
     # NHL futures
     "kxnhl": "icehockey_nhl",                         # Stanley Cup (broad prefix catches all)
     # More specific NHL futures for clarity:
