@@ -2541,6 +2541,52 @@ async def get_game_markets(
         sport_key,
     )
 
+    # 9. Enrich player props with headshot URLs from team rosters
+    if player_props and event.sport_id:
+        # Build player name → headshot lookup from both teams' rosters
+        player_headshots: dict[str, str] = {}
+        try:
+            team_result = await db.execute(
+                select(Team.roster_players).where(
+                    Team.name.in_([event.home_team_name, event.away_team_name]),
+                    Team.sport_id == event.sport_id,
+                )
+            )
+            for (roster,) in team_result.all():
+                if roster and isinstance(roster, list):
+                    for item in roster:
+                        if isinstance(item, dict) and item.get("name") and item.get("headshot"):
+                            player_headshots[item["name"].lower()] = item["headshot"]
+        except Exception:
+            pass
+
+        if player_headshots:
+            for prop in player_props:
+                # Extract player name from market_name or outcome_name
+                name = prop.get("market_name", "")
+                colon_idx = name.find(":")
+                after_colon = name[colon_idx + 1:].strip() if colon_idx >= 0 else ""
+                # Try extracting from outcome for format 2
+                outcome = prop.get("outcome_name", "")
+                outcome_colon = outcome.find(":")
+                outcome_player = outcome[:outcome_colon].strip() if outcome_colon > 0 else ""
+
+                for candidate in [after_colon, outcome_player]:
+                    if not candidate:
+                        continue
+                    # Try exact match first
+                    headshot = player_headshots.get(candidate.lower())
+                    if headshot:
+                        prop["player_headshot"] = headshot
+                        break
+                    # Try partial match — player name is prefix of market text
+                    for pname, pheadshot in player_headshots.items():
+                        if pname in candidate.lower() or candidate.lower() in pname:
+                            prop["player_headshot"] = pheadshot
+                            break
+                    if "player_headshot" in prop:
+                        break
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -3094,13 +3140,30 @@ async def get_related_futures(
     # Merge entries with the same (merge_group, outcome_name) across sources.
     # Keeps the entry with the highest bookmaker count (most liquid).
     # Aggregates all sources into an `all_sources` list on the winner.
+    #
+    # Per-team merge groups (win_total, make_playoffs, etc.) use merge_group
+    # alone as the key because each team has exactly one entry per source,
+    # but outcome names may differ structurally ("Boston Celtics" vs "Yes").
+    # Per-team: futures already classified into home/away, so within each
+    # list there's at most one entry per merge group per source.
+    # Division winners use dynamic keys like "atlantic_division" —
+    # match with suffix check.
+    _PER_TEAM_MERGE_GROUPS = {
+        "win_total", "make_playoffs", "make_nfl_playoffs",
+        "make_nhl_playoffs", "make_mlb_playoffs",
+    }
+    _PER_TEAM_MERGE_SUFFIXES = ("_division", "_conf_champion", "_conf_1_seed", "_conf_playin")
+
     def _dedup_by_merge_group(futures: list[dict]) -> list[dict]:
-        groups: dict[tuple[str, str], list[dict]] = {}
+        groups: dict[tuple, list[dict]] = {}
         ungrouped: list[dict] = []
         for f in futures:
             mg = f.get("merge_group")
             if mg:
-                key = (mg, f["outcome_name"].lower())
+                if mg in _PER_TEAM_MERGE_GROUPS or mg.endswith(_PER_TEAM_MERGE_SUFFIXES):
+                    key = (mg,)
+                else:
+                    key = (mg, f["outcome_name"].lower())
                 groups.setdefault(key, []).append(f)
             else:
                 ungrouped.append(f)
@@ -3118,6 +3181,32 @@ async def get_related_futures(
 
     home_futures = _dedup_by_merge_group(home_futures)
     away_futures = _dedup_by_merge_group(away_futures)
+
+    # ── Enrich matchup outcomes with team logos ───────────────────
+    # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
+    # market), look up the team logo so the frontend can display it.
+    matchup_outcomes = set()
+    for f in home_futures + away_futures:
+        mg = f.get("merge_group") or ""
+        if "_matchup" in mg:
+            matchup_outcomes.add(f["outcome_name"])
+    if matchup_outcomes and event.sport_id:
+        from app.utils.name_normalization import names_match
+        team_logo_result = await db.execute(
+            select(Team.name, Team.logo_small, Team.logo).where(
+                Team.sport_id == event.sport_id,
+            )
+        )
+        team_rows = team_logo_result.all()
+        for f in home_futures + away_futures:
+            mg = f.get("merge_group") or ""
+            if "_matchup" not in mg:
+                continue
+            oname = f["outcome_name"]
+            for tname, logo_sm, logo_lg in team_rows:
+                if names_match(oname, tname):
+                    f["team_logo"] = logo_sm or logo_lg
+                    break
 
     # Sort each side by relevance score descending
     home_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -3985,14 +4074,14 @@ async def get_line_movement_analysis(
                 (event.win_probability_sources or {}).get("statpal_plays", [])
             )
 
-        if event.status == "live":
+        if event.status in ("live", "completed", "closed"):
             game_context = {
                 "home_team": event.home_team_name,
                 "away_team": event.away_team_name,
                 "home_score": event.home_score,
                 "away_score": event.away_score,
-                "period": event.period,
-                "clock": event.game_clock,
+                "period": event.period if event.status == "live" else "Final",
+                "clock": event.game_clock if event.status == "live" else None,
             }
 
         # Fetch team season stats for richer context

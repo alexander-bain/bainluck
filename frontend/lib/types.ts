@@ -614,6 +614,7 @@ export interface RelatedFuture {
     espn_id?: string;
     headshot?: string;
   };
+  team_logo?: string;
 }
 
 export interface RelatedFuturesResponse {

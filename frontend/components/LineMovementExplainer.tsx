@@ -73,7 +73,7 @@ export default function LineMovementExplainer({
                 {data.explanation}
               </p>
               {/* Show context quality indicator when no real data was available */}
-              {data.context && !data.context.injuries_count && !data.context.news_count && !data.context.has_game_state && (
+              {data.context && !data.context.injuries_count && !data.context.news_count && !data.context.has_game_state && !(data.context as any).scoring_plays_count && !(data.context as any).has_team_stats && (
                 <p className="text-xs text-text-muted mt-1">
                   Limited context available for this game
                 </p>
