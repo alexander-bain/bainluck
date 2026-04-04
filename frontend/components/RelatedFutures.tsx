@@ -2286,14 +2286,22 @@ export default function RelatedFutures({
     }
   );
 
-  if (isLoading || error || !data || data.total_count === 0) {
+  // Only bail early on loading/error/no-response.
+  // total_count === 0 is NOT checked here — Gate 2 below handles emptiness
+  // so that teamProgression (Playoff Path) and standings (Season Stats)
+  // can still render even when the related-futures API returns zero matches.
+  const hasGridProgression = !!(teamProgression?.home_team || teamProgression?.away_team);
+  const hasStandingsData = !!(homeStandings || awayStandings);
+  if (isLoading || error || (!data && !hasGridProgression && !hasStandingsData)) {
     return null;
   }
 
-  const { home_team_futures, away_team_futures, event_status, box_score } = data;
-  const isFinished = event_status === "completed" || event_status === "closed";
-  const isLive = event_status === "live";
-  const boxScore = box_score ?? null;
+  const home_team_futures = data?.home_team_futures ?? [];
+  const away_team_futures = data?.away_team_futures ?? [];
+  const event_status_from_futures = data?.event_status;
+  const isFinished = (event_status_from_futures ?? eventStatus) === "completed" || (event_status_from_futures ?? eventStatus) === "closed";
+  const isLive = (event_status_from_futures ?? eventStatus) === "live";
+  const boxScore = data?.box_score ?? null;
 
   const hColor = homeTeamColor || DEFAULT_COLOR;
   const aColor = awayTeamColor || DEFAULT_COLOR;
@@ -2356,9 +2364,6 @@ export default function RelatedFutures({
     homeCats.trades.length + awayCats.trades.length +
     mergedNovelty.length +
     (hasStandings && homeCats.seasonStats.length === 0 && awayCats.seasonStats.length === 0 ? 1 : 0);
-
-  // Grid-based playoff path is available when team-progression data exists for at least one team
-  const hasGridProgression = !!(teamProgression?.home_team || teamProgression?.away_team);
 
   if (gameMarketCount === 0 && seasonCount === 0 && !hasGridProgression) return null;
 
@@ -2588,7 +2593,7 @@ export default function RelatedFutures({
       {/* Footer count */}
       <div className="text-center pt-2 border-t border-surface-border/30 mt-3">
         <span className="text-[9px] text-text-muted">
-          {data.total_count} related futures from multiple sources
+          {data?.total_count ?? 0} related futures from multiple sources
         </span>
       </div>
     </div>
