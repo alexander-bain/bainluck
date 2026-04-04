@@ -1315,6 +1315,8 @@ export interface ChampionshipGridColumn {
   label: string;
   order: number;
   sequential: boolean;
+  /** Primary market ID for this column (for evolution chart) */
+  market_id?: number | null;
 }
 
 export interface ChampionshipGridCellSource {

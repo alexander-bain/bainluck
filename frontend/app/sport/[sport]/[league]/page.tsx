@@ -23,7 +23,7 @@ import type {
 } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
-import { EvolutionView } from "@/components/EvolutionView";
+import { EvolutionView, type PositionOption } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -213,12 +213,35 @@ export default function LeagueShowcasePage() {
     return { liveTournaments: live, upcomingTournaments: upcoming, completedTournaments: completed };
   }, [golfData, leagueSlug]);
 
-  const evolutionMarketId = useMemo((): number | null => {
-    // Non-golf: use championship market ID from the grid
-    if (grid?.championship_market_id) return grid.championship_market_id;
+  // Build evolution chart market ID + stage position options from grid columns
+  const { evolutionMarketId, evolutionPositionOptions } = useMemo(() => {
+    // Non-golf: build position options from grid columns that have market_ids
+    if (grid?.columns) {
+      const options: PositionOption[] = grid.columns
+        .filter((c) => c.market_id)
+        .map((c) => ({
+          key: c.key,
+          label: c.label,
+          marketId: c.market_id!,
+        }));
+      if (options.length > 0) {
+        // Default to the last column (championship) — it's the most interesting
+        return {
+          evolutionMarketId: options[options.length - 1].marketId,
+          evolutionPositionOptions: options.length > 1 ? options : undefined,
+        };
+      }
+    }
+    // Fallback: championship_market_id from grid
+    if (grid?.championship_market_id) {
+      return { evolutionMarketId: grid.championship_market_id, evolutionPositionOptions: undefined };
+    }
     // Golf: use the hero tournament's first market
     const hero = liveTournaments[0] || upcomingTournaments[0];
-    return hero?.market_ids?.[0] ?? null;
+    return {
+      evolutionMarketId: hero?.market_ids?.[0] ?? null,
+      evolutionPositionOptions: undefined,
+    };
   }, [grid, liveTournaments, upcomingTournaments]);
 
   if (loading) {
@@ -298,6 +321,7 @@ export default function LeagueShowcasePage() {
               marketName={heroTournament?.name || grid?.name || league.name}
               defaultTopN={5}
               hours={168}
+              positionOptions={evolutionPositionOptions}
             />
           </section>
         )}

@@ -2968,15 +2968,19 @@ async def get_playoff_grid(
     # 9. Build response
     # -----------------------------------------------------------------------
 
-    # Only include columns that have data
+    # Only include columns that have data, with per-column market_id
     active_columns = []
     for col in config.columns:
         if col.key in column_data:
+            # Find the most common market_id for this column
+            col_market_ids = [m.id for m, _ in column_data[col.key]]
+            col_market_id = Counter(col_market_ids).most_common(1)[0][0] if col_market_ids else None
             active_columns.append({
                 "key": col.key,
                 "label": col.label,
                 "order": col.order,
                 "sequential": col.sequential,
+                "market_id": col_market_id,
             })
 
     # Group teams by conference if configured
