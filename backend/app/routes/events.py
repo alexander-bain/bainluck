@@ -2368,11 +2368,19 @@ async def get_game_markets(
     sport_key = event.sport.key if event.sport else None
 
     # 2. Find game-level markets linked to this event
+    # For completed events, include resolved/closed markets so we can show
+    # the final prediction market state (Kalshi/Polymarket settle post-game).
+    event_is_finished = event.status in ("completed", "closed")
+    status_filter = (
+        FuturesMarket.status.in_(("open", "resolved", "closed"))
+        if event_is_finished
+        else FuturesMarket.status == "open"
+    )
     market_result = await db.execute(
         select(FuturesMarket)
         .where(
             FuturesMarket.event_id == event_id,
-            FuturesMarket.status == "open",
+            status_filter,
         )
     )
     markets = list(market_result.scalars().all())
@@ -2390,7 +2398,7 @@ async def get_game_markets(
                 select(FuturesMarket)
                 .where(
                     FuturesMarket.event_id.is_(None),
-                    FuturesMarket.status == "open",
+                    status_filter,
                     FuturesMarket.category == "game_prop",
                     or_(*name_conditions),
                 )
@@ -2704,9 +2712,17 @@ async def get_related_futures(
     if compatible_sport_ids:
         sport_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
 
+    # For completed events, include resolved/closed markets so season stats
+    # (win totals, playoff odds, etc.) persist after the game ends.
+    event_is_finished = event.status in ("completed", "closed")
+    rf_status_filter = (
+        FuturesMarket.status.in_(("open", "resolved", "closed"))
+        if event_is_finished
+        else FuturesMarket.status == "open"
+    )
     market_result = await db.execute(
         select(FuturesMarket.id).where(
-            FuturesMarket.status == "open",
+            rf_status_filter,
             or_(*sport_filters),
         )
     )
