@@ -82,10 +82,16 @@ _LABEL_REWRITES: list[tuple[re.Pattern, str]] = [
      r"\1 Conference Play-In"),
 
     # Win totals (generic — handles NBA, MLB, NHL, NFL after pro sport rewrite)
-    (re.compile(r"^(?:NBA|MLB|NHL|NFL)\s+Win\s+Totals.*$", re.I), "Win Total"),
+    (re.compile(r"^(?:NBA|MLB|NHL|NFL)\s+Win\s+Totals?.*$", re.I), "Win Total"),
+    (re.compile(r"^(?:NBA|MLB|NHL|NFL)\s+Wins\s*$", re.I), "Win Total"),
     (re.compile(r"^(.+?)\s+(?:NBA|MLB|NHL|NFL)\s+wins\s+this\s+season\??\s*$", re.I),
      r"\1 Win Total"),
     (re.compile(r"^Regular\s+Season\s+Win\s+Totals?\s*$", re.I), "Win Total"),
+    # Binary win total per team: "Boston Celtics 2025-26 Season Win Total Over 48.5"
+    (re.compile(
+        r"^(.+?)\s+\d{4}[-\u2013]\d{2,4}\s+(?:Season\s+)?Win\s+Total\s+(?:Over|Under)\s+[\d.]+\s*$",
+        re.I,
+    ), r"\1 Win Total"),
 
     # Win streak
     (re.compile(r"^How many games will (.+?) win in a row.*$", re.I),

@@ -3140,13 +3140,30 @@ async def get_related_futures(
     # Merge entries with the same (merge_group, outcome_name) across sources.
     # Keeps the entry with the highest bookmaker count (most liquid).
     # Aggregates all sources into an `all_sources` list on the winner.
+    #
+    # Per-team merge groups (win_total, make_playoffs, etc.) use merge_group
+    # alone as the key because each team has exactly one entry per source,
+    # but outcome names may differ structurally ("Boston Celtics" vs "Yes").
+    # Per-team: futures already classified into home/away, so within each
+    # list there's at most one entry per merge group per source.
+    # Division winners use dynamic keys like "atlantic_division" —
+    # match with suffix check.
+    _PER_TEAM_MERGE_GROUPS = {
+        "win_total", "make_playoffs", "make_nfl_playoffs",
+        "make_nhl_playoffs", "make_mlb_playoffs",
+    }
+    _PER_TEAM_MERGE_SUFFIXES = ("_division", "_conf_champion", "_conf_1_seed", "_conf_playin")
+
     def _dedup_by_merge_group(futures: list[dict]) -> list[dict]:
-        groups: dict[tuple[str, str], list[dict]] = {}
+        groups: dict[tuple, list[dict]] = {}
         ungrouped: list[dict] = []
         for f in futures:
             mg = f.get("merge_group")
             if mg:
-                key = (mg, f["outcome_name"].lower())
+                if mg in _PER_TEAM_MERGE_GROUPS or mg.endswith(_PER_TEAM_MERGE_SUFFIXES):
+                    key = (mg,)
+                else:
+                    key = (mg, f["outcome_name"].lower())
                 groups.setdefault(key, []).append(f)
             else:
                 ungrouped.append(f)
