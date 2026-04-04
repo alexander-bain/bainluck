@@ -22,19 +22,28 @@ type SortConfig = {
 };
 
 /**
- * Color-coded cell background based on probability value.
- * Green (high) → yellow (medium) → red (low) gradient.
+ * Compute inline data bar width as a percentage (0-100).
+ * Uses square-root scaling so differences at the low end (2% vs 8%)
+ * are as visible as differences at the high end (20% vs 35%).
+ * Scaled relative to a column max of ~40% (sqrt(0.4) ≈ 0.632).
  */
-function cellBgClass(probability: number | null, status?: "clinched" | "eliminated" | null): string {
-  if (status === "clinched") return "bg-emerald-500/30";
-  if (status === "eliminated") return "bg-red-500/15";
-  if (probability === null || probability === undefined) return "bg-gray-800/20";
-  if (probability >= 0.8) return "bg-emerald-500/25";
-  if (probability >= 0.6) return "bg-emerald-500/15";
-  if (probability >= 0.4) return "bg-yellow-500/15";
-  if (probability >= 0.2) return "bg-orange-500/10";
-  if (probability >= 0.05) return "bg-red-500/8";
-  return "bg-gray-800/10";
+function barWidth(probability: number | null): number {
+  if (probability === null || probability === undefined || probability <= 0) return 0;
+  // sqrt scaling, capped at 100% bar width
+  return Math.min(100, (Math.sqrt(probability) / Math.sqrt(0.4)) * 100);
+}
+
+/**
+ * Font weight / opacity class based on probability value.
+ * Higher values get bolder text; very small values fade out.
+ */
+function probTextClass(probability: number | null, status?: "clinched" | "eliminated" | null): string {
+  if (status === "eliminated") return "text-red-400/60 line-through";
+  if (status === "clinched") return "text-emerald-600 font-bold";
+  if (probability === null) return "text-text-secondary/40";
+  if (probability >= 0.10) return "text-text-primary font-semibold";
+  if (probability >= 0.01) return "text-text-primary";
+  return "text-text-secondary/50";
 }
 
 /**
@@ -196,14 +205,9 @@ export default function TournamentProgressionTable({
       )}
       {/* Legends row: color + source */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5">
-        {/* Color legend */}
-        <div className="flex items-center gap-1.5 text-[10px] text-text-secondary/50">
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/25" />
-          <span>High</span>
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-yellow-500/15" />
-          <span>Mid</span>
-          <span className="inline-block w-3 h-2.5 rounded-sm bg-red-500/8" />
-          <span>Low</span>
+        {/* Bar legend */}
+        <div className="flex items-center gap-1 text-[10px] text-text-secondary/50">
+          <span className="text-text-secondary/40">Bar width = probability</span>
         </div>
         {/* Source legend */}
         {hasSources && uniqueSources.length > 1 && (
@@ -333,24 +337,22 @@ export default function TournamentProgressionTable({
                         return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
                       }).join(" · ")
                     : undefined;
+                  const bw = barWidth(prob);
                   return (
                     <td
                       key={stage.key}
-                      className={`py-1.5 px-2 text-center ${cellBgClass(prob, status)} transition-colors`}
+                      className="py-1.5 px-2 text-center relative"
                       title={tooltip}
                     >
-                      <div className="flex flex-col items-center">
-                        <span
-                          className={`font-mono text-sm ${
-                            status === "eliminated"
-                              ? "text-red-400/60 line-through"
-                              : status === "clinched"
-                              ? "text-emerald-400 font-bold"
-                              : prob !== null
-                              ? "text-text-primary"
-                              : "text-text-secondary/40"
-                          }`}
-                        >
+                      {/* Inline data bar — scaled width, single-hue accent */}
+                      {bw > 0 && (
+                        <div
+                          className="absolute inset-y-0 left-0 bg-blue-500/[0.08] transition-all"
+                          style={{ width: `${bw}%` }}
+                        />
+                      )}
+                      <div className="flex flex-col items-center relative">
+                        <span className={`font-mono text-sm ${probTextClass(prob, status)}`}>
                           {status === "clinched" ? "✓" : formatProb(prob)}
                         </span>
                         <SourceBreakdown sources={sources ?? []} />

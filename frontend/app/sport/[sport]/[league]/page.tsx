@@ -296,7 +296,7 @@ export default function LeagueShowcasePage() {
             <EvolutionView
               marketId={evolutionMarketId}
               marketName={heroTournament?.name || grid?.name || league.name}
-              defaultTopN={10}
+              defaultTopN={5}
               hours={168}
             />
           </section>

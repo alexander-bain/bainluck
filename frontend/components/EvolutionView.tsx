@@ -67,10 +67,12 @@ export function EvolutionView({
     };
   }, [isFullscreen]);
 
-  // Fetch history data
+  // Fetch history data — "Full Event" requests a much longer window
+  // so it actually differs from "7 Days"
+  const fetchHours = timeRange === "full" ? Math.max(hours, 720) : hours;
   const { data, error, isLoading } = useSWR(
-    `futures-evolution-${activeMarketId}-${hours}`,
-    () => fetchFuturesHistory(activeMarketId, hours, undefined, 30),
+    `futures-evolution-${activeMarketId}-${fetchHours}`,
+    () => fetchFuturesHistory(activeMarketId, fetchHours, undefined, 30),
     { refreshInterval: 60_000 }
   );
 
