@@ -1812,22 +1812,19 @@ function WinTotalsPair({
           ) : <div />}
         </div>
       )}
-      {/* Other season stats — list view */}
-      {(homeExtracted.other.length > 0 || awayExtracted.other.length > 0) && (
+      {/* Other season stats — list view with standings fallback for missing teams */}
+      {(homeExtracted.other.length > 0 || awayExtracted.other.length > 0 || homeStandings || awayStandings) && (
         <div className="grid grid-cols-2 gap-2">
-          {renderListCol(awayExtracted.other, awayShort, awayColor, awayLogo)}
-          {renderListCol(homeExtracted.other, homeShort, homeColor, homeLogo)}
-        </div>
-      )}
-      {/* Standings-only fallback when no futures exist for either team */}
-      {!hasGauge && homeExtracted.other.length === 0 && awayExtracted.other.length === 0 && (homeStandings || awayStandings) && (
-        <div className="grid grid-cols-2 gap-2">
-          {awayStandings ? (
-            <StandingsCard name={awayShort} color={awayColor} logo={awayLogo} standings={awayStandings} />
-          ) : <div />}
-          {homeStandings ? (
-            <StandingsCard name={homeShort} color={homeColor} logo={homeLogo} standings={homeStandings} />
-          ) : <div />}
+          {awayExtracted.other.length > 0
+            ? renderListCol(awayExtracted.other, awayShort, awayColor, awayLogo)
+            : awayStandings
+              ? <StandingsCard name={awayShort} color={awayColor} logo={awayLogo} standings={awayStandings} />
+              : <div />}
+          {homeExtracted.other.length > 0
+            ? renderListCol(homeExtracted.other, homeShort, homeColor, homeLogo)
+            : homeStandings
+              ? <StandingsCard name={homeShort} color={homeColor} logo={homeLogo} standings={homeStandings} />
+              : <div />}
         </div>
       )}
     </>
@@ -1938,12 +1935,16 @@ function MatchupGrid({
                     <span className="text-[8px] font-bold text-text-muted w-3 text-right shrink-0">
                       {i + 1}
                     </span>
-                    <div
-                      className="w-[18px] h-[18px] rounded flex items-center justify-center text-white text-[6px] font-extrabold shrink-0"
-                      style={{ backgroundColor: "#6B7280" }}
-                    >
-                      {(f.outcome_name || "").split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase()}
-                    </div>
+                    {f.team_logo ? (
+                      <img src={f.team_logo} alt="" className="w-[18px] h-[18px] object-contain shrink-0" />
+                    ) : (
+                      <div
+                        className="w-[18px] h-[18px] rounded flex items-center justify-center text-white text-[6px] font-extrabold shrink-0"
+                        style={{ backgroundColor: "#6B7280" }}
+                      >
+                        {(f.outcome_name || "").split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase()}
+                      </div>
+                    )}
                     <span className="text-[10px] font-semibold flex-1 truncate text-text-primary group-hover:text-text-primary/80">
                       {f.outcome_name}
                     </span>
@@ -2368,8 +2369,8 @@ export default function RelatedFutures({
       </h3>
       <div className="max-w-2xl mx-auto">
 
-      {/* Title Odds comparison */}
-      {showTitleComparison && (
+      {/* Title Odds comparison — hidden when grid-based playoff path is available (redundant) */}
+      {showTitleComparison && !hasGridProgression && (
         <TitleComparison
           homeChamp={homeChamp!}
           awayChamp={awayChamp!}

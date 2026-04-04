@@ -571,6 +571,7 @@ export interface GameMarketsResponse {
     over_probability: number;
     source: string;
     movement: number | null;
+    player_headshot?: string;
   }[];
   team_totals: {
     threshold: number;

@@ -17,6 +17,7 @@ interface ParsedProp {
   source: string;
   movement: number | null;
   team: "home" | "away" | "unknown";
+  headshot?: string;
 }
 
 /**
@@ -103,6 +104,7 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
         source: p.source,
         movement: p.movement,
         team,
+        headshot: p.player_headshot,
       });
     }
 
@@ -142,12 +144,21 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
             <div key={i} className="bg-surface-elevated rounded-xl p-2 border border-surface-border">
               {/* Player */}
               <div className="flex items-center gap-1.5 mb-1">
-                <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
-                  style={{ background: teamColor || "#6B7280" }}
-                >
-                  {initials}
-                </div>
+                {prop.headshot ? (
+                  <img
+                    src={prop.headshot}
+                    alt={prop.playerName}
+                    className="w-6 h-6 rounded-full object-cover shrink-0"
+                    style={{ backgroundColor: teamColor || "#6B7280" }}
+                  />
+                ) : (
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
+                    style={{ background: teamColor || "#6B7280" }}
+                  >
+                    {initials}
+                  </div>
+                )}
                 <span className="text-[10px] font-bold text-text-primary truncate">
                   {prop.playerName}
                 </span>
