@@ -10,7 +10,7 @@ import os
 import re
 import statistics
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -3024,6 +3024,20 @@ async def get_playoff_grid(
             if ungrouped:
                 grouped_teams["Other"] = ungrouped
 
+    # -----------------------------------------------------------------------
+    # 10. Extract championship market_id for evolution chart
+    # -----------------------------------------------------------------------
+    championship_market_id = None
+    champ_market_ids: list[int] = []
+    for norm_name in grid_raw:
+        entries = grid_raw[norm_name].get(championship_col, [])
+        for e in entries:
+            if e.get("market_id"):
+                champ_market_ids.append(e["market_id"])
+    if champ_market_ids:
+        # Pick the most common market_id (the main championship market)
+        championship_market_id = Counter(champ_market_ids).most_common(1)[0][0]
+
     resp = {
         "league": config.slug,
         "name": config.name,
@@ -3036,6 +3050,7 @@ async def get_playoff_grid(
         "team_count": len(teams),
         "last_updated": datetime.now(timezone.utc).isoformat(),
         "sources_available": sorted(sources_seen),
+        "championship_market_id": championship_market_id,
     }
 
     # Debug mode: include which markets feed each column
