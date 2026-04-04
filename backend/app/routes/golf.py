@@ -528,23 +528,107 @@ _NAME_ALIASES: dict[str, str] = {
     "sepp": "josef",
 }
 
-# Golfer key aliases for cross-source dedup.
-# Maps abbreviated/alternate match keys to their canonical form.
-# Primarily handles Odds API single-initial abbreviations (e.g., "J. Spaun")
-# vs full initials from DataGolf/Kalshi/Polymarket (e.g., "J.J. Spaun").
-_GOLFER_KEY_ALIASES: dict[str, str] = {
-    # Multi-initial golfers: Odds API "X. Last" → canonical "XY Last"
-    "j spaun": "jj spaun",
-    "j poston": "jt poston",
-    "c pan": "ct pan",
-    "s noh": "sy noh",
-    "y noh": "yh noh",
-    "k lee": "kh lee",
-    # NOTE: aliases for common last names (Kim, Lee, An) with single initials
-    # are intentionally omitted — "S. Kim" could be S.H. Kim OR Si Woo Kim,
-    # "B. Lee" could be B.H. Lee OR someone else. The DataGolf invitee filter
-    # handles these ambiguous cases by removing non-DataGolf entries.
-}
+
+def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
+    """Merge abbreviated-name entries into full-name entries.
+
+    Sportsbooks often abbreviate golfer names to "F. Lastname" while DataGolf
+    and prediction markets use full names. This creates separate entries with
+    different match keys (e.g., "c smith" vs "cameron smith").
+
+    Algorithm:
+    1. Group entries by last name (final token in match key)
+    2. Identify abbreviated entries (1-char first part like "c") and
+       initial entries (2-char first part like "ct", "jj")
+    3. For each, find longer entries where the first letter matches
+    4. If exactly ONE match → merge (unambiguous)
+    5. If multiple matches → skip (ambiguous; DataGolf filter handles it)
+
+    Handles three merge types:
+    - "c smith" (1 char) → "cameron smith" (full name)
+    - "j spaun" (1 char) → "jj spaun" (2-char initials)
+    - "c pan" (1 char) → "ct pan" (2-char initials)
+
+    Also handles _NAME_ALIASES reversals: "t finau" merges into
+    "anthony finau" because "tony" (starts with 't') aliases to "anthony".
+    """
+    from collections import defaultdict
+
+    # Build reverse alias map: expanded_name → set of first chars that alias to it
+    # e.g., "anthony" → {"t"} (from tony→anthony), "thomas" → {"t"} (from tommy)
+    _alias_first_chars: dict[str, set[str]] = {}
+    for short, long in _NAME_ALIASES.items():
+        _alias_first_chars.setdefault(long, set()).add(short[0])
+    # Also add the canonical name's own first char
+    for long_name in set(_NAME_ALIASES.values()):
+        _alias_first_chars.setdefault(long_name, set()).add(long_name[0])
+
+    def _first_chars_match(abbrev_first: str, candidate_first: str) -> bool:
+        """Check if abbreviated first char(s) could match a candidate's first token."""
+        # Direct first-letter match
+        if candidate_first[0] == abbrev_first[0]:
+            return True
+        # Check alias reversals: does any alias starting with abbrev_first[0]
+        # expand to candidate_first?
+        possible_chars = _alias_first_chars.get(candidate_first, set())
+        return abbrev_first[0] in possible_chars
+
+    # Group by last name
+    by_last: dict[str, list[str]] = defaultdict(list)
+    for key in golfer_data:
+        parts = key.split()
+        if parts:
+            by_last[parts[-1]].append(key)
+
+    to_merge: dict[str, str] = {}  # abbreviated_key → full_key
+
+    for last_name, keys in by_last.items():
+        if len(keys) < 2:
+            continue
+
+        for key in keys:
+            parts = key.split()
+            first = " ".join(parts[:-1])
+
+            # Is this an abbreviated entry? (1-char first part, all alpha)
+            if not first or len(first) != 1 or not first.isalpha():
+                continue
+
+            # Find ALL longer entries where first letter could match
+            candidates = [
+                k for k in keys
+                if k != key
+                and len(k.split()[0]) > 1
+                and _first_chars_match(first, k.split()[0])
+            ]
+
+            if len(candidates) == 1:
+                to_merge[key] = candidates[0]
+
+    if not to_merge:
+        return golfer_data
+
+    # Execute merges: fold abbreviated data into full-name entries
+    for short_key, long_key in to_merge.items():
+        if short_key not in golfer_data or long_key not in golfer_data:
+            continue
+
+        short = golfer_data[short_key]
+        long = golfer_data[long_key]
+
+        # Merge sources and probabilities
+        long["sources"].update(short["sources"])
+        long["probabilities"].extend(short["probabilities"])
+
+        if short["movement_24h"] is not None and long["movement_24h"] is None:
+            long["movement_24h"] = short["movement_24h"]
+        if short["opening_probability"] is not None and long["opening_probability"] is None:
+            long["opening_probability"] = short["opening_probability"]
+
+        del golfer_data[short_key]
+        logger.info("Golf dedup: merged '%s' into '%s'", short_key, long_key)
+
+    return golfer_data
 
 
 def _match_key(name: str) -> str:
@@ -592,9 +676,6 @@ def _match_key(name: str) -> str:
     if parts and parts[0] in _NAME_ALIASES:
         parts[0] = _NAME_ALIASES[parts[0]]
     clean = " ".join(parts)
-    # Resolve golfer-specific key aliases (abbreviated initials, etc.)
-    if clean in _GOLFER_KEY_ALIASES:
-        clean = _GOLFER_KEY_ALIASES[clean]
     return clean
 
 
@@ -863,6 +944,11 @@ async def get_golf(
                 # Track opening probability
                 if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
                     golfer_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
+
+        # Merge abbreviated-name entries (e.g., "c smith" from Odds API)
+        # into full-name entries (e.g., "cameron smith" from DataGolf)
+        # before applying the invitee filter.
+        golfer_data = _merge_abbreviated_golfers(golfer_data)
 
         # Filter to invitees only — when DataGolf field data exists for a
         # tournament, only include golfers who appear in the DataGolf field.
