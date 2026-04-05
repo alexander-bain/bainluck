@@ -1872,8 +1872,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
-    # Compute tags for this event
-    response["event_tags"] = compute_event_tags(
+    # Compute deterministic tags, then merge in stored LLM-enriched tags
+    # (competitive_structure, stakes, narrative, audience) from background enrichment.
+    from app.utils.event_taxonomy import LLM_ENRICHMENT_NAMESPACES
+    deterministic_tags = compute_event_tags(
         sport_key=event.sport.key if event.sport else "",
         status=event.status,
         commence_time=event.commence_time,
@@ -1884,6 +1886,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         raw_ei=float(event.raw_ei) if event.raw_ei else None,
         broadcast_info=getattr(event, "broadcast_info", None),
     )
+    # Preserve LLM-enriched tags from the stored event_tags
+    stored_tags = event.event_tags or []
+    llm_tags = [t for t in stored_tags if t.split(":")[0] in LLM_ENRICHMENT_NAMESPACES]
+    response["event_tags"] = sorted(set(deterministic_tags) | set(llm_tags))
 
     # Compute standings context for event detail
     standings_context = _compute_standings_context(
