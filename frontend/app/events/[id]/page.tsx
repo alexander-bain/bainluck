@@ -989,8 +989,17 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
 
-            {/* Center: Giant Probability */}
+            {/* Center: Giant Probability + Game State */}
             <div className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0">
+              {/* Game state indicator — period/inning + clock, prominent for live games */}
+              {effectivelyLive && (event.espn?.period || event.espn?.game_clock) && (
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-sm font-semibold text-emerald-600 tracking-wide">
+                    {event.espn.period}{event.espn.period && event.espn.game_clock ? " · " : ""}{event.espn.game_clock || ""}
+                  </span>
+                </div>
+              )}
               <div className="flex items-baseline">
                 <span
                   className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
