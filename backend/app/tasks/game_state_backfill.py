@@ -11,9 +11,10 @@ Reconstruction strategies (in priority order):
 """
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, func, and_, or_, exists, text, literal
+from sqlalchemy import select, func, and_, or_, exists, text, literal, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tasks.base import get_task_session
@@ -124,6 +125,9 @@ async def _backfill_game_state(
             except Exception as e:
                 stats["errors"] += 1
                 logger.error(f"Game state backfill error for event {event.id}: {e}")
+                # CRITICAL: rollback so the poisoned transaction doesn't
+                # cascade failures to all subsequent events.
+                await session.rollback()
 
         if fixed_count > 0:
             await session.commit()
@@ -147,6 +151,8 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
 
     # 1. Check if WinProbSnapshot already has game_state with period data.
     #    If so, the history endpoint's third fallback will pick it up.
+    #    Use safe JSONB checks: period key exists and is non-empty, OR
+    #    inning key exists (any truthy value — avoids unsafe integer cast).
     wp_with_period = await session.execute(
         select(func.count())
         .select_from(WinProbSnapshot)
@@ -154,8 +160,12 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
             WinProbSnapshot.event_id == event_id,
             WinProbSnapshot.game_state.isnot(None),
             or_(
-                WinProbSnapshot.game_state["period"].astext != "",
-                WinProbSnapshot.game_state["inning"].astext.cast(text("integer")) > 0,
+                and_(
+                    WinProbSnapshot.game_state.has_key("period"),
+                    WinProbSnapshot.game_state["period"].astext != "",
+                    WinProbSnapshot.game_state["period"].astext != "null",
+                ),
+                WinProbSnapshot.game_state.has_key("inning"),
             ),
         )
     )
@@ -173,14 +183,17 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
                 ESPNSnapshot.period.isnot(None),
                 ESPNSnapshot.period != "",
                 ESPNSnapshot.period != "Final",
-                # Filter out pre-game date strings
-                ~ESPNSnapshot.period.op("~")(
-                    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-                ),
             )
             .order_by(ESPNSnapshot.captured_at)
         )
         espn_snaps = espn_result.scalars().all()
+
+        # Filter out pre-game date strings in Python (safer than SQL regex)
+        _DATE_RE = re.compile(
+            r"(?:January|February|March|April|May|June|July|August|September|October|November|December)",
+            re.IGNORECASE,
+        )
+        espn_snaps = [s for s in espn_snaps if not _DATE_RE.search(s.period)]
 
         if espn_snaps:
             # Group by period, take first timestamp per period
@@ -285,7 +298,7 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
                         period_duration = total_duration / n_periods
 
                         for i, pname in enumerate(period_names):
-                            period_ts = first_ts + __import__("datetime").timedelta(
+                            period_ts = first_ts + timedelta(
                                 seconds=period_duration * i
                             )
                             # Find the nearest score transition to this time
