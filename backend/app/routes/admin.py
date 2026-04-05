@@ -2112,6 +2112,61 @@ async def backfill_box_scores(
     }
 
 
+@router.post("/events/backfill-game-state")
+async def backfill_game_state(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max events to process"),
+    sport: Optional[str] = Query(None, description="Sport key filter (e.g., 'baseball_mlb', 'basketball')"),
+):
+    """
+    Backfill missing game state (period markers) for completed events.
+
+    Finds completed/closed events with no period data in ScoringPlay table
+    and reconstructs from ESPNSnapshot period data or score progression.
+    Writes markers as WinProbSnapshot records with game_state.period so the
+    history endpoint's existing fallback logic picks them up.
+
+    Run with sport=baseball_mlb first (most impactful), then without filter
+    for all sports. Safe to run multiple times — skips events that already
+    have data.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_game_state as task
+
+    result = task.delay(limit=limit, sport_filter=sport)
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": (
+            f"Game state backfill queued (limit={limit}, sport={sport or 'all'}). "
+            f"Check status at /api/admin/events/task/{{task_id}}"
+        ),
+    }
+
+
+@router.get("/events/task/{task_id}")
+async def get_event_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of an event backfill task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {"task_id": task_id, "state": result.state}
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+    return response
+
+
 @router.get("/celery/health")
 async def celery_health():
     """Check Celery worker health via heartbeat timestamp in Redis."""
