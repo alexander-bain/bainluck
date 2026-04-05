@@ -174,7 +174,7 @@ async def get_feed(
                         d["away_team_data"] = _format_team_data(away_team)
 
     # === SCORE GOLF TOURNAMENTS ===
-    tournament_items = await _score_golf_tournaments(db, now, sport)
+    tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
     if tournament_items:
         feed_items.extend(tournament_items)
 
@@ -1293,10 +1293,50 @@ _golf_cache: dict[str, tuple[float, list[dict]]] = {}
 _GOLF_CACHE_TTL = 120  # 2 minutes
 
 
+_DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})
+
+# Map tournament tour values to user affinity keys
+_TOUR_AFFINITY_KEYS: dict[str, str] = {
+    "pga": "golf_pga",
+    "major": "golf_pga",       # Majors bundled with PGA Tour
+    "dp_world": "golf_dp_world",
+    "lpga": "golf_lpga",
+    "liv": "golf_liv",
+}
+
+
+def _compute_user_feed_tours(ctx) -> set[str]:
+    """Compute which golf tours a user wants to see based on sport affinities."""
+    if not ctx or not ctx.is_authenticated or not ctx.sport_affinities:
+        return set(_DEFAULT_FEED_TOURS)
+
+    has_any_golf = any(k.startswith("golf") for k in ctx.sport_affinities)
+    if not has_any_golf:
+        return set()  # User went through onboarding, no golf interest
+
+    # Check for new-style tour-level keys
+    has_tour_keys = any(
+        k in ctx.sport_affinities
+        for k in ("golf_pga", "golf_dp_world", "golf_lpga", "golf_liv")
+    )
+    if not has_tour_keys:
+        # Legacy user — has golf_masters_tournament_winner etc. but no tour keys
+        # Show all tours (preserves old behavior)
+        return set(_DEFAULT_FEED_TOURS)
+
+    # New-style user — filter by tour preference
+    tours: set[str] = set()
+    for tour, affinity_key in _TOUR_AFFINITY_KEYS.items():
+        if ctx.sport_affinities.get(affinity_key, 0.0) > 0.05:
+            tours.add(tour)
+    return tours
+
+
 async def _score_golf_tournaments(
     db: AsyncSession,
     now: datetime,
     sport_filter: Optional[str],
+    ctx=None,
 ) -> list[dict]:
     """Score golf tournaments for the unified feed.
 
@@ -1310,28 +1350,34 @@ async def _score_golf_tournaments(
 
     import time as _time
 
-    cache_key = "golf_tournaments"
+    # Cache raw tournament data (shared across users), filter per-user below
+    cache_key = "golf_tournaments_raw"
+    tournaments = None
     if cache_key in _golf_cache:
-        cached_at, cached_items = _golf_cache[cache_key]
+        cached_at, cached_data = _golf_cache[cache_key]
         if _time.time() - cached_at < _GOLF_CACHE_TTL:
-            return cached_items
+            tournaments = cached_data
 
-    try:
-        from app.routes.golf import get_golf
-        golf_data = await get_golf(db=db)
-    except Exception as e:
-        logger.warning("Feed: failed to load golf tournaments: %s", e)
-        return []
+    if tournaments is None:
+        try:
+            from app.routes.golf import get_golf
+            golf_data = await get_golf(db=db)
+        except Exception as e:
+            logger.warning("Feed: failed to load golf tournaments: %s", e)
+            return []
 
-    tournaments = golf_data.get("tournaments", [])
+        tournaments = golf_data.get("tournaments", [])
+        _golf_cache[cache_key] = (_time.time(), tournaments)
+
     if not tournaments:
-        _golf_cache[cache_key] = (_time.time(), [])
         return []
 
     feed_items: list[dict] = []
 
-    # Tours worth showing in the feed (skip obscure tours like asian, sunshine, korn_ferry)
-    _FEED_TOURS = {"pga", "major", "dp_world", "lpga", "liv"}
+    # Per-user tour filtering based on sport affinities
+    feed_tours = _compute_user_feed_tours(ctx)
+    if not feed_tours:
+        return []  # User has no golf interest
 
     for t in tournaments:
         # Only include tournaments with golfer data
@@ -1339,8 +1385,8 @@ async def _score_golf_tournaments(
         if not golfers:
             continue
 
-        # Only include relevant tours in the feed
-        if t.get("tour") not in _FEED_TOURS:
+        # Only include tours the user follows
+        if t.get("tour") not in feed_tours:
             continue
 
         # Only include winner/outright markets (skip top-20, make-cut, etc.)
@@ -1424,7 +1470,6 @@ async def _score_golf_tournaments(
             ),
         })
 
-    _golf_cache[cache_key] = (_time.time(), feed_items)
     return feed_items
 
 

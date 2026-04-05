@@ -110,8 +110,16 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "soccer": ["soccer_epl", "soccer_usa_mls", "soccer_spain_la_liga",
                "soccer_germany_bundesliga", "soccer_italy_serie_a",
                "soccer_france_ligue_one", "soccer_uefa_champs_league"],
+    # Golf tour split (like NFL/College Football)
+    "golf_pga": ["golf_masters_tournament_winner", "golf_pga_championship_winner",
+                 "golf_the_open_championship_winner", "golf_us_open_winner", "golf_pga"],
+    "golf_dp_world": ["golf_dp_world"],
+    "golf_lpga": ["golf_lpga"],
+    "golf_liv": ["golf_liv"],
+    # Legacy key — maps to ALL golf backend keys (backward compat)
     "golf": ["golf_masters_tournament_winner", "golf_pga_championship_winner",
-             "golf_the_open_championship_winner", "golf_us_open_winner"],
+             "golf_the_open_championship_winner", "golf_us_open_winner",
+             "golf_pga", "golf_dp_world", "golf_lpga", "golf_liv"],
     "tennis": ["tennis_atp_french_open", "tennis_atp_us_open",
                "tennis_atp_wimbledon", "tennis_atp_australian_open"],
     "mma": ["mma_mixed_martial_arts"],
@@ -135,7 +143,7 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
 # Prefer split keys (nfl, college_football, etc.) over legacy keys (football, basketball).
 SPORT_KEY_TO_CATEGORY: dict[str, str] = {}
 # Legacy keys first (will be overwritten by split keys below)
-_LEGACY_AFFINITY_KEYS = {"football", "basketball"}
+_LEGACY_AFFINITY_KEYS = {"football", "basketball", "golf"}
 for category, keys in SPORT_AFFINITY_MAPPING.items():
     if category in _LEGACY_AFFINITY_KEYS:
         for key in keys:

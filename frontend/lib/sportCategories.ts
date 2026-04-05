@@ -106,6 +106,35 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["golf_"],
     tier: 2,
   },
+  // Golf tour split (affinity-display only, like NFL/College Football)
+  {
+    key: "golf_pga",
+    name: "PGA Tour & Majors",
+    emoji: "⛳",
+    prefixes: [],
+    tier: 2,
+  },
+  {
+    key: "golf_dp_world",
+    name: "DP World Tour",
+    emoji: "⛳",
+    prefixes: [],
+    tier: 2,
+  },
+  {
+    key: "golf_lpga",
+    name: "LPGA",
+    emoji: "⛳",
+    prefixes: [],
+    tier: 2,
+  },
+  {
+    key: "golf_liv",
+    name: "LIV Golf",
+    emoji: "⛳",
+    prefixes: [],
+    tier: 2,
+  },
   {
     key: "tennis",
     name: "Tennis",

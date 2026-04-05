@@ -36,7 +36,7 @@ const BEYOND_SPORTS_KEYS = new Set([
 ]);
 
 // Parent keys that are split into pro/college sub-categories
-const SPLIT_PARENT_KEYS = new Set(["football", "basketball"]);
+const SPLIT_PARENT_KEYS = new Set(["football", "basketball", "golf"]);
 
 // Sports to show in the grid — tier 1 + tier 2 from sportCategories.ts,
 // excluding non-sports categories (those go in Beyond Sports section below)
@@ -981,6 +981,7 @@ function StepSports({
   const SPLIT_GROUPS: Record<string, { emoji: string; label: string; keys: string[] }> = {
     "nfl": { emoji: "🏈", label: "Football", keys: ["nfl", "college_football"] },
     "nba": { emoji: "🏀", label: "Basketball", keys: ["nba", "college_basketball"] },
+    "golf_pga": { emoji: "⛳", label: "Golf", keys: ["golf_pga", "golf_dp_world", "golf_lpga", "golf_liv"] },
   };
   const splitChildKeys = new Set(Object.values(SPLIT_GROUPS).flatMap(g => g.keys));
   const seenGroups = new Set<string>();
