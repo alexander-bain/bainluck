@@ -3669,6 +3669,21 @@ async def get_event_odds_history(
     except Exception:
         pass
 
+    # Fallback: derive period markers from computed scoring_plays (ESPN box score)
+    # when the ScoringPlay table is empty (e.g., completed games where StatPal
+    # only syncs plays during live status).
+    if not period_markers and scoring_plays:
+        first_seen: dict[str, str] = {}
+        for play in scoring_plays:
+            period = play.get("period")
+            ts = play.get("timestamp")
+            if period and ts and period not in first_seen:
+                first_seen[period] = ts
+        period_markers = [
+            {"timestamp": ts, "period": period}
+            for period, ts in sorted(first_seen.items(), key=lambda x: x[1])
+        ]
+
     # ── Prediction market spread/total binary contracts ──
     # Query FuturesMarkets linked to this event for spread/total data,
     # then derive implied spread, total, and projected final score.
