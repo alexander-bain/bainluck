@@ -544,6 +544,14 @@ def backfill_team_identities(self):
     return run_async(_backfill_team_identities())
 
 
+# --- Game State Backfill ---
+
+@celery_app.task(bind=True, soft_time_limit=1800, time_limit=1860, name="app.tasks.backfill_game_state")
+def backfill_game_state(self, limit=500, sport_filter=None):
+    from app.tasks.game_state_backfill import _backfill_game_state
+    return run_async(_backfill_game_state(limit=limit, sport_filter=sport_filter))
+
+
 # --- DataGolf ---
 
 @celery_app.task(bind=True, name="app.tasks.poll_datagolf_markets")

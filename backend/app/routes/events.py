@@ -1901,6 +1901,12 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if standings_context:
         response["standings_context"] = standings_context
 
+    # Use compute_aggregate_probability() as primary probability source,
+    # matching the feed endpoint. This blends all sources (sportsbooks, ESPN,
+    # Kalshi, Polymarket, stat model) with SOURCE_WEIGHTS for consistency.
+    from app.utils.aggregation import compute_aggregate_probability
+    agg_prob = compute_aggregate_probability(event)
+
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
         all_latest_snapshots = latest_snapshots
@@ -1916,16 +1922,22 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         # Detect bookmakers with reversed home/away odds
         reversed_bookmakers = detect_reversed_bookmakers(filtered_snapshots)
 
-        # Aggregate across bookmakers (exclude reversed ones)
+        # Aggregate across bookmakers (exclude reversed ones) — used for
+        # spread, over/under, projected scores, and bookmaker count.
         agg_snapshots = [s for s in filtered_snapshots if s.bookmaker not in reversed_bookmakers]
         if not agg_snapshots:
             agg_snapshots = filtered_snapshots  # fallback: use all if all were flagged
         aggregated = aggregate_bookmaker_odds(agg_snapshots)
 
+        # Hero probability: use multi-source aggregate (matching feed),
+        # fall back to bookmaker-only consensus if aggregate unavailable.
+        hero_home_prob = agg_prob if agg_prob is not None else aggregated["home_probability"]
+        hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
+
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
-            "home_probability": aggregated["home_probability"],
-            "away_probability": aggregated["away_probability"],
+            "home_probability": hero_home_prob,
+            "away_probability": hero_away_prob,
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -1979,18 +1991,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                 })
         response["bookmaker_odds"] = bookmaker_odds_list
 
-    # Fallback: if no odds snapshots, compute aggregate from alternative sources
-    # (ESPN win probability, Kalshi, Polymarket, stat model)
-    if "current_odds" not in response:
-        from app.utils.aggregation import compute_aggregate_probability
-        agg_prob = compute_aggregate_probability(event)
-        if agg_prob is not None:
-            response["current_odds"] = {
-                "home_probability": agg_prob,
-                "away_probability": round(1.0 - agg_prob, 6),
-                "source": "aggregate",
-                "bookmaker_count": 0,
-            }
+    # Fallback: if no odds snapshots, use aggregate from alternative sources
+    if "current_odds" not in response and agg_prob is not None:
+        response["current_odds"] = {
+            "home_probability": agg_prob,
+            "away_probability": round(1.0 - agg_prob, 6),
+            "source": "aggregate",
+            "bookmaker_count": 0,
+        }
 
     # Include opening odds in event detail response for frontend fallback
     if event.opening_home_probability is not None:
@@ -3683,6 +3691,39 @@ async def get_event_odds_history(
             {"timestamp": ts, "period": period}
             for period, ts in sorted(first_seen.items(), key=lambda x: x[1])
         ]
+
+    # Third fallback: derive period markers from win_prob_history game_state.
+    # Covers games where ScoringPlay table is empty and no ESPN box_score
+    # scoring_plays exist, but win_prob_snapshots carry game_state.period
+    # (e.g., from ESPN sync or stat_model with period data).
+    if not period_markers and win_prob_history:
+        first_seen_wp: dict[str, str] = {}
+        for source_points in win_prob_history.values():
+            for point in source_points:
+                gs = point.get("game_state") or {}
+                period_val = gs.get("period")
+                if isinstance(period_val, str) and period_val:
+                    if period_val not in first_seen_wp:
+                        first_seen_wp[period_val] = point["timestamp"]
+                    continue
+                # MLB format: inning + inning_half
+                inning = gs.get("inning")
+                if isinstance(inning, int) and inning > 0:
+                    half = gs.get("inning_half", "top")
+                    ordinal = (
+                        "1st" if inning == 1 else
+                        "2nd" if inning == 2 else
+                        "3rd" if inning == 3 else
+                        f"{inning}th"
+                    )
+                    period_str = f"{str(half).capitalize()} {ordinal}"
+                    if period_str not in first_seen_wp:
+                        first_seen_wp[period_str] = point["timestamp"]
+        if first_seen_wp:
+            period_markers = [
+                {"timestamp": ts, "period": period}
+                for period, ts in sorted(first_seen_wp.items(), key=lambda x: x[1])
+            ]
 
     # ── Prediction market spread/total binary contracts ──
     # Query FuturesMarkets linked to this event for spread/total data,

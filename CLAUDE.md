@@ -555,6 +555,8 @@ When fixing ANY data quality, matching, grouping, or display issue:
 | `win_total_resolved` | Deterministic | Futures | Near-resolved win total thresholds (noise) |
 | `label_clarity` | LLM | Futures | Unclear/misleading market labels |
 | `team_matching` | LLM | Futures | Market incorrectly associated with team |
+| `game_state_missing` | Deterministic | Event | Live/completed event with no period boundaries for charts |
+| `game_state_weak_source` | Deterministic | Event | Period data only from fallback sources |
 | `grid_fill_rate` | Deterministic | Grid | Columns with low data coverage |
 | `grid_single_source` | Deterministic | Grid | Columns using only 1 source when more available |
 | `grid_team_identity` | Deterministic | Grid | Teams missing logo, team_id, record |

@@ -149,6 +149,17 @@ async def _sync_mlb_win_probability():
                     sources[WIN_PROB_SOURCE_KEY] = round(mlb_game.home_win_probability, 4)
                     event.win_probability_sources = sources
 
+                    # Update Event.period for feed scoring (late-game bonus)
+                    # and chart game state display. ESPN sync also sets this,
+                    # but MLB API has more reliable inning data for baseball.
+                    if game_state.get("period"):
+                        event.period = game_state["period"]
+                    if mlb_game.inning is not None:
+                        # Baseball doesn't have a running clock — store inning
+                        # info as game_clock for the live badge display
+                        half = (mlb_game.inning_half or "").capitalize()
+                        event.game_clock = f"{half} {mlb_game.inning}" if half else str(mlb_game.inning)
+
                 except Exception as e:
                     stats["errors"].append(str(e))
                     logger.error(f"MLB sync error for game {mlb_game.game_pk}: {e}")
