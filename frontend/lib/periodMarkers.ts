@@ -197,9 +197,27 @@ function deriveBoundariesFromWinProb(
 
   for (const points of Object.values(winProbHistory)) {
     for (const point of points) {
-      const period = (point.game_state as Record<string, unknown>)?.period;
+      const gs = point.game_state as Record<string, unknown> | undefined;
+      if (!gs) continue;
+
+      // Standard period field (ESPN, stat_model)
+      const period = gs.period;
       if (typeof period === "string" && period) {
         allPoints.push({ timestamp: point.timestamp, period });
+        continue;
+      }
+
+      // MLB format: inning + inning_half (e.g., {inning: 3, inning_half: "top"})
+      const inning = gs.inning;
+      if (typeof inning === "number" && inning > 0) {
+        const half = typeof gs.inning_half === "string" ? gs.inning_half : "top";
+        // Construct a period string that normalizePeriodLabel can parse
+        // e.g., "Top 3rd" → normalized to "3"
+        const ordinal = inning === 1 ? "1st" : inning === 2 ? "2nd" : inning === 3 ? "3rd" : `${inning}th`;
+        allPoints.push({
+          timestamp: point.timestamp,
+          period: `${half.charAt(0).toUpperCase() + half.slice(1)} ${ordinal}`,
+        });
       }
     }
   }

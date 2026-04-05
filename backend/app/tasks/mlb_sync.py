@@ -116,6 +116,12 @@ async def _sync_mlb_win_probability():
                         game_state["inning"] = mlb_game.inning
                     if mlb_game.inning_half:
                         game_state["inning_half"] = mlb_game.inning_half
+                    # Also store as "period" for consistency with ESPN/stat_model
+                    # format, so chart period markers can extract it uniformly.
+                    if mlb_game.inning is not None and mlb_game.inning_half:
+                        ordinals = {1: "1st", 2: "2nd", 3: "3rd"}
+                        ord_str = ordinals.get(mlb_game.inning, f"{mlb_game.inning}th")
+                        game_state["period"] = f"{mlb_game.inning_half.capitalize()} {ord_str}"
                     if mlb_game.home_score is not None:
                         game_state["home_score"] = mlb_game.home_score
                     if mlb_game.away_score is not None:

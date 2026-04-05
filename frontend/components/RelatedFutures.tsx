@@ -2292,9 +2292,12 @@ export default function RelatedFutures({
   // can still render even when the related-futures API returns zero matches.
   const hasGridProgression = !!(teamProgression?.home_team || teamProgression?.away_team);
   const hasStandingsData = !!(homeStandings || awayStandings);
-  if (isLoading || error || (!data && !hasGridProgression && !hasStandingsData)) {
-    return null;
-  }
+  // Gate 1: bail only when we have nothing at all to show.
+  // Don't bail on API error if we have grid progression or standings —
+  // those come from separate fetches and are still valuable.
+  if (isLoading) return null;
+  if (!data && !hasGridProgression && !hasStandingsData) return null;
+  if (error && !hasGridProgression && !hasStandingsData) return null;
 
   const home_team_futures = data?.home_team_futures ?? [];
   const away_team_futures = data?.away_team_futures ?? [];
