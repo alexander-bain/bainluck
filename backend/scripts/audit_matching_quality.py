@@ -1038,6 +1038,207 @@ def check_grid_probability_sum(grid_data: dict, report: AuditReport):
 
 
 # ---------------------------------------------------------------------------
+# GAME STATE: Chart period boundary coverage
+# ---------------------------------------------------------------------------
+
+def check_game_state_coverage(event_data: dict, report: AuditReport):
+    """Check that a live/completed event has period markers for chart annotations.
+
+    Period boundaries (Q1, HT, Q3, Top 5th, etc.) are critical chart context.
+    Every live or completed game should have them from at least one source:
+    ScoringPlay table, win_prob_history game_state, ESPN history, or scoring plays.
+    """
+    event_id = event_data.get("id")
+    status = event_data.get("status", "")
+    if status not in ("live", "completed", "closed"):
+        return  # Scheduled games don't have game state yet
+
+    home = event_data.get("home_team", "?")
+    away = event_data.get("away_team", "?")
+
+    try:
+        history = api_get(f"/api/events/{event_id}/history")
+    except Exception:
+        report.add(AuditFinding(
+            check="game_state_history_unavailable",
+            severity=SEVERITY_WARNING,
+            category="event_detail",
+            description=f"Could not fetch history for {away} @ {home} (ID: {event_id})",
+            details={"event_id": event_id},
+        ))
+        return
+
+    # Check all period data sources
+    period_markers = history.get("period_markers") or []
+    espn_history = history.get("espn_history") or []
+    win_prob_history = history.get("win_prob_history") or {}
+    scoring_plays = history.get("scoring_plays") or []
+
+    # Count periods from each source
+    espn_periods = set()
+    for pt in espn_history:
+        if pt.get("period"):
+            espn_periods.add(pt["period"])
+
+    wp_periods = set()
+    for source_points in win_prob_history.values():
+        for pt in source_points:
+            gs = pt.get("game_state") or {}
+            if gs.get("period"):
+                wp_periods.add(gs["period"])
+            elif isinstance(gs.get("inning"), int) and gs["inning"] > 0:
+                wp_periods.add(f"inning_{gs['inning']}")
+
+    sp_periods = set()
+    for play in scoring_plays:
+        if play.get("period"):
+            sp_periods.add(play["period"])
+
+    has_period_markers = len(period_markers) > 0
+    has_espn_periods = len(espn_periods) > 0
+    has_wp_periods = len(wp_periods) > 0
+    has_sp_periods = len(sp_periods) > 0
+
+    any_game_state = has_period_markers or has_espn_periods or has_wp_periods or has_sp_periods
+
+    if not any_game_state:
+        report.add(AuditFinding(
+            check="game_state_missing",
+            severity=SEVERITY_CRITICAL,
+            category="event_detail",
+            description=f"No game state data for {away} @ {home} (ID: {event_id}, status: {status}). Charts have no period boundaries.",
+            details={
+                "event_id": event_id,
+                "status": status,
+                "period_markers": len(period_markers),
+                "espn_periods": len(espn_periods),
+                "wp_periods": len(wp_periods),
+                "sp_periods": len(sp_periods),
+            },
+        ))
+    elif not has_period_markers and not has_wp_periods:
+        # Period markers missing from primary sources but available in fallbacks
+        sources = []
+        if has_espn_periods:
+            sources.append(f"espn({len(espn_periods)})")
+        if has_sp_periods:
+            sources.append(f"scoring_plays({len(sp_periods)})")
+        report.add(AuditFinding(
+            check="game_state_weak_source",
+            severity=SEVERITY_INFO,
+            category="event_detail",
+            description=f"{away} @ {home}: period data only from fallback sources: {', '.join(sources)}",
+            details={
+                "event_id": event_id,
+                "sources": sources,
+            },
+        ))
+
+
+def audit_game_state_bulk(verbose: bool = False):
+    """Scan all live/completed events from the feed for game state coverage.
+
+    Returns (total_checked, missing_count, findings_list).
+    """
+    print("\n" + "=" * 70)
+    print("GAME STATE COVERAGE AUDIT")
+    print("=" * 70)
+
+    feed = api_get("/api/feed", {"limit": "100"})
+    items = feed.get("items", [])
+
+    # Collect live + completed events
+    events = []
+    for item in items:
+        data = item.get("data", {})
+        status = data.get("status", "")
+        if data.get("id") and status in ("live", "completed", "closed"):
+            events.append(data)
+
+    print(f"Found {len(events)} live/completed events in feed")
+
+    report = AuditReport()
+    results = []
+
+    for ev in events:
+        eid = ev["id"]
+        home = ev.get("home_team", "?")
+        away = ev.get("away_team", "?")
+        status = ev.get("status", "?")
+
+        try:
+            history = api_get(f"/api/events/{eid}/history")
+        except Exception:
+            results.append({"id": eid, "name": f"{away} @ {home}", "status": status, "game_state": False, "sources": []})
+            continue
+
+        period_markers = history.get("period_markers") or []
+        espn_history = history.get("espn_history") or []
+        win_prob_history = history.get("win_prob_history") or {}
+        scoring_plays = history.get("scoring_plays") or []
+
+        sources = []
+        if period_markers:
+            sources.append(f"period_markers({len(period_markers)})")
+        espn_periods = sum(1 for pt in espn_history if pt.get("period"))
+        if espn_periods:
+            sources.append(f"espn({espn_periods})")
+        wp_count = 0
+        for pts in win_prob_history.values():
+            for pt in pts:
+                gs = pt.get("game_state") or {}
+                if gs.get("period") or (isinstance(gs.get("inning"), int) and gs["inning"] > 0):
+                    wp_count += 1
+        if wp_count:
+            sources.append(f"win_prob({wp_count})")
+        sp_periods = sum(1 for p in scoring_plays if p.get("period"))
+        if sp_periods:
+            sources.append(f"scoring_plays({sp_periods})")
+
+        has_any = len(sources) > 0
+        results.append({
+            "id": eid,
+            "name": f"{away} @ {home}",
+            "status": status,
+            "game_state": has_any,
+            "sources": sources,
+        })
+
+        if not has_any:
+            report.add(AuditFinding(
+                check="game_state_missing",
+                severity=SEVERITY_CRITICAL,
+                category="event_detail",
+                description=f"No game state: {away} @ {home} (ID: {eid}, {status})",
+                details={"event_id": eid, "status": status},
+            ))
+
+        if verbose or not has_any:
+            icon = "✅" if has_any else "❌"
+            src_str = ", ".join(sources) if sources else "NONE"
+            print(f"  {icon} [{status:9s}] {away:25s} @ {home:25s}  sources: {src_str}")
+
+    # Summary
+    total = len(results)
+    missing = sum(1 for r in results if not r["game_state"])
+    covered = total - missing
+    pct = (covered / total * 100) if total > 0 else 0
+
+    print(f"\n{'─' * 50}")
+    print(f"Game state coverage: {covered}/{total} ({pct:.0f}%)")
+    if missing > 0:
+        print(f"❌ Missing game state: {missing} events")
+        for r in results:
+            if not r["game_state"]:
+                print(f"   - {r['name']} (ID: {r['id']}, {r['status']})")
+    else:
+        print("✅ All live/completed events have game state data")
+    print()
+
+    return total, missing, report.findings
+
+
+# ---------------------------------------------------------------------------
 # Main audit functions
 # ---------------------------------------------------------------------------
 
@@ -1057,6 +1258,7 @@ def audit_event_detail(event_data: dict, report: AuditReport, verbose: bool, ski
     check_hero_probability_sanity(event_data, report)
     check_feed_vs_detail_consistency(event_data, report)
     check_missing_team_data(event_data, report)
+    check_game_state_coverage(event_data, report)
 
     # Fetch related futures
     try:
@@ -1146,6 +1348,12 @@ Examples:
 
   # Grid-only audit:
   python3 scripts/audit_matching_quality.py --skip-event --grid nba --skip-llm
+
+  # Game state coverage scan (all live/completed events):
+  python3 scripts/audit_matching_quality.py --game-state
+
+  # Verbose game state scan (shows all events, not just missing):
+  python3 scripts/audit_matching_quality.py --game-state --verbose
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1159,7 +1367,13 @@ Examples:
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--save", action="store_true", help="Save results as new baseline")
     parser.add_argument("--compare", action="store_true", help="Compare against last baseline")
+    parser.add_argument("--game-state", action="store_true", help="Bulk game state coverage scan across all live/completed feed events")
     args = parser.parse_args()
+
+    # --- Standalone game state audit ---
+    if args.game_state:
+        total, missing, findings = audit_game_state_bulk(verbose=args.verbose)
+        sys.exit(1 if missing > 0 else 0)
 
     if not args.skip_llm and not os.getenv("OPENAI_API_KEY"):
         print("ERROR: Set OPENAI_API_KEY or use --skip-llm for deterministic-only mode")

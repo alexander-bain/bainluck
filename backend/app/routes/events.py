@@ -3692,6 +3692,39 @@ async def get_event_odds_history(
             for period, ts in sorted(first_seen.items(), key=lambda x: x[1])
         ]
 
+    # Third fallback: derive period markers from win_prob_history game_state.
+    # Covers games where ScoringPlay table is empty and no ESPN box_score
+    # scoring_plays exist, but win_prob_snapshots carry game_state.period
+    # (e.g., from ESPN sync or stat_model with period data).
+    if not period_markers and win_prob_history:
+        first_seen_wp: dict[str, str] = {}
+        for source_points in win_prob_history.values():
+            for point in source_points:
+                gs = point.get("game_state") or {}
+                period_val = gs.get("period")
+                if isinstance(period_val, str) and period_val:
+                    if period_val not in first_seen_wp:
+                        first_seen_wp[period_val] = point["timestamp"]
+                    continue
+                # MLB format: inning + inning_half
+                inning = gs.get("inning")
+                if isinstance(inning, int) and inning > 0:
+                    half = gs.get("inning_half", "top")
+                    ordinal = (
+                        "1st" if inning == 1 else
+                        "2nd" if inning == 2 else
+                        "3rd" if inning == 3 else
+                        f"{inning}th"
+                    )
+                    period_str = f"{str(half).capitalize()} {ordinal}"
+                    if period_str not in first_seen_wp:
+                        first_seen_wp[period_str] = point["timestamp"]
+        if first_seen_wp:
+            period_markers = [
+                {"timestamp": ts, "period": period}
+                for period, ts in sorted(first_seen_wp.items(), key=lambda x: x[1])
+            ]
+
     # ── Prediction market spread/total binary contracts ──
     # Query FuturesMarkets linked to this event for spread/total data,
     # then derive implied spread, total, and projected final score.
