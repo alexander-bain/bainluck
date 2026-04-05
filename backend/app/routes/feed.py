@@ -1330,10 +1330,17 @@ async def _score_golf_tournaments(
 
     feed_items: list[dict] = []
 
+    # Tours worth showing in the feed (skip obscure tours like asian, sunshine, korn_ferry)
+    _FEED_TOURS = {"pga", "major", "dp_world", "lpga", "liv"}
+
     for t in tournaments:
         # Only include tournaments with golfer data
         golfers = t.get("golfers", [])
         if not golfers:
+            continue
+
+        # Only include relevant tours in the feed
+        if t.get("tour") not in _FEED_TOURS:
             continue
 
         # Only include winner/outright markets (skip top-20, make-cut, etc.)
@@ -1452,13 +1459,17 @@ def _score_tournament(t: dict, now: datetime) -> int:
     if t.get("is_major"):
         score += 15
 
-    # Tournaments starting soon get a boost
+    # Tournaments starting soon get a boost; stale ones get penalized
     if t.get("start_date"):
         try:
             start = datetime.fromisoformat(t["start_date"])
             days_until = (start.date() - now.date()).days
-            if days_until <= 0:
+            if days_until <= 0 and days_until >= -4:
+                # Currently in progress or just started (4-day tournament window)
                 score += 20
+            elif days_until < -4:
+                # Stale — started more than 4 days ago, probably over
+                return 0
             elif days_until <= 3:
                 score += 15
             elif days_until <= 7:

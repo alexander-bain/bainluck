@@ -146,6 +146,7 @@ _NOT_THE_OPEN_RE = re.compile(
 # Order matters: more specific patterns first
 _TOURNAMENT_PATTERNS = [
     (re.compile(r"(?:the\s+)?masters(?:\s+(?:tournament|golf|winner|champion))?(?!\s+(?:tour|bangkok|shanghai|madrid|tokyo|reykjavik|copenhagen))", re.I), "masters"),
+    (re.compile(r"augusta\s+national", re.I), "masters"),  # "Augusta National Invitational" etc.
     (re.compile(r"pga\s+championship", re.I), "pga_championship"),
     (re.compile(r"us\s+open|u\.s\.\s+open", re.I), "us_open"),
     (re.compile(r"the\s+open\s+championship|(?:the\s+)?open\s+championship|british\s+open|the\s+open\b", re.I), "the_open"),
@@ -281,7 +282,23 @@ TOUR_DISPLAY_NAMES = {
 }
 
 
-def _classify_tour(market_name: str, tournament_key: str, is_major: bool, is_womens: bool) -> str:
+# DataGolf tour codes → our tour keys
+_DG_TOUR_TO_KEY = {
+    "pga": "pga",
+    "euro": "dp_world",
+    "kft": "korn_ferry",
+    "opp": "asian",       # "opposite-field" / international events
+    "alt": "dp_world",    # alternate/co-sanctioned events
+}
+
+
+def _classify_tour(
+    market_name: str,
+    tournament_key: str,
+    is_major: bool,
+    is_womens: bool,
+    market_external_ids: list[str] | None = None,
+) -> str:
     """Classify a tournament into a tour. Returns tour key."""
     if is_major:
         return "major"
@@ -290,6 +307,14 @@ def _classify_tour(market_name: str, tournament_key: str, is_major: bool, is_wom
     for pattern, tour in _TOUR_CLASSIFICATION_PATTERNS:
         if pattern.search(market_name):
             return tour
+    # Check DataGolf external_id for authoritative tour classification
+    # e.g., "datagolf:euro:123:win" → "dp_world"
+    if market_external_ids:
+        for eid in market_external_ids:
+            if eid and eid.startswith("datagolf:"):
+                parts = eid.split(":")
+                if len(parts) >= 2 and parts[1] in _DG_TOUR_TO_KEY:
+                    return _DG_TOUR_TO_KEY[parts[1]]
     # Default to PGA Tour for non-major, non-women's, non-pattern-matched
     return "pga"
 
@@ -1024,13 +1049,15 @@ async def get_golf(
             or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
         )
 
-        # Classify tour
+        # Classify tour (use DataGolf external_ids for authoritative classification)
         tour_name_for_classify = display_name
         if tourn_markets:
             tour_name_for_classify = tourn_markets[0].name
+        market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
         tour = _classify_tour(
             tour_name_for_classify, tourn_key,
             tourn_key in MAJOR_TOURNAMENTS, is_womens,
+            market_external_ids=market_ext_ids,
         )
 
         tournaments.append({
@@ -1086,17 +1113,37 @@ async def get_golf(
                 t["end_date"] = sched["end_date"]
 
     # ========================================================================
-    # Filter out completed tournaments (end_date in the past, >1 day buffer)
+    # Filter out completed/stale tournaments
     # ========================================================================
     now_date = now.date()
     filtered_tournaments = []
     for t in tournaments:
+        # Filter by end_date (>1 day past end = completed)
         end_date_str = t.get("end_date")
         if end_date_str:
             try:
                 end_dt = datetime.fromisoformat(end_date_str).date()
                 if end_dt < now_date - timedelta(days=1):
                     logger.debug("Golf: filtering completed tournament '%s' (ended %s)", t["name"], end_dt)
+                    continue
+            except (ValueError, TypeError):
+                pass
+        # Fallback: filter by start_date when no end_date
+        # (tournaments starting >7 days ago with no end_date are stale)
+        elif t.get("start_date"):
+            try:
+                start_dt = datetime.fromisoformat(t["start_date"]).date()
+                if start_dt < now_date - timedelta(days=7):
+                    logger.debug("Golf: filtering stale tournament '%s' (started %s, no end_date)", t["name"], start_dt)
+                    continue
+            except (ValueError, TypeError):
+                pass
+        # Fallback: filter by resolution_date for tournaments with no schedule data
+        elif t.get("resolution_date"):
+            try:
+                res_dt = datetime.fromisoformat(t["resolution_date"]).date()
+                if res_dt < now_date - timedelta(days=7):
+                    logger.debug("Golf: filtering stale tournament '%s' (resolution %s)", t["name"], res_dt)
                     continue
             except (ValueError, TypeError):
                 pass
