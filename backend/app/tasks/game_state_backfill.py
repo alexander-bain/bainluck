@@ -333,6 +333,25 @@ def _write_periods_from_scoring_plays(
                 ) / (len(known) - 1)
                 period_timestamps[period_num] = prev_ts + timedelta(seconds=avg_gap)
 
+    # If we have period numbers from scoring plays but couldn't map most
+    # to timestamps (sparse score_timestamps), space them evenly between
+    # the timestamps we do have (or between commence_time and last known).
+    if len(period_timestamps) < 2 and len(period_first_score) >= 2 and commence_time:
+        # Use all available timestamp sources for game end estimate
+        all_known_ts = list(period_timestamps.values()) if period_timestamps else [commence_time]
+        game_start = commence_time
+        # Estimate end: last known timestamp or commence + 2.5 hours
+        game_end = max(all_known_ts) if all_known_ts else game_start
+        if (game_end - game_start).total_seconds() < 3600:
+            game_end = game_start + timedelta(hours=2, minutes=30)
+
+        duration = (game_end - game_start).total_seconds()
+        n = len(sorted_periods)
+        for i, pnum in enumerate(sorted_periods):
+            if pnum not in period_timestamps:
+                frac = i / max(n, 1)
+                period_timestamps[pnum] = game_start + timedelta(seconds=duration * frac)
+
     if len(period_timestamps) < 2:
         return 0
 
@@ -388,6 +407,7 @@ async def _fetch_and_write_espn_periods(
 
         scoring_plays = context.get("scoring_plays", [])
         if not scoring_plays:
+            logger.info(f"ESPN fetch for event {event.id}: no scoring_plays returned (espn_id={event.espn_id}, sport={sport_key})")
             return 0
 
         # Store for future use (if not already stored)
