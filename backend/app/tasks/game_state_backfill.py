@@ -74,6 +74,12 @@ async def _backfill_game_state(
             .where(
                 Event.status.in_(["completed", "closed"]),
                 ~has_scoring_play_period,
+                # Skip prediction market stub events — these are auto-created
+                # shells with no real game data. They don't have charts.
+                or_(
+                    Event.external_id.is_(None),
+                    ~Event.external_id.like("pm_%"),
+                ),
             )
             .order_by(Event.commence_time.desc())
             .limit(limit)
