@@ -2,20 +2,21 @@
 
 Finds completed/closed events with no period data in any source
 (ScoringPlay, WinProbSnapshot game_state, ESPNSnapshot) and
-reconstructs period boundaries from available data.
+reconstructs period boundaries from real data.
 
 Reconstruction strategies (in priority order):
-1. ESPN snapshot period field — copy to WinProbSnapshot game_state
-2. Score progression — detect score changes to infer period boundaries
-3. Timeline division — divide game timeline (from any data source) into
-   sport-appropriate periods using known period structure
+1. Event.box_score_data scoring_plays — already stored, has period numbers
+2. ESPN API fetch — call /summary for events with espn_id, get scoring_plays
+3. ESPN snapshot period field — copy existing period data to game_state
+4. Score snapshots + ESPN snapshots — match score changes to period transitions
 """
 
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from sqlalchemy import select, func, and_, or_, exists, text, literal, Integer
+from sqlalchemy import select, func, and_, or_, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tasks.base import get_task_session
@@ -29,164 +30,29 @@ from app.models.models import (
 
 logger = logging.getLogger(__name__)
 
-# Sports where we know the period structure and typical real-time duration.
-# duration_minutes is wall-clock time (includes timeouts, halftime, etc.)
-SPORT_PERIODS = {
-    "basketball_nba": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 150,
-        # Proportional timing: Q1 ends ~25%, halftime ~50%, Q3 ends ~72%, game ends ~100%
-        "splits": [0.0, 0.25, 0.50, 0.72],
-    },
-    "basketball_ncaab": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 120,
-        "splits": [0.0, 0.50],
-    },
-    "basketball_wncaab": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 130,
-        "splits": [0.0, 0.25, 0.50, 0.72],
-    },
-    "basketball_wnba": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 130,
-        "splits": [0.0, 0.25, 0.50, 0.72],
-    },
-    "americanfootball_nfl": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 190,
-        "splits": [0.0, 0.25, 0.52, 0.72],  # Halftime is longer in NFL
-    },
-    "americanfootball_ncaaf": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 200,
-        "splits": [0.0, 0.25, 0.52, 0.72],
-    },
-    "icehockey_nhl": {
-        "names": ["1st Period", "2nd Period", "3rd Period"],
-        "duration_minutes": 150,
-        "splits": [0.0, 0.36, 0.68],  # Intermissions between periods
-    },
-    "baseball_mlb": {
-        "names": ["Top 1st", "Top 2nd", "Top 3rd", "Top 4th", "Top 5th",
-                   "Top 6th", "Top 7th", "Top 8th", "Top 9th"],
-        "duration_minutes": 180,
-        "splits": [0.0, 0.11, 0.22, 0.33, 0.44, 0.55, 0.66, 0.77, 0.88],
-    },
-    "baseball_mlb_preseason": {
-        "names": ["Top 1st", "Top 2nd", "Top 3rd", "Top 4th", "Top 5th",
-                   "Top 6th", "Top 7th", "Top 8th", "Top 9th"],
-        "duration_minutes": 180,
-        "splits": [0.0, 0.11, 0.22, 0.33, 0.44, 0.55, 0.66, 0.77, 0.88],
-    },
-    "soccer_epl": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_spain_la_liga": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_uefa_champs_league": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_germany_bundesliga": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_italy_serie_a": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_france_ligue_one": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "soccer_usa_mls": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-}
-
-# Fallback: for sports not in the map, try to infer from prefix
-SPORT_PREFIX_PERIODS = {
-    "basketball": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 140,
-        "splits": [0.0, 0.25, 0.50, 0.72],
-    },
-    "americanfootball": {
-        "names": ["Q1", "Q2", "Q3", "Q4"],
-        "duration_minutes": 190,
-        "splits": [0.0, 0.25, 0.52, 0.72],
-    },
-    "icehockey": {
-        "names": ["1st Period", "2nd Period", "3rd Period"],
-        "duration_minutes": 150,
-        "splits": [0.0, 0.36, 0.68],
-    },
-    "soccer": {
-        "names": ["1st Half", "2nd Half"],
-        "duration_minutes": 115,
-        "splits": [0.0, 0.50],
-    },
-    "baseball": {
-        "names": ["Top 1st", "Top 2nd", "Top 3rd", "Top 4th", "Top 5th",
-                   "Top 6th", "Top 7th", "Top 8th", "Top 9th"],
-        "duration_minutes": 180,
-        "splits": [0.0, 0.11, 0.22, 0.33, 0.44, 0.55, 0.66, 0.77, 0.88],
-    },
-}
-
-
-def _get_period_config(sport_key: str) -> dict | None:
-    """Get period configuration for a sport key, with prefix fallback."""
-    if sport_key in SPORT_PERIODS:
-        return SPORT_PERIODS[sport_key]
-    # Try prefix match
-    prefix = sport_key.split("_")[0] if "_" in sport_key else sport_key
-    return SPORT_PREFIX_PERIODS.get(prefix)
-
 
 async def _backfill_game_state(
     limit: int = 500,
     sport_filter: str | None = None,
-    batch_size: int = 100,
+    batch_size: int = 50,
 ) -> dict:
     """Backfill missing period markers for completed events.
 
-    Processes events in batches. For each event missing period data,
-    tries to reconstruct from existing DB data.
-
-    Args:
-        limit: Max events to process per run.
-        sport_filter: Optional sport key prefix (e.g., "baseball" or "basketball_nba").
-        batch_size: DB commit batch size.
-
-    Returns:
-        Stats dict with counts.
+    Returns stats dict with counts.
     """
     stats = {
         "scanned": 0,
         "already_has_data": 0,
-        "fixed_from_espn": 0,
-        "fixed_from_scores": 0,
-        "fixed_from_timeline": 0,
+        "fixed_from_boxscore": 0,
+        "fixed_from_espn_fetch": 0,
+        "fixed_from_espn_snaps": 0,
         "unfixable": 0,
         "errors": 0,
+        "error_samples": [],
     }
 
     async with get_task_session() as session:
-        # Find completed events that have NO period data in ScoringPlay.
+        # Find completed events missing period data in ScoringPlay table.
         has_scoring_play_period = (
             select(literal(1))
             .where(
@@ -201,7 +67,6 @@ async def _backfill_game_state(
         query = (
             select(Event)
             .join(Sport, Event.sport_id == Sport.id)
-            .options()
             .where(
                 Event.status.in_(["completed", "closed"]),
                 ~has_scoring_play_period,
@@ -223,52 +88,46 @@ async def _backfill_game_state(
         for event in events:
             try:
                 fixed = await _try_fix_event(session, event)
-                if fixed == "espn":
-                    stats["fixed_from_espn"] += 1
+                if fixed == "boxscore":
+                    stats["fixed_from_boxscore"] += 1
                     fixed_count += 1
-                elif fixed == "scores":
-                    stats["fixed_from_scores"] += 1
+                elif fixed == "espn_fetch":
+                    stats["fixed_from_espn_fetch"] += 1
                     fixed_count += 1
-                elif fixed == "timeline":
-                    stats["fixed_from_timeline"] += 1
+                elif fixed == "espn_snaps":
+                    stats["fixed_from_espn_snaps"] += 1
                     fixed_count += 1
                 elif fixed == "has_data":
                     stats["already_has_data"] += 1
                 else:
                     stats["unfixable"] += 1
 
-                # Batch commits
                 if fixed_count > 0 and fixed_count % batch_size == 0:
                     await session.commit()
-                    logger.info(f"Game state backfill: committed batch ({fixed_count} fixed so far)")
+                    logger.info(f"Game state backfill: committed batch ({fixed_count} fixed)")
 
             except Exception as e:
                 stats["errors"] += 1
+                if len(stats["error_samples"]) < 5:
+                    stats["error_samples"].append(f"event {event.id}: {str(e)[:200]}")
                 logger.error(f"Game state backfill error for event {event.id}: {e}")
                 await session.rollback()
 
         if fixed_count > 0:
             await session.commit()
 
-    logger.info(
-        f"Game state backfill complete: scanned={stats['scanned']}, "
-        f"fixed_espn={stats['fixed_from_espn']}, "
-        f"fixed_scores={stats['fixed_from_scores']}, "
-        f"fixed_timeline={stats['fixed_from_timeline']}, "
-        f"already_had={stats['already_has_data']}, "
-        f"unfixable={stats['unfixable']}, errors={stats['errors']}"
-    )
+    logger.info(f"Game state backfill complete: {stats}")
     return stats
 
 
 async def _try_fix_event(session: AsyncSession, event: Event) -> str:
     """Try to reconstruct period markers for one event.
 
-    Returns: "espn", "scores", "timeline", "has_data", or "none".
+    Returns: "boxscore", "espn_fetch", "espn_snaps", "has_data", or "none".
     """
     event_id = event.id
 
-    # 1. Check if WinProbSnapshot already has game_state with period data.
+    # 0. Check if WinProbSnapshot already has real period data.
     wp_with_period = await session.execute(
         select(func.count())
         .select_from(WinProbSnapshot)
@@ -280,16 +139,16 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
                     WinProbSnapshot.game_state.has_key("period"),
                     WinProbSnapshot.game_state["period"].astext != "",
                     WinProbSnapshot.game_state["period"].astext != "null",
+                    WinProbSnapshot.game_state["period"].astext != "Final",
                 ),
                 WinProbSnapshot.game_state.has_key("inning"),
             ),
         )
     )
-    wp_period_count = wp_with_period.scalar() or 0
-    if wp_period_count >= 2:
+    if (wp_with_period.scalar() or 0) >= 2:
         return "has_data"
 
-    # Get sport key (needed by all strategies below)
+    # Get sport key
     sport_key = None
     if event.sport_id:
         sport_result = await session.execute(
@@ -297,9 +156,241 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
         )
         sport_key = sport_result.scalar()
 
-    # 2. Check ESPNSnapshot for period data — copy to WinProbSnapshot game_state
+    # Build a timestamp lookup from all available snapshot sources.
+    # Maps (home_score, away_score) → earliest wall-clock timestamp.
+    score_timestamps = await _build_score_timestamp_map(session, event_id)
+
+    # 1. Try Event.box_score_data (already stored from previous backfills)
+    box_score_plays = (event.box_score_data or {}).get("scoring_plays", [])
+    if box_score_plays:
+        periods_written = _write_periods_from_scoring_plays(
+            session, event_id, box_score_plays, score_timestamps, event.commence_time,
+        )
+        if periods_written >= 2:
+            return "boxscore"
+
+    # 2. Try fetching from ESPN API (if we have espn_id)
+    if event.espn_id and sport_key:
+        periods_written = await _fetch_and_write_espn_periods(
+            session, event, sport_key, score_timestamps,
+        )
+        if periods_written >= 2:
+            return "espn_fetch"
+
+    # 3. Try existing ESPN snapshot period data
+    periods_written = await _copy_espn_snapshot_periods(session, event_id)
+    if periods_written >= 2:
+        return "espn_snaps"
+
+    return "none"
+
+
+async def _build_score_timestamp_map(
+    session: AsyncSession, event_id: int
+) -> dict[tuple[int, int], datetime]:
+    """Build a map of (home_score, away_score) → earliest wall-clock timestamp.
+
+    Combines ESPN snapshots, score snapshots, and win_prob game_state to get
+    the best possible timestamp for each score state.
+    """
+    score_map: dict[tuple[int, int], datetime] = {}
+
+    def _record(home: int, away: int, ts: datetime):
+        key = (home, away)
+        if key not in score_map or ts < score_map[key]:
+            score_map[key] = ts
+
+    # Source 1: ESPN snapshots (most reliable — 60s frequency with scores)
     try:
         from app.models.models import ESPNSnapshot
+        espn_result = await session.execute(
+            select(ESPNSnapshot.home_score, ESPNSnapshot.away_score, ESPNSnapshot.captured_at)
+            .where(ESPNSnapshot.event_id == event_id)
+            .order_by(ESPNSnapshot.captured_at)
+        )
+        for row in espn_result.all():
+            if row.home_score is not None and row.away_score is not None:
+                _record(int(row.home_score), int(row.away_score), row.captured_at)
+    except Exception:
+        pass
+
+    # Source 2: Score snapshots
+    try:
+        from app.models.models import ScoreSnapshot
+        score_result = await session.execute(
+            select(ScoreSnapshot.home_score, ScoreSnapshot.away_score, ScoreSnapshot.captured_at)
+            .where(ScoreSnapshot.event_id == event_id)
+            .order_by(ScoreSnapshot.captured_at)
+        )
+        for row in score_result.all():
+            if row.home_score is not None and row.away_score is not None:
+                _record(int(row.home_score), int(row.away_score), row.captured_at)
+    except Exception:
+        pass
+
+    # Source 3: WinProbSnapshot game_state with scores
+    wp_result = await session.execute(
+        select(WinProbSnapshot.game_state, WinProbSnapshot.captured_at)
+        .where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.game_state.isnot(None),
+        )
+        .order_by(WinProbSnapshot.captured_at)
+    )
+    for row in wp_result.all():
+        gs = row.game_state or {}
+        hs = gs.get("home_score")
+        aws = gs.get("away_score")
+        if hs is not None and aws is not None:
+            _record(int(hs), int(aws), row.captured_at)
+
+    return score_map
+
+
+def _write_periods_from_scoring_plays(
+    session: AsyncSession,
+    event_id: int,
+    scoring_plays: list[dict],
+    score_timestamps: dict[tuple[int, int], datetime],
+    commence_time: Optional[datetime],
+) -> int:
+    """Extract distinct periods from ESPN scoring plays and write as WinProbSnapshot.
+
+    Maps each period to a wall-clock timestamp by matching post-play scores
+    to our score_timestamp map. Returns number of periods written.
+    """
+    # Group plays by period, find the first score in each period
+    period_first_score: dict[int, tuple[int, int]] = {}
+    for play in scoring_plays:
+        period = play.get("period")
+        if period is None:
+            continue
+        period = int(period)
+        if period not in period_first_score:
+            hs = play.get("home_score")
+            aws = play.get("away_score")
+            if hs is not None and aws is not None:
+                period_first_score[period] = (int(hs), int(aws))
+
+    if not period_first_score:
+        return 0
+
+    # Map periods to timestamps
+    period_timestamps: dict[int, datetime] = {}
+    for period_num, (hs, aws) in sorted(period_first_score.items()):
+        ts = score_timestamps.get((hs, aws))
+        if ts:
+            period_timestamps[period_num] = ts
+
+    # For period 1, use commence_time if no score match
+    if 1 not in period_timestamps and commence_time:
+        period_timestamps[1] = commence_time
+
+    # Also try: for periods without a direct score match, find the closest
+    # score_timestamp between the previous and next period timestamps
+    sorted_periods = sorted(period_first_score.keys())
+    for period_num in sorted_periods:
+        if period_num in period_timestamps:
+            continue
+        # Find bracketing timestamps
+        prev_ts = None
+        next_ts = None
+        for p in sorted_periods:
+            if p < period_num and p in period_timestamps:
+                prev_ts = period_timestamps[p]
+            if p > period_num and p in period_timestamps and next_ts is None:
+                next_ts = period_timestamps[p]
+        # Use midpoint of bracket as estimate
+        if prev_ts and next_ts:
+            mid = prev_ts + (next_ts - prev_ts) / 2
+            period_timestamps[period_num] = mid
+        elif prev_ts:
+            # Estimate based on average period duration from known data
+            known = sorted(period_timestamps.items())
+            if len(known) >= 2:
+                avg_gap = sum(
+                    (known[i+1][1] - known[i][1]).total_seconds()
+                    for i in range(len(known)-1)
+                ) / (len(known) - 1)
+                period_timestamps[period_num] = prev_ts + timedelta(seconds=avg_gap)
+
+    if len(period_timestamps) < 2:
+        return 0
+
+    # Write period markers
+    written = 0
+    for period_num, ts in sorted(period_timestamps.items()):
+        period_label = _period_num_to_label(period_num, len(sorted_periods))
+        session.add(WinProbSnapshot(
+            event_id=event_id,
+            source="backfill",
+            captured_at=ts,
+            game_state={"period": period_label, "backfilled": True},
+        ))
+        written += 1
+
+    return written
+
+
+def _period_num_to_label(period_num: int, total_periods: int) -> str:
+    """Convert ESPN period number to display label based on total periods."""
+    ordinals = {1: "1st", 2: "2nd", 3: "3rd"}
+    ordinal = ordinals.get(period_num, f"{period_num}th")
+
+    if total_periods <= 3:
+        # Hockey-style periods or soccer halves
+        if total_periods == 2:
+            return f"{ordinal} Half"
+        return f"{ordinal} Period"
+    elif total_periods <= 4:
+        # Basketball/football quarters
+        return f"{ordinal} Quarter"
+    else:
+        # Baseball innings (period > 4 total periods)
+        return f"Top {ordinal}"
+
+
+async def _fetch_and_write_espn_periods(
+    session: AsyncSession,
+    event: Event,
+    sport_key: str,
+    score_timestamps: dict[tuple[int, int], datetime],
+) -> int:
+    """Fetch scoring plays from ESPN API and write period markers.
+
+    Only called for events with espn_id. Stores box_score_data on the event
+    for future use.
+    """
+    try:
+        from app.services.espn_api import ESPNApiClient
+
+        async with ESPNApiClient() as espn:
+            context = await espn.get_event_context(sport_key, event.espn_id)
+
+        scoring_plays = context.get("scoring_plays", [])
+        if not scoring_plays:
+            return 0
+
+        # Store for future use (if not already stored)
+        if not event.box_score_data:
+            event.box_score_data = {"scoring_plays": scoring_plays}
+        elif "scoring_plays" not in event.box_score_data:
+            event.box_score_data = {**event.box_score_data, "scoring_plays": scoring_plays}
+
+        return _write_periods_from_scoring_plays(
+            session, event.id, scoring_plays, score_timestamps, event.commence_time,
+        )
+
+    except Exception as e:
+        logger.debug(f"ESPN fetch failed for event {event.id}: {e}")
+        return 0
+
+
+async def _copy_espn_snapshot_periods(session: AsyncSession, event_id: int) -> int:
+    """Copy period data from ESPNSnapshot records into WinProbSnapshot game_state."""
+    try:
+        from app.models.models import ESPNSnapshot
+
         espn_result = await session.execute(
             select(ESPNSnapshot)
             .where(
@@ -312,139 +403,59 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
         )
         espn_snaps = espn_result.scalars().all()
 
-        # Filter out pre-game date strings in Python
+        # Filter date strings
         _DATE_RE = re.compile(
             r"(?:January|February|March|April|May|June|July|August|September|October|November|December)",
             re.IGNORECASE,
         )
         espn_snaps = [s for s in espn_snaps if not _DATE_RE.search(s.period)]
 
-        if espn_snaps:
-            seen_periods: dict[str, datetime] = {}
-            for snap in espn_snaps:
-                period = snap.period.strip()
-                if period and period not in seen_periods:
-                    seen_periods[period] = snap.captured_at
+        if not espn_snaps:
+            return 0
 
-            if len(seen_periods) >= 2:
-                for period, ts in seen_periods.items():
-                    existing = await session.execute(
-                        select(func.count())
-                        .select_from(WinProbSnapshot)
-                        .where(
-                            WinProbSnapshot.event_id == event_id,
-                            WinProbSnapshot.source == "espn",
-                            WinProbSnapshot.captured_at == ts,
-                        )
+        # Group by period, take first timestamp per unique period
+        seen_periods: dict[str, datetime] = {}
+        for snap in espn_snaps:
+            period = snap.period.strip()
+            if period and period not in seen_periods:
+                seen_periods[period] = snap.captured_at
+
+        if len(seen_periods) < 2:
+            return 0
+
+        written = 0
+        for period, ts in seen_periods.items():
+            # Check for existing snapshot at this timestamp
+            existing = await session.execute(
+                select(func.count())
+                .select_from(WinProbSnapshot)
+                .where(
+                    WinProbSnapshot.event_id == event_id,
+                    WinProbSnapshot.source == "espn",
+                    WinProbSnapshot.captured_at == ts,
+                )
+            )
+            if (existing.scalar() or 0) > 0:
+                await session.execute(
+                    WinProbSnapshot.__table__.update()
+                    .where(
+                        WinProbSnapshot.event_id == event_id,
+                        WinProbSnapshot.source == "espn",
+                        WinProbSnapshot.captured_at == ts,
                     )
-                    if (existing.scalar() or 0) > 0:
-                        await session.execute(
-                            WinProbSnapshot.__table__.update()
-                            .where(
-                                WinProbSnapshot.event_id == event_id,
-                                WinProbSnapshot.source == "espn",
-                                WinProbSnapshot.captured_at == ts,
-                            )
-                            .values(game_state={"period": period, "backfilled": True})
-                        )
-                    else:
-                        session.add(WinProbSnapshot(
-                            event_id=event_id,
-                            source="espn",
-                            captured_at=ts,
-                            game_state={"period": period, "backfilled": True},
-                        ))
-                return "espn"
-    except Exception as e:
-        logger.debug(f"ESPN backfill failed for event {event_id}: {e}")
+                    .values(game_state={"period": period, "backfilled": True})
+                )
+            else:
+                session.add(WinProbSnapshot(
+                    event_id=event_id,
+                    source="espn",
+                    captured_at=ts,
+                    game_state={"period": period, "backfilled": True},
+                ))
+            written += 1
 
-    # 3. Timeline division — use ANY available timestamp source to determine
-    #    game start/end, then place period markers at sport-appropriate proportions.
-    #    This is the broadest strategy: works for any event with odds data.
-    period_config = _get_period_config(sport_key or "")
-    if not period_config:
-        return "none"
-
-    try:
-        # Determine game timeline from multiple sources (most to least reliable)
-        game_start = event.commence_time
-        game_end = None
-
-        # Source A: Last odds snapshot timestamp (most common data source)
-        last_odds = await session.execute(
-            select(func.max(OddsSnapshot.captured_at))
-            .where(OddsSnapshot.event_id == event_id)
-        )
-        odds_end = last_odds.scalar()
-
-        # Source B: Last win prob snapshot timestamp
-        last_wp = await session.execute(
-            select(func.max(WinProbSnapshot.captured_at))
-            .where(WinProbSnapshot.event_id == event_id)
-        )
-        wp_end = last_wp.scalar()
-
-        # Source C: Last ESPN snapshot timestamp
-        try:
-            from app.models.models import ESPNSnapshot
-            last_espn = await session.execute(
-                select(func.max(ESPNSnapshot.captured_at))
-                .where(ESPNSnapshot.event_id == event_id)
-            )
-            espn_end = last_espn.scalar()
-        except Exception:
-            espn_end = None
-
-        # Source D: Last score snapshot timestamp
-        try:
-            from app.models.models import ScoreSnapshot
-            last_score = await session.execute(
-                select(func.max(ScoreSnapshot.captured_at))
-                .where(ScoreSnapshot.event_id == event_id)
-            )
-            score_end = last_score.scalar()
-        except Exception:
-            score_end = None
-
-        # Pick the latest end time from all sources
-        candidates = [t for t in [odds_end, wp_end, espn_end, score_end] if t is not None]
-        if not candidates:
-            return "none"  # No data at all
-
-        game_end = max(candidates)
-
-        # Sanity: game must have lasted at least 30 minutes
-        if game_start is None:
-            return "none"
-        duration = (game_end - game_start).total_seconds()
-        if duration < 1800:  # 30 min minimum
-            return "none"
-
-        # Cap duration at expected max (e.g., don't let stale bookmaker data
-        # from 20 min after the game stretch the timeline)
-        expected_duration = period_config["duration_minutes"] * 60
-        max_duration = expected_duration * 1.4  # 40% buffer for OT, delays
-        if duration > max_duration:
-            # Clip game_end to expected duration
-            game_end = game_start + timedelta(seconds=expected_duration)
-            duration = expected_duration
-
-        # Place period markers at proportional splits
-        period_names = period_config["names"]
-        splits = period_config["splits"]
-
-        for i, (pname, split_frac) in enumerate(zip(period_names, splits)):
-            marker_ts = game_start + timedelta(seconds=duration * split_frac)
-            session.add(WinProbSnapshot(
-                event_id=event_id,
-                source="backfill",
-                captured_at=marker_ts,
-                game_state={"period": pname, "backfilled": True},
-            ))
-
-        return "timeline"
+        return written
 
     except Exception as e:
-        logger.debug(f"Timeline backfill failed for event {event_id}: {e}")
-
-    return "none"
+        logger.debug(f"ESPN snapshot copy failed for event {event_id}: {e}")
+        return 0
