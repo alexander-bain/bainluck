@@ -53,6 +53,7 @@ async def _backfill_game_state(
         # Diagnostics
         "had_espn_id": 0,
         "had_box_score_data": 0,
+        "unfixable_samples": [],
     }
 
     async with get_task_session() as session:
@@ -118,6 +119,16 @@ async def _backfill_game_state(
                     stats["already_has_data"] += 1
                 else:
                     stats["unfixable"] += 1
+                    if len(stats["unfixable_samples"]) < 10:
+                        stats["unfixable_samples"].append({
+                            "id": event.id,
+                            "ext_id": event.external_id,
+                            "espn_id": event.espn_id,
+                            "sport_id": event.sport_id,
+                            "home": event.home_team_name,
+                            "away": event.away_team_name,
+                            "has_boxscore": bool(event.box_score_data),
+                        })
 
                 if fixed_count > 0 and fixed_count % batch_size == 0:
                     await session.commit()
@@ -185,6 +196,14 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
         )
         if periods_written >= 2:
             return "boxscore"
+        else:
+            # Diagnose why boxscore failed
+            plays_with_period = sum(1 for p in box_score_plays if p.get("period") is not None)
+            logger.info(
+                f"Event {event_id}: boxscore had {len(box_score_plays)} plays, "
+                f"{plays_with_period} with period, {len(score_timestamps)} score timestamps, "
+                f"wrote {periods_written} periods"
+            )
 
     # 2. Try fetching from ESPN API (if we have espn_id)
     if event.espn_id and sport_key:
@@ -287,10 +306,18 @@ def _write_periods_from_scoring_plays(
     # Group plays by period, find the first score in each period
     period_first_score: dict[int, tuple[int, int]] = {}
     for play in scoring_plays:
-        period = play.get("period")
-        if period is None:
+        raw_period = play.get("period")
+        if raw_period is None:
             continue
-        period = int(period)
+        # Handle both parsed format (int) and raw ESPN format ({"number": 1})
+        if isinstance(raw_period, dict):
+            raw_period = raw_period.get("number")
+        if raw_period is None:
+            continue
+        try:
+            period = int(raw_period)
+        except (ValueError, TypeError):
+            continue
         if period not in period_first_score:
             hs = play.get("home_score")
             aws = play.get("away_score")
