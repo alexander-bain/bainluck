@@ -623,6 +623,16 @@ export default function OddsChart({
       }
     }
 
+    // Ensure period boundary timestamps exist as chart data points.
+    // ReferenceLine on a categorical x-axis only renders when the x value
+    // matches an existing category. Without this, boundaries that fall
+    // between data points silently vanish.
+    if (periodBoundaries && periodBoundaries.length > 0) {
+      for (const b of periodBoundaries) {
+        ensurePoint(b.timestamp);
+      }
+    }
+
     // Forward-fill game state: carry most recent score/period/clock to subsequent points
     const sorted = Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
@@ -642,7 +652,7 @@ export default function OddsChart({
     }
 
     return sorted;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays, timeRange]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.

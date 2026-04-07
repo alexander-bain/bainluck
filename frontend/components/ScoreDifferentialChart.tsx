@@ -361,6 +361,13 @@ export default function ScoreDifferentialChart({
       }
     }
 
+    // Ensure period boundary timestamps have matching chart categories
+    if (periodBoundaries && periodBoundaries.length > 0) {
+      for (const b of periodBoundaries) {
+        ensurePoint(b.timestamp);
+      }
+    }
+
     // Add prediction market implied spread as a constant line at current value
     // (This is a snapshot, not a time series — we only have the current implied spread)
     if (pmSpreadData?.implied_spreads) {
@@ -379,7 +386,7 @@ export default function ScoreDifferentialChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries]);
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
