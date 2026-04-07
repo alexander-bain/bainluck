@@ -46,9 +46,13 @@ async def _backfill_game_state(
         "fixed_from_boxscore": 0,
         "fixed_from_espn_fetch": 0,
         "fixed_from_espn_snaps": 0,
+        "fixed_start_end": 0,
         "unfixable": 0,
         "errors": 0,
         "error_samples": [],
+        # Diagnostics
+        "had_espn_id": 0,
+        "had_box_score_data": 0,
     }
 
     async with get_task_session() as session:
@@ -86,6 +90,10 @@ async def _backfill_game_state(
         fixed_count = 0
 
         for event in events:
+            if event.espn_id:
+                stats["had_espn_id"] += 1
+            if event.box_score_data:
+                stats["had_box_score_data"] += 1
             try:
                 fixed = await _try_fix_event(session, event)
                 if fixed == "boxscore":
@@ -96,6 +104,9 @@ async def _backfill_game_state(
                     fixed_count += 1
                 elif fixed == "espn_snaps":
                     stats["fixed_from_espn_snaps"] += 1
+                    fixed_count += 1
+                elif fixed == "start_end":
+                    stats["fixed_start_end"] += 1
                     fixed_count += 1
                 elif fixed == "has_data":
                     stats["already_has_data"] += 1
@@ -181,6 +192,14 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
     periods_written = await _copy_espn_snapshot_periods(session, event_id)
     if periods_written >= 2:
         return "espn_snaps"
+
+    # 4. Final fallback: write "Start" and "Final" markers using real timestamps.
+    #    commence_time for start, latest data point for end.
+    #    Not as useful as period-level granularity, but gives the chart
+    #    anchoring context rather than nothing.
+    wrote_start_end = await _write_start_end_markers(session, event)
+    if wrote_start_end:
+        return "start_end"
 
     return "none"
 
@@ -382,7 +401,7 @@ async def _fetch_and_write_espn_periods(
         )
 
     except Exception as e:
-        logger.debug(f"ESPN fetch failed for event {event.id}: {e}")
+        logger.warning(f"ESPN fetch failed for event {event.id} (espn_id={event.espn_id}): {e}")
         return 0
 
 
@@ -459,3 +478,87 @@ async def _copy_espn_snapshot_periods(session: AsyncSession, event_id: int) -> i
     except Exception as e:
         logger.debug(f"ESPN snapshot copy failed for event {event_id}: {e}")
         return 0
+
+
+async def _write_start_end_markers(session: AsyncSession, event: Event) -> bool:
+    """Write Start and Final markers using real timestamps.
+
+    Uses commence_time for start and the latest data point from any
+    source for end. Returns True if markers were written.
+    """
+    event_id = event.id
+    start_time = event.commence_time
+    if not start_time:
+        return False
+
+    # Find latest data timestamp across all sources
+    end_candidates: list[datetime] = []
+
+    try:
+        r = await session.execute(
+            select(func.max(OddsSnapshot.captured_at))
+            .where(OddsSnapshot.event_id == event_id)
+        )
+        v = r.scalar()
+        if v:
+            end_candidates.append(v)
+    except Exception:
+        pass
+
+    try:
+        r = await session.execute(
+            select(func.max(WinProbSnapshot.captured_at))
+            .where(WinProbSnapshot.event_id == event_id)
+        )
+        v = r.scalar()
+        if v:
+            end_candidates.append(v)
+    except Exception:
+        pass
+
+    try:
+        from app.models.models import ESPNSnapshot
+        r = await session.execute(
+            select(func.max(ESPNSnapshot.captured_at))
+            .where(ESPNSnapshot.event_id == event_id)
+        )
+        v = r.scalar()
+        if v:
+            end_candidates.append(v)
+    except Exception:
+        pass
+
+    try:
+        from app.models.models import ScoreSnapshot
+        r = await session.execute(
+            select(func.max(ScoreSnapshot.captured_at))
+            .where(ScoreSnapshot.event_id == event_id)
+        )
+        v = r.scalar()
+        if v:
+            end_candidates.append(v)
+    except Exception:
+        pass
+
+    if not end_candidates:
+        return False
+
+    end_time = max(end_candidates)
+
+    # Sanity: game must have lasted at least 30 minutes
+    if (end_time - start_time).total_seconds() < 1800:
+        return False
+
+    session.add(WinProbSnapshot(
+        event_id=event_id,
+        source="backfill",
+        captured_at=start_time,
+        game_state={"period": "Start", "backfilled": True},
+    ))
+    session.add(WinProbSnapshot(
+        event_id=event_id,
+        source="backfill",
+        captured_at=end_time,
+        game_state={"period": "Final", "backfilled": True},
+    ))
+    return True

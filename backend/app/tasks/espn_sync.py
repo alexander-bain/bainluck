@@ -486,7 +486,7 @@ async def _sync_espn_live_events():
                                     away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
                                     game_state={
                                         "clock": ee.clock,
-                                        "period": _sanitize_period(ee.status_detail),
+                                        "period": _sanitize_period(ee.status_detail) or (str(ee.period) if ee.period else None),
                                         "home_score": ee.home_score,
                                         "away_score": ee.away_score,
                                     },
@@ -536,7 +536,7 @@ async def _sync_espn_live_events():
                                         away_win_probability=round(1.0 - stat_wp, 4),
                                         game_state={
                                             "clock": ee.clock,
-                                            "period": _sanitize_period(ee.status_detail),
+                                            "period": period_str,
                                             "home_score": ee.home_score,
                                             "away_score": ee.away_score,
                                             "pregame_spread": pregame_spread,
