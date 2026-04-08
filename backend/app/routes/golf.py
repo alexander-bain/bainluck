@@ -915,15 +915,20 @@ async def get_golf(
         latest_resolution = None
 
         # ----------------------------------------------------------------
-        # Per-source market dedup: when a source has multiple markets for
-        # the same tournament (e.g., Kalshi winner + tour prop + nationality
-        # prop + score prop + cross-sport), keep only the one with the most
-        # golfer-like outcomes.  Winner markets have 50-100+ golfer names;
-        # prop markets have 4-10 outcomes that fail the name filter.
+        # Per-source market dedup: when a source has multiple WINNER-type
+        # markets for the same tournament (e.g., Kalshi winner + tour prop +
+        # nationality prop + cross-sport), keep only the one with the most
+        # golfer-like outcomes.  Non-winner markets (Top 5/10/20, Make Cut)
+        # are excluded from dedup so they still appear on the detail page.
         # ----------------------------------------------------------------
-        _source_best: dict[str, int] = {}  # source -> best market id
+        _source_best: dict[str, int] = {}  # source -> best winner market id
+        _dedup_candidates: set[int] = set()  # market ids in the dedup pool
         _source_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
         for m in tourn_markets:
+            # Non-winner markets (Top 5, Top 10, Make Cut, etc.) are excluded
+            # from dedup — they're needed for the detail page sub-groups.
+            if _NON_WINNER_MARKET_RE.search(m.name):
+                continue
             src = m.source or "unknown"
             golfer_count = sum(
                 1 for o in m.outcomes
@@ -932,6 +937,7 @@ async def get_golf(
                 and not _PROP_OUTCOME_RE.search(o.name.strip())
             )
             _source_groups[src].append((m.id, golfer_count))
+            _dedup_candidates.add(m.id)
 
         for src, candidates in _source_groups.items():
             best_id, best_count = max(candidates, key=lambda x: x[1])
@@ -939,7 +945,7 @@ async def get_golf(
             if len(candidates) > 1:
                 skipped = len(candidates) - 1
                 logger.info(
-                    "Golf dedup: source '%s' has %d markets for %s, "
+                    "Golf dedup: source '%s' has %d winner markets for %s, "
                     "selected market %d (%d golfer outcomes, skipping %d)",
                     src, len(candidates), tourn_key, best_id, best_count, skipped,
                 )
@@ -960,8 +966,9 @@ async def get_golf(
                     latest_resolution = market.resolution_date
 
             # Per-source dedup: only process the best winner market per source.
+            # Non-winner markets (Top 5/10/20) bypass dedup entirely.
             # Metadata (market_ids, sources, timing) is still tracked for all.
-            if market.id != _source_best.get(source):
+            if market.id in _dedup_candidates and market.id != _source_best.get(source):
                 continue
 
             # Guard: participation/field markets have outcome probabilities
@@ -1134,8 +1141,9 @@ async def get_golf(
             # Use resolution date as tiebreaker within the tour events band (50-98)
             order_idx = 50
 
-        # Collect deduplicated market names for context labels
-        market_names = sorted({m.name for m in tourn_markets})
+        # Collect market names parallel to market_ids (needed by detail page
+        # to build sub-groups via _detect_market_type)
+        market_names = [m.name for m in tourn_markets]
 
         # Detect women's / LPGA tournaments
         is_womens = (
