@@ -220,14 +220,39 @@ TOURNAMENT_ORDER = [
 # Max golfers to return per tournament
 _MAX_GOLFERS = 15
 
-# Outcomes that are not individual golfer names — skip these
+# Outcomes that are not individual golfer names — skip these.
+# Catches prop market outcomes that leak through when Kalshi groups
+# multiple market types (winner, tour, nationality, score, margin)
+# under the same tournament name.
 _PROP_OUTCOME_RE = re.compile(
     r"(?:"
     r"\d\+\s|"                   # "1+ golf major..."
     r"\bany\s+golfer\b|"         # "Any golfer"
     r"\bcombined\b|"             # "...combined"
     r"\band\b.*\bcombined\b|"    # "X, Y, and Z combined"
-    r"^yes$|^no$"                # Binary yes/no outcomes
+    r"^yes$|^no$|"               # Binary yes/no outcomes
+    # Tour name outcomes (from "tour of winner" props)
+    r"^pga\s+tour$|"             # "PGA Tour"
+    r"^liv$|"                    # "LIV"
+    r"^dp\s+world|"              # "DP World Tour"
+    r"^european\s+tour|"         # "European Tour"
+    r"^korn\s+ferry|"            # "Korn Ferry Tour"
+    r"^asian\s+tour|"            # "Asian Tour"
+    # Country/region outcomes (from "nationality of winner" props)
+    r"\bunited\s+states\b|"      # "United States"
+    r"\bunited\s+kingdom\b|"     # "United Kingdom & Ireland"
+    r"\bcontinental\s+europe\b|" # "Continental Europe"
+    r"\brest\s+of\s+(?:the\s+)?world\b|" # "Rest of World"
+    r"^(?:europe|asia|africa|australia|international)$|"  # Single-word regions
+    # Score/margin outcomes (from "winning score" and "margin" props)
+    r"\bexactly\s+\d+|"          # "Exactly 1 stroke", "Exactly 0 strokes"
+    r"\bstroke|"                  # Anything with "stroke(s)"
+    r"\bwinning\s+score|"        # "Winning Score: -13 to -15"
+    r"-\d+\s+to\s+-\d+|"         # Score ranges like "-13 to -15"
+    r"\bunder\s+par\b|"          # "Under par" props
+    r"\bover\s+par\b|"           # "Over par" props
+    r"\bbogey|"                   # "Bogey-free round" etc.
+    r"\bbirdie"                   # "Most birdies" etc.
     r")",
     re.I,
 )
@@ -250,7 +275,19 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bhole[- ]in[- ]one\b|"    # Hole-in-one props
     r"\bplayoff\b|"              # "Will there be a playoff"
     r"\bwill\b.*\bplay\b|"       # "Will X play in..."
-    r"\bcaptain\b"               # "U.S. Team Captain at 2027 Ryder Cup"
+    r"\bcaptain\b|"              # "U.S. Team Captain at 2027 Ryder Cup"
+    # Prop market types (Kalshi creates separate events for these)
+    r"\bnationality\b|"          # "Nationality of Winner"
+    r"\bcountry\b.*\bwinner\b|"  # "Country of Winner"
+    r"\btour\b.*\bwinner\b|"     # "Tour of Winner"
+    r"\bwinner'?s?\s+tour\b|"    # "Winner's Tour"
+    r"\bwinning\s+score\b|"      # "Winning Score"
+    r"\bscore\s+range\b|"        # "Score Range"
+    r"\bmargin\s+of\s+victory\b|" # "Margin of Victory"
+    r"\bwinning\s+margin\b|"     # "Winning Margin"
+    r"\bmargin\s+in\s+stroke|"   # "Margin in strokes"
+    r"\b(?:over|under)\s+par\b|" # "Over/Under Par"
+    r"\bstroke[s]?\s+(?:margin|lead|ahead)\b" # "Strokes margin/lead"
     r")",
     re.I,
 )
