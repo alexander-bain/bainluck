@@ -914,6 +914,36 @@ async def get_golf(
         earliest_commence = None
         latest_resolution = None
 
+        # ----------------------------------------------------------------
+        # Per-source market dedup: when a source has multiple markets for
+        # the same tournament (e.g., Kalshi winner + tour prop + nationality
+        # prop + score prop + cross-sport), keep only the one with the most
+        # golfer-like outcomes.  Winner markets have 50-100+ golfer names;
+        # prop markets have 4-10 outcomes that fail the name filter.
+        # ----------------------------------------------------------------
+        _source_best: dict[str, int] = {}  # source -> best market id
+        _source_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        for m in tourn_markets:
+            src = m.source or "unknown"
+            golfer_count = sum(
+                1 for o in m.outcomes
+                if o.current_probability is not None
+                and o.name.strip().lower() not in ("tie", "field", "other", "the field")
+                and not _PROP_OUTCOME_RE.search(o.name.strip())
+            )
+            _source_groups[src].append((m.id, golfer_count))
+
+        for src, candidates in _source_groups.items():
+            best_id, best_count = max(candidates, key=lambda x: x[1])
+            _source_best[src] = best_id
+            if len(candidates) > 1:
+                skipped = len(candidates) - 1
+                logger.info(
+                    "Golf dedup: source '%s' has %d markets for %s, "
+                    "selected market %d (%d golfer outcomes, skipping %d)",
+                    src, len(candidates), tourn_key, best_id, best_count, skipped,
+                )
+
         for market in tourn_markets:
             market_ids.append(market.id)
             market_sources.append(market.source or "unknown")
@@ -928,6 +958,11 @@ async def get_golf(
             if market.resolution_date:
                 if latest_resolution is None or market.resolution_date > latest_resolution:
                     latest_resolution = market.resolution_date
+
+            # Per-source dedup: only process the best winner market per source.
+            # Metadata (market_ids, sources, timing) is still tracked for all.
+            if market.id != _source_best.get(source):
+                continue
 
             # Guard: participation/field markets have outcome probabilities
             # that sum to far more than 100% (each golfer has 80-95% chance of
