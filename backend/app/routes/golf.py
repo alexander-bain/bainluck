@@ -1509,7 +1509,7 @@ _MARKET_TYPE_PATTERNS = [
     (re.compile(r"\bTop\s+5\b", re.I), "top_5", "Top 5"),
     (re.compile(r"\bTop\s+10\b", re.I), "top_10", "Top 10"),
     (re.compile(r"\bTop\s+20\b", re.I), "top_20", "Top 20"),
-    (re.compile(r"\bMa[dk]e\s+Cut\b", re.I), "make_cut", "Make Cut"),
+    (re.compile(r"\bMa[dk]e\s+(?:the\s+)?Cut\b", re.I), "make_cut", "Make Cut"),
     (re.compile(r"\bRound\s+\d+\s+Leader\b", re.I), "round_leader", "Round Leader"),
 ]
 
