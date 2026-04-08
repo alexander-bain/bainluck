@@ -146,7 +146,10 @@ _NOT_THE_OPEN_RE = re.compile(
 # Order matters: more specific patterns first
 _TOURNAMENT_PATTERNS = [
     (re.compile(r"(?:the\s+)?masters(?:\s+(?:tournament|golf|winner|champion))?(?!\s+(?:tour|bangkok|shanghai|madrid|tokyo|reykjavik|copenhagen))", re.I), "masters"),
-    (re.compile(r"augusta\s+national", re.I), "masters"),  # "Augusta National Invitational" etc.
+    # NOTE: "Augusta National Invitational" is a Kalshi participation/field
+    # market, NOT a winner market. Do NOT map it to "masters" — its high
+    # per-golfer probabilities (80-95%) corrupt winner market averages.
+    # It is suppressed below via the market probability sum guard.
     (re.compile(r"pga\s+championship", re.I), "pga_championship"),
     (re.compile(r"us\s+open|u\.s\.\s+open", re.I), "us_open"),
     (re.compile(r"the\s+open\s+championship|(?:the\s+)?open\s+championship|british\s+open|the\s+open\b", re.I), "the_open"),
@@ -889,6 +892,21 @@ async def get_golf(
                 if latest_resolution is None or market.resolution_date > latest_resolution:
                     latest_resolution = market.resolution_date
 
+            # Guard: participation/field markets have outcome probabilities
+            # that sum to far more than 100% (each golfer has 80-95% chance of
+            # being in the field). Detect and route to prop markets.
+            outcome_prob_sum = sum(
+                float(o.current_probability)
+                for o in market.outcomes
+                if o.current_probability is not None
+            )
+            if outcome_prob_sum > 1.5:
+                logger.info(
+                    "Golf: skipping non-winner market '%s' (source=%s, outcome_sum=%.2f)",
+                    market.name, source, outcome_prob_sum,
+                )
+                continue
+
             # Non-winner markets (captain, participation, placement, etc.)
             # are shown separately with proper labels — not mixed into winner odds.
             if _NON_WINNER_MARKET_RE.search(market.name):
@@ -944,13 +962,11 @@ async def get_golf(
                     golfer_data[key] = {
                         "name": display_name,
                         "sources": {},
-                        "probabilities": [],
                         "movement_24h": None,
                         "opening_probability": None,
                     }
 
                 golfer_data[key]["sources"][source_label] = round(prob, 3)
-                golfer_data[key]["probabilities"].append(prob)
 
                 # Compute 24h movement from snapshots
                 if outcome.id in prob_24h_ago:
@@ -989,10 +1005,12 @@ async def get_golf(
                     logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
                 golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
 
-        # Compute average probability
+        # Compute average probability — one value per source (deduplicates
+        # if the same source contributed multiple markets to this tournament)
         golfers = []
         for data in golfer_data.values():
-            avg_prob = sum(data["probabilities"]) / len(data["probabilities"])
+            source_vals = list(data["sources"].values())
+            avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
             golfers.append({
                 "name": data["name"],
                 "probability": avg_prob,
@@ -1003,6 +1021,10 @@ async def get_golf(
 
         # Sort by probability descending
         golfers.sort(key=lambda g: g["probability"], reverse=True)
+
+        # Skip tournaments where all markets were filtered out
+        if not golfers:
+            continue
 
         # Keep full list for detail pages, cap for landing page cards
         all_golfers = golfers
