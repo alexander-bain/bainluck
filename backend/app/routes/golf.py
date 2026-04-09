@@ -1792,11 +1792,16 @@ async def get_golf_leaderboard(
                         snapshot_lookup[name.lower()] = entry
                     logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
         else:
-            # Round 1: use pre-tournament winner market odds as baseline
+            # Round 1: use last DataGolf snapshot from before today as baseline
+            # (captures pre-tournament odds from close to midnight)
+            et_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+            today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff = today_start.astimezone(timezone.utc)
+
             async with async_session_maker() as snap_session:
                 # Find the DataGolf winner market for this tour
                 dg_result = await snap_session.execute(
-                    sa_select(FuturesMarket).options(selectinload(FuturesMarket.outcomes)).where(
+                    sa_select(FuturesMarket).where(
                         FuturesMarket.source == "datagolf",
                         FuturesMarket.external_id.like(f"datagolf:{tour}:%:win"),
                         FuturesMarket.status == "open",
@@ -1804,11 +1809,46 @@ async def get_golf_leaderboard(
                 )
                 dg_market = dg_result.scalar_one_or_none()
                 if dg_market:
-                    for o in dg_market.outcomes:
-                        if o.current_probability is not None:
-                            wp = round(float(o.current_probability) * 100, 1)
-                            snapshot_lookup[o.name.lower()] = {"win_prob": wp}
-                    logger.info("Leaderboard R1: loaded %d-player pre-tournament baseline", len(snapshot_lookup))
+                    # Get outcome IDs for this market
+                    out_result = await snap_session.execute(
+                        sa_select(FuturesOutcome.id, FuturesOutcome.name).where(
+                            FuturesOutcome.market_id == dg_market.id,
+                        )
+                    )
+                    outcomes = out_result.all()
+                    outcome_ids = [o.id for o in outcomes]
+                    outcome_names = {o.id: o.name for o in outcomes}
+
+                    if outcome_ids:
+                        # Get the last snapshot per outcome before today
+                        from sqlalchemy import func as sa_func
+                        subq = (
+                            sa_select(
+                                FuturesOddsSnapshot.outcome_id,
+                                sa_func.max(FuturesOddsSnapshot.captured_at).label("max_ts"),
+                            )
+                            .where(
+                                FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                                FuturesOddsSnapshot.captured_at < cutoff,
+                            )
+                            .group_by(FuturesOddsSnapshot.outcome_id)
+                            .subquery()
+                        )
+                        snap_result = await snap_session.execute(
+                            sa_select(FuturesOddsSnapshot).join(
+                                subq,
+                                (FuturesOddsSnapshot.outcome_id == subq.c.outcome_id)
+                                & (FuturesOddsSnapshot.captured_at == subq.c.max_ts),
+                            )
+                        )
+                        for snap in snap_result.scalars().all():
+                            name = outcome_names.get(snap.outcome_id, "")
+                            if name and snap.probability is not None:
+                                wp = round(float(snap.probability) * 100, 1)
+                                snapshot_lookup[name.lower()] = {"win_prob": wp}
+
+                    logger.info("Leaderboard R1: loaded %d-player pre-round snapshot (cutoff=%s)",
+                                len(snapshot_lookup), cutoff.isoformat())
     except Exception as e:
         logger.warning("Leaderboard: could not load baseline: %s", e)
 
