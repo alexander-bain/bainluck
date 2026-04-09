@@ -18,7 +18,7 @@ from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOddsSnapshot, Event, Sport
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Event, Sport
 from app.services import get_db
 from app.utils.odds_math import probability_to_american
 
@@ -1591,6 +1591,65 @@ async def get_golf_tournament(
         if m.get("tournament_key") == tournament.get("key")
     ]
 
+    # ------------------------------------------------------------------
+    # Enrich golfers with Top 5/10/20/Make Cut probabilities from
+    # non-winner markets so the grid shows placement odds pre-tournament.
+    # ------------------------------------------------------------------
+    golfers = tournament.get("_all_golfers", tournament.get("golfers", []))
+
+    placement_market_ids: dict[str, list[int]] = {}  # type_key -> [market_ids]
+    for g in sorted_groups:
+        if g["type"] in ("top_5", "top_10", "top_20", "make_cut"):
+            placement_market_ids[g["type"]] = g["market_ids"]
+
+    if placement_market_ids:
+        # Collect all placement market IDs
+        all_placement_ids = []
+        for ids in placement_market_ids.values():
+            all_placement_ids.extend(ids)
+
+        # Query outcomes for these markets in one batch
+        placement_result = await db.execute(
+            select(FuturesOutcome)
+            .where(
+                FuturesOutcome.market_id.in_(all_placement_ids),
+                FuturesOutcome.current_probability.isnot(None),
+            )
+        )
+        placement_outcomes = placement_result.scalars().all()
+
+        # Build market_id -> type_key lookup
+        mid_to_type: dict[int, str] = {}
+        for type_key, mids in placement_market_ids.items():
+            for mid in mids:
+                mid_to_type[mid] = type_key
+
+        # Build match_key -> {type_key: probability} from placement outcomes
+        placement_probs: dict[str, dict[str, float]] = defaultdict(dict)
+        for o in placement_outcomes:
+            type_key = mid_to_type.get(o.market_id)
+            if not type_key:
+                continue
+            key = _match_key(o.name)
+            if not key:
+                continue
+            prob = float(o.current_probability)
+            # Per-source average: if multiple markets for same type, average
+            if type_key in placement_probs[key]:
+                placement_probs[key][type_key] = (placement_probs[key][type_key] + prob) / 2
+            else:
+                placement_probs[key][type_key] = prob
+
+        # Merge into golfers
+        for g in golfers:
+            key = _match_key(g["name"])
+            if key and key in placement_probs:
+                probs = placement_probs[key]
+                g["top_5_prob"] = round(probs["top_5"] * 100, 1) if "top_5" in probs else None
+                g["top_10_prob"] = round(probs["top_10"] * 100, 1) if "top_10" in probs else None
+                g["top_20_prob"] = round(probs["top_20"] * 100, 1) if "top_20" in probs else None
+                g["make_cut_prob"] = round(probs["make_cut"] * 100, 1) if "make_cut" in probs else None
+
     return {
         "tournament": {
             "name": tournament["name"],
@@ -1606,7 +1665,7 @@ async def get_golf_tournament(
             "commence_time": tournament.get("commence_time"),
             "resolution_date": tournament.get("resolution_date"),
         },
-        "golfers": tournament.get("_all_golfers", tournament.get("golfers", [])),
+        "golfers": golfers,
         "markets": sorted_groups,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,

@@ -1080,6 +1080,11 @@ export interface GolfGolfer {
   movement_24h: number | null;
   rank: number;
   sources: Record<string, number>;
+  // Placement probabilities (from DataGolf pre-tournament / non-winner markets)
+  top_5_prob?: number | null;
+  top_10_prob?: number | null;
+  top_20_prob?: number | null;
+  make_cut_prob?: number | null;
 }
 
 export interface GolfTournament {
