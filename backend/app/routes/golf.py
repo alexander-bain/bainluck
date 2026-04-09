@@ -1681,6 +1681,7 @@ _leaderboard_cache: dict[str, tuple[float, dict]] = {}
 _LEADERBOARD_CACHE_TTL = 120  # 2 minutes
 
 
+@router.get("/leaderboard/{tour}")
 @router.get("/leaderboard")
 async def get_golf_leaderboard(
     tour: str = "pga",
