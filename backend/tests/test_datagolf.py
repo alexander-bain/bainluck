@@ -187,9 +187,10 @@ class TestParsePlayersInPlay:
                     "top_5_prob": 0.60,
                     "top_10_prob": 0.75,
                     "current_pos": "1",
-                    "total": -12,
+                    "current_score": -12,
                     "today": -3,
                     "thru": "14",
+                    "round": 3,
                 },
             ]
         }

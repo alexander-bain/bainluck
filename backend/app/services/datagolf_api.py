@@ -362,18 +362,13 @@ class DataGolfAPIService:
 
             if in_play:
                 player.position = entry.get("current_pos") or entry.get("position")
-                player.total_score = (
-                    _safe_int(entry.get("total"))
-                    or _safe_int(entry.get("total_to_par"))
-                    or _safe_int(entry.get("score"))
-                )
-                player.today_score = (
-                    _safe_int(entry.get("today"))
-                    or _safe_int(entry.get("today_to_par"))
-                    or _safe_int(entry.get("round_score"))
-                )
+                # Use _first_int to avoid 0 (even par) being treated as falsy
+                player.total_score = _first_int(entry, "current_score", "total", "total_to_par")
+                player.today_score = _first_int(entry, "today", "today_to_par")
                 player.thru = str(entry.get("thru", "")) or None
-                player.current_round = event_round or _safe_int(entry.get("current_round"))
+                player.current_round = _first_int(
+                    {"r": event_round, **entry}, "r", "current_round", "round",
+                ) if event_round else _first_int(entry, "current_round", "round")
 
                 # Debug: log field names from first player to diagnose missing scores
                 if not players and logger.isEnabledFor(logging.DEBUG):
@@ -412,6 +407,18 @@ def _safe_int(val) -> Optional[int]:
         return int(val)
     except (ValueError, TypeError):
         return None
+
+
+def _first_int(d: dict, *keys: str) -> Optional[int]:
+    """Return the first non-None int value from the dict for the given keys.
+
+    Unlike chaining with `or`, this correctly handles 0 (even par).
+    """
+    for key in keys:
+        val = _safe_int(d.get(key))
+        if val is not None:
+            return val
+    return None
 
 
 # ---------------------------------------------------------------------------
