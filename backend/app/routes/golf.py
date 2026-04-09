@@ -1759,37 +1759,58 @@ async def get_golf_leaderboard(
     players.sort(key=_pos_sort_key)
 
     # ----------------------------------------------------------------
-    # Load start-of-day snapshot for delta computation
+    # Load baseline for delta computation.
+    # For Round 1, use pre-tournament odds from DataGolf FuturesOutcome
+    # (more meaningful than the first in-play snapshot).
+    # For subsequent rounds, use start-of-day leaderboard snapshot.
     # ----------------------------------------------------------------
     snapshot_lookup: dict[str, dict] = {}  # player_name -> {position, win_prob, ...}
+    current_round = info.get("current_round")
     try:
         from app.models.models import GolfLeaderboardSnapshot
-        from app.services import get_db as _get_db
-        from sqlalchemy.ext.asyncio import AsyncSession
+        from app.services.database import async_session_maker
         from sqlalchemy import select as sa_select
         from zoneinfo import ZoneInfo
 
-        et_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
-        today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if current_round and current_round >= 2:
+            # Rounds 2-4: use start-of-day leaderboard snapshot
+            et_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+            today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Use a fresh DB session for snapshot lookup
-        from app.services.database import async_session_maker
-        async with async_session_maker() as snap_session:
-            snap_result = await snap_session.execute(
-                sa_select(GolfLeaderboardSnapshot).where(
-                    GolfLeaderboardSnapshot.tour == tour,
-                    GolfLeaderboardSnapshot.snapshot_date == today_start,
-                    GolfLeaderboardSnapshot.snapshot_type == "start_of_day",
+            async with async_session_maker() as snap_session:
+                snap_result = await snap_session.execute(
+                    sa_select(GolfLeaderboardSnapshot).where(
+                        GolfLeaderboardSnapshot.tour == tour,
+                        GolfLeaderboardSnapshot.snapshot_date == today_start,
+                        GolfLeaderboardSnapshot.snapshot_type == "start_of_day",
+                    )
                 )
-            )
-            snapshot = snap_result.scalar_one_or_none()
-            if snapshot and snapshot.data:
-                for entry in snapshot.data:
-                    name = entry.get("player_name", "")
-                    snapshot_lookup[name.lower()] = entry
-                logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
+                snapshot = snap_result.scalar_one_or_none()
+                if snapshot and snapshot.data:
+                    for entry in snapshot.data:
+                        name = entry.get("player_name", "")
+                        snapshot_lookup[name.lower()] = entry
+                    logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
+        else:
+            # Round 1: use pre-tournament winner market odds as baseline
+            async with async_session_maker() as snap_session:
+                # Find the DataGolf winner market for this tour
+                dg_result = await snap_session.execute(
+                    sa_select(FuturesMarket).options(selectinload(FuturesMarket.outcomes)).where(
+                        FuturesMarket.source == "datagolf",
+                        FuturesMarket.external_id.like(f"datagolf:{tour}:%:win"),
+                        FuturesMarket.status == "open",
+                    )
+                )
+                dg_market = dg_result.scalar_one_or_none()
+                if dg_market:
+                    for o in dg_market.outcomes:
+                        if o.current_probability is not None:
+                            wp = round(float(o.current_probability) * 100, 1)
+                            snapshot_lookup[o.name.lower()] = {"win_prob": wp}
+                    logger.info("Leaderboard R1: loaded %d-player pre-tournament baseline", len(snapshot_lookup))
     except Exception as e:
-        logger.warning("Leaderboard: could not load snapshot: %s", e)
+        logger.warning("Leaderboard: could not load baseline: %s", e)
 
     # Build response
     leaderboard = []
