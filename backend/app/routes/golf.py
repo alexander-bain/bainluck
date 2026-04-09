@@ -1681,6 +1681,27 @@ _leaderboard_cache: dict[str, tuple[float, dict]] = {}
 _LEADERBOARD_CACHE_TTL = 120  # 2 minutes
 
 
+@router.get("/leaderboard/debug")
+async def get_golf_leaderboard_debug():
+    """Debug: return raw DataGolf in-play response to diagnose field names."""
+    from app.services.datagolf_api import DataGolfAPIService
+    service = DataGolfAPIService()
+    try:
+        data = await service._get("preds/in-play", {"tour": "pga"})
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        await service.close()
+    # Return raw response with first 3 player entries
+    raw_players = data.get("data", [])
+    return {
+        "info": data.get("info", {}),
+        "top_level_keys": sorted(data.keys()),
+        "player_count": len(raw_players),
+        "sample_players": raw_players[:3],
+    }
+
+
 @router.get("/leaderboard/{tour}")
 @router.get("/leaderboard")
 async def get_golf_leaderboard(
