@@ -185,6 +185,19 @@ class DataGolfAPIService:
             raise
 
         info = data.get("info", {})
+
+        # Log raw field names from first player entry for score debugging
+        raw_players = data.get("data", [])
+        if raw_players:
+            sample = raw_players[0]
+            logger.info(
+                "DataGolf in-play raw keys: %s (sample player: %s, total=%s, today=%s)",
+                sorted(sample.keys()),
+                sample.get("player_name", "?"),
+                sample.get("total"),
+                sample.get("today"),
+            )
+
         return self._parse_players(data, in_play=True), info
 
     # -- Pre-tournament predictions ----------------------------------------
@@ -349,10 +362,26 @@ class DataGolfAPIService:
 
             if in_play:
                 player.position = entry.get("current_pos") or entry.get("position")
-                player.total_score = _safe_int(entry.get("total"))
-                player.today_score = _safe_int(entry.get("today"))
+                player.total_score = (
+                    _safe_int(entry.get("total"))
+                    or _safe_int(entry.get("total_to_par"))
+                    or _safe_int(entry.get("score"))
+                )
+                player.today_score = (
+                    _safe_int(entry.get("today"))
+                    or _safe_int(entry.get("today_to_par"))
+                    or _safe_int(entry.get("round_score"))
+                )
                 player.thru = str(entry.get("thru", "")) or None
                 player.current_round = event_round or _safe_int(entry.get("current_round"))
+
+                # Debug: log field names from first player to diagnose missing scores
+                if not players and logger.isEnabledFor(logging.DEBUG):
+                    score_keys = [k for k in entry.keys() if any(
+                        t in k.lower() for t in ("score", "total", "today", "par", "round")
+                    )]
+                    logger.debug("DataGolf in-play fields for %s: %s (score_keys=%s)",
+                                 name, list(entry.keys()), score_keys)
 
             players.append(player)
 

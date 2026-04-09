@@ -1720,6 +1720,13 @@ async def get_golf_leaderboard(
             "players": [],
         }
 
+    # Log score availability for debugging
+    has_scores = sum(1 for p in players if p.total_score is not None)
+    logger.info(
+        "Leaderboard: %d players, %d with scores, event=%s, round=%s",
+        len(players), has_scores, info.get("event_name"), info.get("current_round"),
+    )
+
     # Sort by position (numeric sort, with CUT/WD at bottom)
     def _pos_sort_key(p):
         pos = (p.position or "999").lstrip("T")
