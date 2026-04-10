@@ -258,6 +258,23 @@ async def _sync_espn_live_events():
                 if k not in live_sport_keys:
                     live_sport_keys.append(k)
 
+            # Also include sports with "scheduled" events that have already
+            # commenced — odds polling may be slow to mark them "live", so
+            # ESPN sync should pick them up proactively.
+            started_cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
+            started_scheduled_result = await session.execute(
+                select(distinct(Sport.key))
+                .join(Event)
+                .where(
+                    Event.status == "scheduled",
+                    Event.commence_time <= datetime.now(timezone.utc),
+                    Event.commence_time >= started_cutoff,
+                )
+            )
+            for row in started_scheduled_result.all():
+                if row[0] not in live_sport_keys:
+                    live_sport_keys.append(row[0])
+
             if not live_sport_keys:
                 return {"status": "no_live_games", **stats}
 
@@ -321,6 +338,13 @@ async def _sync_espn_live_events():
                                 and_(
                                     Event.status.in_(["completed", "closed"]),
                                     Event.commence_time >= recently_completed_cutoff,
+                                ),
+                                # Include scheduled events that have already started
+                                # (odds polling may be slow to flip status to "live")
+                                and_(
+                                    Event.status == "scheduled",
+                                    Event.commence_time <= datetime.now(timezone.utc),
+                                    Event.commence_time >= started_cutoff,
                                 ),
                             ),
                         )
