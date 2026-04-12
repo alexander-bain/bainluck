@@ -536,6 +536,9 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bheisman\b           |   # College football awards
     \b(?:steals|blocks|assists|rebounds|scoring)\s+(?:leader|per\s+game)\b |  # Stat categories
     \bwhich\s+teams\s+will\s+play\b |  # "Which teams will play in..." matchup markets
+    \bteams\s+in\s+(?:the\s+)?(?:mlb\s+finals|world\s+series|nba\s+finals|stanley\s+cup|super\s+bowl)\b | # "Teams in MLB Finals" pair matchups (kxteamsinws etc.)
+    \bbest\s+record\b    |   # "Pro Baseball Best Record" season rank prop (not playoffs)
+    \bworst\s+record\b   |   # "Pro Baseball Worst Record" season rank prop
     \bwhich\s+cities\b    |   # Expansion city markets
     \bcover\s+of\b        |   # "Cover of NBA 2K27"
     \b2k\d+\b             |   # Video game markets (NBA 2K27, etc.)

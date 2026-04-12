@@ -353,6 +353,125 @@ class TestMarketToColumnMatching:
         m = _make_market("Will the Dodgers Make Playoffs?")
         assert _match_market_to_column(m, MLB_CONFIG) == "make_playoffs"
 
+
+class TestMLBGroundTruth:
+    """Ground-truth MLB Kalshi/Polymarket market names → expected grid column.
+
+    Each case corresponds to a specific Kalshi ticker or Polymarket slug.
+    If any of these regress, the corresponding ticker silently disappears
+    from the MLB championship grid.
+    """
+
+    # --- make_playoffs ---
+    def test_kxmlbplayoffs_kalshi(self):
+        # kxmlbplayoffs
+        m = _make_market("Pro Baseball Playoff Qualifiers", source="kalshi")
+        assert _match_market_to_column(m, MLB_CONFIG) == "make_playoffs"
+
+    def test_make_postseason_polymarket(self):
+        # mlb-team-to-make-postseason
+        m = _make_market("MLB: Team to Make Postseason", source="polymarket")
+        assert _match_market_to_column(m, MLB_CONFIG) == "make_playoffs"
+
+    def test_make_postseason_polymarket_question(self):
+        m = _make_market("Which team will make the postseason?", source="polymarket")
+        assert _match_market_to_column(m, MLB_CONFIG) == "make_playoffs"
+
+    # --- division (Kalshi "American/National League East/Central/West Winner") ---
+    def test_kxmlbaleast_kalshi(self):
+        m = _make_market("American League East Winner", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_kxmlbalcent_kalshi(self):
+        m = _make_market("American League Central Winner", source="kalshi",
+                          market_tier=4)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_kxmlbalwest_kalshi(self):
+        m = _make_market("American League West Winner", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_kxmlbnleast_kalshi(self):
+        m = _make_market("National League East Winner", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_kxmlbnlcent_kalshi(self):
+        m = _make_market("National League Central Winner", source="kalshi",
+                          market_tier=4)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_kxmlbnlwest_kalshi(self):
+        m = _make_market("National League West Winner", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    # --- division (Polymarket "MLB 2026 AL/NL East/Central/West Champion") ---
+    def test_pm_al_east_champion(self):
+        m = _make_market("MLB 2026 AL East Champion", source="polymarket",
+                          market_tier=4)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_pm_al_central_champion(self):
+        m = _make_market("MLB 2026 AL Central Champion", source="polymarket",
+                          market_tier=4)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_pm_nl_west_champion(self):
+        m = _make_market("MLB 2026 NL West Champion", source="polymarket",
+                          market_tier=4)
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    # --- pennant (Kalshi kxmlbal / kxmlbnl) ---
+    def test_kxmlbal_kalshi(self):
+        m = _make_market("MLB American League Championship", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    def test_kxmlbnl_kalshi(self):
+        m = _make_market("MLB National League Championship", source="kalshi",
+                          market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    def test_pm_al_pennant(self):
+        m = _make_market("MLB 2026 American League Champion",
+                          source="polymarket", market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    def test_pm_nl_pennant(self):
+        m = _make_market("MLB 2026 National League Champion",
+                          source="polymarket", market_tier=2)
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    # --- championship (kxmlb / mlb-world-series-champion-2026) ---
+    def test_kxmlb_kalshi(self):
+        m = _make_market("World Series", source="kalshi", market_tier=1)
+        assert _match_market_to_column(m, MLB_CONFIG) == "championship"
+
+    def test_pm_world_series(self):
+        m = _make_market("MLB World Series Champion 2026", source="polymarket",
+                          market_tier=1)
+        assert _match_market_to_column(m, MLB_CONFIG) == "championship"
+
+    # --- rejects (noise that must NOT land on the grid) ---
+    def test_reject_best_record(self):
+        m = _make_market("Pro Baseball Best Record", source="kalshi")
+        assert _is_playoff_relevant_market(m.name) is False
+
+    def test_reject_worst_record(self):
+        m = _make_market("Pro Baseball Worst Record", source="kalshi")
+        assert _is_playoff_relevant_market(m.name) is False
+
+    def test_reject_teams_in_ws_matchup(self):
+        m = _make_market("Teams in MLB Finals", source="kalshi")
+        assert _is_playoff_relevant_market(m.name) is False
+
+    def test_reject_teams_in_world_series(self):
+        m = _make_market("Teams in World Series", source="kalshi")
+        assert _is_playoff_relevant_market(m.name) is False
+
     # --- WNBA ---
     def test_wnba_championship(self):
         m = _make_market("WNBA Championship Winner 2026")

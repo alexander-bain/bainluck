@@ -818,9 +818,9 @@ def check_grid_missing_columns(grid_data: dict, league: str, report: AuditReport
 
     # Expected columns per league
     expected = {
-        "mlb": {"make_playoffs", "pennant", "championship"},
+        "mlb": {"make_playoffs", "division", "pennant", "championship"},
         "nba": {"make_playoffs", "conference", "championship"},
-        "nhl": {"make_playoffs", "conference", "championship"},
+        "nhl": {"make_playoffs", "division", "conference", "championship"},
     }
 
     if league in expected:

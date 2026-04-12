@@ -428,9 +428,15 @@ MLB_CONFIG = LeagueConfig(
             column="pennant",
             tier=2,
             name_patterns=[
-                r"(?:American|National)\s+League\s+(?:Pennant|Champion|Winner)",
-                r"(?:AL|NL)\s+(?:Pennant|Champion|Winner)",
-                r"MLB.*(?:AL|NL)\b",
+                r"(?:American|National)\s+League\s+(?:Pennant|Champion|Winner)\b",
+                # Word boundary on AL/NL: without \b, the "al" at the end of
+                # "Central" trips this pattern on division markets like
+                # "American League Central Winner" → wrong column.
+                r"\b(?:AL|NL)\s+(?:Pennant|Champion)\b",
+                # Note: intentionally omit r"MLB.*(?:AL|NL)\b" — it matched
+                # "MLB 2026 AL East Champion" (a division market) by greedily
+                # capturing everything up to "AL", preempting the division rule.
+                # The two patterns above cover all real pennant market titles.
             ],
         ),
         MarketMatchingRule(
@@ -439,6 +445,10 @@ MLB_CONFIG = LeagueConfig(
             name_patterns=[
                 r"\bDivision\b",
                 r"(?:AL|NL)\s+(?:East|West|Central)\b",
+                # Kalshi uses "American League East Winner" / "National League Central Winner"
+                # Without this, 6 Kalshi division markets (kxmlb{al,nl}{east,central,west})
+                # are invisible to the grid.
+                r"(?:American|National)\s+League\s+(?:East|West|Central)\b",
             ],
         ),
         MarketMatchingRule(
@@ -446,6 +456,12 @@ MLB_CONFIG = LeagueConfig(
             name_patterns=[
                 r"Make\s+Playoffs",
                 r"Playoff\s+(?:Berth|Qualif)",
+                # Polymarket's "mlb-team-to-make-postseason" uses postseason vocabulary.
+                # market_grouping.py already treats "postseason" as a playoff synonym
+                # (line 96); mirror that here so the grid classifier sees it too.
+                r"Make\s+(?:the\s+)?Postseason",
+                r"Postseason\s+(?:Berth|Qualif|Appearance)",
+                r"\bTeam\b.*\bPostseason\b",
             ],
         ),
     ],

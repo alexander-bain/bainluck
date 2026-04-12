@@ -153,7 +153,16 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
+            "patterns": [
+                r"make.playoffs",
+                r"make\b.*\bplayoffs",
+                r"playoff.berth",
+                # Polymarket "mlb-team-to-make-postseason" — postseason vocabulary
+                r"make.postseason",
+                r"make\b.*\bpostseason",
+                r"postseason.berth",
+                r"postseason.qualif",
+            ],
         },
         {
             "key": "division",
@@ -167,6 +176,9 @@ SPORT_STAGES: dict[str, list[dict]] = {
                 r"\bnl.central\b",
                 r"\bal.west\b",
                 r"\bnl.east\b",
+                # Kalshi "American League East Winner" / "National League Central Winner"
+                r"american\s+league\s+(?:east|west|central)",
+                r"national\s+league\s+(?:east|west|central)",
             ],
         },
         {
@@ -483,7 +495,10 @@ def classify_market_stage(
             ("division", re.compile(
                 r"\bdivision\b"
                 r"|\b(?:afc|nfc)\s+(?:east|north|south|west)\b"  # NFL divisions
-                r"|\b(?:al|nl)\s+(?:east|central|west)\b",       # MLB divisions
+                r"|\b(?:al|nl)\s+(?:east|central|west)\b"        # MLB divisions (AL/NL form)
+                # MLB divisions (spelled-out form) — must beat the pennant sub-pattern
+                # which matches "american league" loosely.
+                r"|\b(?:american|national)\s+league\s+(?:east|central|west)\b",
                 re.IGNORECASE,
             )),
             ("conference", re.compile(
