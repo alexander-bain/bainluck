@@ -6,7 +6,7 @@ import { EvolutionChart } from "@/components/EvolutionChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory } from "@/lib/api";
 
-type TimeRange = "full" | "7d" | "24h" | "today";
+type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
 
 export interface PositionOption {
   key: string;   // "win", "top_5", "top_10", "top_20"
@@ -23,6 +23,10 @@ interface EvolutionViewProps {
   positionOptions?: PositionOption[];
   /** Label for sidebar — "Teams", "Players", etc. Defaults to "Players" */
   entityLabel?: string;
+  /** Tournament start date (ISO) — enables "Tournament" range with day boundaries */
+  tournamentStart?: string | null;
+  /** Tournament end date (ISO) */
+  tournamentEnd?: string | null;
 }
 
 export function EvolutionView({
@@ -33,11 +37,24 @@ export function EvolutionView({
   className,
   positionOptions,
   entityLabel = "Players",
+  tournamentStart,
+  tournamentEnd,
 }: EvolutionViewProps) {
+  // Tournament mode: enabled once the event has started, useful during the
+  // event when the 7-day view becomes cluttered. Replaces "7d" in the picker.
+  const hasTournament = !!tournamentStart;
+  const tournamentStarted = useMemo(() => {
+    if (!tournamentStart) return false;
+    try { return new Date(tournamentStart).getTime() <= Date.now(); }
+    catch { return false; }
+  }, [tournamentStart]);
+
   const [highlightedOutcomeId, setHighlightedOutcomeId] = useState<number | null>(null);
   const [selectedOutcomeIds, setSelectedOutcomeIds] = useState<Set<number> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [timeRange, setTimeRange] = useState<TimeRange>("7d");
+  const [timeRange, setTimeRange] = useState<TimeRange>(
+    tournamentStarted ? "tournament" : "7d"
+  );
   const [selectedPosition, setSelectedPosition] = useState<string>(
     positionOptions?.[positionOptions.length - 1]?.key || "win"
   );
@@ -71,17 +88,73 @@ export function EvolutionView({
   }, [isFullscreen]);
 
   // Map time range to fetch hours:
-  // "full" = full season (~6 months), "7d"/"24h"/"today" all use the shorter window
-  // but filter client-side via EvolutionChart's timeRange prop.
-  const fetchHours = timeRange === "full" ? 4320 : Math.max(hours, 168);
+  // "full" = full season (~6 months), "tournament" covers the event window plus a
+  // small lead-in, all shorter ranges share a 1-week fetch that's filtered
+  // client-side via EvolutionChart's timeRange prop.
+  const tournamentFetchHours = useMemo(() => {
+    if (!tournamentStart) return 168;
+    try {
+      const startMs = new Date(tournamentStart).getTime();
+      const leadInMs = 24 * 60 * 60 * 1000; // 1 day lead-in before start
+      const elapsedHrs = Math.max(0, (Date.now() - startMs + leadInMs) / 3_600_000);
+      // Cap at ~2 weeks so we don't pull excessive data for long stale events
+      return Math.min(336, Math.max(168, Math.ceil(elapsedHrs)));
+    } catch {
+      return 168;
+    }
+  }, [tournamentStart]);
 
-  // Fetch history data — always use the same key for non-full ranges
-  // so switching between 7d/24h/today doesn't trigger a new fetch
+  const fetchHours = timeRange === "full"
+    ? 4320
+    : timeRange === "tournament"
+      ? tournamentFetchHours
+      : Math.max(hours, 168);
+
+  // Fetch history data. "tournament" gets its own cache key when it fetches a
+  // different window than the shorter ranges.
+  const fetchKey = timeRange === "full"
+    ? "full"
+    : timeRange === "tournament"
+      ? `tournament-${tournamentFetchHours}`
+      : "week";
+
   const { data, error, isLoading } = useSWR(
-    `futures-evolution-${activeMarketId}-${timeRange === "full" ? "full" : "week"}`,
+    `futures-evolution-${activeMarketId}-${fetchKey}`,
     () => fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
     { refreshInterval: 60_000, keepPreviousData: true }
   );
+
+  // Derive day-boundary markers for the tournament range: start of each day
+  // from tournament start through min(end, now).
+  const tournamentDayBoundaries = useMemo(() => {
+    if (!tournamentStart) return null;
+    try {
+      const start = new Date(tournamentStart);
+      start.setHours(0, 0, 0, 0);
+      const endMs = tournamentEnd
+        ? Math.min(new Date(tournamentEnd).getTime() + 86_400_000, Date.now())
+        : Date.now();
+      const boundaries: { timestamp: string; label: string }[] = [];
+      const dayMs = 86_400_000;
+      let t = start.getTime();
+      let dayIdx = 1;
+      while (t <= endMs && dayIdx <= 5) {
+        boundaries.push({
+          timestamp: new Date(t).toISOString(),
+          label: `R${dayIdx}`,
+        });
+        t += dayMs;
+        dayIdx += 1;
+      }
+      return boundaries;
+    } catch {
+      return null;
+    }
+  }, [tournamentStart, tournamentEnd]);
+
+  const effectiveBoundaries = timeRange === "tournament" && tournamentDayBoundaries
+    ? tournamentDayBoundaries
+    : data?.round_boundaries ?? null;
 
   // Auto-select top N outcomes on first load
   const effectiveSelectedIds = useMemo(() => {
@@ -153,10 +226,11 @@ export function EvolutionView({
           selectedOutcomeIds={effectiveSelectedIds}
           highlightedOutcomeId={highlightedOutcomeId}
           onHoverOutcome={setHighlightedOutcomeId}
-          roundBoundaries={data.round_boundaries}
+          roundBoundaries={effectiveBoundaries}
           height={isFullscreen ? 600 : 300}
           className=""
           timeRange={timeRange}
+          tournamentStart={tournamentStart ?? null}
         />
       </div>
       <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-gray-100 px-3 py-2 sm:overflow-y-auto">
@@ -185,25 +259,34 @@ export function EvolutionView({
               Time Range
             </span>
             <div className="flex border border-gray-200 rounded-md overflow-hidden">
-              {(["full", "7d", "24h", "today"] as TimeRange[]).map((range) => (
-                <button
-                  key={range}
-                  onClick={() => setTimeRange(range)}
-                  className={`px-3 py-1 text-[11.5px] font-medium border-r border-gray-100 last:border-r-0 transition-colors ${
-                    timeRange === range
-                      ? "bg-gray-900 text-white font-semibold"
-                      : "text-gray-500 hover:bg-gray-50"
-                  }`}
-                >
-                  {range === "full"
-                    ? "Season"
-                    : range === "7d"
-                      ? "7 Days"
-                      : range === "24h"
-                        ? "24 Hours"
-                        : "Today"}
-                </button>
-              ))}
+              {(() => {
+                // During/after the event, swap "7 Days" for "Tournament".
+                // Pre-event, keep "7 Days".
+                const ranges: TimeRange[] = hasTournament && tournamentStarted
+                  ? ["full", "tournament", "24h", "today"]
+                  : ["full", "7d", "24h", "today"];
+                return ranges.map((range) => (
+                  <button
+                    key={range}
+                    onClick={() => setTimeRange(range)}
+                    className={`px-3 py-1 text-[11.5px] font-medium border-r border-gray-100 last:border-r-0 transition-colors ${
+                      timeRange === range
+                        ? "bg-gray-900 text-white font-semibold"
+                        : "text-gray-500 hover:bg-gray-50"
+                    }`}
+                  >
+                    {range === "full"
+                      ? "Season"
+                      : range === "tournament"
+                        ? "Tournament"
+                        : range === "7d"
+                          ? "7 Days"
+                          : range === "24h"
+                            ? "24 Hours"
+                            : "Today"}
+                  </button>
+                ));
+              })()}
             </div>
 
             {/* Position control group — only when multiple markets available */}

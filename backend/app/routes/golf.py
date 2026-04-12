@@ -823,11 +823,21 @@ async def get_golf(
     result = await db.execute(query)
     markets = result.scalars().unique().all()
 
-    # Filter out game-level markets (e.g., "Player A vs Player B" matchups)
-    markets = [m for m in markets if " vs " not in m.name.lower() and " vs." not in m.name.lower()]
+    # Separate head-to-head matchup markets (e.g., "Scheffler vs McIlroy").
+    # These are kept and surfaced as standalone matchup cards on the tournament
+    # detail page instead of being mixed into winner aggregation.
+    h2h_markets_raw = [
+        m for m in markets
+        if " vs " in m.name.lower() or " vs." in m.name.lower()
+    ]
+    markets = [
+        m for m in markets
+        if " vs " not in m.name.lower() and " vs." not in m.name.lower()
+    ]
 
     # Filter out non-golf false positives (esports, entertainment, politics, etc.)
     markets = [m for m in markets if _is_golf_market(m)]
+    h2h_markets_raw = [m for m in h2h_markets_raw if _is_golf_market(m)]
 
     logger.info("Golf endpoint: %d markets after filtering", len(markets))
 
@@ -1181,6 +1191,107 @@ async def get_golf(
             "prop_markets": prop_markets_list,
             "_all_golfers": all_golfers,  # Full list for detail endpoint
         })
+
+    # ========================================================================
+    # Group head-to-head matchup markets by tournament
+    # ========================================================================
+    # Build a reverse index: golfer match_key -> {tournament_key, ...}
+    # so we can route h2h markets by which tournament has their golfers.
+    golfer_to_tournaments: dict[str, set[str]] = defaultdict(set)
+    for t in tournaments:
+        for g in t.get("_all_golfers", t.get("golfers", [])):
+            k = _match_key(g["name"])
+            if k:
+                golfer_to_tournaments[k].add(t["key"])
+
+    h2h_by_tournament: dict[str, list[dict]] = defaultdict(list)
+    for market in h2h_markets_raw:
+        # Extract matchup outcomes — must have exactly 2 valid golfer outcomes
+        valid_outcomes = [
+            o for o in market.outcomes
+            if o.current_probability is not None
+            and o.name.strip().lower() not in ("tie", "field", "other", "the field")
+        ]
+        if len(valid_outcomes) != 2:
+            continue
+
+        prob_sum = sum(float(o.current_probability) for o in valid_outcomes)
+        if prob_sum < 0.8 or prob_sum > 1.2:
+            continue
+
+        a, b = valid_outcomes
+        a_key = _match_key(a.name)
+        b_key = _match_key(b.name)
+        if not a_key or not b_key:
+            continue
+
+        # Route by tournament that contains BOTH golfers; fall back to name matching
+        tourn_key: str | None = None
+        a_tourns = golfer_to_tournaments.get(a_key, set())
+        b_tourns = golfer_to_tournaments.get(b_key, set())
+        shared = a_tourns & b_tourns
+        if len(shared) == 1:
+            tourn_key = next(iter(shared))
+        elif len(shared) > 1:
+            # Tie-break via market name regex if multiple tournaments contain both
+            name_key = _normalize_tournament(market.name, schedule)
+            if _WOMENS_RE.search(market.name):
+                name_key = name_key + "_womens"
+            if name_key in shared:
+                tourn_key = name_key
+            else:
+                tourn_key = next(iter(shared))
+        else:
+            # Neither: last-ditch name-based matching
+            name_key = _normalize_tournament(market.name, schedule)
+            if name_key != "other":
+                if _WOMENS_RE.search(market.name):
+                    name_key = name_key + "_womens"
+                tourn_key = name_key
+
+        if not tourn_key:
+            continue
+
+        source = market.source or "unknown"
+        source_label = "datagolf_model" if source == "datagolf" else source
+        # Normalize so the higher probability is always on the left
+        a_prob = float(a.current_probability)
+        b_prob = float(b.current_probability)
+        if b_prob > a_prob:
+            a, b = b, a
+            a_prob, b_prob = b_prob, a_prob
+
+        h2h_by_tournament[tourn_key].append({
+            "market_id": market.id,
+            "source": source_label,
+            "golfer_a": {
+                "name": _normalize_golfer_name(a.name.strip()),
+                "probability": round(a_prob, 3),
+            },
+            "golfer_b": {
+                "name": _normalize_golfer_name(b.name.strip()),
+                "probability": round(b_prob, 3),
+            },
+        })
+
+    # Attach h2h matchups to their tournament; dedupe by golfer pair across sources
+    for t in tournaments:
+        raw_matchups = h2h_by_tournament.get(t["key"], [])
+        # Dedupe: same pair from multiple sources collapses to one entry (first wins)
+        seen_pairs: set[tuple[str, str]] = set()
+        deduped: list[dict] = []
+        for m in raw_matchups:
+            key = tuple(sorted([
+                _match_key(m["golfer_a"]["name"]) or m["golfer_a"]["name"].lower(),
+                _match_key(m["golfer_b"]["name"]) or m["golfer_b"]["name"].lower(),
+            ]))
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            deduped.append(m)
+        # Sort by closeness (tightest matchups first)
+        deduped.sort(key=lambda m: abs(m["golfer_a"]["probability"] - m["golfer_b"]["probability"]))
+        t["h2h_matchups"] = deduped
 
     # Sort tournaments by order, then by resolution date for tour events
     tournaments.sort(key=lambda t: (t["order"], t.get("sort_date") or "9999"))
@@ -1599,7 +1710,7 @@ async def get_golf_tournament(
 
     placement_market_ids: dict[str, list[int]] = {}  # type_key -> [market_ids]
     for g in sorted_groups:
-        if g["type"] in ("top_5", "top_10", "top_20", "make_cut"):
+        if g["type"] in ("top_5", "top_10", "top_20", "make_cut", "round_leader"):
             placement_market_ids[g["type"]] = g["market_ids"]
 
     if placement_market_ids:
@@ -1649,6 +1760,7 @@ async def get_golf_tournament(
                 g["top_10_prob"] = round(probs["top_10"] * 100, 1) if "top_10" in probs else None
                 g["top_20_prob"] = round(probs["top_20"] * 100, 1) if "top_20" in probs else None
                 g["make_cut_prob"] = round(probs["make_cut"] * 100, 1) if "make_cut" in probs else None
+                g["round_leader_prob"] = round(probs["round_leader"] * 100, 1) if "round_leader" in probs else None
 
     return {
         "tournament": {
@@ -1669,6 +1781,7 @@ async def get_golf_tournament(
         "markets": sorted_groups,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,
+        "h2h_matchups": tournament.get("h2h_matchups", []),
     }
 
 

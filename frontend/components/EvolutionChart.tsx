@@ -31,7 +31,7 @@ const EVOLUTION_COLORS = [
   "#065f46", // emerald
 ];
 
-type TimeRange = "full" | "7d" | "24h" | "today";
+type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
 
 interface RoundBoundary {
   timestamp: string;
@@ -47,13 +47,16 @@ interface EvolutionChartProps {
   height?: number;
   className?: string;
   timeRange: TimeRange;
+  /** ISO start date — required cutoff for the "tournament" time range */
+  tournamentStart?: string | null;
 }
 
 /** Merge all outcome histories into unified time-bucketed chart data */
 function buildChartData(
   historyData: FuturesOutcomeHistory[],
   selectedIds: Set<number>,
-  timeRange: TimeRange
+  timeRange: TimeRange,
+  tournamentStart?: string | null
 ): { data: Record<string, number | string | null>[]; domain: [number, number] } {
   let cutoff = 0;
   if (timeRange === "7d") cutoff = subDays(new Date(), 7).getTime();
@@ -62,6 +65,13 @@ function buildChartData(
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     cutoff = todayStart.getTime();
+  } else if (timeRange === "tournament" && tournamentStart) {
+    // Start a little before the first round so the viewer sees the pre-event baseline
+    try {
+      cutoff = new Date(tournamentStart).getTime() - 12 * 60 * 60 * 1000;
+    } catch {
+      cutoff = 0;
+    }
   }
 
   const allTimestamps = new Set<number>();
@@ -73,7 +83,11 @@ function buildChartData(
     for (const point of outcome.history) {
       const ts = parseISO(point.timestamp).getTime();
       if (cutoff && ts < cutoff) continue;
-      const bucketMs = timeRange === "full" ? 15 * 60 * 1000 : 5 * 60 * 1000;
+      const bucketMs = timeRange === "full"
+        ? 15 * 60 * 1000
+        : timeRange === "tournament"
+          ? 15 * 60 * 1000
+          : 5 * 60 * 1000;
       const bucket = Math.floor(ts / bucketMs) * bucketMs;
       map.set(bucket, point.probability ?? 0);
       allTimestamps.add(bucket);
@@ -120,6 +134,7 @@ export function EvolutionChart({
   height = 300,
   className,
   timeRange,
+  tournamentStart,
 }: EvolutionChartProps) {
   // Build name lookup and color assignment
   const outcomeInfo = useMemo(() => {
@@ -142,8 +157,8 @@ export function EvolutionChart({
   }, [historyData, selectedOutcomeIds]);
 
   const { data, domain } = useMemo(
-    () => buildChartData(historyData, selectedOutcomeIds, timeRange),
-    [historyData, selectedOutcomeIds, timeRange]
+    () => buildChartData(historyData, selectedOutcomeIds, timeRange, tournamentStart),
+    [historyData, selectedOutcomeIds, timeRange, tournamentStart]
   );
 
   const formatXAxis = useCallback(
@@ -152,6 +167,9 @@ export function EvolutionChart({
         const d = parseISO(value);
         if (timeRange === "today" || timeRange === "24h") {
           return format(d, "h:mm a");
+        }
+        if (timeRange === "tournament") {
+          return format(d, "EEE");
         }
         return format(d, "MMM d");
       } catch {
