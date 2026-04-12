@@ -693,53 +693,24 @@ def _match_market_to_column(
 ) -> str | None:
     """Determine which grid column a market belongs to.
 
-    Uses matching_rules from the league config (name patterns + market_tier),
-    then falls back to tournament_stages.py classify_market_stage.
+    Delegates to the unified classifier in ``utils/market_classification``
+    so the grid, TeamPlayoffCard, and RelatedFutures/Bigger Picture all
+    share one classification path.
     """
+    from app.utils.market_classification import classify_in_league
+
     name = market.name or ""
-    name_lower = name.lower()
 
     # 0. Reject non-playoff markets (win totals, props, awards, etc.)
     if not _is_playoff_relevant_market(name):
         return None
 
-    # 1. Try league config matching rules (most specific)
-    for rule in config.matching_rules:
-        # Tier match
-        if rule.tier is not None and market.market_tier == rule.tier:
-            # Verify the column key exists in config columns
-            if any(c.key == rule.column for c in config.columns):
-                # For tier matches, also check name patterns if available
-                # to prevent false positives (e.g., tier 2 could be conference OR award)
-                if rule.name_patterns:
-                    for pat in rule.name_patterns:
-                        if re.search(pat, name, re.IGNORECASE):
-                            return rule.column
-                else:
-                    return rule.column
-
-        # Name pattern match
-        for pat in rule.name_patterns:
-            if re.search(pat, name, re.IGNORECASE):
-                return rule.column
-
-    # 2. Fall back to tournament_stages.py classify_market_stage
-    # NOTE: Do NOT pass market_tier to the fallback — our config matching rules
-    # already handle tiers with name-pattern gating. The fallback's tier→stage
-    # mapping has no name validation, which causes false positives like
-    # "NBA 2K27 Cover" (tier=1) → championship.
-    stages = get_stages_for_sport(config.sport_category, league=None)
-    if stages:
-        stage_key = classify_market_stage(
-            market_name=name,
-            external_id=market.external_id,
-            market_tier=None,  # Intentionally None — see note above
-            stages=stages,
-        )
-        if stage_key and any(c.key == stage_key for c in config.columns):
-            return stage_key
-
-    return None
+    return classify_in_league(
+        name=name,
+        external_id=market.external_id,
+        market_tier=market.market_tier,
+        config=config,
+    )
 
 
 def _correct_inverted_probs(probs: list[float]) -> list[float]:

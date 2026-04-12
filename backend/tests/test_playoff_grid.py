@@ -472,6 +472,78 @@ class TestMLBGroundTruth:
         m = _make_market("Teams in World Series", source="kalshi")
         assert _is_playoff_relevant_market(m.name) is False
 
+
+class TestClassifierConsistency:
+    """Ensure the grid and RelatedFutures classifiers agree on every
+    MLB ground-truth market.
+
+    Both entry points (_match_market_to_column for the grid, and
+    compute_playoff_stage for RelatedFutures/Bigger Picture) now
+    delegate to utils/market_classification. This test class walks
+    the same ground-truth list through both and asserts that:
+
+    1. The grid assigns the expected column.
+    2. compute_playoff_stage maps the same market to the expected
+       RelatedFutures (stage_type, order) per _GRID_TO_RELATED_FUTURES.
+
+    If the two classifiers ever drift apart, this test will fail.
+    """
+
+    # (kalshi/PM market name, market_tier, expected_grid_column,
+    #  expected_related_futures_stage_type)
+    CASES = [
+        # make_playoffs → playoffs
+        ("Pro Baseball Playoff Qualifiers", 5, "make_playoffs", "playoffs"),
+        ("MLB: Team to Make Postseason", 5, "make_playoffs", "playoffs"),
+
+        # Kalshi divisions → grid: division / RF: division
+        ("American League East Winner",    2, "division", "division"),
+        ("American League Central Winner", 4, "division", "division"),
+        ("American League West Winner",    2, "division", "division"),
+        ("National League East Winner",    2, "division", "division"),
+        ("National League Central Winner", 4, "division", "division"),
+        ("National League West Winner",    2, "division", "division"),
+
+        # Polymarket divisions → grid: division / RF: division
+        ("MLB 2026 AL East Champion",      4, "division", "division"),
+        ("MLB 2026 AL Central Champion",   4, "division", "division"),
+        ("MLB 2026 NL West Champion",      4, "division", "division"),
+
+        # Pennants → grid: pennant / RF: conference (MLB pennant collapses
+        # to generic "conference" in the RelatedFutures taxonomy).
+        ("MLB American League Championship",   2, "pennant", "conference"),
+        ("MLB National League Championship",   2, "pennant", "conference"),
+        ("MLB 2026 American League Champion",  2, "pennant", "conference"),
+        ("MLB 2026 National League Champion",  2, "pennant", "conference"),
+
+        # Championship → grid: championship / RF: championship
+        ("World Series",                      1, "championship", "championship"),
+        ("MLB World Series Champion 2026",    1, "championship", "championship"),
+    ]
+
+    @pytest.mark.parametrize("name,tier,expected_grid,expected_rf", CASES)
+    def test_grid_and_related_futures_agree(self, name, tier, expected_grid, expected_rf):
+        from app.utils.market_label_normalization import compute_playoff_stage
+
+        # 1. Grid classifier (via _match_market_to_column)
+        market = _make_market(name, source="kalshi", market_tier=tier,
+                               llm_sport_category="baseball")
+        grid_col = _match_market_to_column(market, MLB_CONFIG)
+        assert grid_col == expected_grid, (
+            f"{name!r}: grid expected {expected_grid!r}, got {grid_col!r}"
+        )
+
+        # 2. RelatedFutures classifier (via compute_playoff_stage)
+        stage_type, _display, _order = compute_playoff_stage(
+            clean_label=name,
+            raw_name=name,
+            market_tier=tier,
+            llm_sport_category="baseball",
+        )
+        assert stage_type == expected_rf, (
+            f"{name!r}: RelatedFutures expected {expected_rf!r}, got {stage_type!r}"
+        )
+
     # --- WNBA ---
     def test_wnba_championship(self):
         m = _make_market("WNBA Championship Winner 2026")

@@ -3124,9 +3124,17 @@ async def get_related_futures(
         )
         merge_group = get_merge_group(clean_label)
 
-        # Compute playoff stage classification (single source of truth)
+        # Compute playoff stage classification (single source of truth).
+        # Pass the full market metadata so the league-aware classifier can
+        # use Kalshi ticker prefixes and Odds API sport keys in addition
+        # to the raw name — this keeps RelatedFutures consistent with the
+        # championship grid classifier.
         stage_type, stage_display, stage_order = compute_playoff_stage(
-            clean_label, raw_name=market.name or "",
+            clean_label,
+            raw_name=market.name or "",
+            external_id=market.external_id,
+            market_tier=market.market_tier,
+            llm_sport_category=market.llm_sport_category,
         )
 
         entry = {

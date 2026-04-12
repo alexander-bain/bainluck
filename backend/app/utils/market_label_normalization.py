@@ -614,55 +614,105 @@ _CONF_NAME_RE = re.compile(r"(eastern|western|afc|nfc|american|national|\bAL\b|\
 _DIV_NAME_RE = re.compile(r"([\w]+)\s+division", re.I)
 
 
+def _build_stage_display(stage_type: str, text: str,
+                         clean_label: str, raw_name: str) -> str:
+    """Build the human-readable display label for a generic stage type.
+
+    Shared by both the league-aware and generic classification paths
+    so "Eastern Champ" / "AL Champ" / "Atlantic Div" are rendered
+    consistently regardless of which path matched.
+    """
+    if stage_type == "conference":
+        m = _CONF_NAME_RE.search(text)
+        if m:
+            raw = m.group(1)
+            if raw.upper() in ("AL", "NL", "AFC", "NFC"):
+                return raw.upper() + " Champ"
+            return raw[0].upper() + raw[1:] + " Champ"
+        return "Conference"
+    if stage_type == "championship":
+        return "Championship"
+    if stage_type == "division":
+        m = _DIV_NAME_RE.search(text)
+        if m and m.group(1).lower() not in ("the", "a", "win"):
+            return m.group(1)[0].upper() + m.group(1)[1:] + " Div"
+        # Fall back to team-league+region forms that lack the literal
+        # "division" word (e.g. "NFC East", "AL Central").
+        m2 = re.search(
+            r"\b(?:afc|nfc|al|nl)\s+(?:east|north|south|west|central)\b",
+            text, re.IGNORECASE,
+        )
+        if m2:
+            return m2.group(0).upper() + " Div"
+        return "Division"
+    if stage_type == "play_in":
+        return "Play-In"
+    if stage_type == "playoffs":
+        return "Playoffs"
+    if stage_type == "top_seed":
+        return "#1 Seed"
+    return clean_label or raw_name
+
+
 def compute_playoff_stage(
     clean_label: str,
     raw_name: str = "",
+    external_id: Optional[str] = None,
+    market_tier: Optional[int] = None,
+    llm_sport_category: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], Optional[int]]:
     """Compute playoff stage classification for a market.
 
-    Returns (stage_type, stage_display_name, stage_order) or (None, None, None)
-    if not a playoff-path market.
+    Returns ``(stage_type, stage_display_name, stage_order)`` or
+    ``(None, None, None)`` for non-playoff markets.
 
-    stage_type: machine-readable key ("conference", "championship", "division", etc.)
-    stage_display_name: human-readable label ("Eastern Champ", "Championship", "Atlantic Div")
-    stage_order: sort order (1=Playoffs, 2=Play-In, 3=Division, 4=Conference, 5=Championship, 6=#1 Seed)
+    Delegates to :func:`app.utils.market_classification.classify_market`
+    so the grid, TeamPlayoffCard, and RelatedFutures/Bigger Picture all
+    share the same classification path. When a ``LeagueConfig`` resolves,
+    the grid stage key is translated to the generic RelatedFutures
+    taxonomy (e.g. MLB ``pennant`` → ``conference``). For markets that
+    don't resolve to any league (long-tail sports, missing metadata),
+    falls back to sport-agnostic pattern matching.
+
+    The extra keyword arguments (``external_id``, ``market_tier``,
+    ``llm_sport_category``) are optional — callers with a full
+    ``FuturesMarket`` should pass them so the league resolver can use
+    Kalshi ticker prefixes and Odds API sport keys in addition to the
+    market name.
     """
+    # Use the richer input for classification (raw_name has the full
+    # original market title; clean_label may have stage suffixes stripped).
+    name_for_classification = raw_name or clean_label or ""
     text = (clean_label or raw_name or "").lower()
     if not text:
         return None, None, None
 
-    for pattern, stage_type, order in _PLAYOFF_STAGE_RULES:
-        if pattern.search(text):
-            # Compute display name based on stage type
-            if stage_type == "conference":
-                m = _CONF_NAME_RE.search(text)
-                if m:
-                    raw = m.group(1)
-                    # Keep abbreviations uppercase (AL, NL, AFC, NFC)
-                    if raw.upper() in ("AL", "NL", "AFC", "NFC"):
-                        display = raw.upper() + " Champ"
-                    else:
-                        display = raw[0].upper() + raw[1:] + " Champ"
-                else:
-                    display = "Conference"
-            elif stage_type == "championship":
-                display = "Championship"
-            elif stage_type == "division":
-                m = _DIV_NAME_RE.search(text)
-                if m and m.group(1).lower() not in ("the", "a", "win"):
-                    display = m.group(1)[0].upper() + m.group(1)[1:] + " Div"
-                else:
-                    display = "Division"
-            elif stage_type == "play_in":
-                display = "Play-In"
-            elif stage_type == "playoffs":
-                display = "Playoffs"
-            elif stage_type == "top_seed":
-                display = "#1 Seed"
-            else:
-                display = clean_label or raw_name
+    # 1. Try the league-aware classifier first.
+    from app.utils.market_classification import (
+        classify_market,
+        classify_generic,
+        to_related_futures_stage,
+    )
 
+    result = classify_market(
+        name=name_for_classification,
+        external_id=external_id,
+        market_tier=market_tier,
+        llm_sport_category=llm_sport_category,
+    )
+
+    if result.stage_key:
+        stage_type, order = to_related_futures_stage(result.stage_key)
+        if stage_type:
+            display = _build_stage_display(stage_type, text, clean_label, raw_name)
             return stage_type, display, order
+
+    # 2. Fall back to generic sport-agnostic classification for markets
+    # that don't resolve to a configured league.
+    stage_type, order = classify_generic(text)
+    if stage_type:
+        display = _build_stage_display(stage_type, text, clean_label, raw_name)
+        return stage_type, display, order
 
     return None, None, None
 

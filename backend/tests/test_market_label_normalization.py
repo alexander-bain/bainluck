@@ -341,12 +341,18 @@ class TestComputePlayoffStage:
         ("Eastern Conference Finals Matchup", "conference", "Eastern Champ", 4),
         ("Western Conf Finals MVP", "conference", "Western Champ", 4),
 
-        # Division markets
+        # Division markets — team-league+region forms must beat the
+        # conference rule (e.g., "NFC East" is a division, not a
+        # conference championship). The pre-unification classifier had
+        # "conference first" priority which misclassified these.
         ("Atlantic Division Winner", "division", "Atlantic Div", 3),
-        ("NFC East", "conference", "NFC Champ", 4),  # NFC triggers conference
+        ("NFC East", "division", "NFC EAST Div", 3),
+        ("AL East", "division", "AL EAST Div", 3),
+        ("American League Central", "division", "Division", 3),
 
-        # Play-In
-        ("Eastern Conference Play-In", "conference", "Eastern Champ", 4),  # conference first
+        # Play-In — qualifies into the playoffs, so "Eastern Conference
+        # Play-In" is a play-in market not a conference championship.
+        ("Eastern Conference Play-In", "play_in", "Play-In", 2),
         ("Play-In Tournament", "play_in", "Play-In", 2),
 
         # Make Playoffs
