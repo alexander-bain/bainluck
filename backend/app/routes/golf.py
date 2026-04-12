@@ -821,25 +821,51 @@ async def get_golf(
     )
 
     result = await db.execute(query)
-    markets = result.scalars().unique().all()
-
-    # Separate head-to-head matchup markets (e.g., "Scheffler vs McIlroy").
-    # These are kept and surfaced as standalone matchup cards on the tournament
-    # detail page instead of being mixed into winner aggregation.
-    h2h_markets_raw = [
-        m for m in markets
-        if " vs " in m.name.lower() or " vs." in m.name.lower()
-    ]
-    markets = [
-        m for m in markets
-        if " vs " not in m.name.lower() and " vs." not in m.name.lower()
-    ]
+    markets_all = result.scalars().unique().all()
 
     # Filter out non-golf false positives (esports, entertainment, politics, etc.)
-    markets = [m for m in markets if _is_golf_market(m)]
-    h2h_markets_raw = [m for m in h2h_markets_raw if _is_golf_market(m)]
+    markets_all = [m for m in markets_all if _is_golf_market(m)]
 
-    logger.info("Golf endpoint: %d markets after filtering", len(markets))
+    # Structurally split off head-to-head matchup markets. Odds API matchup
+    # markets don't always have " vs " in the market name — the two golfers
+    # are in the *outcomes*. A market is a matchup if it has exactly two
+    # valid golfer-named outcomes whose probabilities sum to ~1.0. Keeping
+    # these out of winner aggregation prevents them from polluting the top
+    # contenders' averages.
+    def _is_h2h_matchup(market) -> bool:
+        valid = [
+            o for o in market.outcomes
+            if o.current_probability is not None
+            and o.name.strip().lower() not in (
+                "yes", "no", "tie", "field", "other", "the field",
+            )
+        ]
+        if len(valid) != 2:
+            return False
+        prob_sum = sum(float(o.current_probability) for o in valid)
+        if prob_sum < 0.85 or prob_sum > 1.15:
+            return False
+        # Each outcome must look like a human name (produces a match key)
+        for o in valid:
+            if not _match_key(o.name):
+                return False
+            # Reject single-word or generic outcome names
+            if len(o.name.strip().split()) < 2:
+                return False
+        return True
+
+    h2h_markets_raw: list = []
+    markets: list = []
+    for m in markets_all:
+        if _is_h2h_matchup(m):
+            h2h_markets_raw.append(m)
+        else:
+            markets.append(m)
+
+    logger.info(
+        "Golf endpoint: %d markets after filtering (%d h2h matchups)",
+        len(markets), len(h2h_markets_raw),
+    )
 
     # ========================================================================
     # Compute 24h movement from futures_odds_snapshots
@@ -1204,19 +1230,40 @@ async def get_golf(
             if k:
                 golfer_to_tournaments[k].add(t["key"])
 
+    # Also index tournaments by their commence_time so we can route matchups
+    # with no golfer overlap (e.g., very long tail tours) by timestamp.
+    tourn_by_commence: list[tuple[datetime, str]] = []
+    for t in tournaments:
+        ct_str = t.get("commence_time")
+        if ct_str:
+            try:
+                tourn_by_commence.append((datetime.fromisoformat(ct_str), t["key"]))
+            except (ValueError, TypeError):
+                pass
+
+    def _route_by_commence(market) -> str | None:
+        if not market.commence_time:
+            return None
+        m_ct = market.commence_time
+        best_key = None
+        best_delta = timedelta(days=4)
+        for ct, tk in tourn_by_commence:
+            delta = abs(ct - m_ct) if ct.tzinfo else abs(ct.replace(tzinfo=timezone.utc) - m_ct)
+            if delta < best_delta:
+                best_delta = delta
+                best_key = tk
+        return best_key
+
     h2h_by_tournament: dict[str, list[dict]] = defaultdict(list)
+    h2h_unrouted = 0
     for market in h2h_markets_raw:
-        # Extract matchup outcomes — must have exactly 2 valid golfer outcomes
+        # Structural pre-filter guarantees exactly 2 valid golfer outcomes
         valid_outcomes = [
             o for o in market.outcomes
             if o.current_probability is not None
-            and o.name.strip().lower() not in ("tie", "field", "other", "the field")
+            and o.name.strip().lower() not in ("yes", "no", "tie", "field", "other", "the field")
         ]
         if len(valid_outcomes) != 2:
-            continue
-
-        prob_sum = sum(float(o.current_probability) for o in valid_outcomes)
-        if prob_sum < 0.8 or prob_sum > 1.2:
             continue
 
         a, b = valid_outcomes
@@ -1225,31 +1272,34 @@ async def get_golf(
         if not a_key or not b_key:
             continue
 
-        # Route by tournament that contains BOTH golfers; fall back to name matching
+        # Route by tournament that contains BOTH golfers, then either golfer,
+        # then market commence_time, then market name regex.
         tourn_key: str | None = None
         a_tourns = golfer_to_tournaments.get(a_key, set())
         b_tourns = golfer_to_tournaments.get(b_key, set())
         shared = a_tourns & b_tourns
+
+        name_key = _normalize_tournament(market.name, schedule)
+        if name_key != "other" and _WOMENS_RE.search(market.name):
+            name_key = name_key + "_womens"
+
         if len(shared) == 1:
             tourn_key = next(iter(shared))
         elif len(shared) > 1:
-            # Tie-break via market name regex if multiple tournaments contain both
-            name_key = _normalize_tournament(market.name, schedule)
-            if _WOMENS_RE.search(market.name):
-                name_key = name_key + "_womens"
-            if name_key in shared:
+            tourn_key = name_key if name_key in shared else next(iter(shared))
+        else:
+            # Either golfer matches a single tournament
+            either = a_tourns | b_tourns
+            if len(either) == 1:
+                tourn_key = next(iter(either))
+            elif name_key != "other":
                 tourn_key = name_key
             else:
-                tourn_key = next(iter(shared))
-        else:
-            # Neither: last-ditch name-based matching
-            name_key = _normalize_tournament(market.name, schedule)
-            if name_key != "other":
-                if _WOMENS_RE.search(market.name):
-                    name_key = name_key + "_womens"
-                tourn_key = name_key
+                # commence_time fallback
+                tourn_key = _route_by_commence(market)
 
         if not tourn_key:
+            h2h_unrouted += 1
             continue
 
         source = market.source or "unknown"
@@ -1273,6 +1323,9 @@ async def get_golf(
                 "probability": round(b_prob, 3),
             },
         })
+
+    if h2h_unrouted:
+        logger.info("Golf h2h: %d matchups unrouted (no matching tournament)", h2h_unrouted)
 
     # Attach h2h matchups to their tournament; dedupe by golfer pair across sources
     for t in tournaments:
