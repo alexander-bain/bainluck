@@ -190,6 +190,7 @@ async def _poll_futures_odds():
                             service.last_requests_used or 0,
                             "poll_futures",
                             pre_call_used=pre_used,
+                            sport_key=sport_key,
                         )
 
                     if not markets_data:

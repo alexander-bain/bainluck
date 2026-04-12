@@ -600,6 +600,7 @@ async def _poll_all_odds():
                             service.last_requests_used or 0,
                             "poll_odds",
                             pre_call_used=pre_used,
+                            sport_key=sport_key,
                         )
 
                     # Update last poll time and per-sport adaptive state in Redis

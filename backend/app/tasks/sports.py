@@ -279,6 +279,7 @@ async def _discover_events():
                             service.last_requests_used or 0,
                             "discover_events",
                             pre_call_used=pre_used,
+                            sport_key=sport_key,
                         )
 
                     # Collect all team names from this sport's events
