@@ -221,6 +221,33 @@ async def _poll_datagolf_markets() -> dict:
                                 session.add(snap)
                                 stats["snapshots_written"] += 1
 
+                        # Null out stale outcomes: any outcome on this market
+                        # that isn't in the fresh player set has withdrawn or
+                        # was never in the field. Setting current_probability
+                        # to None removes them from the aggregated response —
+                        # the /golf route skips None outcomes. This is what
+                        # prevents e.g. Anthony Kim from lingering in the
+                        # Masters winner odds after DataGolf stops returning
+                        # him.
+                        fresh_ext_ids = {f"dg_{p.dg_id}" for p in players}
+                        stale_result = await session.execute(
+                            select(FuturesOutcome).where(
+                                FuturesOutcome.market_id == market.id,
+                                FuturesOutcome.current_probability.isnot(None),
+                                ~FuturesOutcome.external_id.in_(fresh_ext_ids),
+                            )
+                        )
+                        stale_nulled = 0
+                        for stale in stale_result.scalars().all():
+                            stale.current_probability = None
+                            stale.last_updated = now
+                            stale_nulled += 1
+                        if stale_nulled:
+                            logger.info(
+                                "DataGolf pre-tournament: nulled %d stale outcomes on market %s",
+                                stale_nulled, market.id,
+                            )
+
                     stats["tours_polled"] += 1
 
                 except Exception as e:
@@ -427,6 +454,27 @@ async def _poll_datagolf_live() -> dict:
                                 )
                                 session.add(snap)
                                 stats["snapshots_written"] += 1
+
+                        # Null out stale outcomes not in the current in-play
+                        # field. See pre-tournament poll above for rationale.
+                        fresh_ext_ids = {f"dg_{p.dg_id}" for p in players}
+                        stale_result = await session.execute(
+                            select(FuturesOutcome).where(
+                                FuturesOutcome.market_id == market.id,
+                                FuturesOutcome.current_probability.isnot(None),
+                                ~FuturesOutcome.external_id.in_(fresh_ext_ids),
+                            )
+                        )
+                        stale_nulled = 0
+                        for stale in stale_result.scalars().all():
+                            stale.current_probability = None
+                            stale.last_updated = now
+                            stale_nulled += 1
+                        if stale_nulled:
+                            logger.info(
+                                "DataGolf live: nulled %d stale outcomes on market %s",
+                                stale_nulled, market.id,
+                            )
 
                     stats["tours_polled"] += 1
 
