@@ -1085,6 +1085,14 @@ export interface GolfGolfer {
   top_10_prob?: number | null;
   top_20_prob?: number | null;
   make_cut_prob?: number | null;
+  round_leader_prob?: number | null;
+}
+
+export interface GolfH2HMatchup {
+  market_id: number;
+  source: string;
+  golfer_a: { name: string; probability: number };
+  golfer_b: { name: string; probability: number };
 }
 
 export interface GolfTournament {
@@ -1196,6 +1204,7 @@ export interface GolfTournamentDetailResponse {
   markets: GolfMarketGroup[];
   evolution_market_id: number | null;
   biggest_movers: GolfMover[];
+  h2h_matchups?: GolfH2HMatchup[];
 }
 
 // ============================================================================

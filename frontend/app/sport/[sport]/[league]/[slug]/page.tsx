@@ -7,6 +7,7 @@ import { fetchGolfTournament, fetchGolfLeaderboard, fetchSportHierarchyDetail, f
 import type {
   GolfTournamentDetailResponse,
   GolfGolfer,
+  GolfH2HMatchup,
   GolfLeaderboardPlayer,
   GolfMarketGroup,
   SportHierarchy,
@@ -26,11 +27,15 @@ function EvolutionViewWithFallback({
   marketName,
   defaultTopN,
   hours,
+  tournamentStart,
+  tournamentEnd,
 }: {
   marketIds: number[];
   marketName: string;
   defaultTopN: number;
   hours: number;
+  tournamentStart?: string | null;
+  tournamentEnd?: string | null;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -49,6 +54,8 @@ function EvolutionViewWithFallback({
       marketName={marketName}
       defaultTopN={defaultTopN}
       hours={hours}
+      tournamentStart={tournamentStart}
+      tournamentEnd={tournamentEnd}
       onEmpty={() => {
         if (currentIndex + 1 < marketIds.length) {
           setCurrentIndex(currentIndex + 1);
@@ -63,12 +70,16 @@ function EvolutionViewWithCallback({
   marketName,
   defaultTopN,
   hours,
+  tournamentStart,
+  tournamentEnd,
   onEmpty,
 }: {
   marketId: number;
   marketName: string;
   defaultTopN: number;
   hours: number;
+  tournamentStart?: string | null;
+  tournamentEnd?: string | null;
   onEmpty: () => void;
 }) {
   const [hasData, setHasData] = useState<boolean | null>(null);
@@ -106,7 +117,177 @@ function EvolutionViewWithCallback({
       marketName={marketName}
       defaultTopN={defaultTopN}
       hours={hours}
+      tournamentStart={tournamentStart ?? null}
+      tournamentEnd={tournamentEnd ?? null}
     />
+  );
+}
+
+// ============================================================================
+// Odds grid — multi-column (Win / Top 5 / Top 10 / Top 20 / Make Cut / Round Leader)
+// ============================================================================
+
+type OddsColumn = {
+  key: "probability" | "top_5_prob" | "top_10_prob" | "top_20_prob" | "make_cut_prob" | "round_leader_prob" | "movement_24h";
+  label: string;
+};
+
+function formatProb(value: number | null | undefined, isUnit: "percent" | "fraction"): string {
+  if (value == null) return "-";
+  const pct = isUnit === "percent" ? value : value * 100;
+  if (pct >= 10) return `${pct.toFixed(0)}%`;
+  if (pct >= 1) return `${pct.toFixed(1)}%`;
+  return `${pct.toFixed(1)}%`;
+}
+
+function OddsGrid({ golfers }: { golfers: GolfGolfer[] }) {
+  // Build dynamic column set — only include placement columns with any data
+  const columns: OddsColumn[] = useMemo(() => {
+    const all: OddsColumn[] = [
+      { key: "probability", label: "Win" },
+      { key: "top_5_prob", label: "Top 5" },
+      { key: "top_10_prob", label: "Top 10" },
+      { key: "top_20_prob", label: "Top 20" },
+      { key: "make_cut_prob", label: "Make Cut" },
+      { key: "round_leader_prob", label: "Rd Leader" },
+    ];
+    const kept = all.filter((col) => {
+      if (col.key === "probability") return true;
+      return golfers.some((g) => (g as unknown as Record<string, number | null | undefined>)[col.key] != null);
+    });
+    return kept;
+  }, [golfers]);
+
+  const showMovement = golfers.some((g) => g.movement_24h != null);
+
+  // Column layout: # | Player | ...data columns | 24h?
+  const dataColsCount = columns.length;
+  const movementCols = showMovement ? 1 : 0;
+  const templateCols = `2.5rem minmax(7rem,1fr) ${Array(dataColsCount).fill("minmax(3.5rem,4.5rem)").join(" ")}${movementCols ? " 4rem" : ""}`;
+
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
+      <div className="overflow-x-auto">
+        <div
+          className="grid items-center px-3 py-2 text-xs text-text-muted border-b border-surface-border bg-surface-elevated"
+          style={{ gridTemplateColumns: templateCols, minWidth: "min-content" }}
+        >
+          <span>#</span>
+          <span>Player</span>
+          {columns.map((c) => (
+            <span key={c.key} className="text-right">{c.label}</span>
+          ))}
+          {showMovement && <span className="text-right">24h</span>}
+        </div>
+        {golfers.slice(0, 30).map((g: GolfGolfer, i: number) => (
+          <div
+            key={g.name}
+            className={`grid items-center px-3 py-2 text-sm ${
+              i % 2 === 0 ? "bg-surface-elevated/50" : ""
+            }`}
+            style={{ gridTemplateColumns: templateCols, minWidth: "min-content" }}
+          >
+            <span className="text-text-muted font-mono text-xs">{g.rank}</span>
+            <span className="text-text-primary truncate">{g.name}</span>
+            {columns.map((c) => {
+              if (c.key === "probability") {
+                return (
+                  <span
+                    key={c.key}
+                    className={`text-right font-mono text-xs ${
+                      g.probability > 0.05 ? "text-emerald-600" : "text-text-primary"
+                    }`}
+                  >
+                    {formatProb(g.probability, "fraction")}
+                  </span>
+                );
+              }
+              const raw = (g as unknown as Record<string, number | null | undefined>)[c.key];
+              return (
+                <span key={c.key} className="text-right font-mono text-xs text-text-secondary">
+                  {formatProb(raw, "percent")}
+                </span>
+              );
+            })}
+            {showMovement && (
+              <span
+                className={`text-right font-mono text-xs ${
+                  g.movement_24h && g.movement_24h > 0
+                    ? "text-accent-live"
+                    : g.movement_24h && g.movement_24h < 0
+                      ? "text-accent-danger"
+                      : "text-text-muted"
+                }`}
+              >
+                {g.movement_24h != null
+                  ? `${g.movement_24h > 0 ? "+" : ""}${(g.movement_24h * 100).toFixed(1)}%`
+                  : "-"}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Head-to-head matchups card
+// ============================================================================
+
+function H2HMatchupsCard({ matchups }: { matchups: GolfH2HMatchup[] }) {
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
+      <div className="divide-y divide-surface-border">
+        {matchups.map((m) => {
+          const aPct = m.golfer_a.probability * 100;
+          const bPct = m.golfer_b.probability * 100;
+          return (
+            <div
+              key={m.market_id}
+              className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3"
+            >
+              {/* Left golfer */}
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm text-text-primary truncate font-medium">
+                  {m.golfer_a.name}
+                </span>
+                <span className="text-xs text-emerald-600 font-mono">
+                  {aPct.toFixed(0)}%
+                </span>
+              </div>
+
+              {/* Center bar */}
+              <div className="w-24 sm:w-40">
+                <div className="flex h-1.5 rounded-full overflow-hidden bg-surface-elevated">
+                  <div
+                    className="bg-emerald-600"
+                    style={{ width: `${aPct}%` }}
+                  />
+                  <div
+                    className="bg-gray-300"
+                    style={{ width: `${bPct}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-text-muted text-center mt-1 uppercase tracking-wide">
+                  vs
+                </div>
+              </div>
+
+              {/* Right golfer */}
+              <div className="flex flex-col items-end min-w-0">
+                <span className="text-sm text-text-primary truncate font-medium text-right">
+                  {m.golfer_b.name}
+                </span>
+                <span className="text-xs text-text-secondary font-mono">
+                  {bPct.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -318,6 +499,8 @@ export default function SportEventDetailPage() {
               marketName={t.name}
               defaultTopN={10}
               hours={168}
+              tournamentStart={t.start_date}
+              tournamentEnd={t.end_date}
             />
           </section>
         )}
@@ -347,57 +530,21 @@ export default function SportEventDetailPage() {
           </section>
         )}
 
-        {/* Top Golfers by Odds (if no leaderboard) */}
-        {mergedLeaderboard.length === 0 && tournament.golfers && tournament.golfers.length > 0 && (
+        {/* Odds Grid — multi-column placement probabilities */}
+        {tournament.golfers && tournament.golfers.length > 0 && (
           <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Odds to Win</h2>
-            <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-              <div className="grid grid-cols-[2.5rem_1fr_5rem_5rem] items-center px-3 py-2 text-xs text-text-muted border-b border-surface-border bg-surface-elevated">
-                <span>#</span>
-                <span>Player</span>
-                <span className="text-right">Win %</span>
-                <span className="text-right">24h</span>
-              </div>
-              {tournament.golfers.slice(0, 30).map((g: GolfGolfer, i: number) => (
-                <div
-                  key={g.name}
-                  className={`grid grid-cols-[2.5rem_1fr_5rem_5rem] items-center px-3 py-2 text-sm ${
-                    i % 2 === 0 ? "bg-surface-elevated/50" : ""
-                  }`}
-                >
-                  <span className="text-text-muted font-mono text-xs">{g.rank}</span>
-                  <span className="text-text-primary truncate">{g.name}</span>
-                  <span className="text-right font-mono text-xs text-emerald-600">
-                    {(g.probability * 100).toFixed(1)}%
-                  </span>
-                  <span className={`text-right font-mono text-xs ${
-                    g.movement_24h && g.movement_24h > 0 ? "text-accent-live" :
-                    g.movement_24h && g.movement_24h < 0 ? "text-accent-danger" : "text-text-muted"
-                  }`}>
-                    {g.movement_24h != null
-                      ? `${g.movement_24h > 0 ? "+" : ""}${(g.movement_24h * 100).toFixed(1)}%`
-                      : "-"}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Odds</h2>
+            <OddsGrid golfers={tournament.golfers} />
           </section>
         )}
 
-        {/* Market Groups */}
-        {tournament.markets && tournament.markets.length > 0 && (
+        {/* Head-to-head matchups */}
+        {tournament.h2h_matchups && tournament.h2h_matchups.length > 0 && (
           <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Markets</h2>
-            <div className="flex flex-wrap gap-2">
-              {tournament.markets.map((m: GolfMarketGroup) => (
-                <span
-                  key={m.type}
-                  className="bg-surface-elevated text-text-secondary text-sm px-3 py-1.5 rounded-full border border-surface-border"
-                >
-                  {m.label} ({m.market_ids.length} source{m.market_ids.length !== 1 ? "s" : ""})
-                </span>
-              ))}
-            </div>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+              Head-to-head Matchups
+            </h2>
+            <H2HMatchupsCard matchups={tournament.h2h_matchups} />
           </section>
         )}
 
