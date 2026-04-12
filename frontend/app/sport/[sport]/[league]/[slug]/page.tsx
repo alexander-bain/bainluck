@@ -16,8 +16,6 @@ import type {
 import { EvolutionView } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
-type MergedLeaderboardPlayer = GolfLeaderboardPlayer & { _golfer?: GolfGolfer };
-
 // ============================================================================
 // Evolution chart with fallback — tries market IDs in order
 // ============================================================================
@@ -124,46 +122,130 @@ function EvolutionViewWithCallback({
 }
 
 // ============================================================================
-// Odds grid — multi-column (Win / Top 5 / Top 10 / Top 20 / Make Cut / Round Leader)
+// Unified leaderboard + odds table
+// ============================================================================
+//
+// Row source of truth:
+//   live leaderboard → DataGolf in-play field (authoritative for "who is
+//     competing" — if a player isn't here, they're not in the tournament)
+//   fallback → tournament.golfers (DataGolf pre-tournament field)
+//
+// Odds are merged in from tournament.golfers by normalized name match.
+// Score columns (Total/Today/Thru) only render when the leaderboard source
+// is being used.
 // ============================================================================
 
-type OddsColumn = {
-  key: "probability" | "top_5_prob" | "top_10_prob" | "top_20_prob" | "make_cut_prob" | "round_leader_prob" | "movement_24h";
-  label: string;
-};
-
-function formatProb(value: number | null | undefined, isUnit: "percent" | "fraction"): string {
+function formatProb(value: number | null | undefined, unit: "percent" | "fraction"): string {
   if (value == null) return "-";
-  const pct = isUnit === "percent" ? value : value * 100;
+  const pct = unit === "percent" ? value : value * 100;
   if (pct >= 10) return `${pct.toFixed(0)}%`;
-  if (pct >= 1) return `${pct.toFixed(1)}%`;
   return `${pct.toFixed(1)}%`;
 }
 
-function OddsGrid({ golfers }: { golfers: GolfGolfer[] }) {
-  // Build dynamic column set — only include placement columns with any data
-  const columns: OddsColumn[] = useMemo(() => {
-    const all: OddsColumn[] = [
-      { key: "probability", label: "Win" },
-      { key: "top_5_prob", label: "Top 5" },
-      { key: "top_10_prob", label: "Top 10" },
-      { key: "top_20_prob", label: "Top 20" },
-      { key: "make_cut_prob", label: "Make Cut" },
-      { key: "round_leader_prob", label: "Rd Leader" },
-    ];
-    const kept = all.filter((col) => {
-      if (col.key === "probability") return true;
-      return golfers.some((g) => (g as unknown as Record<string, number | null | undefined>)[col.key] != null);
-    });
-    return kept;
+/** Normalize a golfer name for cross-source matching. */
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,'"]/g, "")
+    .replace(/\s+(jr|sr|ii|iii|iv)\b/g, "")
+    .trim();
+}
+
+type UnifiedRow = {
+  name: string;
+  position?: string;
+  total?: string;
+  today?: string;
+  thru?: string;
+  win?: number | null;          // fraction 0..1
+  top_5?: number | null;        // percent
+  top_10?: number | null;
+  top_20?: number | null;
+  make_cut?: number | null;
+  round_leader?: number | null;
+  movement_24h?: number | null; // fraction delta
+};
+
+type OddsColumnKey = "win" | "top_5" | "top_10" | "top_20" | "make_cut" | "round_leader";
+
+function UnifiedBoard({
+  leaderboard,
+  golfers,
+}: {
+  leaderboard: GolfLeaderboardPlayer[];
+  golfers: GolfGolfer[];
+}) {
+  const hasLeaderboard = leaderboard.length > 0;
+
+  // Build name -> odds index from tournament.golfers
+  const oddsByName = useMemo(() => {
+    const map = new Map<string, GolfGolfer>();
+    for (const g of golfers) {
+      map.set(normalizeName(g.name), g);
+    }
+    return map;
   }, [golfers]);
 
-  const showMovement = golfers.some((g) => g.movement_24h != null);
+  const rows: UnifiedRow[] = useMemo(() => {
+    if (hasLeaderboard) {
+      // DataGolf in-play leaderboard is the source of truth for "who's playing"
+      return leaderboard.map((p) => {
+        const g = oddsByName.get(normalizeName(p.name));
+        return {
+          name: p.name,
+          position: p.position || undefined,
+          total: p.score || undefined,
+          today: p.today || undefined,
+          thru: p.thru || p.hole || undefined,
+          win: g?.probability ?? (p.win_prob > 0 ? p.win_prob / 100 : null),
+          top_5: g?.top_5_prob ?? p.top_5_prob ?? null,
+          top_10: g?.top_10_prob ?? p.top_10_prob ?? null,
+          top_20: g?.top_20_prob ?? p.top_20_prob ?? null,
+          make_cut: g?.make_cut_prob ?? p.make_cut_prob ?? null,
+          round_leader: g?.round_leader_prob ?? null,
+          movement_24h: g?.movement_24h ?? null,
+        };
+      });
+    }
+    // Pre-tournament fallback: tournament.golfers (backend-filtered to field)
+    return golfers.map((g) => ({
+      name: g.name,
+      win: g.probability,
+      top_5: g.top_5_prob ?? null,
+      top_10: g.top_10_prob ?? null,
+      top_20: g.top_20_prob ?? null,
+      make_cut: g.make_cut_prob ?? null,
+      round_leader: g.round_leader_prob ?? null,
+      movement_24h: g.movement_24h ?? null,
+    }));
+  }, [hasLeaderboard, leaderboard, golfers, oddsByName]);
 
-  // Column layout: # | Player | ...data columns | 24h?
-  const dataColsCount = columns.length;
-  const movementCols = showMovement ? 1 : 0;
-  const templateCols = `2.5rem minmax(7rem,1fr) ${Array(dataColsCount).fill("minmax(3.5rem,4.5rem)").join(" ")}${movementCols ? " 4rem" : ""}`;
+  // Conditional odds columns — hide columns with no data anywhere
+  const oddsColumns: { key: OddsColumnKey; label: string }[] = useMemo(() => {
+    const all: { key: OddsColumnKey; label: string }[] = [
+      { key: "win", label: "Win" },
+      { key: "top_5", label: "Top 5" },
+      { key: "top_10", label: "Top 10" },
+      { key: "top_20", label: "Top 20" },
+      { key: "make_cut", label: "Make Cut" },
+      { key: "round_leader", label: "Rd Leader" },
+    ];
+    return all.filter((col) => {
+      if (col.key === "win") return true;
+      return rows.some((r) => r[col.key] != null);
+    });
+  }, [rows]);
+
+  const showMovement = !hasLeaderboard && rows.some((r) => r.movement_24h != null);
+
+  // Grid template: [Pos/#] Player [Total Today Thru]? ...odds [24h]?
+  const posCol = hasLeaderboard ? "3rem " : "2.5rem ";
+  const scoreCols = hasLeaderboard ? " 3.5rem 3.5rem 3.5rem" : "";
+  const oddsCols = Array(oddsColumns.length).fill(" minmax(3.5rem,4.5rem)").join("");
+  const movementCols = showMovement ? " 4rem" : "";
+  const templateCols = `${posCol}minmax(8rem,1fr)${scoreCols}${oddsCols}${movementCols}`;
 
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
@@ -172,37 +254,59 @@ function OddsGrid({ golfers }: { golfers: GolfGolfer[] }) {
           className="grid items-center px-3 py-2 text-xs text-text-muted border-b border-surface-border bg-surface-elevated"
           style={{ gridTemplateColumns: templateCols, minWidth: "min-content" }}
         >
-          <span>#</span>
+          <span>{hasLeaderboard ? "Pos" : "#"}</span>
           <span>Player</span>
-          {columns.map((c) => (
+          {hasLeaderboard && (
+            <>
+              <span className="text-right">Total</span>
+              <span className="text-right">Today</span>
+              <span className="text-right">Thru</span>
+            </>
+          )}
+          {oddsColumns.map((c) => (
             <span key={c.key} className="text-right">{c.label}</span>
           ))}
           {showMovement && <span className="text-right">24h</span>}
         </div>
-        {golfers.slice(0, 30).map((g: GolfGolfer, i: number) => (
+        {rows.slice(0, 60).map((r, i) => (
           <div
-            key={g.name}
+            key={r.name}
             className={`grid items-center px-3 py-2 text-sm ${
               i % 2 === 0 ? "bg-surface-elevated/50" : ""
             }`}
             style={{ gridTemplateColumns: templateCols, minWidth: "min-content" }}
           >
-            <span className="text-text-muted font-mono text-xs">{g.rank}</span>
-            <span className="text-text-primary truncate">{g.name}</span>
-            {columns.map((c) => {
-              if (c.key === "probability") {
+            <span className="text-text-muted font-mono text-xs">
+              {hasLeaderboard ? (r.position || "-") : (i + 1)}
+            </span>
+            <span className="text-text-primary truncate">{r.name}</span>
+            {hasLeaderboard && (
+              <>
+                <span className="text-text-primary text-right font-mono text-xs">
+                  {r.total || "-"}
+                </span>
+                <span className="text-text-secondary text-right font-mono text-xs">
+                  {r.today || "-"}
+                </span>
+                <span className="text-text-muted text-right font-mono text-xs">
+                  {r.thru || "-"}
+                </span>
+              </>
+            )}
+            {oddsColumns.map((c) => {
+              const raw = r[c.key];
+              if (c.key === "win") {
                 return (
                   <span
                     key={c.key}
                     className={`text-right font-mono text-xs ${
-                      g.probability > 0.05 ? "text-emerald-600" : "text-text-primary"
+                      raw != null && raw > 0.05 ? "text-emerald-600" : "text-text-primary"
                     }`}
                   >
-                    {formatProb(g.probability, "fraction")}
+                    {formatProb(raw, "fraction")}
                   </span>
                 );
               }
-              const raw = (g as unknown as Record<string, number | null | undefined>)[c.key];
               return (
                 <span key={c.key} className="text-right font-mono text-xs text-text-secondary">
                   {formatProb(raw, "percent")}
@@ -212,15 +316,15 @@ function OddsGrid({ golfers }: { golfers: GolfGolfer[] }) {
             {showMovement && (
               <span
                 className={`text-right font-mono text-xs ${
-                  g.movement_24h && g.movement_24h > 0
+                  r.movement_24h && r.movement_24h > 0
                     ? "text-accent-live"
-                    : g.movement_24h && g.movement_24h < 0
+                    : r.movement_24h && r.movement_24h < 0
                       ? "text-accent-danger"
                       : "text-text-muted"
                 }`}
               >
-                {g.movement_24h != null
-                  ? `${g.movement_24h > 0 ? "+" : ""}${(g.movement_24h * 100).toFixed(1)}%`
+                {r.movement_24h != null
+                  ? `${r.movement_24h > 0 ? "+" : ""}${(r.movement_24h * 100).toFixed(1)}%`
                   : "-"}
               </span>
             )}
@@ -292,44 +396,6 @@ function H2HMatchupsCard({ matchups }: { matchups: GolfH2HMatchup[] }) {
 }
 
 // ============================================================================
-// Leaderboard row
-// ============================================================================
-
-function LeaderboardRow({
-  player,
-  golfer,
-  isEven,
-}: {
-  player: GolfLeaderboardPlayer;
-  golfer?: GolfGolfer;
-  isEven: boolean;
-}) {
-  const prob = golfer?.probability ?? (player.win_prob > 0 ? player.win_prob / 100 : null);
-  return (
-    <div
-      className={`grid grid-cols-[2.5rem_1fr_3rem_3rem_3rem_4rem] sm:grid-cols-[2.5rem_1fr_3.5rem_3.5rem_3.5rem_5rem] items-center px-3 py-2 text-sm ${
-        isEven ? "bg-surface-elevated/50" : ""
-      }`}
-    >
-      <span className="text-text-muted font-mono text-xs">{player.position || "-"}</span>
-      <span className="text-text-primary truncate">{player.name}</span>
-      <span className="text-text-primary text-right font-mono text-xs">{player.score || "-"}</span>
-      <span className="text-text-secondary text-right font-mono text-xs">{player.today || "-"}</span>
-      <span className="text-text-muted text-right font-mono text-xs">{player.thru || player.hole || "-"}</span>
-      <span className="text-right font-mono text-xs">
-        {prob != null ? (
-          <span className={prob > 0.1 ? "text-emerald-600" : "text-text-muted"}>
-            {(prob * 100).toFixed(1)}%
-          </span>
-        ) : (
-          <span className="text-text-muted">-</span>
-        )}
-      </span>
-    </div>
-  );
-}
-
-// ============================================================================
 // Main Page
 // ============================================================================
 
@@ -387,18 +453,6 @@ export default function SportEventDetailPage() {
     const interval = setInterval(load, 60_000);
     return () => clearInterval(interval);
   }, [tournament, load]);
-
-  const mergedLeaderboard: MergedLeaderboardPlayer[] = useMemo(() => {
-    if (!leaderboard.length || !tournament?.golfers) return leaderboard;
-    const golferMap = new Map<string, GolfGolfer>();
-    for (const g of tournament.golfers) {
-      golferMap.set(g.name.toLowerCase(), g);
-    }
-    return leaderboard.map((p) => ({
-      ...p,
-      _golfer: golferMap.get(p.name.toLowerCase()),
-    }));
-  }, [leaderboard, tournament]);
 
   const allMarketIds = useMemo(() => {
     if (!tournament?.markets) return [];
@@ -505,36 +559,17 @@ export default function SportEventDetailPage() {
           </section>
         )}
 
-        {/* Live Leaderboard */}
-        {mergedLeaderboard.length > 0 && (
+        {/* Unified leaderboard + odds — DataGolf in-play field is the source of
+            truth for "who's competing"; odds are merged in by name match. */}
+        {(leaderboard.length > 0 || (tournament.golfers && tournament.golfers.length > 0)) && (
           <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Leaderboard</h2>
-            <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-              <div className="grid grid-cols-[2.5rem_1fr_3rem_3rem_3rem_4rem] sm:grid-cols-[2.5rem_1fr_3.5rem_3.5rem_3.5rem_5rem] items-center px-3 py-2 text-xs text-text-muted border-b border-surface-border bg-surface-elevated">
-                <span>Pos</span>
-                <span>Player</span>
-                <span className="text-right">Total</span>
-                <span className="text-right">Today</span>
-                <span className="text-right">Thru</span>
-                <span className="text-right">Win %</span>
-              </div>
-              {mergedLeaderboard.slice(0, 30).map((p: MergedLeaderboardPlayer, i: number) => (
-                <LeaderboardRow
-                  key={p.name}
-                  player={p}
-                  golfer={p._golfer}
-                  isEven={i % 2 === 0}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Odds Grid — multi-column placement probabilities */}
-        {tournament.golfers && tournament.golfers.length > 0 && (
-          <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Odds</h2>
-            <OddsGrid golfers={tournament.golfers} />
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+              {leaderboard.length > 0 ? "Leaderboard & Odds" : "Odds"}
+            </h2>
+            <UnifiedBoard
+              leaderboard={leaderboard}
+              golfers={tournament.golfers || []}
+            />
           </section>
         )}
 
