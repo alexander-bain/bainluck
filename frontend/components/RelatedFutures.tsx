@@ -317,87 +317,6 @@ function PlayerHeadshot({
   );
 }
 
-// ─── HERO CARD: Championship / Conference / Division futures ───
-function HeroFutureCard({
-  future,
-  teamColor,
-}: {
-  future: RelatedFuture;
-  teamColor: string;
-}) {
-  const tierNum = effectiveTier(future);
-  const tier = TIER_CONFIG[tierNum] || TIER_CONFIG[4];
-
-  return (
-    <Link
-      href={`/futures/${future.market_id}`}
-      className="block group rounded-xl p-4 transition-all duration-200 hover:scale-[1.01]"
-      style={{
-        background: `linear-gradient(135deg, ${teamColor}18, ${teamColor}08)`,
-        border: `1px solid ${teamColor}30`,
-      }}
-    >
-      {/* Header: tier + market name + source */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 mb-1">
-            {tier && <span className="text-[10px]">{tier.icon}</span>}
-            <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-              {tier?.label || "Market"}
-            </span>
-          </div>
-          <div className="text-xs text-text-secondary leading-snug">
-            {future.clean_label || cleanMarketName(future.market_name)}
-          </div>
-        </div>
-        {future.all_sources && future.all_sources.length > 1 ? (
-          <MultiSourceBadge sources={future.all_sources} />
-        ) : (
-          <SourceBadge source={future.source} />
-        )}
-      </div>
-
-      {/* Big probability + movement + odds */}
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <div className="flex items-baseline gap-2">
-            <span
-              className="text-2xl font-bold tabular-nums tracking-tight"
-              style={{ color: teamColor }}
-            >
-              {formatProbability(future.probability)}
-            </span>
-            <MovementPill change={future.probability_change_24h} />
-          </div>
-          <div className="text-[11px] text-text-muted font-mono mt-0.5">
-            {formatOdds(future.american_odds)}
-          </div>
-        </div>
-        {future.rank && (
-          <div className="text-right">
-            <div className="text-[10px] text-text-muted uppercase">Rank</div>
-            <div className="text-lg font-bold text-text-secondary">
-              #{future.rank}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Subtle probability bar */}
-      <div className="mt-3 h-1 rounded-full bg-surface-elevated overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{
-            width: `${Math.max(2, Math.min(100, (future.probability || 0) / 0.5 * 100))}%`,
-            backgroundColor: teamColor,
-            opacity: 0.7,
-          }}
-        />
-      </div>
-    </Link>
-  );
-}
-
 /**
  * Extract a short award label from a market name.
  * Uses backend clean_label when available, falls back to regex extraction.
@@ -2356,8 +2275,18 @@ export default function RelatedFutures({
     effectiveStatProps +
     homeCats.games.length + awayCats.games.length;
   const hasStandings = !!(homeStandings || awayStandings);
+  // Playoff Path count: the ternary at line ~2438 renders either
+  // GridPlayoffPathPair (single unit) OR PlayoffPathPair (single unit
+  // from futures) OR nothing. Count it as 1 item when either branch
+  // will render, 0 otherwise. The old code double-counted each
+  // homePlayoff future when grid was present but those futures are
+  // never displayed — Phase 2 fix.
+  const playoffPathCount =
+    hasGridProgression || homePlayoff.length > 0 || awayPlayoff.length > 0
+      ? 1
+      : 0;
   const seasonCount =
-    homePlayoff.length + awayPlayoff.length +
+    playoffPathCount +
     homeCats.matchups.length + awayCats.matchups.length +
     homeCats.seasonStats.length + awayCats.seasonStats.length +
     mergedAwards.length +
@@ -2374,8 +2303,15 @@ export default function RelatedFutures({
       </h3>
       <div className="max-w-2xl mx-auto">
 
-      {/* Title Odds comparison — hidden when grid-based playoff path is available (redundant) */}
-      {showTitleComparison && !hasGridProgression && (
+      {/* Title Odds comparison — hidden whenever a Playoff Path card will
+          render below (either GridPlayoffPathPair from grid data or
+          PlayoffPathPair from futures). The championship probability is
+          already shown as the final stage in those cards, so rendering
+          TitleComparison on top would duplicate the same number. */}
+      {showTitleComparison
+        && !hasGridProgression
+        && homePlayoff.length === 0
+        && awayPlayoff.length === 0 && (
         <TitleComparison
           homeChamp={homeChamp!}
           awayChamp={awayChamp!}
@@ -2432,7 +2368,7 @@ export default function RelatedFutures({
       {/* === Level 4: Season Context === */}
       {(seasonCount > 0 || hasGridProgression) && (
         <>
-          <SectionDivider level={4} label="Season Context" count={seasonCount + (hasGridProgression && homePlayoff.length === 0 && awayPlayoff.length === 0 ? 1 : 0)} />
+          <SectionDivider level={4} label="Season Context" count={seasonCount} />
 
           {/* Playoff Path — use grid data (guaranteed both teams) with futures fallback */}
           {hasGridProgression ? (

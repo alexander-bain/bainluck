@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Shared types for TeamPlayoffCard and ChampionshipGrid
+// Shared types for ChampionshipGrid
 // ---------------------------------------------------------------------------
 
 export interface StageSource {
