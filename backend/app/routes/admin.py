@@ -6337,6 +6337,7 @@ async def operations_dashboard(
     from app.tasks.redis_state import (
         get_odds_api_quota, get_odds_api_quota_history,
         get_odds_api_task_breakdown,
+        get_odds_api_sport_breakdown,
         get_all_task_metrics, get_redis_client,
     )
     import calendar as cal_mod
@@ -6347,6 +6348,8 @@ async def operations_dashboard(
     quota = get_odds_api_quota()
     history = get_odds_api_quota_history(hours=720)  # 30 days
     task_breakdown = get_odds_api_task_breakdown(hours=720)  # 30 days
+    sport_breakdown_24h = get_odds_api_sport_breakdown(hours=24)
+    sport_breakdown_7d = get_odds_api_sport_breakdown(hours=168)
 
     # Compute daily usage deltas — only include current month (UTC)
     current_month_prefix = now.strftime("%Y-%m-")
@@ -6385,6 +6388,8 @@ async def operations_dashboard(
         "current": quota,
         "daily_usage": daily_usage,
         "daily_by_task": task_breakdown,
+        "by_sport_24h": sport_breakdown_24h,
+        "by_sport_7d": sport_breakdown_7d,
         "hourly_history": history[-168:],  # last 7 days
         "budget": {
             "total": total_budget,

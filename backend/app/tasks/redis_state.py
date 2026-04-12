@@ -283,6 +283,7 @@ def _utc_now_iso() -> str:
 QUOTA_KEY = "bainluck:odds_api_quota"
 QUOTA_HISTORY_PREFIX = "bainluck:odds_api_quota:hourly"
 QUOTA_TASK_HOURLY_PREFIX = "bainluck:odds_api_quota:task_hourly"
+QUOTA_SPORT_HOURLY_PREFIX = "bainluck:odds_api_quota:sport_hourly"
 QUOTA_ALERT_THRESHOLD = 500_000
 QUOTA_WARNING_THRESHOLD = 1_000_000
 
@@ -381,7 +382,13 @@ def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[boo
         return True, "redis_error"
 
 
-def record_odds_api_quota(remaining: int, used: int, source_task: str, pre_call_used: int | None = None):
+def record_odds_api_quota(
+    remaining: int,
+    used: int,
+    source_task: str,
+    pre_call_used: int | None = None,
+    sport_key: str | None = None,
+):
     """Store latest quota reading from passive header capture.
 
     Args:
@@ -390,6 +397,9 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str, pre_call_
         source_task: Which task made the call (poll_odds, discover_events, poll_futures)
         pre_call_used: Used quota BEFORE the API call (from a previous header read).
                        If provided, enables accurate per-task attribution.
+        sport_key: Optional sport identifier the call was made for. When provided
+                   alongside a positive delta, billed units are also attributed to
+                   a per-sport hourly bucket, enabling per-sport cost visibility.
     """
     from datetime import datetime, timezone, timedelta
 
@@ -431,6 +441,13 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str, pre_call_
             task_hourly_key = f"{QUOTA_TASK_HOURLY_PREFIX}:{source_task}:{hour_key}"
             pipe.incrby(task_hourly_key, delta)
             pipe.expire(task_hourly_key, 86400 * 35)  # 35 day TTL
+
+            # Per-sport attribution (only when caller supplies a sport_key).
+            # Sharing the same delta as task attribution keeps totals consistent.
+            if sport_key:
+                sport_hourly_key = f"{QUOTA_SPORT_HOURLY_PREFIX}:{sport_key}:{hour_key}"
+                pipe.incrby(sport_hourly_key, delta)
+                pipe.expire(sport_hourly_key, 86400 * 35)
 
         pipe.execute()
 
@@ -550,6 +567,69 @@ def get_odds_api_task_breakdown(hours: int = 168) -> list:
             entry.update(daily_data[date])
             results.append(entry)
 
+        return results
+    except Exception:
+        return []
+
+
+def get_odds_api_sport_breakdown(hours: int = 24) -> list:
+    """Get billed-unit usage broken down by sport_key over a rolling window.
+
+    Per-sport attribution is only populated when callers pass ``sport_key`` to
+    ``record_odds_api_quota`` — discovery, live polling, and futures all do so.
+
+    Args:
+        hours: Number of hours to look back (default: 24)
+
+    Returns:
+        List of per-sport totals sorted by usage descending, e.g.:
+        [{"sport": "basketball_nba", "billed_units": 42000, "hours": 24}, ...]
+    """
+    from datetime import datetime, timezone, timedelta
+    from collections import defaultdict
+
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        now = datetime.now(timezone.utc)
+        # Build the set of hour keys within the window so we only aggregate
+        # buckets we actually care about (avoids scan-every-key blowups).
+        window_hours = {
+            (now - timedelta(hours=h)).strftime("%Y-%m-%dT%H")
+            for h in range(hours)
+        }
+
+        pattern = f"{QUOTA_SPORT_HOURLY_PREFIX}:*"
+        keys = r.keys(pattern)
+
+        per_sport: dict[str, int] = defaultdict(int)
+        for key in keys:
+            key_str = key.decode() if isinstance(key, bytes) else key
+            # Format: bainluck:odds_api_quota:sport_hourly:{sport_key}:{YYYY-MM-DDTHH}
+            # sport_key may itself contain colons in theory; split from the right.
+            parts = key_str.rsplit(":", 1)
+            if len(parts) != 2:
+                continue
+            hour_str = parts[1]
+            if hour_str not in window_hours:
+                continue
+            # Strip the shared prefix (plus trailing colon) to recover sport_key
+            prefix_len = len(QUOTA_SPORT_HOURLY_PREFIX) + 1
+            sport_key = parts[0][prefix_len:]
+            if not sport_key:
+                continue
+            try:
+                delta = int(r.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            per_sport[sport_key] += delta
+
+        results = [
+            {"sport": sport, "billed_units": units, "hours": hours}
+            for sport, units in per_sport.items()
+        ]
+        results.sort(key=lambda row: row["billed_units"], reverse=True)
         return results
     except Exception:
         return []
