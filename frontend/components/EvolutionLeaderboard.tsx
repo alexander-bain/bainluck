@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import type {
   FuturesOutcomeHistory,
   DataGolfLeaderboardEntry,
@@ -81,23 +81,13 @@ export function EvolutionLeaderboard({
         {entityLabel}
       </div>
 
-      {/* Add player dropdown */}
+      {/* Searchable player picker */}
       {unselected.length > 0 && (
-        <select
-          className="w-full px-2 py-1.5 border border-gray-200 rounded-[5px] text-[11.5px] text-gray-700 bg-white cursor-pointer outline-none mb-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
-          value=""
-          onChange={(e) => {
-            const id = parseInt(e.target.value, 10);
-            if (!isNaN(id)) onAddOutcome(id);
-          }}
-        >
-          <option value="">Find {entityLabel.toLowerCase().replace(/s$/, "")}...</option>
-          {unselected.map((o) => (
-            <option key={o.outcome_id} value={o.outcome_id}>
-              {shortName(o.name)} — {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
-            </option>
-          ))}
-        </select>
+        <PlayerSearch
+          unselected={unselected}
+          onAddOutcome={onAddOutcome}
+          entityLabel={entityLabel}
+        />
       )}
 
       {/* Player list */}
@@ -146,6 +136,70 @@ export function EvolutionLeaderboard({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Searchable player/team picker — replaces native <select> */
+function PlayerSearch({
+  unselected,
+  onAddOutcome,
+  entityLabel,
+}: {
+  unselected: FuturesOutcomeHistory[];
+  onAddOutcome: (outcomeId: number) => void;
+  entityLabel: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return unselected.slice(0, 20);
+    const q = query.toLowerCase();
+    return unselected.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 20);
+  }, [unselected, query]);
+
+  const placeholder = `Find ${entityLabel.toLowerCase().replace(/s$/, "")}...`;
+
+  return (
+    <div ref={ref} className="relative mb-1.5">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        className="w-full px-2 py-1.5 border border-gray-200 rounded-[5px] text-[11.5px] text-gray-700 bg-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 w-full mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          {filtered.map((o) => (
+            <button
+              key={o.outcome_id}
+              onClick={() => {
+                onAddOutcome(o.outcome_id);
+                setQuery("");
+                setOpen(false);
+              }}
+              className="w-full text-left px-2 py-1.5 text-[11.5px] text-gray-700 hover:bg-gray-50 flex justify-between"
+            >
+              <span className="truncate">{shortName(o.name)}</span>
+              <span className="text-gray-400 tabular-nums ml-1 flex-shrink-0">
+                {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

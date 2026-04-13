@@ -169,7 +169,8 @@ export function EvolutionChart({
           return format(d, "h:mm a");
         }
         if (timeRange === "tournament") {
-          return format(d, "EEE");
+          // Use "Thu 10" format to avoid duplicate day names (e.g. "Wed" appearing twice)
+          return format(d, "EEE d");
         }
         return format(d, "MMM d");
       } catch {
@@ -281,22 +282,41 @@ export function EvolutionChart({
             }}
           />
 
-          {/* Round boundary markers — dashed lines with label pills */}
-          {roundBoundaries?.map((rb) => (
-            <ReferenceLine
-              key={rb.timestamp}
-              x={rb.timestamp}
-              stroke="#9ca3af55"
-              strokeDasharray="4 3"
-              label={{
-                value: rb.label,
-                position: "top",
-                fill: "#6b7280",
-                fontSize: 9,
-                fontWeight: 600,
-              }}
-            />
-          ))}
+          {/* Round boundary markers — dashed lines with label pills.
+              Snap boundary timestamps to nearest data point since ReferenceLine x
+              must exactly match a data row's timestamp value. */}
+          {roundBoundaries?.map((rb) => {
+            const rbMs = new Date(rb.timestamp).getTime();
+            // Find closest data point timestamp
+            let closest = rb.timestamp;
+            let minDist = Infinity;
+            for (const row of data) {
+              const rowMs = row._ts as number;
+              const dist = Math.abs(rowMs - rbMs);
+              if (dist < minDist) {
+                minDist = dist;
+                closest = row.timestamp as string;
+              }
+            }
+            // Don't render if nearest point is more than 2 hours away
+            if (minDist > 2 * 60 * 60 * 1000) return null;
+            return (
+              <ReferenceLine
+                key={rb.timestamp}
+                x={closest}
+                stroke="#9ca3af"
+                strokeDasharray="4 3"
+                strokeWidth={1}
+                label={{
+                  value: rb.label,
+                  position: "top",
+                  fill: "#6b7280",
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              />
+            );
+          })}
 
           {/* One line per selected outcome */}
           {Array.from(outcomeInfo.entries()).map(([oid, info]) => (

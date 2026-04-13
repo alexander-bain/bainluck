@@ -263,10 +263,15 @@ export function EvolutionView({
             </span>
             <div className="flex border border-gray-200 rounded-md overflow-hidden">
               {(() => {
-                // During/after the event, swap "7 Days" for "Tournament".
-                // Pre-event, keep "7 Days".
+                // Tournament mode: once started, show "Tournament" instead of "7 Days".
+                // For completed tournaments, drop 24h/Today (they'd show nothing useful).
+                const tournamentEnded = tournamentEnd
+                  ? new Date(tournamentEnd).getTime() + 86_400_000 < Date.now()
+                  : false;
                 const ranges: TimeRange[] = hasTournament && tournamentStarted
-                  ? ["full", "tournament", "24h", "today"]
+                  ? tournamentEnded
+                    ? ["full", "tournament"]
+                    : ["full", "tournament", "24h", "today"]
                   : ["full", "7d", "24h", "today"];
                 return ranges.map((range) => (
                   <button
