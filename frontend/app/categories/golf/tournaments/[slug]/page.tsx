@@ -145,7 +145,7 @@ function buildMergedGolfers(
   oddsGolfers: GolfGolfer[],
   leaderboard: GolfLeaderboardResponse | null
 ): MergedGolfer[] {
-  if (leaderboard && leaderboard.status === "live" && leaderboard.players.length > 0) {
+  if (leaderboard && leaderboard.players.length > 0) {
     const oddsMap = new Map<string, GolfGolfer>();
     for (const g of oddsGolfers) {
       oddsMap.set(normalizeGolferName(g.name), g);
@@ -201,6 +201,16 @@ function isTournamentLive(
   leaderboard: GolfLeaderboardResponse | null
 ): boolean {
   if (!leaderboard || leaderboard.status !== "live" || !leaderboard.event_name) return false;
+
+  // Date-based validation: tournament must be within its scheduled window
+  // to prevent stale "LIVE" badges on completed tournaments
+  if (tournament.end_date) {
+    const endDate = new Date(tournament.end_date);
+    // Add 1 day buffer after end_date (tournaments can finish late)
+    endDate.setDate(endDate.getDate() + 1);
+    if (new Date() > endDate) return false;
+  }
+
   const tName = tournament.name.toLowerCase();
   const eName = leaderboard.event_name.toLowerCase();
   if (eName.includes("masters") && tName.includes("masters")) return true;
@@ -296,28 +306,28 @@ export default function GolfTournamentPage() {
   const showBubbleWatch = isLive && currentRound != null && currentRound <= 2;
 
   // Tournament status badge
+  const isCompleted = tournament.schedule_status === "completed" ||
+    (tournament.end_date && new Date() > new Date(new Date(tournament.end_date).getTime() + 86_400_000));
   let statusLabel = "";
   let statusBg = "";
-  if (isLive) {
+  if (isCompleted) {
+    statusLabel = "Completed";
+    statusBg = "bg-gray-100 text-gray-500 border-gray-200";
+  } else if (isLive) {
     statusLabel = currentRound ? `Round ${currentRound}` : "In Progress";
   } else if (tournament.start_date && tournament.end_date) {
-    const now = new Date();
     const start = new Date(tournament.start_date);
-    const end = new Date(tournament.end_date);
-    if (now > end) {
-      statusLabel = "Completed";
-      statusBg = "bg-gray-100 text-gray-500 border-gray-200";
-    } else {
-      const days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
-      statusLabel =
-        days <= 7
-          ? `Starts ${start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`
-          : "Upcoming";
-      statusBg = "bg-blue-50 text-blue-700 border-blue-200";
-    }
+    const days = Math.ceil((start.getTime() - Date.now()) / 86400000);
+    statusLabel =
+      days <= 7
+        ? `Starts ${start.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
+        : "Upcoming";
+    statusBg = "bg-blue-50 text-blue-700 border-blue-200";
   }
 
-  const mergedGolfers = buildMergedGolfers(golfers, isLive ? leaderboard : null);
+  // Use leaderboard data for both live AND completed tournaments (final scores)
+  const useLeaderboard = (isLive || isCompleted) && leaderboard && leaderboard.players.length > 0;
+  const mergedGolfers = buildMergedGolfers(golfers, useLeaderboard ? leaderboard : null);
 
   const winnerGroup = markets.find((g) => g.type === "winner");
   const evolutionMarketIds = winnerGroup?.market_ids || (evolution_market_id ? [evolution_market_id] : []);
@@ -382,12 +392,13 @@ export default function GolfTournamentPage() {
                   <>
                     <span className="text-gray-300">&middot;</span>
                     <span>
-                      {new Date(tournament.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {new Date(tournament.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}
                       {"\u2013"}
                       {new Date(tournament.end_date).toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
                         year: "numeric",
+                        timeZone: "UTC",
                       })}
                     </span>
                   </>
@@ -425,6 +436,8 @@ export default function GolfTournamentPage() {
               defaultTopN={8}
               hours={168}
               positionOptions={positionOptions.length > 1 ? positionOptions : undefined}
+              tournamentStart={tournament.start_date}
+              tournamentEnd={tournament.end_date}
             />
           </section>
         )}
@@ -467,8 +480,8 @@ export default function GolfTournamentPage() {
 // Leaderboard Grid
 // ============================================================================
 
-// Grid template columns for desktop — always show all columns
-const GRID_COLS = "grid-cols-[40px_1fr_64px_56px_48px_88px_72px_72px_72px]";
+// Grid template columns for desktop — always show all columns (including Make Cut)
+const GRID_COLS = "grid-cols-[40px_1fr_64px_56px_48px_88px_72px_72px_72px_72px]";
 
 function LeaderboardGrid({
   golfers,
@@ -500,6 +513,7 @@ function LeaderboardGrid({
           <div className="text-center">Top 5</div>
           <div className="text-center">Top 10</div>
           <div className="text-center">Top 20</div>
+          <div className="text-center">Cut</div>
         </div>
 
         {/* Golfer rows */}
@@ -697,6 +711,11 @@ function DesktopRow({
       {/* Top 20 */}
       <div className="text-center font-mono text-xs tabular-nums text-gray-500">
         {golfer.top20Prob != null ? `${Math.round(golfer.top20Prob)}%` : "\u2014"}
+      </div>
+
+      {/* Make Cut */}
+      <div className="text-center font-mono text-xs tabular-nums text-gray-500">
+        {golfer.makeCutProb != null ? `${Math.round(golfer.makeCutProb)}%` : "\u2014"}
       </div>
     </div>
   );

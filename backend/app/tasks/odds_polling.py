@@ -505,12 +505,12 @@ async def _poll_all_odds():
                     poll_interval = LIVE_POLL_INTERVAL
                     tier = "live"
                     has_live_games = True
-                elif soonest_game and soonest_game <= now + timedelta(hours=1):
-                    # Starting soon (0-1 hours) - poll every 5 minutes
+                elif soonest_game and soonest_game <= now + timedelta(hours=2):
+                    # Starting soon (0-2 hours) - poll every 5 minutes
                     poll_interval = SOON_POLL_INTERVAL
                     tier = "soon"
                 else:
-                    # Starting later (1-6 hours) - poll every 1 hour
+                    # Starting later (2-6 hours) - poll every 1 hour
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
 
@@ -578,7 +578,11 @@ async def _poll_all_odds():
                 elif tier == "live":
                     api_markets = "h2h,spreads,totals"
                     api_regions = "us,us2"
-                else:  # "soon" and "later" — h2h only, primary US only
+                elif tier == "soon":
+                    # Full markets, single region (saves ~50% vs live)
+                    api_markets = "h2h,spreads,totals"
+                    api_regions = "us"
+                else:  # "later" — h2h only, primary US only (saves ~83% vs live)
                     api_markets = "h2h"
                     api_regions = "us"
 

@@ -324,6 +324,15 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 
 **Billing model**: The Odds API charges per `events_returned * market_types * regions` per HTTP call, NOT per call. Requesting h2h + spreads + totals with us + us2 regions costs 6x per event vs h2h-only with us-only.
 
+**Tier-aware polling** (implemented April 2026):
+| Tier | Window | Markets | Regions | Cost vs Full |
+|------|--------|---------|---------|-------------|
+| Live | In-progress | h2h,spreads,totals | us,us2 | 1x (baseline) |
+| Soon | 0-2h pre-game | h2h,spreads,totals | us | ~0.5x |
+| Later | 2-6h pre-game | h2h | us | ~0.17x |
+
+**Adaptive slowdown**: Per-sport Redis counter tracks consecutive unchanged polls. After 3 unchanged → 5min interval. After 6 unchanged → 10min interval. Resets instantly when odds change. Live tier exempt.
+
 ---
 
 ## Product Priorities (ordered)
@@ -340,38 +349,65 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 - **Data quality** — Reclassified 4078 misclassified events, purged 195 orphan pm_ events, expanded Kalshi ticker mappings (18→38)
 
 ### Golf (April 2026)
-- **Golf product strategy**: `docs/golf-product-strategy.md` — comprehensive plan for golf UX, cards, following, props
-- **Evolution chart shipped**: `EvolutionChart.tsx` + `EvolutionView.tsx` + `EvolutionLeaderboard.tsx` — DataGolf-style interactive line chart with position toggle (Top 20/10/5/Win), time range, fullscreen, player sidebar
-- **Tournament detail page**: `/categories/golf/tournaments/[slug]` — leaderboard (9-column grid), bubble watch, evolution chart
-- **Known golf data issues**: tour misclassification (Hainan Classic labeled PGA Tour), false "LIVE" badges, Polymarket binary "Yes" market in charts, "Augusta National Invitational" ghost tournament
-- **Phase 1 cleanup needed before Masters** (April 9-12): fix tour classification, fix LIVE badge logic, filter non-winner markets from cards, add "to win" labels
+- **Golf product strategy**: `docs/golf-product-strategy.md`
+- **Evolution chart shipped**: Interactive line chart with position toggle, time range, fullscreen, player sidebar
+- **Tournament detail page**: `/categories/golf/tournaments/[slug]` — leaderboard grid, bubble watch, evolution chart
+- **Masters data quality (April 13 audit)**: Evolution chart has 0 snapshots (no history during R1-R4). Leaderboard shows Rory as winner but tournament `status` is null. LIVE badge stale. ATP Monte-Carlo "Masters" markets contaminating golf. X-axis duplication and missing round markers unverifiable (no chart data to render).
 
-### Backlog
+### Backlog (SINGLE SOURCE OF TRUTH)
 
-**Data Quality / Blending**
-- **Freshness-weighted source blending** — During live tournaments, stale prediction market prices (e.g., Kalshi 5h old) get equal weight with fresh model data (DataGolf updated minutes ago), making merged probabilities LESS accurate. Need time-decay weighting. Key complications: (1) `last_updated` reflects poll time, not last price change — need to detect actual price movement; (2) staleness is context-dependent (2h stale during live round vs 12h pre-tournament is very different); (3) if decay drops a source to near-zero, cells become single-source — need to surface that; (4) applies to all grids, not just golf. Gathering eval data before implementing. See `.claude/projects/-Users-bain-bainluck/memory/project_freshness_blending.md` for full design notes (CLI only).
+All outstanding items live here. `TODO.md` is archived; `trip-recap-and-next-steps.md` is historical reference only.
+
+**Architecture (planned April 13, 2026 — see `plans/ancient-humming-blossom.md`)**
+- **B1: Site navigation** — Move from `/playoffs/[sport]` to `/[sport]/[league]` hierarchy. Team sports get grid+games+futures tabs. Individual sports (golf, tennis) get tour hub → tournament detail. Sport hub pages list sub-leagues.
+- **B2: League context service** — Extract matching logic from `playoffs.py` into reusable `market_discovery.py` + `team_resolution.py`. Cache per-league team standings in Redis. Enrich event detail API with dynamic championship/playoff probabilities. Orphaned event detection.
+- **B3: Eval page v2** — Group by market (not per-team). Three card types: market-column assignment, source disagreement, interesting futures. Decisions flow downstream to grid builder + feed ranking. Gamification phase 2 (points, levels, leaderboard).
+- **B4: Trade volume** — Store Kalshi/Polymarket volume on `FuturesMarket` (5 nullable columns). Use for feed ranking, grid confidence weighting, eval context. Internal signal only — never user-facing.
+
+**HIGH-PRIORITY follow-ups**
+- **Evolution chart: combined probability trend** — Chart currently shows single-source data; grid shows merged/grouped. Chart should show merged probability trend. Requires time-series computation of aggregate — data pipeline question.
+- **`/[sport]/[league]/[team]` entity pages** — `/basketball/nba/celtics` aggregates all content for a team: games, futures, related markets, championship timeline. Good for SEO + My Stuff integration.
+- **Golf round markers on charts** — R1/R2/R3/R4 start times as vertical markers. Minimum: midnight each tournament day. Ideal: actual start-of-play.
+- **Golf LIVE badge fix** — Date-based validation, not just leaderboard existence. Currently false-positive for completed tournaments.
+
+**Golf data quality (still open)**
+- Tour misclassification (Hainan = Asian Tour, not PGA Tour)
+- "Augusta National Invitational" ghost tournament
+- Categories page chart showing "Yes" (Polymarket binary, not Kalshi player market)
+- "To win" label on card probabilities
+- H2H matchups on tournament detail (stop filtering `" vs "` markets in `golf.py` ~L608)
+- Make Cut column on tournament detail page
+- ATP Monte-Carlo "Masters" markets leaking into golf data
+
+**Data quality / Blending**
+- **Freshness-weighted source blending** — Stale prediction market prices weighted equally with fresh model data. Need time-decay weighting. Design notes in `.claude/projects/-Users-bain-bainluck/memory/project_freshness_blending.md`.
 - Sport-specific EI normalization (different ceilings per sport)
 
-**Sport/League Pages (new, April 2026)**
-- **Win totals column in championship grid** — Add O/U win totals (e.g., "OKC O/U 58.5") as a column. Data from Odds API season win total futures. Grid is already team-indexed, natural fit.
-- **Awards/props cards on league pages** — MVP, DPOY, ROY, scoring leader as standalone cards (player-indexed, not team-indexed). Source: Kalshi + Odds API futures.
-- **Season props section** — Division winner, conference winner, O/U records below grid. Can reuse TournamentCard-style layout.
-- **Season state indicators on evolution chart** — Hardcode key dates (Trade Deadline, All-Star Break, Playoffs Start, Conference Finals, Finals) as vertical reference lines via `roundBoundaries`. Mechanism exists, just needs date data.
-- **Full-season futures history depth** — "Season" view limited by when polling started (~Feb 2026). Will improve as data accumulates.
-- **Team landing pages** — `/sport/basketball/nba/teams/celtics` with event cards + team futures. Clickable from grid team names.
-- **`/sport` index page improvements** — Live events across sports, trending movers, featured matchups.
-- **SEO: sitemap, structured data** — sitemap.xml for `/sport/*` routes, JSON-LD for events.
+**Sport/League pages**
+- Win totals column in championship grid
+- Awards/props cards on league pages (MVP, DPOY, ROY)
+- Season state indicators on evolution chart (Trade Deadline, All-Star Break, etc.)
+- Team landing pages (clickable from grid team names)
+- SEO: sitemap, structured data for `/sport/*` routes
+
+**DS/Analytics infrastructure**
+- Add `ended_at`, `final_home_probability`, `event_results`, `season` columns to events
+- Denormalize `sport_group` on events
+- Normalize `ei_metadata` from Text to proper columns
+- Create `v_completed_events` analytical view
+- First analysis: "Who's Right?" Brier score source accuracy
 
 **Features**
-- H2H matchups section (Option B compact rows) — golf tournament detail page
-- TV Mode v2 (designed, prototype at `tv-mode-prototype.jsx`, plan at `docs/tv-mode-plan.md`)
-- Non-sports category display (politics, entertainment tabs)
+- TV Mode v2 (prototype at `docs/tv-mode-prototype.jsx`)
+- Non-sports categories: audit existing markets, weather visualization, politics timelines
 - "The Market Was Wrong" v2 — AI narrative + personalization
-- "Your Team's Season at a Glance" dashboard
-- Hockey win probability model research (lit search for better models)
+
+**Housekeeping**
+- **May 1, 2026**: Delete `frontend/_to-delete/` if nothing broke
+- **May 1, 2026**: Delete `docs/archive/` if nothing referenced
+- **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 
 See `docs/completed-features.md` for shipped features.
-See `docs/travel-guide.md` for the full numbered backlog with status tracking.
 See Ideas Backlog in `docs/PRD.md` for longer-term ideas.
 
 ---
@@ -641,6 +677,6 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 | Admin endpoints | `/api/admin/*` |
 | Feature docs | `docs/feature-reference.md` |
 | Shipped features | `docs/completed-features.md` |
-| Travel guide / backlog | `docs/travel-guide.md` |
 | PRD / Roadmap | `docs/PRD.md` |
-| Championship grids | `docs/championship-grids-project.md` |
+| Architecture plans | `.claude/plans/ancient-humming-blossom.md` |
+| Trip recap (historical) | `docs/trip-recap-and-next-steps.md` |

@@ -125,12 +125,14 @@ export function EvolutionView({
   );
 
   // Derive day-boundary markers for the tournament range: start of each day
-  // from tournament start through min(end, now).
+  // from tournament start through min(end, now). Uses UTC dates since the API
+  // returns UTC timestamps (e.g., 2026-04-09T00:00:00+00:00).
   const tournamentDayBoundaries = useMemo(() => {
     if (!tournamentStart) return null;
     try {
       const start = new Date(tournamentStart);
-      start.setHours(0, 0, 0, 0);
+      // Use UTC midnight to align with API dates
+      start.setUTCHours(0, 0, 0, 0);
       const endMs = tournamentEnd
         ? Math.min(new Date(tournamentEnd).getTime() + 86_400_000, Date.now())
         : Date.now();
@@ -152,7 +154,8 @@ export function EvolutionView({
     }
   }, [tournamentStart, tournamentEnd]);
 
-  const effectiveBoundaries = timeRange === "tournament" && tournamentDayBoundaries
+  // Show tournament round markers on all time ranges when available
+  const effectiveBoundaries = tournamentDayBoundaries
     ? tournamentDayBoundaries
     : data?.round_boundaries ?? null;
 
