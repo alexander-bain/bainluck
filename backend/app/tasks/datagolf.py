@@ -163,7 +163,7 @@ async def _poll_datagolf_markets() -> dict:
                         now = datetime.now(timezone.utc)
                         for player in players:
                             prob = _get_prob(player, market_type)
-                            if prob is None or prob <= 0 or prob >= 1.0:
+                            if prob is None:
                                 continue
 
                             outcome_ext_id = f"dg_{player.dg_id}"
@@ -400,10 +400,12 @@ async def _poll_datagolf_live() -> dict:
                             "leaderboard": leaderboard[:50],  # Top 50 for metadata size
                         }
 
-                        # Update outcomes + write snapshots
+                        # Update outcomes + write snapshots.
+                        # Allow prob=0.0 (eliminated) and prob=1.0 (winner) — these are
+                        # valid final-round states. Only skip if prob is truly unavailable.
                         for player in players:
                             prob = _get_prob(player, market_type)
-                            if prob is None or prob <= 0 or prob >= 1.0:
+                            if prob is None:
                                 continue
 
                             outcome_ext_id = f"dg_{player.dg_id}"
