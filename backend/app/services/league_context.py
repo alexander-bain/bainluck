@@ -290,8 +290,8 @@ async def enrich_event_with_context(
     if not home_ctx and not away_ctx:
         return None
 
-    sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
-    league_page_url = f"/{sport_group}/{config.slug}" if sport_group else f"/league/{config.slug}"
+    # Use /playoffs/ URLs until B1 navigation ships /[sport]/[league] pages
+    league_page_url = f"/playoffs/{config.slug}"
 
     result = {
         "league_slug": config.slug,
