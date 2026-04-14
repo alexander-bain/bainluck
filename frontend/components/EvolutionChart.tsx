@@ -184,6 +184,23 @@ export function EvolutionChart({
     return `${(value * 100).toFixed(0)}%`;
   }, []);
 
+  // Compute explicit tick positions: one per unique day to prevent duplicate date labels.
+  // For intraday ranges (today/24h), let Recharts auto-tick.
+  const explicitTicks = useMemo(() => {
+    if (timeRange === "today" || timeRange === "24h" || data.length === 0) return undefined;
+    const seen = new Set<string>();
+    const ticks: string[] = [];
+    for (const row of data) {
+      const ts = row.timestamp as string;
+      const dayKey = ts.slice(0, 10); // "2026-04-09"
+      if (!seen.has(dayKey)) {
+        seen.add(dayKey);
+        ticks.push(ts); // Use first data point of each day as the tick
+      }
+    }
+    return ticks;
+  }, [data, timeRange]);
+
   if (data.length === 0) {
     return (
       <div className={`flex items-center justify-center h-48 text-gray-400 text-sm ${className || ""}`}>
@@ -224,7 +241,7 @@ export function EvolutionChart({
             tickFormatter={formatXAxis}
             stroke="#dde0e5"
             tick={{ fontSize: 10, fill: "#9ca3af" }}
-            interval={Math.max(0, Math.ceil(data.length / 7) - 1)}
+            ticks={explicitTicks}
             tickLine={false}
           />
           <YAxis
@@ -298,8 +315,8 @@ export function EvolutionChart({
                 closest = row.timestamp as string;
               }
             }
-            // Don't render if nearest point is more than 2 hours away
-            if (minDist > 2 * 60 * 60 * 1000) return null;
+            // Don't render if nearest point is more than 12 hours away
+            if (minDist > 12 * 60 * 60 * 1000) return null;
             return (
               <ReferenceLine
                 key={rb.timestamp}
