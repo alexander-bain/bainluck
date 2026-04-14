@@ -1764,25 +1764,30 @@ async def _build_completed_tournament(
     for i, g in enumerate(golfers):
         g["rank"] = i + 1
 
-    # Try to find schedule data from DataGolf
-    from app.services.datagolf_api import DataGolfAPIService
-    svc = DataGolfAPIService()
+    # Try to find schedule data from the golf API response (already cached)
     start_date = None
     end_date = None
     venue = None
     schedule_status = None
     try:
-        schedule = await svc.get_schedule()
+        golf_data = await get_golf(db=db)
+        schedule = golf_data.get("pga_schedule", [])
         for event in schedule:
-            event_slug = _clean_slug(event.get("event_name", ""))
-            if event_slug == slug:
+            # Match by multiple strategies: display name slug, key slug, or
+            # normalized tournament key matching
+            event_name = event.get("name", "")
+            event_key = event.get("key", "")
+            event_name_slug = _clean_slug(event_name)
+            event_key_slug = _clean_slug(event_key.replace("_", " "))
+            norm_key = _normalize_tournament(event_name)
+            norm_display = TOURNAMENT_DISPLAY_NAMES.get(norm_key, "")
+            norm_slug = _clean_slug(norm_display) if norm_display else ""
+
+            if slug in (event_name_slug, event_key_slug, norm_slug):
                 start_date = event.get("start_date")
                 end_date = event.get("end_date")
-                venue = event.get("course")
-                if end_date:
-                    end_dt = datetime.fromisoformat(end_date) if isinstance(end_date, str) else end_date
-                    if hasattr(end_dt, 'date') and end_dt.date() < datetime.now(timezone.utc).date():
-                        schedule_status = "completed"
+                venue = event.get("venue") or event.get("course")
+                schedule_status = event.get("status")
                 break
     except Exception:
         pass

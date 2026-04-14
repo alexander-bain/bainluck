@@ -55,6 +55,13 @@ export function EvolutionView({
   const [timeRange, setTimeRange] = useState<TimeRange>(
     tournamentStarted ? "tournament" : "7d"
   );
+
+  // If tournamentStart arrives after initial render (async data), switch to tournament view
+  useEffect(() => {
+    if (tournamentStarted && timeRange === "7d") {
+      setTimeRange("tournament");
+    }
+  }, [tournamentStarted]); // eslint-disable-line react-hooks/exhaustive-deps
   const [selectedPosition, setSelectedPosition] = useState<string>(
     positionOptions?.[positionOptions.length - 1]?.key || "win"
   );
