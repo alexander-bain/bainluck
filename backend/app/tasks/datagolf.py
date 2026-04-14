@@ -282,11 +282,13 @@ async def _poll_datagolf_live() -> dict:
                         # No live event — clear live flag
                         r.delete(f"{LIVE_KEY_PREFIX}:{tour}")
                         stats["skipped"] += 1
+                        logger.debug("DataGolf live %s: no in-play data returned", tour)
                         continue
 
                     # Set live flag with 30-min TTL
                     r.set(f"{LIVE_KEY_PREFIX}:{tour}", "1", ex=1800)
                     stats["live_events"] += 1
+                    stats[f"{tour}_players"] = len(players)
 
                     # Find existing DataGolf markets for this tour.
                     # Don't filter by status — if DataGolf API returns in-play data,
@@ -299,6 +301,9 @@ async def _poll_datagolf_live() -> dict:
                         )
                     )
                     markets = market_result.scalars().all()
+                    stats[f"{tour}_markets"] = len(markets)
+                    if markets:
+                        stats[f"{tour}_market_statuses"] = list({m.status for m in markets})
 
                     if not markets:
                         # Auto-create markets from schedule + in-play data
@@ -403,10 +408,14 @@ async def _poll_datagolf_live() -> dict:
                         # Update outcomes + write snapshots.
                         # Allow prob=0.0 (eliminated) and prob=1.0 (winner) — these are
                         # valid final-round states. Only skip if prob is truly unavailable.
+                        players_written = 0
+                        players_skipped_none = 0
                         for player in players:
                             prob = _get_prob(player, market_type)
                             if prob is None:
+                                players_skipped_none += 1
                                 continue
+                            players_written += 1
 
                             outcome_ext_id = f"dg_{player.dg_id}"
 
@@ -458,6 +467,12 @@ async def _poll_datagolf_live() -> dict:
                                 )
                                 session.add(snap)
                                 stats["snapshots_written"] += 1
+
+                        if players_written > 0 or players_skipped_none > 0:
+                            logger.info(
+                                "DataGolf live %s market %s: %d players written, %d skipped (None prob)",
+                                tour, market_type, players_written, players_skipped_none,
+                            )
 
                         # Null out stale outcomes not in the current in-play
                         # field. See pre-tournament poll above for rationale.
