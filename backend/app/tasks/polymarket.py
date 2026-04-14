@@ -454,6 +454,13 @@ async def _process_event_batch(
                 if has_multiple_markets:
                     poly_metadata["market_count"] = len(event.markets)
 
+                # Aggregate volume/liquidity from event + markets
+                poly_volume = int(event.volume) if event.volume else None
+                poly_liquidity = float(event.liquidity) if event.liquidity else None
+                poly_volume_24h = sum(
+                    int(m.volume_24h or 0) for m in event.markets
+                ) or None
+
                 # Build update set for on-conflict
                 update_set = {
                     "name": event.title,
@@ -469,6 +476,10 @@ async def _process_event_batch(
                     "group_position": 0,
                     "market_metadata": poly_metadata if poly_metadata else None,
                     "updated_at": func.now(),
+                    "volume": poly_volume,
+                    "volume_24h": poly_volume_24h,
+                    "liquidity": poly_liquidity,
+                    "volume_updated_at": func.now(),
                 }
                 # Only update llm_sport_category if we have a non-"other" value
                 if llm_sport_category and llm_sport_category != "other":
@@ -493,6 +504,10 @@ async def _process_event_batch(
                     group_type=poly_group_type,
                     group_position=0,
                     market_metadata=poly_metadata if poly_metadata else None,
+                    volume=poly_volume,
+                    volume_24h=poly_volume_24h,
+                    liquidity=poly_liquidity,
+                    volume_updated_at=func.now(),
                 ).on_conflict_do_update(
                     index_elements=["source", "external_id"],
                     set_=update_set,

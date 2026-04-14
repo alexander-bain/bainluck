@@ -369,6 +369,11 @@ async def _poll_kalshi_markets():
                     if has_multiple_markets:
                         kalshi_metadata["market_count"] = len(event.markets)
 
+                    # Aggregate volume across all markets in this event
+                    total_volume = sum(m.volume or 0 for m in event.markets) or None
+                    total_volume_24h = sum(m.volume_24h or 0 for m in event.markets) or None
+                    total_open_interest = sum(m.open_interest or 0 for m in event.markets) or None
+
                     # Upsert the FuturesMarket
                     upsert_values = {
                         "source": "kalshi",
@@ -386,6 +391,10 @@ async def _poll_kalshi_markets():
                         "group_type": kalshi_group_type,
                         "group_position": 0,
                         "market_metadata": kalshi_metadata if kalshi_metadata else None,
+                        "volume": total_volume,
+                        "volume_24h": total_volume_24h,
+                        "open_interest": total_open_interest,
+                        "volume_updated_at": func.now(),
                     }
                     update_set = {
                         "name": market_name,
@@ -399,6 +408,10 @@ async def _poll_kalshi_markets():
                         "group_position": 0,
                         "market_metadata": kalshi_metadata if kalshi_metadata else None,
                         "updated_at": func.now(),
+                        "volume": total_volume,
+                        "volume_24h": total_volume_24h,
+                        "open_interest": total_open_interest,
+                        "volume_updated_at": func.now(),
                     }
                     # Always update llm_sport_category unless new value is "other"
                     # and existing might be better (from LLM or previous categorization)
