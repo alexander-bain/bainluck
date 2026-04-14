@@ -1711,22 +1711,27 @@ async def _build_completed_tournament(
 
     # Group by normalized tournament key using existing logic
     tournament_markets: list[FuturesMarket] = []
+    matched_key = None
     for m in all_markets:
         if not _is_golf_market(m):
             continue
-        key, _ = _normalize_tournament(m)
-        m_slug = _clean_slug(_)
-        if m_slug == slug:
+        market_name = m.name or ""
+        key = _normalize_tournament(market_name)
+        # Check slug against both the display name and the raw key
+        display = TOURNAMENT_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
+        display_slug = _clean_slug(display)
+        key_slug = _clean_slug(key.replace("_", " "))
+        if display_slug == slug or key_slug == slug:
             tournament_markets.append(m)
+            if not matched_key:
+                matched_key = key
 
     if not tournament_markets:
         return None
 
-    # Build a minimal tournament dict
-    # Use the first market's name to derive display name
-    first_market = tournament_markets[0]
-    _, display_name = _normalize_tournament(first_market)
-    key, _ = _normalize_tournament(first_market)
+    # Derive display name from the tournament key
+    display_name = TOURNAMENT_DISPLAY_NAMES.get(matched_key or "", (matched_key or slug).replace("_", " ").title())
+    key = matched_key or slug
 
     # Collect all golfers from outcomes
     golfer_map: dict[str, dict] = {}
