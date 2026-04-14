@@ -901,3 +901,38 @@ def get_league_config(slug: str) -> LeagueConfig | None:
 def get_all_league_slugs() -> list[str]:
     """Return all configured league slugs (for index page / navigation)."""
     return list(LEAGUE_CONFIGS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Sport groups — sport_category → league slugs
+# ---------------------------------------------------------------------------
+
+SPORT_GROUPS: dict[str, list[str]] = {
+    "basketball": ["nba", "wnba", "ncaa-basketball", "ncaa-women-basketball"],
+    "football": ["nfl", "ncaa-football"],
+    "baseball": ["mlb"],
+    "hockey": ["nhl"],
+    "soccer": ["epl", "la-liga", "champions-league", "bundesliga", "mls"],
+    "golf": ["golf"],
+}
+
+# Reverse: league_slug → sport_group
+LEAGUE_TO_SPORT: dict[str, str] = {
+    league: sport
+    for sport, leagues in SPORT_GROUPS.items()
+    for league in leagues
+}
+
+# Odds API sport_key → league_slug (for resolving events to their league)
+_SPORT_KEY_TO_LEAGUE: dict[str, str] = {}
+for _cfg in LEAGUE_CONFIGS.values():
+    for _sk in _cfg.sport_keys:
+        _SPORT_KEY_TO_LEAGUE[_sk] = _cfg.slug
+
+
+def get_league_for_sport_key(sport_key: str) -> LeagueConfig | None:
+    """Resolve an Odds API sport key (e.g., 'basketball_nba') to its LeagueConfig."""
+    slug = _SPORT_KEY_TO_LEAGUE.get(sport_key)
+    if slug:
+        return LEAGUE_CONFIGS.get(slug)
+    return None

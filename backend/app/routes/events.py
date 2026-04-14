@@ -2008,6 +2008,15 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "favorite": event.opening_favorite,
         }
 
+    # League context: championship/playoff probabilities for both teams
+    try:
+        from app.services.league_context import enrich_event_with_context
+        league_ctx = await enrich_event_with_context(event, db)
+        if league_ctx:
+            response["league_context"] = league_ctx
+    except Exception as e:
+        logger.debug("League context enrichment failed for event %s: %s", event_id, e)
+
     return response
 
 
