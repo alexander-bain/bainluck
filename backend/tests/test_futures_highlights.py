@@ -116,6 +116,19 @@ class TestComputeFuturesHighlight:
         assert result.flags.has_source_divergence is True
         assert "source_divergence" in result.reasons
 
+    def test_high_volume_bonus(self):
+        """Markets with high 24h trading volume get a bonus."""
+        no_vol = compute_futures_highlight(market_tier=1)
+        high_vol = compute_futures_highlight(market_tier=1, volume_24h=100_000)
+        mod_vol = compute_futures_highlight(market_tier=1, volume_24h=10_000)
+        low_vol = compute_futures_highlight(market_tier=1, volume_24h=100)
+        assert high_vol.score > mod_vol.score > low_vol.score
+        assert high_vol.score > no_vol.score
+        assert high_vol.flags.has_high_volume is True
+        assert low_vol.flags.has_high_volume is False
+        assert "high_volume" in high_vol.reasons
+        assert "moderate_volume" in mod_vol.reasons
+
     def test_score_capped_at_100(self):
         """Score should never exceed 100."""
         # Create a scenario with everything interesting

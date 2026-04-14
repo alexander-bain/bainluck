@@ -946,6 +946,7 @@ async def _score_futures(
             source_count=source_count,
             now=now,
             market_name=market.name,
+            volume_24h=market.volume_24h,
         )
 
         base_score = highlight_result.score

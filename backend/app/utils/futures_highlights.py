@@ -82,12 +82,18 @@ FUTURES_WEIGHTS = {
     "resolving_soon_30d": 8,        # Resolves within 30 days
     "multi_source": 10,             # Available from 2+ sources
     "source_divergence": 20,        # Sources disagree by >5%
+    "high_volume": 15,              # Market has significant trade volume
+    "moderate_volume": 8,           # Market has some trade volume
 }
 
 # Thresholds
 MAJOR_MOVEMENT_THRESHOLD = 0.05    # 5% change in 24h
 MODERATE_MOVEMENT_THRESHOLD = 0.02 # 2% change
 SOURCE_DIVERGENCE_THRESHOLD = 0.05 # 5% disagreement between sources
+
+# Volume thresholds (24h trading volume in contracts/dollars)
+HIGH_VOLUME_THRESHOLD = 50_000     # $50K+ 24h volume = high interest
+MODERATE_VOLUME_THRESHOLD = 5_000  # $5K+ 24h volume = some interest
 
 
 @dataclass
@@ -101,6 +107,7 @@ class FuturesFlags:
     is_resolving_soon: bool = False
     has_multi_source: bool = False
     has_source_divergence: bool = False
+    has_high_volume: bool = False
     league_tier: int = 3
     market_tier: int = 5
 
@@ -135,6 +142,8 @@ def compute_futures_highlight(
     now: Optional[datetime] = None,
     # Market name for minor league detection
     market_name: Optional[str] = None,
+    # Volume/liquidity (internal signal)
+    volume_24h: Optional[int] = None,
 ) -> FuturesHighlightResult:
     """
     Compute highlight score and flags for a futures market.
@@ -272,6 +281,16 @@ def compute_futures_highlight(
         flags.has_source_divergence = True
         result.score += FUTURES_WEIGHTS["source_divergence"]
         result.reasons.append("source_divergence")
+
+    # === Volume scoring ===
+    if volume_24h is not None and volume_24h > 0:
+        if volume_24h >= HIGH_VOLUME_THRESHOLD:
+            flags.has_high_volume = True
+            result.score += FUTURES_WEIGHTS["high_volume"]
+            result.reasons.append("high_volume")
+        elif volume_24h >= MODERATE_VOLUME_THRESHOLD:
+            result.score += FUTURES_WEIGHTS["moderate_volume"]
+            result.reasons.append("moderate_volume")
 
     # === Cap score at 100 ===
     result.score = min(100, result.score)
