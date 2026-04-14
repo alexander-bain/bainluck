@@ -3232,7 +3232,7 @@ async def get_related_futures(
     if matchup_outcomes and event.sport_id:
         from app.utils.name_normalization import names_match
         team_logo_result = await db.execute(
-            select(Team.name, Team.logo_small, Team.logo).where(
+            select(Team.name, Team.logo_url_small, Team.logo_url).where(
                 Team.sport_id == event.sport_id,
             )
         )
