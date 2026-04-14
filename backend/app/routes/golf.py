@@ -1869,11 +1869,25 @@ async def get_golf_tournament(
         key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
     )
 
-    # Find winner market for evolution chart
+    # Find winner market for evolution chart — pick the one with the most
+    # recent snapshot data (best time coverage, especially for completed events)
     evolution_market_id = None
     for g in sorted_groups:
         if g["type"] == "winner" and g["market_ids"]:
-            evolution_market_id = g["market_ids"][0]
+            best_id = g["market_ids"][0]
+            best_latest = None
+            for mid in g["market_ids"]:
+                latest_snap = await db.execute(
+                    select(sqlfunc.max(FuturesOddsSnapshot.captured_at))
+                    .where(FuturesOddsSnapshot.outcome_id.in_(
+                        select(FuturesOutcome.id).where(FuturesOutcome.market_id == mid)
+                    ))
+                )
+                latest = latest_snap.scalar()
+                if latest and (best_latest is None or latest > best_latest):
+                    best_latest = latest
+                    best_id = mid
+            evolution_market_id = best_id
             break
     if not evolution_market_id and market_ids:
         evolution_market_id = market_ids[0]

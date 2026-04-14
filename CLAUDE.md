@@ -369,6 +369,7 @@ All outstanding items live here. `TODO.md` is archived; `trip-recap-and-next-ste
 - **`/[sport]/[league]/[team]` entity pages** — `/basketball/nba/celtics` aggregates all content for a team: games, futures, related markets, championship timeline. Good for SEO + My Stuff integration.
 - **Golf round markers on charts** — R1/R2/R3/R4 start times as vertical markers. Minimum: midnight each tournament day. Ideal: actual start-of-play.
 - **Golf LIVE badge fix** — Date-based validation, not just leaderboard existence. Currently false-positive for completed tournaments.
+- **Live tournament Kalshi/Polymarket polling** — Futures polls run every 4h (Kalshi) / 1h (Polymarket), way too slow for live golf tournaments. Game-level `poll_live_prediction_markets` runs every 2min but only covers event-matched markets, not tournament futures. Need a "live tournament" polling mode: detect active tournament via DataGolf leaderboard, poll its Kalshi/Polymarket markets every 5-10 min during play. Same pattern could apply to any high-interest futures (NBA playoffs, Super Bowl week).
 
 **Golf data quality (still open)**
 - Tour misclassification (Hainan = Asian Tour, not PGA Tour)
