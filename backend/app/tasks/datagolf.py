@@ -288,12 +288,14 @@ async def _poll_datagolf_live() -> dict:
                     r.set(f"{LIVE_KEY_PREFIX}:{tour}", "1", ex=1800)
                     stats["live_events"] += 1
 
-                    # Find existing DataGolf markets for this tour
+                    # Find existing DataGolf markets for this tour.
+                    # Don't filter by status — if DataGolf API returns in-play data,
+                    # we should update regardless of whether another source (Kalshi)
+                    # has already resolved/closed its version of the market.
                     market_result = await session.execute(
                         select(FuturesMarket).where(
                             FuturesMarket.source == "datagolf",
                             FuturesMarket.external_id.like(f"datagolf:{tour}:%"),
-                            FuturesMarket.status == "open",
                         )
                     )
                     markets = market_result.scalars().all()
