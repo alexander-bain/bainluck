@@ -1686,6 +1686,122 @@ def _detect_market_type(market_name: str) -> tuple[str, str]:
     return "other", "Other"
 
 
+async def _build_completed_tournament(
+    slug: str,
+    db: AsyncSession,
+) -> dict | None:
+    """Build tournament data from closed/resolved markets for completed tournaments.
+
+    Called when the main golf listing doesn't include the tournament (markets closed).
+    Returns a tournament dict compatible with get_golf_tournament's expectations, or None.
+    """
+    # Find golf markets (any status) whose name matches the slug
+    query = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            or_(
+                FuturesMarket.external_id.ilike("golf_%"),
+                FuturesMarket.llm_sport_category == "golf",
+            ),
+        )
+    )
+    result = await db.execute(query)
+    all_markets = result.scalars().unique().all()
+
+    # Group by normalized tournament key using existing logic
+    tournament_markets: list[FuturesMarket] = []
+    for m in all_markets:
+        if not _is_golf_market(m):
+            continue
+        key, _ = _normalize_tournament(m)
+        m_slug = _clean_slug(_)
+        if m_slug == slug:
+            tournament_markets.append(m)
+
+    if not tournament_markets:
+        return None
+
+    # Build a minimal tournament dict
+    # Use the first market's name to derive display name
+    first_market = tournament_markets[0]
+    _, display_name = _normalize_tournament(first_market)
+    key, _ = _normalize_tournament(first_market)
+
+    # Collect all golfers from outcomes
+    golfer_map: dict[str, dict] = {}
+    market_ids: list[int] = []
+    market_names: list[str] = []
+
+    for market in tournament_markets:
+        market_ids.append(market.id)
+        market_names.append(market.name or "")
+        for outcome in market.outcomes:
+            if not outcome.name or not outcome.current_probability:
+                continue
+            name = outcome.name.strip()
+            if name.lower() in ("yes", "no", "over", "under", "draw"):
+                continue
+            if name not in golfer_map:
+                golfer_map[name] = {
+                    "name": name,
+                    "probability": outcome.current_probability,
+                    "american_odds": outcome.american_odds,
+                    "movement_24h": None,
+                    "opening_probability": outcome.opening_probability,
+                    "rank": 0,
+                    "sources": {},
+                }
+            source = market.source or "sportsbook"
+            golfer_map[name]["sources"][source] = outcome.current_probability
+
+    golfers = sorted(golfer_map.values(), key=lambda g: g["probability"], reverse=True)
+    for i, g in enumerate(golfers):
+        g["rank"] = i + 1
+
+    # Try to find schedule data from DataGolf
+    from app.services.datagolf_api import DataGolfAPIService
+    svc = DataGolfAPIService()
+    start_date = None
+    end_date = None
+    venue = None
+    schedule_status = None
+    try:
+        schedule = await svc.get_schedule()
+        for event in schedule:
+            event_slug = _clean_slug(event.get("event_name", ""))
+            if event_slug == slug:
+                start_date = event.get("start_date")
+                end_date = event.get("end_date")
+                venue = event.get("course")
+                if end_date:
+                    end_dt = datetime.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+                    if hasattr(end_dt, 'date') and end_dt.date() < datetime.now(timezone.utc).date():
+                        schedule_status = "completed"
+                break
+    except Exception:
+        pass
+
+    return {
+        "name": display_name,
+        "slug": slug,
+        "key": key,
+        "is_major": any(k in key.lower() for k in ("masters", "pga_championship", "us_open", "the_open")),
+        "is_womens": bool(re.search(r"women|lpga|chevron|amundi", display_name, re.I)),
+        "start_date": start_date,
+        "end_date": end_date,
+        "venue": venue,
+        "location": None,
+        "schedule_status": schedule_status,
+        "commence_time": start_date,
+        "resolution_date": end_date,
+        "golfers": golfers,
+        "market_ids": market_ids,
+        "market_names": market_names,
+        "_all_golfers": golfers,
+    }
+
+
 @router.get("/tournaments/{slug}")
 async def get_golf_tournament(
     slug: str,
@@ -1706,7 +1822,11 @@ async def get_golf_tournament(
             break
 
     if not tournament:
-        raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
+        # Fallback: tournament may have completed and its markets closed.
+        # Query closed/resolved markets directly to serve completed tournament data.
+        tournament = await _build_completed_tournament(slug, db)
+        if not tournament:
+            raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
 
     # Sub-group markets by type (winner, top_5, top_10, etc.)
     market_ids = tournament.get("market_ids", [])
