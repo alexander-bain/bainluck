@@ -2747,7 +2747,9 @@ async def get_related_futures(
         select(FuturesMarket.id).where(
             rf_status_filter,
             or_(*sport_filters),
-        )
+        ).order_by(
+            FuturesMarket.market_tier.asc().nullslast()
+        ).limit(300)  # Cap to prevent 30s timeout on sports with many markets
     )
     sport_market_ids = [row.id for row in market_result.all()]
     if not sport_market_ids:
