@@ -11,6 +11,7 @@ const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false }
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
+const SeasonOutlook = dynamic(() => import("@/components/SeasonOutlook"), { ssr: false });
 const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
@@ -1499,6 +1500,17 @@ export default function EventPage({ params }: EventPageProps) {
           />
         );
       })()}
+
+      {/* Season Outlook — championship/playoff probabilities for both teams */}
+      {event.league_context && (
+        <SeasonOutlook
+          leagueContext={event.league_context}
+          homeTeam={event.home_team}
+          awayTeam={event.away_team}
+          homeTeamColor={event.home_team_data?.primary_color || undefined}
+          awayTeamColor={event.away_team_data?.primary_color || undefined}
+        />
+      )}
 
       {/* Related Futures — bigger picture context (below charts) */}
       <RelatedFutures

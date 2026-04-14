@@ -163,6 +163,25 @@ export interface BookmakerOddsDetail {
   projected_away_score?: number | null;
 }
 
+export interface LeagueContextData {
+  league_slug: string;
+  league_name: string;
+  columns: { key: string; label: string }[];
+  league_page_url: string;
+  home_team?: {
+    cells: Record<string, number>;
+    changes_24h: Record<string, number>;
+    record?: string | null;
+    conference?: string | null;
+  };
+  away_team?: {
+    cells: Record<string, number>;
+    changes_24h: Record<string, number>;
+    record?: string | null;
+    conference?: string | null;
+  };
+}
+
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
@@ -171,6 +190,7 @@ export interface EventDetailResponse extends Event {
   excitement?: EIData;
   /** @deprecated Use `ei` instead */
   pulse?: EIData;
+  league_context?: LeagueContextData;
 }
 
 export interface OddsHistoryPoint {
