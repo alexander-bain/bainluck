@@ -1870,22 +1870,31 @@ async def get_golf_tournament(
     )
 
     # Find winner market for evolution chart — pick the one with the most
-    # recent snapshot data (best time coverage, especially for completed events)
+    # snapshot data (richest time coverage). Filter out non-golfer markets
+    # like "League of Winner" or "Winner Nationality" by requiring >5 outcomes.
     evolution_market_id = None
     for g in sorted_groups:
         if g["type"] == "winner" and g["market_ids"]:
             best_id = g["market_ids"][0]
-            best_latest = None
+            best_count = 0
             for mid in g["market_ids"]:
-                latest_snap = await db.execute(
-                    select(sqlfunc.max(FuturesOddsSnapshot.captured_at))
+                # Check outcome count to filter non-golfer markets
+                outcome_count = await db.execute(
+                    select(sqlfunc.count(FuturesOutcome.id))
+                    .where(FuturesOutcome.market_id == mid)
+                )
+                n_outcomes = outcome_count.scalar() or 0
+                if n_outcomes < 5:
+                    continue  # Skip "League of Winner" (3 outcomes), nationality, etc.
+                snap_count = await db.execute(
+                    select(sqlfunc.count(FuturesOddsSnapshot.id))
                     .where(FuturesOddsSnapshot.outcome_id.in_(
                         select(FuturesOutcome.id).where(FuturesOutcome.market_id == mid)
                     ))
                 )
-                latest = latest_snap.scalar()
-                if latest and (best_latest is None or latest > best_latest):
-                    best_latest = latest
+                total = snap_count.scalar() or 0
+                if total > best_count:
+                    best_count = total
                     best_id = mid
             evolution_market_id = best_id
             break
