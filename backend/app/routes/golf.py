@@ -1751,7 +1751,7 @@ async def _build_completed_tournament(
                 golfer_map[name] = {
                     "name": name,
                     "probability": outcome.current_probability,
-                    "american_odds": outcome.american_odds,
+                    "american_odds": outcome.current_american_odds,
                     "movement_24h": None,
                     "opening_probability": outcome.opening_probability,
                     "rank": 0,
