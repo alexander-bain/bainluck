@@ -772,14 +772,35 @@ def _correct_inverted_probs(probs: list[float]) -> list[float]:
     return corrected
 
 
-def _merge_probabilities(probs: list[float]) -> float:
-    """Merge probabilities from multiple sources using median.
+def _volume_confidence(volume_24h: int | None) -> float:
+    """Map 24h trading volume to a confidence weight (0.3-1.0).
 
+    Markets with higher volume have more reliable prices.
+    Used to weight sources during probability merging.
+    """
+    if not volume_24h or volume_24h <= 0:
+        return 0.5  # Unknown volume — moderate confidence
+    if volume_24h < 1_000:
+        return 0.3  # Very thin market
+    if volume_24h < 10_000:
+        return 0.6
+    if volume_24h < 50_000:
+        return 0.8
+    return 1.0  # High-volume market — full confidence
+
+
+def _merge_probabilities(
+    probs: list[float],
+    volumes: list[int | None] | None = None,
+) -> float:
+    """Merge probabilities from multiple sources.
+
+    When volume data is available, uses volume-weighted average instead of
+    plain median. This gives more weight to high-volume sources (which have
+    more reliable prices) and less weight to thin/illiquid markets.
+
+    Falls back to median when no volume data is available.
     Applies inversion correction and outlier filtering before merging.
-    With only 2 sources, median=mean so a single outlier has 50% weight.
-    We detect extreme divergence (>10x ratio) and trust the lower value
-    (in golf/futures, outlier prediction market prices are almost always
-    too high due to illiquidity).
     """
     if not probs:
         return 0.0
@@ -792,14 +813,28 @@ def _merge_probabilities(probs: list[float]) -> float:
     # With 3+ sources: drop values >10x the median of the rest
     if len(corrected) >= 3:
         filtered = []
+        filtered_vols = []
         for i, p in enumerate(corrected):
             others = corrected[:i] + corrected[i + 1:]
             med_others = statistics.median(others)
             if med_others > 0 and p / med_others > 10:
                 continue  # skip extreme outlier
             filtered.append(p)
+            if volumes:
+                filtered_vols.append(volumes[i] if i < len(volumes) else None)
         if filtered:
-            return statistics.median(filtered)
+            corrected = filtered
+            if filtered_vols:
+                volumes = filtered_vols
+
+    # Volume-weighted average when volume data is available for any source
+    if volumes and any(v is not None and v > 0 for v in volumes):
+        weights = [_volume_confidence(volumes[i] if i < len(volumes) else None)
+                   for i in range(len(corrected))]
+        total_weight = sum(weights)
+        if total_weight > 0:
+            return sum(p * w for p, w in zip(corrected, weights)) / total_weight
+
     return statistics.median(corrected)
 
 
@@ -1026,15 +1061,33 @@ async def _get_team_metadata(
 _GOLF_PLACEMENT_COLS = {"make_cut", "top_20", "top_10", "top_5"}
 
 
+def _is_kalshi_noise(source: dict) -> bool:
+    """Detect if a Kalshi source entry is likely noise (illiquid market).
+
+    Uses both price floor/ceiling detection AND volume — a Kalshi entry
+    is noise if its price is at the floor/ceiling (≤0.02 or ≥0.98)
+    OR if it has very low volume (<100 contracts, indicating no real trading).
+    """
+    if source["source"] != "kalshi":
+        return False
+    prob = source["probability"]
+    # Price floor/ceiling detection (original heuristic)
+    if prob <= 0.02 or prob >= 0.98:
+        return True
+    # Volume-based detection (new): very low volume = likely noise
+    vol = source.get("volume_24h")
+    if vol is not None and vol < 100:
+        # Low volume AND probability in the noise band (0.45-0.55)
+        if 0.45 <= prob <= 0.55:
+            return True
+    return False
+
+
 def _filter_kalshi_placement_noise(cells: dict) -> None:
-    """Filter out Kalshi price floor/ceiling noise from golf placement columns.
+    """Filter out Kalshi noise from golf placement columns.
 
-    Kalshi binary golf markets (e.g., "Will X finish Top 20?") are often
-    illiquid, with prices stuck at 0.005 (floor) or 0.995 (ceiling).
-    These aren't real probabilities — they're just the min/max prices
-    on an empty order book.
-
-    For placement columns: remove Kalshi values ≤ 0.02 or ≥ 0.98.
+    Uses price floor/ceiling detection + volume-based noise detection.
+    For placement columns: remove noisy Kalshi entries.
     For the "win" column: keep all values (low win odds can be legitimate).
     """
     for col_key in _GOLF_PLACEMENT_COLS:
@@ -1043,17 +1096,13 @@ def _filter_kalshi_placement_noise(cells: dict) -> None:
             continue
         sources = cell.get("sources", [])
         if len(sources) <= 1:
-            # Only one source — even if it's noise, it's all we have.
-            # But if it's a Kalshi floor/ceiling value alone, remove the cell entirely.
-            if (sources and sources[0]["source"] == "kalshi"
-                    and (sources[0]["probability"] <= 0.02 or sources[0]["probability"] >= 0.98)):
+            # Only one source — if it's Kalshi noise, remove the cell entirely.
+            if sources and _is_kalshi_noise(sources[0]):
                 del cells[col_key]
             continue
 
-        # Multiple sources: filter out Kalshi floor/ceiling values
-        filtered = [s for s in sources
-                    if s["source"] != "kalshi"
-                    or (0.02 < s["probability"] < 0.98)]
+        # Multiple sources: filter out noisy Kalshi entries
+        filtered = [s for s in sources if not _is_kalshi_noise(s)]
         if filtered and len(filtered) < len(sources):
             cell["sources"] = filtered
             probs = [s["probability"] for s in filtered]
@@ -1507,6 +1556,7 @@ async def _build_golf_tour_grid(
                     "outcome_id": outcome.id,
                     "market_name": market.name,
                     "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
+                    "volume_24h": market.volume_24h,
                 })
                 all_outcome_ids.append(outcome.id)
                 outcome_id_to_name[outcome.id] = oname
@@ -1597,7 +1647,8 @@ async def _build_golf_tour_grid(
                     continue
 
                 probs = [e["probability"] for e in entries]
-                merged = _merge_probabilities(probs)
+                vols = [e.get("volume_24h") for e in entries]
+                merged = _merge_probabilities(probs, vols)
 
                 sources = []
                 for e in entries:
@@ -1609,6 +1660,8 @@ async def _build_golf_tour_grid(
                         src["market_name"] = e["market_name"]
                     if e.get("last_updated"):
                         src["last_updated"] = e["last_updated"]
+                    if e.get("volume_24h") is not None:
+                        src["volume_24h"] = e["volume_24h"]
                     sources.append(src)
 
                 # 24h trend
@@ -1922,6 +1975,7 @@ async def _build_upcoming_golf_event_grid(
                 "market_id": market.id,
                 "outcome_id": outcome.id,
                 "market_name": market.name,
+                "volume_24h": market.volume_24h,
             })
             all_outcome_ids.append(outcome.id)
             outcome_id_to_name[outcome.id] = oname
@@ -1968,7 +2022,8 @@ async def _build_upcoming_golf_event_grid(
                 continue
 
             probs = [e["probability"] for e in entries]
-            merged = _merge_probabilities(probs)
+            vols = [e.get("volume_24h") for e in entries]
+            merged = _merge_probabilities(probs, vols)
 
             sources = []
             for e in entries:
@@ -1978,6 +2033,8 @@ async def _build_upcoming_golf_event_grid(
                 }
                 if e.get("market_name"):
                     src["market_name"] = e["market_name"]
+                if e.get("volume_24h") is not None:
+                    src["volume_24h"] = e["volume_24h"]
                 sources.append(src)
 
             # 24h trend
@@ -2474,6 +2531,7 @@ async def get_playoff_grid(
                 "market_id": market.id,
                 "outcome_id": outcome.id,
                 "market_name": market.name,
+                "volume_24h": market.volume_24h,
             }
 
             grid_raw[norm][col_key].append(source_entry)
@@ -3393,8 +3451,9 @@ async def get_team_progression_for_event(
                 continue
 
             probs = [e["probability"] for e in entries]
+            vols = [e.get("volume_24h") for e in entries]
             corrected = _correct_inverted_probs(probs)
-            merged = _merge_probabilities(probs)
+            merged = _merge_probabilities(probs, vols)
 
             sources = []
             for e, corrected_p in zip(entries, corrected):
@@ -3404,6 +3463,8 @@ async def get_team_progression_for_event(
                 }
                 if e.get("market_name"):
                     src["market_name"] = e["market_name"]
+                if e.get("volume_24h") is not None:
+                    src["volume_24h"] = e["volume_24h"]
                 sources.append(src)
 
             trend_24h = None
