@@ -2286,15 +2286,12 @@ export default function RelatedFutures({
     }
   );
 
-  // Only bail early on loading/error/no-response.
-  // total_count === 0 is NOT checked here — Gate 2 below handles emptiness
-  // so that teamProgression (Playoff Path) and standings (Season Stats)
-  // can still render even when the related-futures API returns zero matches.
+  // Only bail early on loading (not error) — if the related-futures API fails
+  // but we have grid progression or standings, still render those sections.
   const hasGridProgression = !!(teamProgression?.home_team || teamProgression?.away_team);
   const hasStandingsData = !!(homeStandings || awayStandings);
-  if (isLoading || error || (!data && !hasGridProgression && !hasStandingsData)) {
-    return null;
-  }
+  if (isLoading) return null;
+  if (!data && !hasGridProgression && !hasStandingsData) return null;
 
   const home_team_futures = data?.home_team_futures ?? [];
   const away_team_futures = data?.away_team_futures ?? [];

@@ -1470,13 +1470,9 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
 
-      {/* Line Movement Analysis — AI-powered odds movement explanations */}
-      <LineMovementExplainer
-        eventId={eventId}
-        homeTeam={event.home_team}
-        awayTeam={event.away_team}
-        eventStatus={event.status}
-      />
+      {/* Line Movement Analysis — disabled until we have non-obvious insights.
+          Current version just states the obvious ("Team X won, odds went up").
+          TODO: Revamp with causal analysis, key moments, context. See backlog. */}
 
       {/* Series Probability — playoff series context */}
       {event.event_tags && (

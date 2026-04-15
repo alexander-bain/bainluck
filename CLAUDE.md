@@ -401,6 +401,7 @@ All outstanding items live here. `TODO.md` is archived; `trip-recap-and-next-ste
 - First analysis: "Who's Right?" Brier score source accuracy
 
 **Features**
+- **Line Movement Explainer v2** — Current version disabled (April 15). Only stated the obvious ("Team X won, odds went up"). Needs: key moment identification, causal analysis ("odds shifted after injury report"), context from scoring plays. Revamp before re-enabling.
 - TV Mode v2 (prototype at `docs/tv-mode-prototype.jsx`)
 - Non-sports categories: audit existing markets, weather visualization, politics timelines
 - "The Market Was Wrong" v2 — AI narrative + personalization
