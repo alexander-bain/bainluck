@@ -2558,7 +2558,7 @@ async def sample_team_linked_outcomes(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import func, text
+    from app.models import Team
 
     result = await db.execute(
         select(
