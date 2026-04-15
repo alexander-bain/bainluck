@@ -2863,7 +2863,9 @@ async def get_related_futures(
                             patterns.append(escaped)
                             team_patterns.append(escaped)
             # Add roster player names from ESPN/MLB API (e.g., "Jayson Tatum")
-            roster = team_row.roster_players
+            # Skip for completed events — player name ILIKE patterns are expensive
+            # and completed events only need championship/award markets (team names).
+            roster = team_row.roster_players if not event_is_finished else None
             if roster and isinstance(roster, list):
                 for item in roster:
                     if isinstance(item, dict):
