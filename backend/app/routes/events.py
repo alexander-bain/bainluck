@@ -2756,33 +2756,31 @@ async def get_related_futures(
         if event_is_finished
         else or_(FuturesMarket.status == "open", FuturesMarket.status.is_(None))
     )
-    # Two-pass market discovery:
-    # Pass 1: markets with market_tier set (championship, conference, awards — most valuable)
-    # Pass 2: remaining markets without tier (game props, misc — fill up to 500)
-    tiered_result = await db.execute(
+    # Tier-aware market discovery:
+    # Pass 1: Season-long markets (tiers 1-4: championship, conference, awards, division)
+    #         These are relevant to any event in the sport. Relatively small set.
+    # Pass 2: Game-specific props (tier 5) — only for THIS event via event_id FK.
+    #         Avoids loading props from every other game in the sport.
+    season_result = await db.execute(
         select(FuturesMarket.id).where(
             rf_status_filter,
             or_(*sport_filters),
-            FuturesMarket.market_tier.isnot(None),
-        ).order_by(FuturesMarket.market_tier.asc())
-    )
-    tiered_ids = [row.id for row in tiered_result.all()]
-
-    # Only include a small number of untiered markets (game props) to prevent
-    # query timeout. The real fix is populating market_tier on all markets.
-    remaining_cap = min(100, max(0, 300 - len(tiered_ids)))
-    untiered_ids = []
-    if remaining_cap > 0:
-        untiered_result = await db.execute(
-            select(FuturesMarket.id).where(
-                rf_status_filter,
-                or_(*sport_filters),
-                FuturesMarket.market_tier.is_(None),
-            ).limit(remaining_cap)
+            FuturesMarket.market_tier.in_([1, 2, 3, 4]),
         )
-        untiered_ids = [row.id for row in untiered_result.all()]
+    )
+    season_market_ids = [row.id for row in season_result.all()]
 
-    sport_market_ids = tiered_ids + untiered_ids
+    # Game props (tier 5): only load markets linked to THIS specific event
+    game_prop_result = await db.execute(
+        select(FuturesMarket.id).where(
+            rf_status_filter,
+            FuturesMarket.event_id == event_id,
+            FuturesMarket.market_tier == 5,
+        )
+    )
+    game_prop_ids = [row.id for row in game_prop_result.all()]
+
+    sport_market_ids = season_market_ids + game_prop_ids
     if not sport_market_ids:
         return empty
 
