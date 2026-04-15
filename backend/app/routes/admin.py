@@ -2620,13 +2620,13 @@ async def debug_team_links(
         WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL
     """))
 
-    # Sample unlinked outcome names to see what they look like
+    # Sample unlinked outcome names on EVENT-LINKED markets (the actionable ones)
     samples = await db.execute(text("""
         SELECT fo.name, fm.name AS market_name, fm.event_id, fm.llm_sport_category,
                fm.market_tier, fm.source
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fo.team_id IS NULL
+        WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL
         ORDER BY fo.id DESC
         LIMIT 30
     """))
