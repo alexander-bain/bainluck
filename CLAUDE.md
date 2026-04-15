@@ -365,6 +365,7 @@ All outstanding items live here. `TODO.md` is archived; `trip-recap-and-next-ste
 - **B4: Trade volume** — Store Kalshi/Polymarket volume on `FuturesMarket` (5 nullable columns). Use for feed ranking, grid confidence weighting, eval context. Internal signal only — never user-facing.
 
 **HIGH-PRIORITY follow-ups**
+- **Market tier tagging in Kalshi/Polymarket tasks** — Most `FuturesMarket` records have `market_tier=NULL`, making it impossible to efficiently filter championships from game props. The Kalshi/Polymarket tasks should use `MarketMatchingRule` from `league_configs.py` to set `market_tier` during upsert. This unblocks Related Futures showing awards, win totals, and game props without massive ILIKE scans.
 - **Evolution chart: combined probability trend** — Chart currently shows single-source data; grid shows merged/grouped. Chart should show merged probability trend. Requires time-series computation of aggregate — data pipeline question.
 - **`/[sport]/[league]/[team]` entity pages** — `/basketball/nba/celtics` aggregates all content for a team: games, futures, related markets, championship timeline. Good for SEO + My Stuff integration.
 - **Golf round markers on charts** — R1/R2/R3/R4 start times as vertical markers. Minimum: midnight each tournament day. Ideal: actual start-of-play.
