@@ -69,8 +69,10 @@ All 3 phases: storage (5 columns on `FuturesMarket`), feed ranking (volume scori
 
 ## Tier 1: HIGH-PRIORITY Follow-ups
 
-### Market Tier Tagging in Kalshi/Polymarket Tasks
-Most `FuturesMarket` records have `market_tier=NULL`, making it impossible to efficiently filter championships from game props. The Kalshi/Polymarket tasks should use `MarketMatchingRule` from `league_configs.py` to set `market_tier` during upsert. This unblocks Related Futures showing awards, win totals, and game props without massive ILIKE scans. **Blocks**: efficient Related Futures queries, awards/props on league pages.
+### Related Futures Performance + Completed Event Props
+Related Futures was timing out (fixed April 15 — tier-aware loading + recency filter). Current workaround: completed events skip roster player ILIKE patterns for speed. **This is a product sacrifice** — we WANT to show player props for completed games ("market expected 2.5 hits, Judge went 3-for-4"). Need to make the query fast enough to include player props for completed events. Options: pre-compute team→outcome links via `team_id` backfill (see roster-based tagging below), use GIN index on outcome names, or denormalize player props onto events.
+
+Also: design slick "expected vs actual" cards for completed game props — this is a compelling content type that differentiates BainLuck.
 
 ### Roster-Based team_id Tagging for Player Awards
 Detailed plan at `.claude/plans/prancy-seeking-ritchie.md`. Add roster matching step to `team_linking` backfill — match player names against `Team.roster_players` before expensive LLM fallback. Reduces OpenAI cost, improves My Stuff and Related Futures for player awards (MVP, ROY, DPOY).
