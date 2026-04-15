@@ -2768,7 +2768,9 @@ async def get_related_futures(
     )
     tiered_ids = [row.id for row in tiered_result.all()]
 
-    remaining_cap = max(0, 500 - len(tiered_ids))
+    # Only include a small number of untiered markets (game props) to prevent
+    # query timeout. The real fix is populating market_tier on all markets.
+    remaining_cap = min(100, max(0, 300 - len(tiered_ids)))
     untiered_ids = []
     if remaining_cap > 0:
         untiered_result = await db.execute(
