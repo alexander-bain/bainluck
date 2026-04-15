@@ -28,7 +28,7 @@ async def _load_teams_by_sport(
     from app.models import Team, Sport
 
     query = (
-        select(Team.id, Team.name, Team.alternate_names, Sport.key)
+        select(Team.id, Team.name, Team.alternate_names, Team.roster_players, Sport.key)
         .join(Sport, Team.sport_id == Sport.id)
     )
     if sport_keys:
@@ -40,6 +40,7 @@ async def _load_teams_by_sport(
             "id": row.id,
             "name": row.name,
             "alternate_names": row.alternate_names or [],
+            "roster_players": row.roster_players,
             "sport_key": row.key,
         }
         for row in result.all()
@@ -136,6 +137,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_processed": 0,
         "outcomes_linked": 0,
         "outcomes_linked_by_name": 0,
+        "outcomes_linked_by_roster": 0,
         "outcomes_linked_by_llm": 0,
         "markets_tiered": 0,
         "errors": [],
@@ -194,11 +196,30 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                         # Fallback: load all teams if sport-scoped search returned nothing
                         teams = await _load_teams_by_sport(session, None)
 
+                    # Build roster lookup: {team_id: [player_name, ...]}
+                    from app.utils.team_linking import match_outcome_to_roster
+                    team_rosters: dict[int, list[str]] = {}
+                    for team in teams:
+                        roster = team.get("roster_players")
+                        if roster and isinstance(roster, list):
+                            players = []
+                            for item in roster:
+                                if isinstance(item, dict):
+                                    name = item.get("name")
+                                elif isinstance(item, str):
+                                    name = item
+                                else:
+                                    continue
+                                if isinstance(name, str) and len(name) >= 4:
+                                    players.append(name)
+                            if players:
+                                team_rosters[team["id"]] = players
+
                     for outcome in cat_outcomes:
                         try:
                             stats["outcomes_processed"] += 1
 
-                            # Try name matching first (no LLM)
+                            # Step 1: Try name matching first (no LLM)
                             from app.utils.team_linking import match_outcome_to_team
                             team_id = match_outcome_to_team(outcome.name, teams)
 
@@ -208,7 +229,17 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 stats["outcomes_linked_by_name"] += 1
                                 continue
 
-                            # Try LLM for player names
+                            # Step 1.5: Try roster player matching
+                            team_id = match_outcome_to_roster(
+                                outcome.name, team_rosters
+                            )
+                            if team_id:
+                                outcome.team_id = team_id
+                                stats["outcomes_linked"] += 1
+                                stats["outcomes_linked_by_roster"] += 1
+                                continue
+
+                            # Step 2: Try LLM for player names
                             if use_llm:
                                 team_id = await link_outcome_to_team(
                                     session=session,

@@ -72,7 +72,7 @@ All 3 phases: storage (5 columns on `FuturesMarket`), feed ranking (volume scori
 ### Related Futures Performance + Completed Event Props
 Related Futures was timing out (fixed April 15 — tier-aware loading + recency filter). Current workaround: completed events skip roster player ILIKE patterns for speed. **This is a product sacrifice** — we WANT to show player props for completed games ("market expected 2.5 hits, Judge went 3-for-4"). Need to make the query fast enough to include player props for completed events. Options: pre-compute team→outcome links via `team_id` backfill (see roster-based tagging below), use GIN index on outcome names, or denormalize player props onto events.
 
-Also: design slick "expected vs actual" cards for completed game props — this is a compelling content type that differentiates BainLuck.
+Also: enrich `PlayerStatCard` with actual results for completed games — show what the market expected vs what happened. The card already exists (`PlayerStatCard.tsx`, `PlayerPropsGrid.tsx`) but doesn't surface actuals yet. Same card for live and completed, just with actuals overlaid when available. Box score data is already on `Event.box_score_data` (JSONB).
 
 ### Roster-Based team_id Tagging for Player Awards
 Detailed plan at `.claude/plans/prancy-seeking-ritchie.md`. Add roster matching step to `team_linking` backfill — match player names against `Team.roster_players` before expensive LLM fallback. Reduces OpenAI cost, improves My Stuff and Related Futures for player awards (MVP, ROY, DPOY).

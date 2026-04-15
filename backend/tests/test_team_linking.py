@@ -8,6 +8,7 @@ from app.utils.team_linking import (
     _normalize_name,
     _names_match,
     match_outcome_to_team,
+    match_outcome_to_roster,
     get_sport_keys_for_category,
 )
 
@@ -126,6 +127,59 @@ class TestMatchOutcomeToTeam:
 
     def test_warriors_full_name(self):
         assert match_outcome_to_team("Golden State Warriors", self.TEAMS) == 3
+
+
+# =============================================================================
+# Match Outcome to Roster
+# =============================================================================
+class TestMatchOutcomeToRoster:
+    """Test roster-based player → team matching."""
+
+    ROSTERS = {
+        1: ["Jayson Tatum", "Jaylen Brown", "Derrick White", "Al Horford"],
+        2: ["LeBron James", "Anthony Davis", "Austin Reaves"],
+        3: ["Stephen Curry", "Draymond Green", "Andrew Wiggins"],
+    }
+
+    def test_exact_player_name(self):
+        assert match_outcome_to_roster("Jaylen Brown", self.ROSTERS) == 1
+
+    def test_case_insensitive(self):
+        assert match_outcome_to_roster("jaylen brown", self.ROSTERS) == 1
+
+    def test_player_name_in_outcome(self):
+        """Player name embedded in longer outcome string."""
+        assert match_outcome_to_roster("Jaylen Brown Over 2.5 Rebounds", self.ROSTERS) == 1
+
+    def test_lebron(self):
+        assert match_outcome_to_roster("LeBron James", self.ROSTERS) == 2
+
+    def test_curry_with_stat(self):
+        assert match_outcome_to_roster("Stephen Curry Points", self.ROSTERS) == 3
+
+    def test_no_match(self):
+        assert match_outcome_to_roster("Random Person", self.ROSTERS) is None
+
+    def test_short_name_skipped(self):
+        assert match_outcome_to_roster("Bob", self.ROSTERS) is None
+
+    def test_yes_skipped(self):
+        assert match_outcome_to_roster("Yes", self.ROSTERS) is None
+
+    def test_no_skipped(self):
+        assert match_outcome_to_roster("No", self.ROSTERS) is None
+
+    def test_over_skipped(self):
+        assert match_outcome_to_roster("Over", self.ROSTERS) is None
+
+    def test_empty_rosters(self):
+        assert match_outcome_to_roster("Jaylen Brown", {}) is None
+
+    def test_empty_name(self):
+        assert match_outcome_to_roster("", self.ROSTERS) is None
+
+    def test_none_name(self):
+        assert match_outcome_to_roster(None, self.ROSTERS) is None
 
 
 # =============================================================================

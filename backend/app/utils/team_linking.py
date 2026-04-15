@@ -83,6 +83,38 @@ def match_outcome_to_team(
     return None
 
 
+def match_outcome_to_roster(
+    outcome_name: str,
+    team_rosters: dict[int, list[str]],
+) -> Optional[int]:
+    """
+    Match a futures outcome name to a team via roster player names.
+
+    Args:
+        outcome_name: e.g., "Jaylen Brown" or "Aaron Judge Over 2.5 Hits"
+        team_rosters: {team_id: ["Jayson Tatum", "Jaylen Brown", ...]}
+
+    Returns:
+        team_id if matched, None otherwise
+    """
+    if not outcome_name or len(outcome_name) < 4:
+        return None
+
+    # Skip generic outcomes
+    name_lower = outcome_name.lower().strip()
+    if name_lower in ("yes", "no", "over", "under", "draw", "tie"):
+        return None
+
+    for team_id, players in team_rosters.items():
+        for player in players:
+            player_lower = player.lower()
+            # Check if player name is contained in outcome or vice versa
+            if player_lower in name_lower or name_lower in player_lower:
+                return team_id
+
+    return None
+
+
 # =============================================================================
 # Sport category → sport key mapping (for scoping team search)
 # =============================================================================
