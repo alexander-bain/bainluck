@@ -2548,6 +2548,51 @@ async def get_team_links_status(
     }
 
 
+@router.get("/futures/team-links-sample")
+async def sample_team_linked_outcomes(
+    secret: str = Query(...),
+    limit: int = Query(50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sample recently linked outcomes to verify matching accuracy."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func, text
+
+    result = await db.execute(
+        select(
+            FuturesOutcome.id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            Team.name.label("team_name"),
+            Team.sport_id,
+            FuturesMarket.name.label("market_name"),
+            FuturesMarket.source,
+            FuturesMarket.llm_sport_category,
+        )
+        .join(Team, FuturesOutcome.team_id == Team.id)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(FuturesOutcome.team_id.isnot(None))
+        .order_by(FuturesOutcome.id.desc())
+        .limit(limit)
+    )
+    samples = [
+        {
+            "outcome_id": r.id,
+            "outcome_name": r.name,
+            "team_id": r.team_id,
+            "team_name": r.team_name,
+            "market_name": r.market_name,
+            "source": r.source,
+            "sport_category": r.llm_sport_category,
+        }
+        for r in result.all()
+    ]
+
+    return {"count": len(samples), "samples": samples}
+
+
 # ---------------------------------------------------------------------------
 # Canonical Market Key (Cross-source matching)
 # ---------------------------------------------------------------------------
