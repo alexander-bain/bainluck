@@ -178,10 +178,24 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
             # which gives us the exact two teams. Match against only those
             # rosters — eliminates cross-team false positives entirely.
-            from app.models import Event, Team as TeamModel
+            from app.models import Event, Sport, Team as TeamModel
             from app.utils.team_linking import match_outcome_to_roster
             remaining_outcomes = []
-            event_cache: dict[int, tuple[dict, dict]] = {}  # event_id → (home_rosters, away_rosters)
+            event_cache: dict[int, dict] = {}  # event_id → {team_id: [player_names]}
+
+            def _extract_rosters(team_rows) -> dict[int, list[str]]:
+                rosters: dict[int, list[str]] = {}
+                for tr in team_rows:
+                    roster = tr.roster_players
+                    if roster and isinstance(roster, list):
+                        players = []
+                        for item in roster:
+                            name = item.get("name") if isinstance(item, dict) else item if isinstance(item, str) else None
+                            if isinstance(name, str) and len(name) >= 4:
+                                players.append(name)
+                        if players:
+                            rosters[tr.id] = players
+                return rosters
 
             for outcome in outcomes:
                 market = outcome.market
@@ -194,26 +208,32 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 # Load event teams (cached per event_id)
                 if market.event_id not in event_cache:
                     ev = await session.get(Event, market.event_id)
-                    if ev and (ev.home_team_id or ev.away_team_id):
-                        team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
-                        team_rows = (await session.execute(
-                            select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
-                            .where(TeamModel.id.in_(team_ids))
-                        )).all()
-                        event_rosters: dict[int, list[str]] = {}
-                        for tr in team_rows:
-                            roster = tr.roster_players
-                            if roster and isinstance(roster, list):
-                                players = []
-                                for item in roster:
-                                    name = item.get("name") if isinstance(item, dict) else item if isinstance(item, str) else None
-                                    if isinstance(name, str) and len(name) >= 4:
-                                        players.append(name)
-                                if players:
-                                    event_rosters[tr.id] = players
-                        event_cache[market.event_id] = event_rosters
-                    else:
-                        event_cache[market.event_id] = {}
+                    event_rosters: dict[int, list[str]] = {}
+                    if ev:
+                        if ev.home_team_id or ev.away_team_id:
+                            # Fast path: FK team IDs exist
+                            team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
+                            team_rows = (await session.execute(
+                                select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                                .where(TeamModel.id.in_(team_ids))
+                            )).all()
+                            event_rosters = _extract_rosters(team_rows)
+                        elif ev.home_team_name and ev.away_team_name:
+                            # Fallback: team IDs not set, look up by name + sport
+                            name_filters = [
+                                or_(
+                                    TeamModel.name == ev.home_team_name,
+                                    TeamModel.name == ev.away_team_name,
+                                )
+                            ]
+                            if ev.sport_id:
+                                name_filters.append(TeamModel.sport_id == ev.sport_id)
+                            team_rows = (await session.execute(
+                                select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                                .where(*name_filters)
+                            )).all()
+                            event_rosters = _extract_rosters(team_rows)
+                    event_cache[market.event_id] = event_rosters
 
                 event_rosters = event_cache[market.event_id]
                 if event_rosters:
