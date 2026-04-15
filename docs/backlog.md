@@ -70,12 +70,25 @@ All 3 phases: storage (5 columns on `FuturesMarket`), feed ranking (volume scori
 ## Tier 1: HIGH-PRIORITY Follow-ups
 
 ### Related Futures Performance + Completed Event Props
-Related Futures was timing out (fixed April 15 — tier-aware loading + recency filter). Current workaround: completed events skip roster player ILIKE patterns for speed. **This is a product sacrifice** — we WANT to show player props for completed games ("market expected 2.5 hits, Judge went 3-for-4"). Need to make the query fast enough to include player props for completed events. Options: pre-compute team→outcome links via `team_id` backfill (see roster-based tagging below), use GIN index on outcome names, or denormalize player props onto events.
+Related Futures was timing out (fixed April 15 — tier-aware loading + recency filter). Current workaround: completed events skip roster player ILIKE patterns for speed. **This is a product sacrifice** — we WANT to show player props for completed games ("market expected 2.5 hits, Judge went 3-for-4"). Need to make the query fast enough to include player props for completed events.
 
-Also: enrich `PlayerStatCard` with actual results for completed games — show what the market expected vs what happened. The card already exists (`PlayerStatCard.tsx`, `PlayerPropsGrid.tsx`) but doesn't surface actuals yet. Same card for live and completed, just with actuals overlaid when available. Box score data is already on `Event.box_score_data` (JSONB).
+**Path to fix**: once `team_id` is populated on player prop outcomes via the roster backfill (see below), Related Futures can use `team_id IN (home_team_id, away_team_id)` instead of ILIKE scanning — indexed FK lookup, instant. Then remove the completed-event roster-skip hack.
 
-### Roster-Based team_id Tagging for Player Awards
-Detailed plan at `.claude/plans/prancy-seeking-ritchie.md`. Add roster matching step to `team_linking` backfill — match player names against `Team.roster_players` before expensive LLM fallback. Reduces OpenAI cost, improves My Stuff and Related Futures for player awards (MVP, ROY, DPOY).
+Also: enrich `PlayerStatCard` with actual results for completed games — show what the market expected vs what happened. Same card for live and completed, just with actuals overlaid when available. Card already exists (`PlayerStatCard.tsx`, `PlayerPropsGrid.tsx`) but doesn't surface actuals. Box score data is on `Event.box_score_data` (JSONB).
+
+### Roster-Based team_id Tagging — SHIPPED April 15 (iterating)
+Roster matching added to team_linking backfill. Three matching strategies:
+1. **Event-scoped** (best): Market has `event_id` → load only those 2 teams' rosters → near-perfect accuracy for Kalshi player props.
+2. **Sport-scoped roster**: Match full "first last" player names against all rosters in the sport. Catches award outcomes (MVP, ROY).
+3. **Team name matching**: Existing approach for championship/division outcomes.
+
+**Current state** (April 15): 90K markets tiered (100%), ~700 outcomes team-linked so far. Backfill runs every 6h. Most unlinked outcomes are generic labels ("Yes", "Over 218.5", "Spread -1.5") that need **market-level** team linking, not outcome-level.
+
+**Next steps for matching quality**:
+- **Market-level team linking**: For game markets ("Boston Red Sox vs Minnesota Twins"), parse team names from market name and link the market to both teams. Outcomes inherit team context. Huge coverage gain for Polymarket game markets.
+- **Player name in market name**: For props like "Donovan Mitchell: Assists" on "Raptors vs Cavaliers", extract player name from market name and match via event-scoped roster.
+- **Clean up early bad matches**: First backfill runs had loose substring matching (now tightened). ~500 outcomes may have wrong team_id. Need a reset-and-relink for those.
+- **Diagnostic endpoint**: `/admin/futures/team-links-sample` and `/admin/futures/team-links-debug` available for accuracy review.
 
 ### iOS Feature Parity Audit
 iOS app is behind web. Only user is Alex right now, but goal is to get others on TestFlight soon. First step: produce a gap list comparing web pages/features vs iOS views. Then prioritize which gaps to close before wider TestFlight distribution.
