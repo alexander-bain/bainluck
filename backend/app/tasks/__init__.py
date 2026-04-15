@@ -772,8 +772,8 @@ celery_app.conf.beat_schedule = {
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",
-        "schedule": crontab(minute=50, hour="*/6"),  # Every 6 hours — team links rarely change
-        "kwargs": {"limit": 200, "use_llm": True},
+        "schedule": crontab(minute=50),  # Every hour — roster matching is cheap, large backlog to clear
+        "kwargs": {"limit": 5000, "use_llm": False},
     },
     "sync-rosters-daily": {
         "task": "app.tasks.sync_rosters",
