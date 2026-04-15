@@ -2748,16 +2748,31 @@ async def get_related_futures(
         if event_is_finished
         else or_(FuturesMarket.status == "open", FuturesMarket.status.is_(None))
     )
-    # Prioritize championship/conference markets (low tier numbers) over game props.
-    # Cap at 500 to prevent timeout but keep enough for team name matching.
-    market_result = await db.execute(
+    # Two-pass market discovery:
+    # Pass 1: markets with market_tier set (championship, conference, awards — most valuable)
+    # Pass 2: remaining markets without tier (game props, misc — fill up to 500)
+    tiered_result = await db.execute(
         select(FuturesMarket.id).where(
             rf_status_filter,
             or_(*sport_filters),
-        ).order_by(
-            FuturesMarket.market_tier.asc().nulls_last()
-        ).limit(500)
+            FuturesMarket.market_tier.isnot(None),
+        ).order_by(FuturesMarket.market_tier.asc())
     )
+    tiered_ids = [row.id for row in tiered_result.all()]
+
+    remaining_cap = max(0, 500 - len(tiered_ids))
+    untiered_ids = []
+    if remaining_cap > 0:
+        untiered_result = await db.execute(
+            select(FuturesMarket.id).where(
+                rf_status_filter,
+                or_(*sport_filters),
+                FuturesMarket.market_tier.is_(None),
+            ).limit(remaining_cap)
+        )
+        untiered_ids = [row.id for row in untiered_result.all()]
+
+    sport_market_ids = tiered_ids + untiered_ids
     sport_market_ids = [row.id for row in market_result.all()]
     if not sport_market_ids:
         return empty
