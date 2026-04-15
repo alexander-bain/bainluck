@@ -2729,13 +2729,21 @@ async def get_related_futures(
 
     # Also match Kalshi futures ticker prefixes (e.g., KXNBA%, KXMLB%, KXNFL%)
     # These don't start with the Odds API sport key but belong to the same sport.
-    from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
-    kalshi_prefixes = set()
-    for prefix, mapped_key in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items():
-        if mapped_key == event_sport_key or mapped_key.startswith(sport_prefix + "_"):
-            kalshi_prefixes.add(prefix.upper())
-    for kp in kalshi_prefixes:
-        sport_filters.append(FuturesMarket.external_id.ilike(f"{kp}%"))
+    # Use a compact set of root prefixes to avoid generating 30+ ILIKE patterns.
+    _SPORT_TO_KALSHI_ROOTS: dict[str, list[str]] = {
+        "basketball": ["KXNBA", "KXWNBA", "KXNCAAMB", "KXNCAAB", "KXNCAAWB"],
+        "americanfootball": ["KXNFL", "KXNCAAF"],
+        "baseball": ["KXMLB", "KXLEADERMLB", "KXNEXTTEAMMLB", "KXCITYMLBEXPAND"],
+        "icehockey": ["KXNHL"],
+        "soccer": ["KXMLS", "KXSOCCER"],
+        "golf": [],  # Golf uses DataGolf, not Kalshi futures
+        "mma": ["KXUFC"],
+        "boxing": ["KXBOXING"],
+        "tennis": ["KXATP", "KXWTA"],
+    }
+    kalshi_roots = _SPORT_TO_KALSHI_ROOTS.get(sport_prefix, [])
+    for root in kalshi_roots:
+        sport_filters.append(FuturesMarket.external_id.ilike(f"{root}%"))
 
     # Include markets regardless of status — many Kalshi markets have status=NULL
     # (never explicitly set). For completed events, also include resolved/closed.
