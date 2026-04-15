@@ -2346,9 +2346,54 @@ export default function RelatedFutures({
     (a, b) => (b.probability || 0) - (a.probability || 0),
   );
 
-  // Playoff path (championship + conference combined)
-  const homePlayoff = [...homeCats.championship, ...homeCats.conference];
-  const awayPlayoff = [...awayCats.championship, ...awayCats.conference];
+  // Playoff path: prefer LeagueContextService data (merged multi-source, volume-weighted)
+  // over raw ILIKE-matched futures entries
+  const leagueCtx = data?.league_context;
+  let homePlayoff: RelatedFuture[];
+  let awayPlayoff: RelatedFuture[];
+
+  if (leagueCtx && (leagueCtx.home_team || leagueCtx.away_team)) {
+    // Convert league context cells to RelatedFuture entries for PlayoffPathPair
+    const ctxToFutures = (
+      teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number> } | undefined,
+      columns: { key: string; label: string }[],
+    ): RelatedFuture[] => {
+      if (!teamCtx) return [];
+      return columns
+        .filter((col) => teamCtx.cells[col.key] != null)
+        .map((col, i) => ({
+          market_id: 0,
+          market_name: col.label,
+          clean_label: col.label,
+          display_category: "playoff_path",
+          merge_group: null,
+          playoff_stage: col.label,
+          playoff_stage_type: "progression",
+          stage_order: i + 1,
+          market_tier: i === columns.length - 1 ? 1 : 4 - i,
+          category: "championship",
+          source: "merged",
+          outcome_id: 0,
+          outcome_name: col.label,
+          probability: teamCtx.cells[col.key],
+          probability_change_24h: teamCtx.changes_24h[col.key] ?? null,
+          opening_probability: null,
+          rank: null,
+          relevance_score: 100,
+          relevance_reason: "league_context",
+          last_updated: null,
+          next_update_expected: null,
+          resolution_date: null,
+          bookmaker_count: 1,
+        }));
+    };
+    homePlayoff = ctxToFutures(leagueCtx.home_team, leagueCtx.columns);
+    awayPlayoff = ctxToFutures(leagueCtx.away_team, leagueCtx.columns);
+  } else {
+    // Fallback: use raw ILIKE-matched futures
+    homePlayoff = [...homeCats.championship, ...homeCats.conference];
+    awayPlayoff = [...awayCats.championship, ...awayCats.conference];
+  }
 
   // Section counts — suppress stat props when game-markets components already show them
   const effectiveStatProps = hasGameMarkets ? 0 : homeCats.statProps.length + awayCats.statProps.length;

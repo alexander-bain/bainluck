@@ -647,6 +647,7 @@ export interface RelatedFuturesResponse {
   summary: string | null;
   event_status?: string;
   box_score?: Record<string, Record<string, number>> | null;
+  league_context?: LeagueContextData | null;
 }
 
 // EI (Excitement Index) rankings types

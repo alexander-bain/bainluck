@@ -2008,15 +2008,6 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "favorite": event.opening_favorite,
         }
 
-    # League context: championship/playoff probabilities for both teams
-    try:
-        from app.services.league_context import enrich_event_with_context
-        league_ctx = await enrich_event_with_context(event, db)
-        if league_ctx:
-            response["league_context"] = league_ctx
-    except Exception as e:
-        logger.debug("League context enrichment failed for event %s: %s", event_id, e)
-
     return response
 
 
@@ -3334,6 +3325,15 @@ async def get_related_futures(
     if event.box_score_data and not event.box_score_data.get("error"):
         box_score_players = event.box_score_data.get("players")
 
+    # Enrich with league context (B2) — provides merged multi-source
+    # championship probabilities for the Playoff Path card
+    league_ctx = None
+    try:
+        from app.services.league_context import enrich_event_with_context
+        league_ctx = await enrich_event_with_context(event, db)
+    except Exception:
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -3346,6 +3346,7 @@ async def get_related_futures(
         "box_score": box_score_players,
         "game_period": event.period,
         "game_clock": event.game_clock,
+        "league_context": league_ctx,
     }
 
 
