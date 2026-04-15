@@ -2766,18 +2766,13 @@ async def get_related_futures(
         or_(*sport_filters),
         FuturesMarket.market_tier.in_([1, 2, 3, 4]),
     ]
-    # For completed events, limit to recent markets to avoid pulling in
-    # tens of thousands of historical resolved markets from past seasons.
+    # For completed events, limit to markets updated in the last 90 days
+    # to avoid pulling in tens of thousands of historical resolved markets.
     if event_is_finished:
-        six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
-        season_filters.append(
-            or_(
-                FuturesMarket.updated_at >= six_months_ago,
-                FuturesMarket.created_at >= six_months_ago,
-            )
-        )
+        recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
     season_result = await db.execute(
-        select(FuturesMarket.id).where(*season_filters)
+        select(FuturesMarket.id).where(*season_filters).limit(500)
     )
     season_market_ids = [row.id for row in season_result.all()]
 
