@@ -2287,19 +2287,33 @@ export default function RelatedFutures({
     }
   );
 
-  // Only bail early on loading (not error) — if the related-futures API fails
-  // but we have grid progression or standings, still render those sections.
+  // If related-futures API fails but we have grid progression or standings,
+  // still render those sections. Otherwise bail.
   const hasGridProgression = !!(teamProgression?.home_team || teamProgression?.away_team);
   const hasStandingsData = !!(homeStandings || awayStandings);
+  const hasFallback = hasGridProgression || hasStandingsData;
   if (isLoading) return null;
-  if (!data && !hasGridProgression && !hasStandingsData) return null;
+  if ((error || !data) && !hasFallback) return null;
+  // When API failed but we have fallback data, use an empty response
+  // to prevent null reference errors downstream
+  const safeData = data ?? {
+    event_id: eventId,
+    home_team: homeTeam,
+    away_team: awayTeam,
+    home_team_futures: [],
+    away_team_futures: [],
+    total_count: 0,
+    summary: null,
+    event_status: eventStatus,
+    box_score: null,
+  };
 
-  const home_team_futures = data?.home_team_futures ?? [];
-  const away_team_futures = data?.away_team_futures ?? [];
-  const event_status_from_futures = data?.event_status;
+  const home_team_futures = safeData.home_team_futures;
+  const away_team_futures = safeData.away_team_futures;
+  const event_status_from_futures = safeData.event_status;
   const isFinished = (event_status_from_futures ?? eventStatus) === "completed" || (event_status_from_futures ?? eventStatus) === "closed";
   const isLive = (event_status_from_futures ?? eventStatus) === "live";
-  const boxScore = data?.box_score ?? null;
+  const boxScore = safeData.box_score ?? null;
 
   const hColor = homeTeamColor || DEFAULT_COLOR;
   const aColor = awayTeamColor || DEFAULT_COLOR;
@@ -2346,7 +2360,7 @@ export default function RelatedFutures({
 
   // Playoff path: prefer LeagueContextService data (merged multi-source, volume-weighted)
   // over raw ILIKE-matched futures entries
-  const leagueCtx = data?.league_context;
+  const leagueCtx = safeData.league_context;
   let homePlayoff: RelatedFuture[];
   let awayPlayoff: RelatedFuture[];
 
@@ -2638,7 +2652,7 @@ export default function RelatedFutures({
       {/* Footer count */}
       <div className="text-center pt-2 border-t border-surface-border/30 mt-3">
         <span className="text-[9px] text-text-muted">
-          {data?.total_count ?? 0} related futures from multiple sources
+          {safeData.total_count} related futures from multiple sources
         </span>
       </div>
     </div>
