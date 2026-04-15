@@ -173,12 +173,14 @@ export interface LeagueContextData {
     changes_24h: Record<string, number>;
     record?: string | null;
     conference?: string | null;
+    sources_available?: string[];
   };
   away_team?: {
     cells: Record<string, number>;
     changes_24h: Record<string, number>;
     record?: string | null;
     conference?: string | null;
+    sources_available?: string[];
   };
 }
 

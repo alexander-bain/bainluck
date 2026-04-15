@@ -306,6 +306,7 @@ async def enrich_event_with_context(
             "changes_24h": home_ctx.changes_24h,
             "record": home_ctx.record,
             "conference": home_ctx.conference,
+            "sources_available": home_ctx.sources_available,
         }
     if away_ctx:
         result["away_team"] = {
@@ -313,6 +314,7 @@ async def enrich_event_with_context(
             "changes_24h": away_ctx.changes_24h,
             "record": away_ctx.record,
             "conference": away_ctx.conference,
+            "sources_available": away_ctx.sources_available,
         }
 
     return result

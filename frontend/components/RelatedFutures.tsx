@@ -2355,10 +2355,11 @@ export default function RelatedFutures({
   if (leagueCtx && (leagueCtx.home_team || leagueCtx.away_team)) {
     // Convert league context cells to RelatedFuture entries for PlayoffPathPair
     const ctxToFutures = (
-      teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number> } | undefined,
+      teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number>; sources_available?: string[] } | undefined,
       columns: { key: string; label: string }[],
     ): RelatedFuture[] => {
       if (!teamCtx) return [];
+      const sourceCount = teamCtx.sources_available?.length ?? 1;
       return columns
         .filter((col) => teamCtx.cells[col.key] != null)
         .map((col, i) => ({
@@ -2384,7 +2385,8 @@ export default function RelatedFutures({
           last_updated: null,
           next_update_expected: null,
           resolution_date: null,
-          bookmaker_count: 1,
+          bookmaker_count: sourceCount,
+          all_sources: teamCtx.sources_available,
         }));
     };
     homePlayoff = ctxToFutures(leagueCtx.home_team, leagueCtx.columns);
