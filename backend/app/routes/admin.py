@@ -2620,33 +2620,70 @@ async def debug_team_links(
         WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL
     """))
 
-    # Sample unlinked outcomes: Kalshi event-linked (player props), then Polymarket
-    samples = await db.execute(text("""
-        (SELECT fo.name, fm.name AS market_name, fm.event_id, fm.llm_sport_category,
-               fm.market_tier, fm.source
+    # Comprehensive breakdown by scope
+    breakdown = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN fm.event_id IS NOT NULL THEN 'event_linked'
+                WHEN fm.llm_sport_category IS NOT NULL THEN 'sport_scoped'
+                ELSE 'unscoped'
+            END AS scope,
+            fm.source,
+            fm.market_tier,
+            COUNT(*) AS total_outcomes,
+            COUNT(fo.team_id) AS linked,
+            COUNT(*) - COUNT(fo.team_id) AS unlinked,
+            -- Classify outcome types
+            COUNT(*) FILTER (WHERE fo.name IN ('Yes', 'No')) AS yes_no_outcomes,
+            COUNT(*) FILTER (WHERE fo.name ~* '^(Over|Under|O/U|Spread|Handicap|Draw|Tie)') AS generic_outcomes,
+            COUNT(*) FILTER (WHERE fo.name ~* '(Winner|Game [0-9]|Map [0-9]|Match Winner)') AS game_label_outcomes,
+            COUNT(*) FILTER (WHERE fo.name !~* '^(Yes|No|Over|Under|O/U|Spread|Handicap|Draw|Tie|Winner|Game [0-9]|Map [0-9]|Match Winner)'
+                              AND length(fo.name) >= 4
+                              AND fo.name ~ '[A-Z][a-z]+ [A-Z]') AS likely_names
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL AND fm.source = 'kalshi'
-        ORDER BY fo.id DESC LIMIT 15)
-        UNION ALL
-        (SELECT fo.name, fm.name AS market_name, fm.event_id, fm.llm_sport_category,
-               fm.market_tier, fm.source
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL AND fm.source = 'polymarket'
-        ORDER BY fo.id DESC LIMIT 15)
+        GROUP BY scope, fm.source, fm.market_tier
+        ORDER BY scope, fm.source, fm.market_tier
     """))
-    sample_list = [
+    breakdown_rows = [
+        {
+            "scope": r.scope, "source": r.source, "tier": r.market_tier,
+            "total": r.total_outcomes, "linked": r.linked, "unlinked": r.unlinked,
+            "yes_no": r.yes_no_outcomes, "generic": r.generic_outcomes,
+            "game_labels": r.game_label_outcomes, "likely_names": r.likely_names,
+        }
+        for r in breakdown.all()
+    ]
+
+    # Sample of "likely_names" that are unlinked (the ones we SHOULD be matching)
+    name_samples = await db.execute(text("""
+        SELECT fo.name, fm.name AS market_name, fm.event_id, fm.source,
+               fm.llm_sport_category, fm.market_tier,
+               CASE WHEN fm.event_id IS NOT NULL THEN 'event_linked'
+                    WHEN fm.llm_sport_category IS NOT NULL THEN 'sport_scoped'
+                    ELSE 'unscoped' END AS scope
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.team_id IS NULL
+          AND fo.name !~* '^(Yes|No|Over|Under|O/U|Spread|Handicap|Draw|Tie|Winner|Game [0-9]|Map [0-9]|Match Winner)'
+          AND length(fo.name) >= 4
+          AND fo.name ~ '[A-Z][a-z]+ [A-Z]'
+        ORDER BY random()
+        LIMIT 40
+    """))
+    name_sample_list = [
         {"outcome": r.name, "market": r.market_name, "event_id": r.event_id,
-         "sport": r.llm_sport_category, "tier": r.market_tier, "source": r.source}
-        for r in samples.all()
+         "source": r.source, "sport": r.llm_sport_category, "tier": r.market_tier,
+         "scope": r.scope}
+        for r in name_samples.all()
     ]
 
     return {
         "markets_with_event_id": el.markets_with_event if el else 0,
         "markets_without_event_id": el.markets_without_event if el else 0,
         "unlinked_outcomes_on_event_markets": unlinked_event.scalar(),
-        "sample_unlinked": sample_list,
+        "breakdown": breakdown_rows,
+        "unlinked_name_samples": name_sample_list,
     }
 
 
