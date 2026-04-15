@@ -234,6 +234,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             )).all()
                             event_rosters = _extract_rosters(team_rows)
                     event_cache[market.event_id] = event_rosters
+                    if not event_rosters and ev:
+                        logger.info(
+                            "Event %s (%s vs %s): no rosters found (team_ids=%s/%s, sport_id=%s)",
+                            market.event_id, ev.home_team_name, ev.away_team_name,
+                            ev.home_team_id, ev.away_team_id, ev.sport_id,
+                        )
 
                 event_rosters = event_cache[market.event_id]
                 if event_rosters:
