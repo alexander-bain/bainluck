@@ -174,9 +174,63 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             if not outcomes:
                 return stats
 
+            # --- Phase 2a: Fast path for event-linked markets ---
+            # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
+            # which gives us the exact two teams. Match against only those
+            # rosters — eliminates cross-team false positives entirely.
+            from app.models import Event, Team as TeamModel
+            from app.utils.team_linking import match_outcome_to_roster
+            remaining_outcomes = []
+            event_cache: dict[int, tuple[dict, dict]] = {}  # event_id → (home_rosters, away_rosters)
+
+            for outcome in outcomes:
+                market = outcome.market
+                if not market.event_id:
+                    remaining_outcomes.append(outcome)
+                    continue
+
+                stats["outcomes_processed"] += 1
+
+                # Load event teams (cached per event_id)
+                if market.event_id not in event_cache:
+                    ev = await session.get(Event, market.event_id)
+                    if ev and (ev.home_team_id or ev.away_team_id):
+                        team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
+                        team_rows = (await session.execute(
+                            select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                            .where(TeamModel.id.in_(team_ids))
+                        )).all()
+                        event_rosters: dict[int, list[str]] = {}
+                        for tr in team_rows:
+                            roster = tr.roster_players
+                            if roster and isinstance(roster, list):
+                                players = []
+                                for item in roster:
+                                    name = item.get("name") if isinstance(item, dict) else item if isinstance(item, str) else None
+                                    if isinstance(name, str) and len(name) >= 4:
+                                        players.append(name)
+                                if players:
+                                    event_rosters[tr.id] = players
+                        event_cache[market.event_id] = event_rosters
+                    else:
+                        event_cache[market.event_id] = {}
+
+                event_rosters = event_cache[market.event_id]
+                if event_rosters:
+                    team_id = match_outcome_to_roster(outcome.name, event_rosters)
+                    if team_id:
+                        outcome.team_id = team_id
+                        stats["outcomes_linked"] += 1
+                        stats["outcomes_linked_by_roster"] += 1
+                        continue
+
+                # Event-linked but no roster match — fall through to category matching
+                remaining_outcomes.append(outcome)
+
+            # --- Phase 2b: Category-based matching for non-event-linked markets ---
             # Group outcomes by sport category to batch team loading
             category_outcomes: dict[str, list] = {}
-            for outcome in outcomes:
+            for outcome in remaining_outcomes:
                 market = outcome.market
                 category = (
                     market.llm_sport_category
