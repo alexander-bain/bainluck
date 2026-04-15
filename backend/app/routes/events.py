@@ -3360,11 +3360,13 @@ async def get_team_progression(
 
     Returns each team's probability of reaching each playoff stage
     (e.g., make playoffs → conference → championship), sourced from
-    Odds API, Kalshi, and Polymarket.
+    the LeagueContextService (merged multi-source, volume-weighted,
+    cached in Redis).
 
-    Used by the TeamPlayoffCard component on event detail pages.
+    Used by the GridPlayoffPathPair component on event detail pages.
     """
-    from app.routes.playoffs import get_team_progression_for_event
+    from app.services.league_context import enrich_event_with_context
+    from app.config.league_configs import get_league_for_sport_key, LEAGUE_TO_SPORT
 
     # Load event with sport
     result = await db.execute(
@@ -3380,18 +3382,57 @@ async def get_team_progression(
     if not sport_key:
         return {"event_id": event_id, "league": None, "home_team": None, "away_team": None}
 
-    progression = await get_team_progression_for_event(
-        db=db,
-        event_id=event_id,
-        home_team_name=event.home_team_name,
-        away_team_name=event.away_team_name,
-        sport_key=sport_key,
-    )
-
-    if progression is None:
+    config = get_league_for_sport_key(sport_key)
+    if not config:
         return {"event_id": event_id, "league": None, "home_team": None, "away_team": None}
 
-    return progression
+    league_ctx = await enrich_event_with_context(event, db)
+    if not league_ctx:
+        return {"event_id": event_id, "league": None, "home_team": None, "away_team": None}
+
+    # Convert LeagueContext format to TeamProgressionResponse format
+    # so the existing GridPlayoffPathPair component renders correctly
+    sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
+    grid_url = f"/playoffs/{config.slug}"
+
+    def _build_team(team_ctx, team_name):
+        if not team_ctx:
+            return None
+        stages = []
+        for col in league_ctx["columns"]:
+            prob = team_ctx["cells"].get(col["key"])
+            trend = team_ctx["changes_24h"].get(col["key"])
+            # Build per-stage sources from the sources_available list
+            sources = [
+                {"source": s, "probability": prob}
+                for s in (team_ctx.get("sources_available") or [])
+            ] if prob is not None else []
+            stages.append({
+                "key": col["key"],
+                "label": col["label"],
+                "probability": prob,
+                "trend_24h": trend,
+                "sources": sources,
+            })
+        short = team_name.split()[-1] if team_name else ""
+        return {
+            "name": team_name,
+            "short_name": short,
+            "team_id": None,
+            "logo_url": None,
+            "record": team_ctx.get("record"),
+            "conference": team_ctx.get("conference"),
+            "stages": stages,
+        }
+
+    return {
+        "event_id": event_id,
+        "league": config.slug,
+        "league_name": config.name,
+        "grid_url": grid_url,
+        "home_team": _build_team(league_ctx.get("home_team"), event.home_team_name),
+        "away_team": _build_team(league_ctx.get("away_team"), event.away_team_name),
+    }
 
 
 @router.get("/{event_id}/history")
