@@ -351,18 +351,19 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 ### Golf (April 2026)
 - **Golf product strategy**: `docs/golf-product-strategy.md`
 - **Evolution chart shipped**: Interactive line chart with position toggle, time range, fullscreen, player sidebar
-- **Tournament detail page**: `/categories/golf/tournaments/[slug]` — leaderboard grid, bubble watch, evolution chart
-- **Masters data quality (April 13 audit)**: Evolution chart has 0 snapshots (no history during R1-R4). Leaderboard shows Rory as winner but tournament `status` is null. LIVE badge stale. ATP Monte-Carlo "Masters" markets contaminating golf. X-axis duplication and missing round markers unverifiable (no chart data to render).
+- **Tournament detail page**: `/categories/golf/tournaments/[slug]` — leaderboard grid, bubble watch, evolution chart, Make Cut column
+- **Masters fixes (April 13-14)**: Round markers (R1-R4), Make Cut column, date timezone fix, LIVE badge date validation, completed tournament fallback endpoint, searchable player picker, x-axis dedup, best-market selection for chart
+- **DataGolf polling fixes (April 14)**: Removed `status=="open"` filter (markets closed by other sources), removed `prob<=0 or >=1.0` filter (was killing snapshots late in tournaments), added diagnostic logging
 
 ### Backlog (SINGLE SOURCE OF TRUTH)
 
 All outstanding items live here. `TODO.md` is archived; `trip-recap-and-next-steps.md` is historical reference only.
 
 **Architecture (planned April 13, 2026 — see `plans/ancient-humming-blossom.md`)**
-- **B1: Site navigation** — Move from `/playoffs/[sport]` to `/[sport]/[league]` hierarchy. Team sports get grid+games+futures tabs. Individual sports (golf, tennis) get tour hub → tournament detail. Sport hub pages list sub-leagues.
-- **B2: League context service** — Extract matching logic from `playoffs.py` into reusable `market_discovery.py` + `team_resolution.py`. Cache per-league team standings in Redis. Enrich event detail API with dynamic championship/playoff probabilities. Orphaned event detection.
-- **B3: Eval page v2** — Group by market (not per-team). Three card types: market-column assignment, source disagreement, interesting futures. Decisions flow downstream to grid builder + feed ranking. Gamification phase 2 (points, levels, leaderboard).
-- **B4: Trade volume** — Store Kalshi/Polymarket volume on `FuturesMarket` (5 nullable columns). Use for feed ranking, grid confidence weighting, eval context. Internal signal only — never user-facing.
+- **B1: Site navigation** — Move from `/playoffs/[sport]` to `/[sport]/[league]` hierarchy. Team sports get grid+games+futures tabs. Individual sports (golf, tennis) get tour hub → tournament detail. Sport hub pages list sub-leagues. **NOT STARTED.**
+- **B2: League context service** — **SHIPPED April 14-15.** `LeagueContextService` in `services/league_context.py`. Redis-cached (5-min TTL), dynamic columns from `league_configs.py`. Powers Playoff Path card in Related Futures + team-progression endpoint. `SPORT_GROUPS` + `get_league_for_sport_key()` added to `league_configs.py`. Still TODO: extract `market_discovery.py` + `team_resolution.py` from `playoffs.py`, orphaned event detection.
+- **B3: Eval page v2** — Group by market (not per-team). Three card types: market-column assignment, source disagreement, interesting futures. Decisions flow downstream to grid builder + feed ranking. Gamification phase 2 (points, levels, leaderboard). **NOT STARTED.**
+- **B4: Trade volume** — **SHIPPED April 14-15.** All 3 phases: storage (5 columns on `FuturesMarket`), feed ranking (volume scoring in `futures_highlights.py`), grid confidence (volume-weighted merging in `_merge_probabilities()`, enhanced Kalshi noise detection). Internal signal only — never user-facing.
 
 **HIGH-PRIORITY follow-ups**
 - **Market tier tagging in Kalshi/Polymarket tasks** — Most `FuturesMarket` records have `market_tier=NULL`, making it impossible to efficiently filter championships from game props. The Kalshi/Polymarket tasks should use `MarketMatchingRule` from `league_configs.py` to set `market_tier` during upsert. This unblocks Related Futures showing awards, win totals, and game props without massive ILIKE scans.
@@ -652,12 +653,16 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 27. **Golf market filtering** — `_NON_WINNER_MARKET_RE` in `routes/golf.py` filters out "compete in", "make the cut", "top N finishers" etc. from headline probabilities. Only outright winner/champion markets should appear in card hero probabilities.
 28. **Evolution chart position/stage pills** — `EvolutionView.tsx` supports `positionOptions` prop for switching markets. Golf uses Top 20/10/5/Win from Kalshi. Team sports use grid column market_ids (Make Playoffs/Conference/Championship). Pass `entityLabel="Teams"` for team sports.
 29. **Golf tour classification** — Many events are mislabeled as "PGA Tour" when they're DP World Tour, Asian Tour, etc. DataGolf provides the correct `tour` field. Fix needed.
-30. **Golf "LIVE" badge** — `isTournamentLive()` in the tournament page checks DataGolf leaderboard status. Can false-positive when leaderboard data exists but tournament hasn't started. Needs date-based validation.
+30. **Golf "LIVE" badge** — `isTournamentLive()` in the tournament page now has date-based validation (added April 14). Tournaments past their `end_date + 1 day` can't be "live". Also checks `schedule_status === "completed"` before falling back to leaderboard status.
 31. **Men's/women's golf major separation** — `_normalize_tournament()` returns the same key for both. The grouping loop in `golf.py` appends `_womens` suffix when `_WOMENS_RE` matches the market name. `TOURNAMENT_DISPLAY_NAMES` and `TOURNAMENT_ORDER` have entries for both variants.
 32. **Championship grid inline data bars** — `TournamentProgressionTable.tsx` uses sqrt-scaled horizontal bars instead of background color heat maps. Bar width = `sqrt(prob) / sqrt(0.4) * 100%`. Font weight varies: semibold >10%, normal 1-10%, faded <1%.
 33. **Evolution chart SWR caching** — 7d/24h/today share the same SWR cache key (same fetched data, filtered client-side). Only "Season" triggers a separate fetch (4320h). `keepPreviousData: true` prevents blank during re-fetch.
 34. **Grid columns include market_id** — `playoffs.py` returns `market_id` on each column (most common market_id from that column's data). Frontend uses these to build stage pills for the evolution chart.
 35. **Cup card detection** — `TournamentCard.tsx:_isCupEvent()` checks tournament key for ryder/presidents/walker/solheim. When a cup has exactly 2 golfers (teams), renders `CupCard` with left/right layout + probability bar instead of leader/chasers.
+36. **Python 3.12+ redundant imports cause UnboundLocalError** — `from datetime import timedelta` inside a function body makes `timedelta` local to the ENTIRE function scope. If the function uses `timedelta` before that line (from the module-level import), it crashes. Fixed in `espn_sync.py` April 15. Check for this pattern in other files.
+37. **Related Futures requires Kalshi ticker prefix matching** — Kalshi futures tickers (KXNBA, KXMLB, etc.) don't start with the Odds API sport key (basketball_nba, baseball_mlb). The sport filter in `get_related_futures()` needs `_SPORT_TO_KALSHI_ROOTS` to find championship/award markets. Without this, only game-level Kalshi markets (which DO have sport-key external_ids) are discoverable.
+38. **`FuturesMarket.market_tier` is NULL for most markets** — The `market_tier` field was designed to filter championships (1) from game props (5), but most markets have NULL. This prevents efficient querying for Related Futures. Fix: populate tier during Kalshi/Polymarket task upserts using `MarketMatchingRule` from `league_configs.py`.
+39. **Team model uses `logo_url_small` not `logo_small`** — The column name is `logo_url_small` (and `logo_url` for full size). Using `Team.logo_small` crashes with AttributeError.
 
 ---
 
