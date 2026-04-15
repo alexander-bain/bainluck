@@ -2761,12 +2761,23 @@ async def get_related_futures(
     #         These are relevant to any event in the sport. Relatively small set.
     # Pass 2: Game-specific props (tier 5) — only for THIS event via event_id FK.
     #         Avoids loading props from every other game in the sport.
-    season_result = await db.execute(
-        select(FuturesMarket.id).where(
-            rf_status_filter,
-            or_(*sport_filters),
-            FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+    season_filters = [
+        rf_status_filter,
+        or_(*sport_filters),
+        FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+    ]
+    # For completed events, limit to recent markets to avoid pulling in
+    # tens of thousands of historical resolved markets from past seasons.
+    if event_is_finished:
+        six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
+        season_filters.append(
+            or_(
+                FuturesMarket.updated_at >= six_months_ago,
+                FuturesMarket.created_at >= six_months_ago,
+            )
         )
+    season_result = await db.execute(
+        select(FuturesMarket.id).where(*season_filters)
     )
     season_market_ids = [row.id for row in season_result.all()]
 
