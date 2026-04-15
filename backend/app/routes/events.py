@@ -2726,21 +2726,26 @@ async def get_related_futures(
     if compatible_sport_ids:
         sport_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
 
-    # For completed events, include resolved/closed markets so season stats
-    # (win totals, playoff odds, etc.) persist after the game ends.
+    # Include markets regardless of status — many Kalshi markets have status=NULL
+    # (never explicitly set). For completed events, also include resolved/closed.
     event_is_finished = event.status in ("completed", "closed")
     rf_status_filter = (
-        FuturesMarket.status.in_(("open", "resolved", "closed"))
+        or_(
+            FuturesMarket.status.in_(("open", "resolved", "closed")),
+            FuturesMarket.status.is_(None),
+        )
         if event_is_finished
-        else FuturesMarket.status == "open"
+        else or_(FuturesMarket.status == "open", FuturesMarket.status.is_(None))
     )
+    # Prioritize championship/conference markets (low tier numbers) over game props.
+    # Cap at 500 to prevent timeout but keep enough for team name matching.
     market_result = await db.execute(
         select(FuturesMarket.id).where(
             rf_status_filter,
             or_(*sport_filters),
         ).order_by(
-            FuturesMarket.market_tier.asc().nullslast()
-        ).limit(300)  # Cap to prevent 30s timeout on sports with many markets
+            FuturesMarket.market_tier.asc().nulls_last()
+        ).limit(500)
     )
     sport_market_ids = [row.id for row in market_result.all()]
     if not sport_market_ids:
