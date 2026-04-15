@@ -704,7 +704,6 @@ async def _sync_espn_live_events():
             # that have an ESPN ID but no box_score_data yet.
             # This catches games that just finished during the previous sync cycle.
             try:
-                from datetime import timedelta
                 recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
                 completed_result = await session.execute(
                     select(Event)
@@ -820,7 +819,6 @@ async def _sync_espn_live_events():
             # (lacrosse, etc.) that were added to ESPN_SPORT_MAPPING after
             # the events completed — they never went through the live sync.
             try:
-                from datetime import timedelta
                 score_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
                 missing_scores_result = await session.execute(
                     select(Event)
@@ -849,7 +847,6 @@ async def _sync_espn_live_events():
                         for sport_key, events_list in events_by_sport.items():
                             try:
                                 # Fetch scoreboard with date range covering these events
-                                from datetime import timedelta
                                 dates = set()
                                 for ev in events_list:
                                     if ev.commence_time:
