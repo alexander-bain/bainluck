@@ -2276,6 +2276,7 @@ export default function RelatedFutures({
   awayStandings,
   hasGameMarkets = false,
   teamProgression,
+  eventStatus,
 }: RelatedFuturesProps) {
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
     ["related-futures", eventId],
