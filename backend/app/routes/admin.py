@@ -2593,6 +2593,57 @@ async def sample_team_linked_outcomes(
     return {"count": len(samples), "samples": samples}
 
 
+@router.get("/futures/team-links-debug")
+async def debug_team_links(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug team linking: show distribution of unlinked outcomes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+
+    # How many markets have event_id?
+    event_linked = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE fm.event_id IS NOT NULL) AS markets_with_event,
+            COUNT(*) FILTER (WHERE fm.event_id IS NULL) AS markets_without_event
+        FROM futures_markets fm
+    """))
+    el = event_linked.first()
+
+    # Unlinked outcomes on event-linked markets
+    unlinked_event = await db.execute(text("""
+        SELECT COUNT(*) FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.team_id IS NULL AND fm.event_id IS NOT NULL
+    """))
+
+    # Sample unlinked outcome names to see what they look like
+    samples = await db.execute(text("""
+        SELECT fo.name, fm.name AS market_name, fm.event_id, fm.llm_sport_category,
+               fm.market_tier, fm.source
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fo.team_id IS NULL
+        ORDER BY fo.id DESC
+        LIMIT 30
+    """))
+    sample_list = [
+        {"outcome": r.name, "market": r.market_name, "event_id": r.event_id,
+         "sport": r.llm_sport_category, "tier": r.market_tier, "source": r.source}
+        for r in samples.all()
+    ]
+
+    return {
+        "markets_with_event_id": el.markets_with_event if el else 0,
+        "markets_without_event_id": el.markets_without_event if el else 0,
+        "unlinked_outcomes_on_event_markets": unlinked_event.scalar(),
+        "sample_unlinked": sample_list,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Canonical Market Key (Cross-source matching)
 # ---------------------------------------------------------------------------
