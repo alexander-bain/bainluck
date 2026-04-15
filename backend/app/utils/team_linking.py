@@ -108,8 +108,14 @@ def match_outcome_to_roster(
     for team_id, players in team_rosters.items():
         for player in players:
             player_lower = player.lower()
-            # Check if player name is contained in outcome or vice versa
-            if player_lower in name_lower or name_lower in player_lower:
+            # Require the full player name (first + last) to appear in the outcome.
+            # Do NOT match if only a first or last name matches — too many collisions
+            # (e.g., "Austin Eckroat" should not match "Austin FC").
+            # Only match if the player name has 2+ words (skip single-word names
+            # to avoid "Santos" matching random things).
+            if " " not in player_lower:
+                continue
+            if player_lower in name_lower:
                 return team_id
 
     return None

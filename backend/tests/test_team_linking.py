@@ -181,6 +181,22 @@ class TestMatchOutcomeToRoster:
     def test_none_name(self):
         assert match_outcome_to_roster(None, self.ROSTERS) is None
 
+    def test_first_name_only_no_match(self):
+        """'Austin Eckroat' must NOT match a team with 'Austin Reaves' on roster."""
+        rosters = {10: ["Austin Reaves", "LeBron James"]}
+        assert match_outcome_to_roster("Austin Eckroat", rosters) is None
+
+    def test_partial_last_name_no_match(self):
+        """'Brian Campbell' must NOT match via single-word roster entry."""
+        rosters = {10: ["Campbell"]}  # Single-word — should be skipped
+        assert match_outcome_to_roster("Brian Campbell", rosters) is None
+
+    def test_full_name_required(self):
+        """Only full 'first last' name in outcome should match."""
+        rosters = {10: ["Aaron Judge", "Giancarlo Stanton"]}
+        assert match_outcome_to_roster("Aaron Judge Over 2.5 Hits", rosters) == 10
+        assert match_outcome_to_roster("Aaron Smith", rosters) is None
+
 
 # =============================================================================
 # Sport Category → Sport Keys
