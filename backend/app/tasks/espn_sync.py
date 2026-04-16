@@ -20,6 +20,27 @@ from app.utils.name_normalization import (
 
 logger = logging.getLogger(__name__)
 
+
+def espn_names_match(our_names: list[str], espn_team) -> bool:
+    """Check if any of our name variations match any ESPN name variant.
+
+    Args:
+        our_names: List of our team name variations (from get_event_name_variations)
+        espn_team: ESPN team object with display_name, short_name, name, location
+    """
+    espn_variants = []
+    for attr in ("display_name", "short_name", "name", "location"):
+        name = getattr(espn_team, attr, None)
+        if name and name not in espn_variants:
+            espn_variants.append(name)
+
+    for our_name in our_names:
+        for espn_name in espn_variants:
+            if _canonical_names_match(our_name, espn_name):
+                return True
+    return False
+
+
 # Pre-game status_detail strings like "Wed, March 25th at 10:00 PM EDT"
 # should not be stored as period values in game_state.
 _PREGAME_DATE_RE = re.compile(
@@ -224,10 +245,9 @@ async def _sync_espn_live_events():
 
     def espn_names_match(our_names, espn_team):
         """Check if any of our name variations match any ESPN name variant."""
-        for our_name in our_names:
-            for espn_name in get_espn_name_variants(espn_team):
-                if names_match(our_name, espn_name):
-                    return True
+        for espn_name in get_espn_name_variants(espn_team):
+            if names_match(our_names, espn_name):
+                return True
         return False
 
     try:
