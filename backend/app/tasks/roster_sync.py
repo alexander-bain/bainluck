@@ -313,16 +313,23 @@ async def _sync_mlb_rosters_impl(session, Team, sport_id: int, service) -> dict:
 
         unique_names = sorted(set(all_names))
 
-        await session.execute(
-            update(Team)
-            .where(Team.id == db_team.id)
-            .values(roster_players=unique_names)
-        )
-        updated += 1
-        total_player_names += len(unique_names)
+        if unique_names:
+            await session.execute(
+                update(Team)
+                .where(Team.id == db_team.id)
+                .values(roster_players=unique_names)
+            )
+            updated += 1
+            total_player_names += len(unique_names)
+            logger.info(f"  MLB: {mlb_name} → team_id={db_team.id}, {len(unique_names)} players")
+        else:
+            logger.warning(f"  MLB: {mlb_name} → empty roster from API")
 
         # Rate limit
         await asyncio.sleep(0.3)
+
+    # Explicit flush to ensure updates are visible before context manager commit
+    await session.flush()
 
     logger.info(
         f"  baseball_mlb: updated {updated}/{len(mlb_teams)} teams, "
