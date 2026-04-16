@@ -718,18 +718,20 @@ async def _poll_all_odds():
 
                             # Write betting consensus to win_probability_sources
                             # so the multi-source aggregation system sees it.
-                            import json as _json
-                            from sqlalchemy import text as _text
+                            # Write betting consensus to win_probability_sources
+                            # using SQLAlchemy ORM update to avoid JSONB cast issues.
+                            from sqlalchemy import update as _update
                             betting_val = round(avg_home, 4)
-                            patch = _json.dumps({"betting": betting_val})
+                            # Read current value, merge, write back
+                            _evt_r = await session.execute(
+                                select(Event.win_probability_sources).where(Event.id == event_id)
+                            )
+                            _current = _evt_r.scalar_one_or_none() or {}
+                            _current["betting"] = betting_val
                             await session.execute(
-                                _text(
-                                    "UPDATE events "
-                                    "SET win_probability_sources = "
-                                    "COALESCE(win_probability_sources, '{}') || :patch "
-                                    "WHERE id = :eid"
-                                ),
-                                {"patch": patch, "eid": event_id},
+                                _update(Event)
+                                .where(Event.id == event_id)
+                                .values(win_probability_sources=_current)
                             )
 
                 except Exception as e:
