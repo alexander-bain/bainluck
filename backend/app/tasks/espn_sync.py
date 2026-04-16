@@ -511,9 +511,19 @@ async def _sync_espn_live_events():
                         # Update ESPN win probability and save snapshot
                         if ee.home_win_probability is not None:
                             event.espn_win_prob_home = ee.home_win_probability
-                            sources = event.win_probability_sources or {}
-                            sources["espn"] = ee.home_win_probability
-                            event.win_probability_sources = sources
+                            # Write to win_probability_sources via select+update
+                            # to avoid ORM session caching issues
+                            from sqlalchemy import update as _sql_update
+                            _wps_r = await session.execute(
+                                select(Event.win_probability_sources).where(Event.id == event.id)
+                            )
+                            _wps = _wps_r.scalar_one_or_none() or {}
+                            _wps["espn"] = round(ee.home_win_probability, 4)
+                            await session.execute(
+                                _sql_update(Event)
+                                .where(Event.id == event.id)
+                                .values(win_probability_sources=_wps)
+                            )
                             changed = True
 
                             snapshot = ESPNSnapshot(
@@ -575,9 +585,16 @@ async def _sync_espn_live_events():
                                     pregame_spread=pregame_spread,
                                 )
                                 if stat_wp is not None:
-                                    sources = event.win_probability_sources or {}
-                                    sources["stat_model"] = round(stat_wp, 4)
-                                    event.win_probability_sources = sources
+                                    _wps_r2 = await session.execute(
+                                        select(Event.win_probability_sources).where(Event.id == event.id)
+                                    )
+                                    _wps2 = _wps_r2.scalar_one_or_none() or {}
+                                    _wps2["stat_model"] = round(stat_wp, 4)
+                                    await session.execute(
+                                        _sql_update(Event)
+                                        .where(Event.id == event.id)
+                                        .values(win_probability_sources=_wps2)
+                                    )
                                     changed = True
 
                                     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
@@ -658,9 +675,16 @@ async def _sync_espn_live_events():
                             # Write win probability snapshot
                             if ee.home_win_probability is not None:
                                 event.espn_win_prob_home = ee.home_win_probability
-                                sources = event.win_probability_sources or {}
-                                sources["espn"] = ee.home_win_probability
-                                event.win_probability_sources = sources
+                                _wps_r3 = await session.execute(
+                                    select(Event.win_probability_sources).where(Event.id == event.id)
+                                )
+                                _wps3 = _wps_r3.scalar_one_or_none() or {}
+                                _wps3["espn"] = round(ee.home_win_probability, 4)
+                                await session.execute(
+                                    _sql_update(Event)
+                                    .where(Event.id == event.id)
+                                    .values(win_probability_sources=_wps3)
+                                )
 
                                 snapshot = ESPNSnapshot(
                                     event_id=event.id,

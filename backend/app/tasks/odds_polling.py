@@ -890,34 +890,39 @@ async def _poll_all_odds():
                                     if stat_wp is not None:
                                         # Update event's win_probability_sources
                                         # Need to re-fetch to get current JSONB
-                                        fresh = await session.execute(
-                                            select(Event).where(Event.id == event_obj.id)
+                                        # Write stat_model to win_probability_sources
+                                        # via select+update to avoid ORM caching
+                                        from sqlalchemy import update as _sql_upd
+                                        _sm_r = await session.execute(
+                                            select(Event.win_probability_sources).where(Event.id == event_obj.id)
                                         )
-                                        fresh_event = fresh.scalar_one_or_none()
-                                        if fresh_event:
-                                            sources = fresh_event.win_probability_sources or {}
-                                            sources["stat_model"] = round(stat_wp, 4)
-                                            fresh_event.win_probability_sources = sources
+                                        _sm_wps = _sm_r.scalar_one_or_none() or {}
+                                        _sm_wps["stat_model"] = round(stat_wp, 4)
+                                        await session.execute(
+                                            _sql_upd(Event)
+                                            .where(Event.id == event_obj.id)
+                                            .values(win_probability_sources=_sm_wps)
+                                        )
 
-                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
-                                                session,
-                                                event_id=event_obj.id,
-                                                source="stat_model",
-                                                home_win_probability=round(stat_wp, 4),
-                                                away_win_probability=round(1.0 - stat_wp, 4),
-                                                game_state={
-                                                    "clock": event_obj.game_clock,
-                                                    "period": event_obj.period,
-                                                    "home_score": home_score,
-                                                    "away_score": away_score,
-                                                    "pregame_spread": pregame_spread,
-                                                    "source": "odds_poll",
-                                                    "time_source": "espn" if event_obj.game_clock else "wall_clock",
-                                                },
-                                            )
-                                            if is_new:
-                                                session.add(stat_snap)
-                                            stat_model_from_poll += 1
+                                        stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                            session,
+                                            event_id=event_obj.id,
+                                            source="stat_model",
+                                            home_win_probability=round(stat_wp, 4),
+                                            away_win_probability=round(1.0 - stat_wp, 4),
+                                            game_state={
+                                                "clock": event_obj.game_clock,
+                                                "period": event_obj.period,
+                                                "home_score": home_score,
+                                                "away_score": away_score,
+                                                "pregame_spread": pregame_spread,
+                                                "source": "odds_poll",
+                                                "time_source": "espn" if event_obj.game_clock else "wall_clock",
+                                            },
+                                        )
+                                        if is_new:
+                                            session.add(stat_snap)
+                                        stat_model_from_poll += 1
                                 except Exception as e:
                                     logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
 

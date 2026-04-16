@@ -144,10 +144,19 @@ async def _sync_mlb_win_probability():
                     else:
                         stats["snapshots_updated"] += 1
 
-                    # Also update win_probability_sources on the event
-                    sources = event.win_probability_sources or {}
-                    sources[WIN_PROB_SOURCE_KEY] = round(mlb_game.home_win_probability, 4)
-                    event.win_probability_sources = sources
+                    # Write MLB win prob to win_probability_sources
+                    # via select+update to avoid ORM session caching
+                    from sqlalchemy import update as _sql_upd, select as _sql_sel
+                    _mlb_r = await session.execute(
+                        _sql_sel(Event.win_probability_sources).where(Event.id == event.id)
+                    )
+                    _mlb_wps = _mlb_r.scalar_one_or_none() or {}
+                    _mlb_wps[WIN_PROB_SOURCE_KEY] = round(mlb_game.home_win_probability, 4)
+                    await session.execute(
+                        _sql_upd(Event)
+                        .where(Event.id == event.id)
+                        .values(win_probability_sources=_mlb_wps)
+                    )
 
                     # Update Event.period for feed scoring (late-game bonus)
                     # and chart game state display. ESPN sync also sets this,
