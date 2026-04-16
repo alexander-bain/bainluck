@@ -49,7 +49,7 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 ---
 
-### 1B. Event Detail Page Quality Issues (discovered April 16)
+### 1B. Event Detail Page Quality Issues (discovered April 16, partially fixed)
 **Layer:** frontend-components, backend-routes
 **Parallel Safety:** Yellow (touches frontend components + backend routes)
 
