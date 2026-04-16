@@ -2858,6 +2858,40 @@ async def get_canonical_key_status(
 # ESPN ID Backfill — retroactively match events to ESPN
 # ---------------------------------------------------------------------------
 
+@router.delete("/events/delete-duplicates")
+async def delete_duplicate_events(
+    secret: str = Query(...),
+    event_ids: str = Query(..., description="Comma-separated event IDs to delete"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete specific duplicate events with FK cleanup."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+
+    ids = [int(x.strip()) for x in event_ids.split(",") if x.strip().isdigit()]
+    if not ids:
+        return {"error": "No valid event IDs provided"}
+
+    # Clean up FKs
+    fk_tables = [
+        "odds_snapshots", "odds_aggregated", "win_prob_snapshots",
+        "espn_snapshots", "score_snapshots", "scoring_plays",
+        "line_movement_analyses",
+    ]
+    for table in fk_tables:
+        await db.execute(text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"), {"ids": ids})
+
+    await db.execute(text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"), {"ids": ids})
+    await db.execute(text("UPDATE user_pins SET target_id = NULL WHERE pin_type = 'event' AND target_id = ANY(:ids)"), {"ids": ids})
+
+    result = await db.execute(text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids})
+    await db.commit()
+
+    return {"deleted": result.rowcount, "event_ids": ids}
+
+
 @router.post("/espn/backfill-ids")
 async def backfill_espn_ids(
     secret: str = Query(...),
