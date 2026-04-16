@@ -617,6 +617,73 @@ async def _sync_espn_live_events():
                         if changed:
                             stats["events_updated"] += 1
 
+                    # ── Create events for unmatched ESPN games ──────────────
+                    # ESPN is a first-class source. If ESPN has a game and we
+                    # don't, create it. Other sources (Odds API, StatPal) will
+                    # find it later via the Event Registry structured match.
+                    matched_espn_ids = set()
+                    for event in our_events:
+                        if event.espn_id:
+                            matched_espn_ids.add(event.espn_id)
+
+                    from app.services.event_registry import (
+                        find_or_create_event as _foc,
+                        EventIdentity as _EI,
+                        EventClaim as _EC,
+                    )
+                    for ee in espn_events:
+                        if not ee.espn_id or ee.espn_id in matched_espn_ids:
+                            continue
+                        if not ee.home_team or not ee.away_team:
+                            continue
+                        espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                        espn_away = ee.away_team.display_name or ee.away_team.name or ""
+                        if not espn_home or not espn_away:
+                            continue
+
+                        try:
+                            identity = _EI(
+                                sport_key=sport_key,
+                                home_team_name=espn_home,
+                                away_team_name=espn_away,
+                                commence_time=ee.date,
+                                claim=_EC("espn", ee.espn_id),
+                                commence_time_source="espn",
+                                status="live" if ee.status == "in" else (
+                                    "completed" if ee.status in ("post", "final") else "scheduled"
+                                ),
+                            )
+                            event, created = await _foc(session, identity)
+
+                            # Write win probability snapshot
+                            if ee.home_win_probability is not None:
+                                event.espn_win_prob_home = ee.home_win_probability
+                                sources = event.win_probability_sources or {}
+                                sources["espn"] = ee.home_win_probability
+                                event.win_probability_sources = sources
+
+                                snapshot = ESPNSnapshot(
+                                    event_id=event.id,
+                                    home_win_probability=ee.home_win_probability,
+                                    away_win_probability=1.0 - ee.home_win_probability,
+                                    home_score=ee.home_score,
+                                    away_score=ee.away_score,
+                                    game_clock=ee.clock,
+                                    period=ee.status_detail,
+                                )
+                                session.add(snapshot)
+
+                            if created:
+                                stats["espn_events_created"] = stats.get("espn_events_created", 0) + 1
+                                logger.info(
+                                    "ESPN: created event %d for %s: %s vs %s (espn_id=%s)",
+                                    event.id, sport_key, espn_home, espn_away, ee.espn_id,
+                                )
+                            else:
+                                stats["espn_events_attached"] = stats.get("espn_events_attached", 0) + 1
+                        except Exception as exc:
+                            logger.warning("ESPN create/attach failed for %s vs %s: %s", espn_home, espn_away, exc)
+
                 except Exception as e:
                     stats["errors"].append(f"{sport_key}: {str(e)}")
 
