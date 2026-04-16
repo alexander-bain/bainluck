@@ -2899,17 +2899,23 @@ async def backfill_espn_ids(
     result = await db.execute(query)
     events = result.scalars().all()
 
-    # Group by sport_key + date for efficient ESPN API calls
+    # Group by sport_key + date for efficient ESPN API calls.
+    # ESPN uses US Eastern time for date boundaries, so a 10pm ET game on
+    # April 14 = 2am UTC April 15. We must check BOTH UTC date and previous
+    # day to catch cross-midnight games.
     from collections import defaultdict
-    groups: dict[tuple[str, str], list] = defaultdict(list)  # (sport_key, date_str) → [events]
+    groups: dict[tuple[str, str], list] = defaultdict(list)
     for event in events:
         if not event.sport:
             continue
         sport_key = event.sport.key
         if sport_key not in ESPN_SPORT_MAPPING:
             continue
-        date_str = event.commence_time.strftime("%Y%m%d")
-        groups[(sport_key, date_str)].append(event)
+        utc_date = event.commence_time.strftime("%Y%m%d")
+        prev_date = (event.commence_time - timedelta(days=1)).strftime("%Y%m%d")
+        groups[(sport_key, utc_date)].append(event)
+        # Also check previous day for late-night US games
+        groups[(sport_key, prev_date)].append(event)
 
     # Fetch ESPN schedules and match
     espn = ESPNAPIService()

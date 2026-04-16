@@ -299,7 +299,13 @@ async def _discover_events():
                                         "Z", "+00:00"
                                     )
                                 )
+                                # ESPN uses US Eastern time for date boundaries.
+                                # A 10pm ET game on Apr 14 = 2am UTC Apr 15.
+                                # Check BOTH UTC date and previous day.
                                 unique_dates.add(ct.strftime("%Y%m%d"))
+                                unique_dates.add(
+                                    (ct - timedelta(days=1)).strftime("%Y%m%d")
+                                )
                             except (ValueError, KeyError):
                                 continue
 
@@ -339,13 +345,17 @@ async def _discover_events():
                             event_status = "scheduled"
 
                         # Cross-reference against pre-fetched ESPN schedule
+                        # Check both UTC date and previous day (ESPN uses ET boundaries)
                         espn_commence_time = None
                         espn_event_id = None
                         if espn_events_by_date:
                             date_str = commence_time.strftime("%Y%m%d")
-                            for ee in espn_events_by_date.get(
-                                date_str, []
-                            ):
+                            prev_date = (commence_time - timedelta(days=1)).strftime("%Y%m%d")
+                            espn_candidates = (
+                                espn_events_by_date.get(date_str, [])
+                                + espn_events_by_date.get(prev_date, [])
+                            )
+                            for ee in espn_candidates:
                                 if not ee.home_team or not ee.away_team:
                                     continue
                                 espn_home = (
