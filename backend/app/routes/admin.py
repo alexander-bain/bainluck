@@ -2678,10 +2678,38 @@ async def debug_team_links(
         for r in name_samples.all()
     ]
 
+    # US major sport matching rates
+    us_sports = await db.execute(text("""
+        SELECT
+            fm.llm_sport_category AS sport,
+            COUNT(*) AS total_outcomes,
+            COUNT(fo.team_id) AS linked,
+            COUNT(*) FILTER (
+                WHERE fo.team_id IS NULL
+                  AND fo.name !~* '^(Yes|No|Over|Under|O/U|Spread|Handicap|Draw|Tie|Push)$'
+                  AND fo.name !~* '^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9]|Odd/Even|Total Kills|First Blood)'
+                  AND fo.name !~* '^[0-9]'
+                  AND length(fo.name) >= 4
+                  AND fo.name ~ '[A-Z][a-z]+ [A-Z]'
+            ) AS unlinked_names
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.llm_sport_category IN ('basketball', 'baseball', 'football', 'hockey', 'golf')
+        GROUP BY fm.llm_sport_category
+        ORDER BY total_outcomes DESC
+    """))
+    us_sport_rates = [
+        {"sport": r.sport, "total": r.total_outcomes, "linked": r.linked,
+         "unlinked_names": r.unlinked_names,
+         "match_rate": f"{r.linked*100/(r.linked+r.unlinked_names):.1f}%" if (r.linked + r.unlinked_names) > 0 else "0%"}
+        for r in us_sports.all()
+    ]
+
     return {
         "markets_with_event_id": el.markets_with_event if el else 0,
         "markets_without_event_id": el.markets_without_event if el else 0,
         "unlinked_outcomes_on_event_markets": unlinked_event.scalar(),
+        "us_sport_match_rates": us_sport_rates,
         "breakdown": breakdown_rows,
         "unlinked_name_samples": name_sample_list,
     }
