@@ -648,6 +648,12 @@ async def _sync_espn_live_events():
                         if ee.espn_id:
                             espn_by_id_sched[ee.espn_id] = ee
 
+                    stats["scheduled_pass"] = stats.get("scheduled_pass", {})
+                    stats["scheduled_pass"][sport_key] = {
+                        "our_events": len(scheduled_events),
+                        "espn_events": len(espn_events),
+                    }
+
                     for event in scheduled_events:
                         matched_espn = None
 
