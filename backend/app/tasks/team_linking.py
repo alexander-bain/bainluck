@@ -170,18 +170,24 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 "^Spread ",                                      # Spread lines
                 "^(Handicap|Game Handicap|Map Handicap)",        # Handicaps
                 "^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9])",  # Game/map labels
-                "^(Odd/Even|Total Kills|First Blood)",           # Esports generics
+                "^(Odd/Even|Total Kills|First Blood|Both Teams|Any Player|Exact Score)",  # Esports/soccer generics
                 "^[0-9]",                                        # Numeric outcomes ("218.5")
             )
             skip_regex = "|".join(f"({p})" for p in _SKIP_PATTERNS)
 
+            # Prioritize US major sports where we have roster data.
+            # Process these first to maximize value per backfill run.
+            _US_SPORTS = ("basketball", "baseball", "football", "hockey", "golf")
+
             outcomes_result = await session.execute(
                 select(FuturesOutcome)
                 .options(selectinload(FuturesOutcome.market))
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
                 .where(
                     FuturesOutcome.team_id.is_(None),
-                    ~FuturesOutcome.name.op("~*")(skip_regex),  # Postgres case-insensitive regex
-                    func.length(FuturesOutcome.name) >= 4,       # Skip very short names
+                    ~FuturesOutcome.name.op("~*")(skip_regex),
+                    func.length(FuturesOutcome.name) >= 4,
+                    FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
                 )
                 .order_by(FuturesOutcome.market_id)
                 .limit(limit)
