@@ -122,7 +122,12 @@ Golf tournament detail pages have no "Bigger Picture" section. The grid shows wi
 - Nationality/continent props ("Will a European win?")
 - Tournament props ("Hole-in-one?", "Will anyone shoot 63?")
 
-These markets already exist on Kalshi/Polymarket and are already tagged with the tournament name. Need a "Related Futures for Tournament" query that finds all markets matching this tournament that aren't in the outright winner grid. Simpler than team-sport Related Futures — just tournament name matching, no roster/team_id needed.
+These markets already exist on Kalshi/Polymarket. Need a "Related Futures for Tournament" endpoint.
+
+**Constraints:**
+- Match by tournament key or Kalshi ticker prefix — NOT `ILIKE '%Masters%'` which leaks esports "Masters" and golf events like "Hainan Masters"
+- Exclude markets already represented in any grid column (Win, Make Cut, Top 5, etc.) — not just tier 1. Grid already returns `market_id` per column; use those as the exclusion set.
+- Query: all tournament-matching markets MINUS grid market IDs → Related Futures
 
 ### Strategy Decisions (need Alex's call)
 - Default to PGA Tour only? (Recommendation: yes, "All Tours" toggle)
