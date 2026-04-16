@@ -249,12 +249,23 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 
 **Billing model**: The Odds API charges per `events_returned * market_types * regions` per HTTP call, NOT per call. Requesting h2h + spreads + totals with us + us2 regions costs 6x per event vs h2h-only with us-only.
 
-**Tier-aware polling** (implemented April 2026):
-| Tier | Window | Markets | Regions | Cost vs Full |
-|------|--------|---------|---------|-------------|
-| Live | In-progress | h2h,spreads,totals | us,us2 | 1x (baseline) |
-| Soon | 0-2h pre-game | h2h,spreads,totals | us | ~0.5x |
-| Later | 2-6h pre-game | h2h | us | ~0.17x |
+**Sport-tier polling** (implemented April 16, 2026):
+
+Sports are classified into 3 tiers in `config.py` → `SPORT_POLLING_TIERS`:
+| Sport Tier | Sports | Interval Multiplier | Regions |
+|-----------|--------|---------------------|---------|
+| Tier 1 | NBA, NHL, MLB, NFL, NCAAB | 1x (live=32s) | us,us2 |
+| Tier 2 | WNBA, EPL, MLS, UCL, MMA, NCAAF | 2x (live=64s) | us |
+| Tier 3 | Everything else (default) | 4x (live=128s) | us |
+
+**Time-tier market selection** (April 13):
+| Time Tier | Window | Markets | Regions (Tier 1) | Regions (Tier 2-3) |
+|-----------|--------|---------|------------------|--------------------|
+| Live | In-progress | h2h,spreads,totals | us,us2 | us |
+| Soon | 0-2h pre-game | h2h,spreads,totals | us,us2 | us |
+| Later | 2-6h pre-game | h2h | us | us |
+
+Adding/promoting a sport is a one-line change in `SPORT_POLLING_TIERS`. All sports always poll — tiers only control frequency and region coverage.
 
 **Adaptive slowdown**: Per-sport Redis counter tracks consecutive unchanged polls. After 3 unchanged -> 5min interval. After 6 unchanged -> 10min interval. Resets instantly when odds change. Live tier exempt.
 
