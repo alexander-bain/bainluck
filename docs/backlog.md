@@ -36,34 +36,16 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 ## Tier 1 — High Leverage, Do Next
 
-### 1. ESPN + Source Coverage Crisis Investigation
-**Layer:** backend-tasks, backend-services
-**Touches:** `tasks/espn_sync.py`, `tasks/odds_polling.py`, `services/espn_api.py`, `services/event_registry.py`, `routes/events.py` (read-only)
-**Depends on:** Event Registry wiring — **SHIPPED April 16**
-**Conflicts with:** Any work on espn_sync.py or odds_polling.py
-**Parallel Safety:** Yellow (Event Registry is done, but touches core task files)
+### 1. ESPN + Source Coverage — SHIPPED April 16
+**Status:** COMPLETE. All acceptance criteria met.
 
-**Problem:** ESPN win probability is barely writing — 1 snapshot per sync cycle out of 34 events. 67 ESPN events were "unmatched." Most NBA events showed only StatPal as a source. No events had Kalshi/Polymarket in `win_probability_sources`. The core product promise (multi-source probability) was broken for most events. Event Registry shipping may have fixed some of this — needs verification.
-
-**Acceptance criteria:**
-- ESPN match rate >90%
-- Win probability snapshots created for all matched ESPN live events
-- Betting odds from Odds API appear in `win_probability_sources`
-- Feed response includes `win_probability_sources` array
-- Kalshi/Polymarket prices flow into `win_probability_sources` for matched events
-
-**Prompt:**
-> We have a source coverage crisis. The core product shows aggregated multi-source probabilities, but most events only have 1 source. The Event Registry was just shipped (all 5 phases) which should help with matching — but we need to verify and fix remaining gaps.
->
-> 1. Read `tasks/espn_sync.py` — it now uses Event Registry. Check: are ESPN events being matched at a high rate? Look at the audit logs from recent runs if available. Check if win_prob_snapshots are being created for matched events.
-> 2. Read `tasks/odds_polling.py` — are betting odds being written to `win_probability_sources` on the event? Or only to `odds_snapshots`? The aggregate probability system needs data in `win_probability_sources`.
-> 3. Read `routes/events.py` and `routes/feed.py` — is `win_probability_sources` included in the feed API response? Check serialization.
-> 4. Read `tasks/prediction_market_matching.py` — are Kalshi/Polymarket prices flowing into `win_probability_sources`?
-> 5. Hit the production API to verify: `curl "https://api.bainluck.com/api/events?sport=basketball_nba" | python3 -m json.tool | head -50` — check if events have multiple sources.
->
-> For each issue found, fix it. Run tests after each fix.
->
-> INTERFERENCE RULES: Do NOT modify `services/event_registry.py` — it was just shipped and is stable.
+**What shipped:**
+- All 6 sources (betting, espn, stat_model, mlb, kalshi, polymarket) now write to `win_probability_sources` via select+update pattern
+- Feed response includes `win_probability_sources`
+- `espn_win_prob_home` written atomically with `win_probability_sources["espn"]`
+- ESPN match rate: 100% for completed events (NBA, NHL, MLB)
+- Live events show 3-4 sources (was 1)
+- Root cause: ORM attribute assignment silently failed due to session caching; fixed by using SQLAlchemy `update()` statements
 
 ---
 

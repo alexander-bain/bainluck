@@ -281,7 +281,9 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 
 ## Core Architecture (summaries — see `docs/architecture-reference.md` for details)
 
-**Probability Aggregation**: `compute_aggregate_probability()` in `utils/aggregation.py` is the single source of truth. Three-tier fallback (win_probability_sources -> ESPN -> opening odds). Source weights: betting 3.0, ESPN 1.5, stat_model 1.0, Kalshi/Polymarket/MLB 0.8. Both feed and event detail APIs MUST use it — never display raw odds_snapshots alone.
+**Event Registry** (shipped April 16): `services/event_registry.py` — unified `find_or_create_event()` for all sources. 4-step cascade: exact source ID → cross-source ID → structured match (sport + time ± 4h + teams) → create. Source priority: ESPN > StatPal > Odds API. All 5 source tasks wired up. ESPN is a first-class source (creates events, never discards data). Post-creation audit compares event counts vs ESPN schedule.
+
+**Probability Aggregation**: `compute_aggregate_probability()` in `utils/aggregation.py` is the single source of truth. Reads from `Event.win_probability_sources` JSONB field. Source weights: betting 3.0, ESPN 1.5, stat_model 1.0, Kalshi/Polymarket/MLB 0.8. All 6 sources write to `win_probability_sources` via `select+update` pattern (NOT ORM attribute assignment, which silently fails due to session caching).
 
 **Source-Agnostic Resilience**: System works when any single source goes dark (validated during March 2026 Odds API quota exhaustion). Events don't require Odds API. Prediction markets match by team name + time. ESPN/StatPal flow independently. Chart domains derive from game timeline, not odds data.
 
