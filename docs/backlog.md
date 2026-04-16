@@ -30,6 +30,7 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 | iOS parity (#5) | ANYTHING — always safe |
 | God function refactoring (#6) | Items 4, 5, 9 (all Green) |
 | Golf data quality (#7) | Items 4, 5, 9 (all Green) |
+| Game prop linking (#1C) | Items 4, 5, 9 (all Green) |
 | No good parallel candidate? | Brainstorm B1 design decisions, or write tests (#4, #9) |
 
 ---
@@ -78,6 +79,112 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 - Awards: PM has 16+ player award markets (MVP, Cy Young, ROY, Manager, etc.)
 - League leaders: Kalshi category
 - Best/worst record: Kalshi `kxmlbbestrecord/worstrecord`
+
+---
+
+### 1C. Revive Related Futures Cards: Fix Game Prop → Event Linking
+**Layer:** backend-tasks, backend-routes
+**Touches:** `tasks/prediction_market_matching.py`, `routes/events.py` (get_related_futures), `utils/prediction_market_matching.py`
+**Depends on:** Nothing (Event Registry is shipped)
+**Conflicts with:** Any work on prediction_market_matching.py or events.py related futures section
+**Parallel Safety:** Yellow
+
+**Problem:** We designed and built 19 Related Futures card components (frontend + iOS). The code is complete and correct. But users only see ~5 card types (championship, conference, awards, playoff path). The other cards — **PlayerStatCard with probability gauges, GameMarketsGrid, WinTotalsGauge, MatchupGrid** — never appear because the data they need isn't linked.
+
+**Root cause:** There are **1,858 Kalshi game_prop markets** in the database (873 basketball, 720 soccer, 154 hockey, 80 baseball) including player points, assists, rebounds, goals, total points, etc. But they have `event_id=NULL` and `sport=None`. The `get_related_futures()` query in `routes/events.py` (line 2783) filters game props by `FuturesMarket.event_id == event_id` — if `event_id` is NULL, they never appear.
+
+**The matching system exists but isn't linking these markets.** `tasks/prediction_market_matching.py` has a full pipeline:
+1. Scans Kalshi markets where `event_id IS NULL` and ticker matches `_KALSHI_GAME_TICKER_PREFIXES`
+2. Extracts team names via `extract_matchup_with_ticker_fallback()`
+3. Matches to events via `_find_matching_event()` (time window + team name scoring)
+4. Sets `market.event_id = matched_event["event_id"]`
+
+But 1,858 markets remain unlinked. Possible failure points:
+- **Ticker prefix not in `_KALSHI_GAME_TICKER_PREFIXES`** — the market ticker may not match any known prefix, so it's never scanned
+- **`extract_matchup_with_ticker_fallback()` fails** — can't parse team names from market name like "WSH Capitals at NJ Devils: Assists"
+- **`_find_matching_event()` fails** — time window too narrow, or team name matching too strict
+- **`sport=None`** — market has no sport classification, making sport-based matching harder
+- **Market tier classification** — the market might not be classified as tier 5 (game_prop), so even if linked, `get_related_futures()` won't load it in the game props pass
+
+**Verified example:** Market id=8633585 "WSH Capitals at NJ Devils: Assists" (Kalshi):
+- `sport=None`, `event_id=NULL`, `source=kalshi`
+- 25 outcomes (Jakob Chychrun: 1+, Jesper Bratt: 1+, etc.)
+- `commence_time=2026-04-16T23:30:00+00:00` (this is the RESOLUTION date, not the game date)
+- The actual game "Capitals at Devils" exists in our events table
+- Matching should work but doesn't — likely ticker prefix or date extraction issue
+
+**Cards this unblocks (all already implemented, just need data):**
+
+| Card | Component | What it shows | File |
+|------|-----------|--------------|------|
+| **PlayerStatCard** | `StatPropsSection` | Pre-game: probability gauge. Live: progress bar toward line. Completed: hit/miss badge. Player headshots. | `frontend/components/RelatedFutures.tsx` L820-1099 |
+| **GameMarketsGrid** | `GameMarketsGrid` | 2-column grid of upcoming game matchups with probabilities | `frontend/components/RelatedFutures.tsx` L562-719 |
+| **GameMarketsPair** | `GameMarketsPair` | Paired upcoming games with moneyline probabilities | `frontend/components/RelatedFutures.tsx` L2158-2185 |
+
+**Also worth verifying (may need small data format fixes):**
+
+| Card | Component | Issue | File |
+|------|-----------|-------|------|
+| **WinTotalsGauge** | `WinTotalsPair` | Semi-circular gauge for season win totals. Data exists (`display_category=season_stat`) but gauge needs structured over/under threshold data — verify format matches | `frontend/components/RelatedFutures.tsx` L1520-1660 |
+| **MatchupGrid** | `MatchupGrid` | Conference/Finals matchup probability grid. Playoff path markets exist but may need specific formatting for the grid | `frontend/components/RelatedFutures.tsx` L1834-1978 |
+
+**Investigation steps (do first, before coding):**
+1. Check `_KALSHI_GAME_TICKER_PREFIXES` — are the tickers for these 1,858 markets included?
+   ```python
+   # Find what tickers these unlinked markets actually have
+   SELECT DISTINCT LEFT(external_id, 10), COUNT(*)
+   FROM futures_markets
+   WHERE source = 'kalshi' AND event_id IS NULL AND market_tier = 5
+   GROUP BY 1 ORDER BY 2 DESC;
+   ```
+2. Check the matching task logs — look for `_match_prediction_markets` stats: what does `no_matchup_extracted` count show? What are the `sample_game_level_no_event` examples?
+3. Check if the Kalshi `commence_time` issue is the blocker — Kalshi sets `commence_time` to the market RESOLUTION date, not the game date. `extract_game_date_from_ticker()` exists to handle this but may not cover all ticker formats.
+4. Run a manual matching test: take the "WSH Capitals at NJ Devils: Assists" market and trace through the matching pipeline step by step.
+
+**Acceptance criteria:**
+- >80% of Kalshi game_prop markets have `event_id` set (currently 0%)
+- Event detail pages for NBA/NHL/MLB games show the PlayerStatCard section with player props
+- Live games show progress bars with box score data flowing into stat props
+- Completed games show hit/miss badges on player props
+- GameMarketsGrid appears in the "Game Markets" section of Related Futures
+- WinTotalsGauge renders when win total markets exist for the teams
+
+**Prompt:**
+> The Related Futures section has 19 card components but only 5 show up. The biggest unlock is fixing game_prop → event linking so PlayerStatCard, GameMarketsGrid, and GameMarketsPair start receiving data.
+>
+> **Phase 1: Diagnose why 1,858 Kalshi game_prop markets have event_id=NULL**
+>
+> 1. Read `utils/sport_keys.py` → `KALSHI_GAME_TICKER_PREFIXES`. Check if the tickers for unlinked markets are covered.
+> 2. Read `tasks/prediction_market_matching.py` → `_match_prediction_markets()`. Trace the linking pipeline. Find where unlinked game_prop markets fall out.
+> 3. Hit the admin API to see matching task stats: `curl "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_SECRET"` — look for prediction market matching metrics.
+> 4. Pick 3 specific unlinked markets and manually trace them through `extract_matchup_with_ticker_fallback()` and `_find_matching_event()`. Find exactly why matching fails.
+>
+> **Phase 2: Fix the linking gaps**
+>
+> Based on diagnosis, the fix is likely one or more of:
+> - Add missing ticker prefixes to `KALSHI_GAME_TICKER_PREFIXES` in `utils/sport_keys.py`
+> - Fix `extract_matchup_with_ticker_fallback()` to handle the "Team A at Team B: Stat Type" format
+> - Fix `extract_game_date_from_ticker()` for ticker formats that aren't covered
+> - Widen time window in `_find_matching_event()` if games aren't found
+>
+> **Phase 3: Verify cards appear**
+>
+> After fixing linking, check that Related Futures now returns game_prop data:
+> ```bash
+> curl "https://api.bainluck.com/api/events/{nba_event_id}/related-futures" | python3 -c "
+> import sys,json; d=json.load(sys.stdin)
+> all_items = d.get('home_team_futures',[]) + d.get('away_team_futures',[])
+> game_props = [i for i in all_items if i.get('display_category') == 'game_prop']
+> print(f'Game props: {len(game_props)}')"
+> ```
+>
+> **Phase 4: Verify WinTotalsGauge and MatchupGrid data format**
+>
+> Check if the season_stat markets have the right structure for the WinTotalsGauge component. The gauge needs over/under threshold data with probabilities. Read the frontend component to understand what data shape it expects, then check if the backend response matches.
+>
+> Run tests: `python3 -m pytest tests/ -v -k "prediction_market or related"`
+>
+> INTERFERENCE RULES: Do NOT modify `services/event_registry.py`. Do NOT modify `tasks/config.py` or `tasks/odds_polling.py` (quota optimization was just deployed).
 
 ---
 
