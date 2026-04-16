@@ -2678,6 +2678,26 @@ async def debug_team_links(
         for r in name_samples.all()
     ]
 
+    # Team roster coverage
+    roster_coverage = await db.execute(text("""
+        SELECT s.key AS sport_key,
+            COUNT(*) AS total_teams,
+            COUNT(*) FILTER (WHERE t.roster_players IS NOT NULL AND t.roster_players != '[]'::jsonb) AS with_roster,
+            AVG(jsonb_array_length(COALESCE(t.roster_players, '[]'::jsonb))) FILTER
+                (WHERE t.roster_players IS NOT NULL AND t.roster_players != '[]'::jsonb) AS avg_roster_size
+        FROM teams t
+        JOIN sports s ON t.sport_id = s.id
+        WHERE s.key IN ('basketball_nba', 'baseball_mlb', 'americanfootball_nfl', 'icehockey_nhl',
+                        'basketball_ncaab', 'americanfootball_ncaaf')
+        GROUP BY s.key
+        ORDER BY total_teams DESC
+    """))
+    roster_data = [
+        {"sport": r.sport_key, "total_teams": r.total_teams, "with_roster": r.with_roster,
+         "avg_roster_size": round(float(r.avg_roster_size or 0), 1)}
+        for r in roster_coverage.all()
+    ]
+
     # US major sport matching rates
     us_sports = await db.execute(text("""
         SELECT
@@ -2709,6 +2729,7 @@ async def debug_team_links(
         "markets_with_event_id": el.markets_with_event if el else 0,
         "markets_without_event_id": el.markets_without_event if el else 0,
         "unlinked_outcomes_on_event_markets": unlinked_event.scalar(),
+        "roster_coverage": roster_data,
         "us_sport_match_rates": us_sport_rates,
         "breakdown": breakdown_rows,
         "unlinked_name_samples": name_sample_list,
