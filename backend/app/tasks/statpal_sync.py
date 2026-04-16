@@ -123,63 +123,39 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
                     live_data = live_by_teams.get(match_key)
 
-                    # Primary: lookup by StatPal fixture ID (fast, exact)
-                    event = None
-                    if fixture.fixture_id:
-                        fid_result = await session.execute(
-                            select(Event).where(
-                                Event.statpal_fixture_id == fixture.fixture_id
+                    # ── Unified event matching via Event Registry ──
+                    # Only create events for future games
+                    if not fixture.start_time or fixture.start_time <= now:
+                        # For past fixtures, try to find existing event to enrich
+                        event = None
+                        if fixture.fixture_id:
+                            fid_result = await session.execute(
+                                select(Event).where(
+                                    Event.statpal_fixture_id == fixture.fixture_id
+                                )
                             )
+                            event = fid_result.scalar_one_or_none()
+                        if not event:
+                            continue  # Past game, no existing event — skip
+                    else:
+                        from app.services.event_registry import (
+                            find_or_create_event, EventIdentity, EventClaim,
                         )
-                        event = fid_result.scalar_one_or_none()
-
-                    # Fallback: fuzzy team name + time proximity matching
-                    if not event:
-                        event = await _find_matching_event(
-                            session, Event, sport_id, fixture
-                        )
-
-                    if not event:
-                        # NEW: Create event from StatPal fixture if it's in the future
-                        if not fixture.start_time or fixture.start_time <= now:
-                            continue  # Don't create events for past games
-
-                        event = Event(
-                            sport_id=sport_id,
-                            external_id=None,  # Will be filled by Odds API later
+                        claim_id = fixture.fixture_id or f"statpal_{fixture.home_team}_{fixture.away_team}"
+                        identity = EventIdentity(
+                            sport_key=our_key,
                             home_team_name=fixture.home_team,
                             away_team_name=fixture.away_team,
                             commence_time=fixture.start_time,
+                            claim=EventClaim("statpal", claim_id),
                             commence_time_source="statpal",
-                            statpal_fixture_id=fixture.fixture_id,
                             status="scheduled",
                         )
-                        session.add(event)
-                        await session.flush()  # Get the ID
-                        sport_created += 1
-
-                        logger.info(
-                            f"StatPal: created new event {event.id} for "
-                            f"{fixture.home_team} vs {fixture.away_team} "
-                            f"at {fixture.start_time}"
+                        event, was_created = await find_or_create_event(
+                            session, identity,
                         )
-
-                        # Resolve team identities
-                        from app.services.team_identity import team_identity_service
-                        home_team = await team_identity_service.resolve_team(
-                            session, "statpal", our_key,
-                            source_name=fixture.home_team,
-                        )
-                        away_team = await team_identity_service.resolve_team(
-                            session, "statpal", our_key,
-                            source_name=fixture.away_team,
-                        )
-                        if home_team:
-                            event.home_team_id = home_team.id
-                        if away_team:
-                            event.away_team_id = away_team.id
-
-                        continue  # Skip enrichment below — we just created it
+                        if was_created:
+                            sport_created += 1
 
                     updated = False
 
