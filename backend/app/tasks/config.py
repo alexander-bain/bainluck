@@ -58,6 +58,36 @@ DISCOVER_TIER4_INTERVAL = 28800  # 8 hours — doubled from 4h
 # Futures poll less frequently since they change slowly
 FUTURES_POLL_INTERVAL = 3600  # 1 hour default
 
+# ---------------------------------------------------------------------------
+# Sport polling tiers — controls frequency AND region coverage per sport
+# ---------------------------------------------------------------------------
+# Tier 1: Core US sports — default intervals, us+us2 regions for live/soon
+# Tier 2: Secondary — 2x slower intervals, us region only
+# Tier 3: Long tail — 4x slower intervals, us region only (default for unlisted)
+SPORT_POLLING_TIERS: dict[str, int] = {
+    # Tier 1 — core
+    "basketball_nba": 1,
+    "basketball_ncaab": 1,
+    "icehockey_nhl": 1,
+    "baseball_mlb": 1,
+    "americanfootball_nfl": 1,
+    # Tier 2 — secondary
+    "basketball_wnba": 2,
+    "americanfootball_ncaaf": 2,
+    "soccer_epl": 2,
+    "soccer_usa_mls": 2,
+    "soccer_uefa_champs_league": 2,
+    "mma_mixed_martial_arts": 2,
+}
+SPORT_POLLING_DEFAULT_TIER = 3
+
+# Interval multipliers: applied to base poll_interval (live/soon/later)
+SPORT_TIER_MULTIPLIERS: dict[int, int] = {
+    1: 1,    # default intervals  (live=32s, soon=5m, later=1h)
+    2: 2,    # 2x slower          (live=64s, soon=10m, later=2h)
+    3: 4,    # 4x slower          (live=128s, soon=20m, later=4h)
+}
+
 # StatPal polling intervals
 STATPAL_SCHEDULE_POLL_INTERVAL = 3600      # 1 hour — fixture/schedule sync
 STATPAL_INJURY_POLL_INTERVAL = 900         # 15 min — injury reports

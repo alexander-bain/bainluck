@@ -25,6 +25,9 @@ from app.tasks.config import (
     ODDS_STALE_MINUTES,
     MIN_HOURS_BEFORE_STALENESS_CHECK,
     SPORT_MAX_DURATIONS,
+    SPORT_POLLING_TIERS,
+    SPORT_POLLING_DEFAULT_TIER,
+    SPORT_TIER_MULTIPLIERS,
 )
 from app.tasks.redis_state import (
     get_redis_client,
@@ -514,6 +517,12 @@ async def _poll_all_odds():
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
 
+                # Sport-tier multiplier: Tier 2 polls 2x slower, Tier 3 polls 4x slower.
+                # Core sports (Tier 1) keep default intervals; long-tail sports poll less.
+                sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
+                tier_mult = SPORT_TIER_MULTIPLIERS.get(sport_tier, 4)
+                poll_interval = poll_interval * tier_mult
+
                 # Quota guard: in full-stop mode, only priority sports allowed
                 if quota_full_stop:
                     if sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
@@ -577,11 +586,12 @@ async def _poll_all_odds():
                     poll_interval = max(poll_interval, QUOTA_GUARD_CONSERVATION_INTERVAL)
                 elif tier == "live":
                     api_markets = "h2h,spreads,totals"
-                    api_regions = "us,us2"
+                    # Tier 1 sports get us+us2 for full bookmaker coverage;
+                    # Tier 2-3 use us only to save quota.
+                    api_regions = "us,us2" if sport_tier == 1 else "us"
                 elif tier == "soon":
-                    # Full markets, single region (saves ~50% vs live)
                     api_markets = "h2h,spreads,totals"
-                    api_regions = "us"
+                    api_regions = "us,us2" if sport_tier == 1 else "us"
                 else:  # "later" — h2h only, primary US only (saves ~83% vs live)
                     api_markets = "h2h"
                     api_regions = "us"
