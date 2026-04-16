@@ -4,6 +4,59 @@ import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "search")
 
+// MARK: - Recent Searches
+
+private enum RecentSearches {
+    private static let key = "recentSearches"
+    private static let maxCount = 10
+
+    static func load() -> [String] {
+        UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    static func save(_ query: String) {
+        var searches = load()
+        // Remove if already present, then insert at front
+        searches.removeAll { $0.caseInsensitiveCompare(query) == .orderedSame }
+        searches.insert(query, at: 0)
+        if searches.count > maxCount {
+            searches = Array(searches.prefix(maxCount))
+        }
+        UserDefaults.standard.set(searches, forKey: key)
+    }
+
+    static func remove(_ query: String) {
+        var searches = load()
+        searches.removeAll { $0.caseInsensitiveCompare(query) == .orderedSame }
+        UserDefaults.standard.set(searches, forKey: key)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+// MARK: - Sport Filter for Search
+
+private struct SearchSportFilter: Identifiable, Hashable {
+    let key: String // "" means "All"
+    let label: String
+    let icon: String
+
+    var id: String { key }
+}
+
+private let searchSportFilters: [SearchSportFilter] = [
+    .init(key: "", label: "All", icon: ""),
+    .init(key: "basketball", label: "Basketball", icon: "basketball.fill"),
+    .init(key: "americanfootball", label: "Football", icon: "football.fill"),
+    .init(key: "baseball", label: "Baseball", icon: "baseball.fill"),
+    .init(key: "icehockey", label: "Hockey", icon: "hockey.puck.fill"),
+    .init(key: "soccer", label: "Soccer", icon: "soccerball"),
+    .init(key: "golf", label: "Golf", icon: "figure.golf"),
+    .init(key: "mma", label: "MMA", icon: "figure.boxing"),
+]
+
 // MARK: - ViewModel
 
 final class SearchViewModel: ObservableObject {
@@ -12,8 +65,14 @@ final class SearchViewModel: ObservableObject {
     @Published var results: SearchResponse?
     @Published var loading = false
     @Published var error: String?
+    @Published var selectedSport = ""
+    @Published var recentSearches: [String] = []
 
     private var debounceTask: Task<Void, Never>?
+
+    init() {
+        recentSearches = RecentSearches.load()
+    }
 
     @MainActor
     func onQueryChange() {
@@ -41,17 +100,40 @@ final class SearchViewModel: ObservableObject {
 
         loading = true
         do {
-            results = try await APIClient.shared.fetchSearch(query: trimmed)
+            let sport = selectedSport.isEmpty ? nil : selectedSport
+            results = try await APIClient.shared.fetchSearch(query: trimmed, sport: sport)
             suggestions = []
             error = nil
             loading = false
             let totalResults = (results?.results.count ?? 0) + (results?.futures.count ?? 0)
             AnalyticsService.trackSearch(query: trimmed, resultsCount: totalResults)
+
+            // Save to recent searches
+            RecentSearches.save(trimmed)
+            recentSearches = RecentSearches.load()
         } catch {
             self.error = error.localizedDescription
             loading = false
             logger.error("Search failed: \(error)")
         }
+    }
+
+    @MainActor
+    func onSportFilterChange() {
+        // Re-search with new sport filter if we have results
+        if results != nil {
+            Task { await search() }
+        }
+    }
+
+    func removeRecentSearch(_ query: String) {
+        RecentSearches.remove(query)
+        recentSearches = RecentSearches.load()
+    }
+
+    func clearRecentSearches() {
+        RecentSearches.clear()
+        recentSearches = []
     }
 
     @MainActor
@@ -109,6 +191,12 @@ struct SearchView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
 
+                // Sport filter chips (shown when there's a query or results)
+                if !vm.query.trimmingCharacters(in: .whitespaces).isEmpty || vm.results != nil {
+                    sportFilterChips
+                        .padding(.bottom, 4)
+                }
+
                 if vm.loading {
                     Spacer()
                     ProgressView()
@@ -153,6 +241,8 @@ struct SearchView: View {
                     MastersLiveView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
+                case .futuresList:
+                    FuturesListView()
                 }
             }
         }
@@ -205,6 +295,7 @@ struct SearchView: View {
                     vm.query = ""
                     vm.suggestions = []
                     vm.results = nil
+                    vm.selectedSport = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.subheadline)
@@ -222,11 +313,103 @@ struct SearchView: View {
         .animation(.easeInOut(duration: 0.2), value: isSearchFocused)
     }
 
-    // MARK: - Empty State with Quick Searches
+    // MARK: - Sport Filter Chips
+
+    private var sportFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(searchSportFilters) { filter in
+                    let isSelected = vm.selectedSport == filter.key
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            vm.selectedSport = filter.key
+                        }
+                        vm.onSportFilterChange()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if !filter.icon.isEmpty {
+                                Image(systemName: filter.icon)
+                                    .font(.system(size: 10))
+                            }
+                            Text(filter.label)
+                                .font(.caption)
+                                .fontWeight(isSelected ? .semibold : .regular)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(isSelected ? Color.blue.opacity(0.15) : Color(.tertiarySystemGroupedBackground))
+                        .foregroundStyle(isSelected ? .blue : .primary)
+                        .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    // MARK: - Empty State with Recent + Quick Searches
 
     private var emptyStateContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // Recent Searches
+                if !vm.recentSearches.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Recent")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                            Spacer()
+                            Button {
+                                vm.clearRecentSearches()
+                            } label: {
+                                Text("Clear")
+                                    .font(.caption)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+
+                        ForEach(vm.recentSearches, id: \.self) { recent in
+                            HStack(spacing: 10) {
+                                Button {
+                                    vm.query = recent
+                                    Task { await vm.search() }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "clock.arrow.circlepath")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 20)
+                                        Text(recent)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Image(systemName: "arrow.up.left")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    vm.removeRecentSearch(recent)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+
+                    Divider()
+                        .padding(.vertical, 4)
+                }
+
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Browse by Sport")

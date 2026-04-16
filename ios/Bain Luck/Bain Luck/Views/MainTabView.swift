@@ -85,6 +85,9 @@ struct MainTabView: View {
                 }
 
                 Section("Quick Links") {
+                    NavigationLink(value: Route.futuresList) {
+                        Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
+                    }
                     NavigationLink(value: Route.eiRankings) {
                         Label("EI Rankings", systemImage: "trophy.fill")
                     }
@@ -114,6 +117,8 @@ struct MainTabView: View {
                     MastersLiveView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
+                case .futuresList:
+                    FuturesListView()
                 }
             }
         } detail: {

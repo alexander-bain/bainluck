@@ -184,6 +184,8 @@ struct FeedView: View {
                     MastersLiveView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
+                case .futuresList:
+                    FuturesListView()
                 }
             }
         }
