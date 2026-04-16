@@ -263,3 +263,65 @@ async def _resolve_sport_id(session: AsyncSession, sport_key: str) -> Optional[i
         _sport_id_cache[sport_key] = row.id
         return row.id
     return None
+
+
+# ── Post-creation audit ─────────────────────────────────────────────
+
+async def audit_event_counts(
+    session: AsyncSession,
+    sport_key: str,
+    espn_events_by_date: dict[str, list],
+) -> list[dict]:
+    """Compare our event count per date against ESPN's schedule count.
+
+    Returns a list of date/sport pairs where we have MORE events than
+    ESPN, indicating possible duplicates.
+    """
+    from sqlalchemy import func
+
+    sport_id = await _resolve_sport_id(session, sport_key)
+    if not sport_id:
+        return []
+
+    alerts = []
+    for date_str, espn_events in espn_events_by_date.items():
+        espn_count = len(espn_events)
+        if espn_count == 0:
+            continue
+
+        # Count our scheduled/live events for this sport on this date
+        # Use a 36-hour window to catch UTC boundary crossings
+        from datetime import datetime as _dt
+        try:
+            date_noon = _dt.strptime(date_str, "%Y%m%d").replace(
+                hour=12, tzinfo=timezone.utc
+            )
+        except ValueError:
+            continue
+
+        our_count_result = await session.execute(
+            select(func.count(Event.id)).where(
+                Event.sport_id == sport_id,
+                Event.commence_time.between(
+                    date_noon - timedelta(hours=18),
+                    date_noon + timedelta(hours=18),
+                ),
+                Event.status.in_(["scheduled", "live"]),
+            )
+        )
+        our_count = our_count_result.scalar() or 0
+
+        if our_count > espn_count:
+            alerts.append({
+                "sport_key": sport_key,
+                "date": date_str,
+                "our_count": our_count,
+                "espn_count": espn_count,
+                "excess": our_count - espn_count,
+            })
+            logger.warning(
+                "DUPLICATE ALERT: %s on %s — we have %d events, ESPN has %d (excess: %d)",
+                sport_key, date_str, our_count, espn_count, our_count - espn_count,
+            )
+
+    return alerts

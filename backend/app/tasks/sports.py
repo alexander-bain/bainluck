@@ -547,6 +547,18 @@ async def _discover_events():
                                     f"events for {sport_key}"
                                 )
 
+                    # ── Post-creation audit: check for duplicates ──
+                    if espn_events_by_date:
+                        from app.services.event_registry import audit_event_counts
+                        alerts = await audit_event_counts(
+                            session, sport_key, espn_events_by_date
+                        )
+                        if alerts:
+                            stats_key = "duplicate_alerts"
+                            if stats_key not in locals():
+                                duplicate_alerts = []
+                            duplicate_alerts.extend(alerts)
+
                 except Exception as e:
                     # Log but continue with other sports
                     print(f"Error discovering events for {sport_key}: {e}")
