@@ -2862,11 +2862,11 @@ async def get_related_futures(
         team_row = team_result.first()
         if team_row:
             id_set.add(team_row.id)
-            # Add alternate team names (e.g., "Celtics", "BOS")
+            # Add alternate team names (e.g., "Celtics", "BOS", "A's")
             alt_names = team_row.alternate_names
             if alt_names and isinstance(alt_names, list):
                 for alt in alt_names:
-                    if isinstance(alt, str) and len(alt) >= 4:
+                    if isinstance(alt, str) and len(alt) >= 2:
                         escaped = _escape_like(alt)
                         if escaped.lower() not in [p.lower() for p in patterns]:
                             patterns.append(escaped)
