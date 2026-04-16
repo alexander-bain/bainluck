@@ -2974,6 +2974,25 @@ async def backfill_espn_ids(
     finally:
         await espn.close()
 
+    # Collect unmatched events with details
+    matched_event_ids = {m["event_id"] for m in matches}
+    unmatched = []
+    for event in events:
+        if event.id not in matched_event_ids and event.sport and event.sport.key in ESPN_SPORT_MAPPING:
+            date_str = event.commence_time.strftime("%Y%m%d")
+            espn_for_date = []
+            for (sk, ds), evts in groups.items():
+                if sk == event.sport.key and ds == date_str:
+                    # We need to re-check what ESPN had for this date
+                    pass
+            unmatched.append({
+                "event_id": event.id,
+                "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                "sport": event.sport.key,
+                "date": date_str,
+                "status": event.status,
+            })
+
     return {
         "dry_run": dry_run,
         "days_scanned": days,
@@ -2981,7 +3000,8 @@ async def backfill_espn_ids(
         "events_scanned": scanned,
         "events_matched": matched,
         "match_rate": f"{matched*100/scanned:.1f}%" if scanned else "N/A",
-        "matches": matches[:50],  # Cap output
+        "matches": matches[:50],
+        "unmatched": unmatched[:30],
     }
 
 
