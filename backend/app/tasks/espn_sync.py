@@ -390,6 +390,14 @@ async def _sync_espn_live_events():
 
                         if not matched_espn:
                             stats["events_unmatched"] = stats.get("events_unmatched", 0) + 1
+                            # Log unmatched major sport events for debugging
+                            if sport_key in ("basketball_nba", "icehockey_nhl", "baseball_mlb", "americanfootball_nfl"):
+                                logger.warning(
+                                    "ESPN unmatched: %s %s vs %s (espn_id=%s, id=%d). "
+                                    "ESPN has %d events for this sport.",
+                                    sport_key, event.home_team_name, event.away_team_name,
+                                    event.espn_id, event.id, len(espn_events),
+                                )
                             continue
 
                         ee = matched_espn
