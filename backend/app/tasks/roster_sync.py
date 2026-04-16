@@ -263,8 +263,6 @@ async def _sync_mlb_rosters_impl(session, Team, sport_id: int, service) -> dict:
         if len(parts) >= 2:
             db_teams_by_name[parts[-1].lower()] = t
 
-    from app.services.team_identity import team_identity_service
-
     updated = 0
     unmatched_mlb = []
     total_player_names = 0
@@ -275,29 +273,13 @@ async def _sync_mlb_rosters_impl(session, Team, sport_id: int, service) -> dict:
         if not mlb_name or not mlb_id:
             continue
 
-        # Fast path: identity service resolution
-        db_team = await team_identity_service.resolve_team(
-            session, "mlb", "baseball_mlb",
-            source_id=str(mlb_id),
-            source_name=mlb_name,
-        )
-
-        # Fallback: name-based matching
+        # Name-based matching (simple, reliable)
+        db_team = db_teams_by_name.get(mlb_name.lower())
         if not db_team:
-            db_team = db_teams_by_name.get(mlb_name.lower())
-            if not db_team:
-                # Try suffix match (e.g., "Yankees" matches "New York Yankees")
-                mlb_parts = mlb_name.split()
-                if len(mlb_parts) >= 2:
-                    db_team = db_teams_by_name.get(mlb_parts[-1].lower())
-
-            # Register the mapping if we found a match via fallback
-            if db_team:
-                await team_identity_service.register_team_identity(
-                    session, db_team.id, "mlb", "baseball_mlb",
-                    source_id=str(mlb_id),
-                    source_name=mlb_name,
-                )
+            # Try suffix match (e.g., "Yankees" matches "New York Yankees")
+            mlb_parts = mlb_name.split()
+            if len(mlb_parts) >= 2:
+                db_team = db_teams_by_name.get(mlb_parts[-1].lower())
 
         if not db_team:
             unmatched_mlb.append(mlb_name)
