@@ -113,6 +113,13 @@ iOS app is behind web. Only user is Alex right now, but goal is to get others on
 - **Golf home redesign** — Hero card, majors section, tour filtering
 - **Mobile smoke test** — Phone Safari QA still pending
 
+### Related Futures for Golf (MISSING)
+Golf tournament detail pages have no "Bigger Picture" section. When viewing Scottie Scheffler at the Masters, you should see his PGA Championship odds, US Open odds, FedExCup odds, Player of the Year odds — all related futures for that golfer. Currently impossible because:
+- Golf tournaments aren't in the `events` table (use golf-specific endpoint)
+- No `player_id` on FuturesOutcome for individual athletes (only `team_id` for team sports)
+- DataGolf has player IDs that could serve this role
+- Need: `player_id` FK on FuturesOutcome + golfer identity resolution + "Related Futures for Player" endpoint
+
 ### Strategy Decisions (need Alex's call)
 - Default to PGA Tour only? (Recommendation: yes, "All Tours" toggle)
 - Golf home hierarchy? (Recommendation: hero -> majors -> upcoming -> completed)
