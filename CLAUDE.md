@@ -304,6 +304,32 @@ Script usage, check catalog, and templates: `docs/quality-audit.md`
 
 ---
 
+## Parallel Work Protocol
+
+When starting ANY backlog item, follow this protocol:
+
+1. **Read `docs/backlog.md`** and identify the item being worked on
+2. **Check the Parallel Safety tags** of all other items
+3. **Suggest one parallel candidate** — tell the user: "While I work on [X], you could safely start [Y] in another thread. Here's the prompt to paste:" followed by the ready-to-use prompt from that item's `Prompt` field
+4. **If no backlog items are safe to parallelize**, suggest one of these instead (in priority order):
+   - Code review of a recently-shipped feature (check `docs/completed-features.md` for the latest)
+   - Test writing for an untested module (see testing gaps in `docs/backlog.md`)
+   - Brainstorming/design session for an upcoming Tier 2 item
+   - iOS parity task (always safe — zero file overlap with backend/frontend)
+5. **Interference rules for this session**: State which files/directories this session will modify, so the user can relay constraints to the other thread
+
+### Parallel Safety Classifications
+- **Green** — Fully independent. Can run alongside anything. (iOS, docs, new frontend pages, new utility files)
+- **Yellow** — Probably safe but check. (Different routes, different tasks, different services)
+- **Red** — Conflicts likely. (Shared models, migrations, same service/route file, event matching logic)
+
+### Never Parallelize
+- Two sessions creating Alembic migrations
+- Two sessions modifying `models/models.py`
+- Two sessions modifying the same route, task, or service file
+
+---
+
 ## Gotchas & Tips
 
 1. **Alembic revision IDs must be <=32 characters** — `alembic_version.version_num` is `VARCHAR(32)`
