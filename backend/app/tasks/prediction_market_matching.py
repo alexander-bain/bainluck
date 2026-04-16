@@ -1131,82 +1131,28 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    # Check if we already have an event with these teams (avoid duplicates)
-    pattern_a = f"%{_escape_like(team_a)}%"
-    pattern_b = f"%{_escape_like(team_b)}%"
-    existing_result = await session.execute(
-        select(Event).where(
-            or_(
-                and_(
-                    Event.home_team_name.ilike(pattern_a),
-                    Event.away_team_name.ilike(pattern_b),
-                ),
-                and_(
-                    Event.home_team_name.ilike(pattern_b),
-                    Event.away_team_name.ilike(pattern_a),
-                ),
-            ),
-            Event.status.in_(["scheduled", "live"]),
-        ).limit(1)
-    )
-    if existing_result.scalar_one_or_none():
-        logger.debug("Event already exists for '%s vs %s', skipping auto-create", team_a, team_b)
-        return None
-
-    # Get or create Sport record
-    sport_result = await session.execute(
-        select(Sport).where(Sport.key == sport_key)
-    )
-    sport = sport_result.scalar_one_or_none()
-    if not sport:
-        sport_info = _SPORT_KEY_NAMES.get(sport_key, (sport_key, sport_key.split("_")[0].title()))
-        sport = Sport(
-            key=sport_key,
-            name=sport_info[0],
-            group=sport_info[1],
-            active=True,
-        )
-        session.add(sport)
-        await session.flush()  # Get the ID
-
+    # ── Unified event matching via Event Registry ──
     # Determine commence_time: use market's commence_time if reasonable,
     # otherwise use now (the market is probably live)
     commence_time = market.commence_time
     if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
-        # commence_time is missing or >30 days away (likely resolution date) — use now
         commence_time = now
 
-    # Determine status from commence_time, not market status.
-    # Prediction markets are "open" for trading weeks before game start,
-    # so market.status is not a reliable indicator of whether the game is live.
     status = "live" if commence_time <= now else "scheduled"
-
-    # Create a unique external_id from the prediction market
     external_id = f"pm_{market.source}_{market.external_id}"
 
-    # Check if an event with this external_id already exists (race condition guard)
-    existing_by_ext = await session.execute(
-        select(Event).where(Event.external_id == external_id).limit(1)
+    from app.services.event_registry import (
+        find_or_create_event, EventIdentity, EventClaim,
     )
-    existing_event = existing_by_ext.scalar_one_or_none()
-    if existing_event:
-        logger.debug(
-            "Event already exists with external_id=%s (event %d), skipping auto-create",
-            external_id, existing_event.id,
-        )
-        return None
-
-    # Create the Event
-    event = Event(
-        sport_id=sport.id,
-        external_id=external_id,
+    identity = EventIdentity(
+        sport_key=sport_key,
         home_team_name=team_a,
         away_team_name=team_b,
         commence_time=commence_time,
+        claim=EventClaim(market.source, external_id),
         status=status,
     )
-    session.add(event)
-    await session.flush()  # Get the event ID
+    event, was_created = await find_or_create_event(session, identity)
 
     # Determine yes_is_home mapping
     team_match = match_teams_to_event(matchup, team_a, team_b)
