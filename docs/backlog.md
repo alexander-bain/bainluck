@@ -76,6 +76,20 @@ Related Futures was timing out (fixed April 15 — tier-aware loading + recency 
 
 Also: enrich `PlayerStatCard` with actual results for completed games — show what the market expected vs what happened. Same card for live and completed, just with actuals overlaid when available. Card already exists (`PlayerStatCard.tsx`, `PlayerPropsGrid.tsx`) but doesn't surface actuals. Box score data is on `Event.box_score_data` (JSONB).
 
+### ESPN + Source Coverage Crisis (discovered April 15)
+ESPN win probability is barely writing to events. Of 34 ESPN events synced per cycle, only 1 win_prob snapshot is being created, and 67 ESPN events are "unmatched" (ESPN sees them but we can't match to our events table). NBA events show only `statpal_fixture_id` as a source, not ESPN or betting odds. NHL events show only `stat_model`. No events have Kalshi or Polymarket in their `win_probability_sources`.
+
+**Impact**: The core product — multi-source probability display — is running on a single source for most events instead of 3-5 sources.
+
+**Needs investigation**:
+- Why are 67 ESPN events unmatched per sync cycle?
+- Why is win_prob_snapshot creation so low (1 per cycle)?
+- Are betting odds from Odds API being written to `win_probability_sources`?
+- Feed response doesn't include `win_probability_sources` — is it stripped in serialization?
+
+### Prediction Market Matching Fix — SHIPPED April 15
+Game prop format ("Team A at Team B: Stat Type") was being SKIPPED by matchup extraction. Fixed: 2,882 markets newly linked in first run. `no_matchup_extracted` dropped from 12,558 to 4,633. Coverage chart should start recovering.
+
 ### Roster-Based team_id Tagging — SHIPPED April 15 (iterating)
 Roster matching added to team_linking backfill. Three matching strategies:
 1. **Event-scoped** (best): Market has `event_id` → load only those 2 teams' rosters → near-perfect accuracy for Kalshi player props.
