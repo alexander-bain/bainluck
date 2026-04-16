@@ -224,9 +224,10 @@ async def _sync_espn_live_events():
 
     def espn_names_match(our_names, espn_team):
         """Check if any of our name variations match any ESPN name variant."""
-        for espn_name in get_espn_name_variants(espn_team):
-            if names_match(our_names, espn_name):
-                return True
+        for our_name in our_names:
+            for espn_name in get_espn_name_variants(espn_team):
+                if names_match(our_name, espn_name):
+                    return True
         return False
 
     try:
