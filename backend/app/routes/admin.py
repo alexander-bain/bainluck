@@ -2548,6 +2548,53 @@ async def get_team_links_status(
     }
 
 
+@router.post("/teams/merge")
+async def merge_duplicate_team(
+    secret: str = Query(...),
+    source_id: int = Query(..., description="Team ID to merge FROM (duplicate, will be deleted)"),
+    target_id: int = Query(..., description="Team ID to merge INTO (canonical, will be kept)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge a duplicate team into the canonical one. Reassigns all FKs then deletes the duplicate."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import Team
+    from sqlalchemy import text
+
+    # Verify both teams exist
+    source = await db.get(Team, source_id)
+    target = await db.get(Team, target_id)
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Source team {source_id} not found")
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Target team {target_id} not found")
+
+    # Reassign all FKs from source to target
+    fk_updates = [
+        "UPDATE events SET home_team_id = :target WHERE home_team_id = :source",
+        "UPDATE events SET away_team_id = :target WHERE away_team_id = :source",
+        "UPDATE futures_outcomes SET team_id = :target WHERE team_id = :source",
+        "UPDATE user_favorites SET team_id = :target WHERE team_id = :source",
+        "UPDATE team_identity_mapping SET team_id = :target WHERE team_id = :source",
+    ]
+    counts = {}
+    for sql in fk_updates:
+        table = sql.split("UPDATE ")[1].split(" SET")[0]
+        result = await db.execute(text(sql), {"source": source_id, "target": target_id})
+        counts[table] = result.rowcount
+
+    # Delete the duplicate
+    await db.execute(text("DELETE FROM teams WHERE id = :source"), {"source": source_id})
+    await db.commit()
+
+    return {
+        "merged": f"{source.name} (id={source_id}) → {target.name} (id={target_id})",
+        "fk_updates": counts,
+        "deleted_team_id": source_id,
+    }
+
+
 @router.get("/futures/team-links-sample")
 async def sample_team_linked_outcomes(
     secret: str = Query(...),
