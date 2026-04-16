@@ -161,11 +161,28 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 stats["markets_tiered"] += 1
 
             # --- Phase 2: Link outcomes to teams ---
-            # Get markets with outcomes that need linking, grouped by sport category
+            # Skip generic outcomes that can never match a team/player name.
+            # This dramatically reduces the number of outcomes we process.
+            from sqlalchemy import text as sa_text
+            _SKIP_PATTERNS = (
+                "^(Yes|No|Over|Under|Draw|Tie|Push)$",          # Binary outcomes
+                "^O/U ",                                         # Over/Under lines
+                "^Spread ",                                      # Spread lines
+                "^(Handicap|Game Handicap|Map Handicap)",        # Handicaps
+                "^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9])",  # Game/map labels
+                "^(Odd/Even|Total Kills|First Blood)",           # Esports generics
+                "^[0-9]",                                        # Numeric outcomes ("218.5")
+            )
+            skip_regex = "|".join(f"({p})" for p in _SKIP_PATTERNS)
+
             outcomes_result = await session.execute(
                 select(FuturesOutcome)
                 .options(selectinload(FuturesOutcome.market))
-                .where(FuturesOutcome.team_id.is_(None))
+                .where(
+                    FuturesOutcome.team_id.is_(None),
+                    ~FuturesOutcome.name.op("~*")(skip_regex),  # Postgres case-insensitive regex
+                    func.length(FuturesOutcome.name) >= 4,       # Skip very short names
+                )
                 .order_by(FuturesOutcome.market_id)
                 .limit(limit)
             )
