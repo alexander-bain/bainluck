@@ -2574,7 +2574,7 @@ export default function RelatedFutures({
             <div className="rounded-xl border border-surface-border overflow-hidden mb-3">
               <div className="flex items-center justify-between px-4 py-2 border-b border-surface-border/30">
                 <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-muted">
-                  Awards & All-Team
+                  Season Awards
                 </span>
                 <span className="text-[10px] text-text-muted/50">
                   {homeShort}/{awayShort} players
