@@ -2892,6 +2892,36 @@ async def delete_duplicate_events(
     return {"deleted": result.rowcount, "event_ids": ids}
 
 
+@router.post("/futures/retier")
+async def retier_futures_markets(
+    secret: str = Query(...),
+    limit: int = Query(1000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-compute market_tier for all futures markets using current patterns."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.market_label_normalization import compute_market_tier
+
+    result = await db.execute(
+        select(FuturesMarket).limit(limit)
+    )
+    markets = result.scalars().all()
+    changed = 0
+    for market in markets:
+        new_tier = compute_market_tier(
+            market.name, market.category,
+            sport_category=market.llm_sport_category,
+        )
+        if market.market_tier != new_tier:
+            market.market_tier = new_tier
+            changed += 1
+
+    await db.commit()
+    return {"scanned": len(markets), "changed": changed}
+
+
 @router.post("/espn/backfill-ids")
 async def backfill_espn_ids(
     secret: str = Query(...),
