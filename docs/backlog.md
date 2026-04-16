@@ -49,6 +49,38 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 ---
 
+### 1B. Event Detail Page Quality Issues (discovered April 16)
+**Layer:** frontend-components, backend-routes
+**Parallel Safety:** Yellow (touches frontend components + backend routes)
+
+**Issues found on Athletics vs Rangers game (screenshot April 16):**
+
+1. **Baseball game state markers say just "1", "2", "3"** — need "Top 1st", "Mid 3rd", "Bot 5th" etc. Currently showing bare inning numbers that overlap and are unreadable. Must clarify half-inning and space markers so they don't collide.
+
+2. **Player props show "points" and "assists" for a baseball game** — these are hockey stat categories leaking into baseball. Vladislav Gavrikov and Mavrik Bourque are hockey players, not baseball. The player props section is pulling from the wrong sport. Likely a sport filter issue in Related Futures.
+
+3. **Player prop cards need headshots** — text-only cards look bad. `PlayerStatCard.tsx` already has `PlayerAvatar` with ESPN headshot support. May just need the `espnPlayerId` or `headshotUrl` to be passed through from the backend.
+
+4. **Playoff Path card broken for Athletics** — only shows "AL Champ: 2%" with no other columns (Make Playoffs, Division, Championship). Alex provided full Kalshi/Polymarket market links for all MLB progression levels. The `league_configs.py` MLB config may be missing matching rules for these markets.
+
+5. **Title Odds card shows Rangers at 52%** — impossibly high for mid-season. And it duplicates info that should be in the Playoff Path card. Title Odds card should be removed (we decided this before) or at minimum should agree with the Playoff Path championship column.
+
+6. **Awards & All-Team card** — only shows "Corey Seager" with 5%. Should show many more players. Card title "Awards & All-Team" is awkward — rename to something like "Player Awards" or "Season Awards". Need to populate from the full list of MLB award markets (MVP, Cy Young, ROY, etc. — Alex provided Kalshi/Polymarket links).
+
+7. **"More Baseball" text at bottom** — shows as plain text with no link or card. Should either link to the MLB league page or be removed.
+
+**MLB Market Links (from Alex, for Playoff Path + Awards):**
+- Make playoffs: Kalshi `kxmlbplayoffs`, PM `mlb-team-to-make-postseason`
+- Divisions: Kalshi `kxmlbaleast/alcent/alwest/nleast/nlcent/nlwest`, PM equivalents
+- League champions: Kalshi `kxmlbal/kxmlbnl`, PM equivalents
+- World Series: Kalshi `kxmlb`, PM `mlb-world-series-champion-2026`
+- Win totals: Kalshi category, PM `mlb-2026-regular-season-win-totals`
+- Awards: PM has 16+ player award markets (MVP, Cy Young, ROY, Manager, etc.)
+- League leaders: Kalshi category
+- Best/worst record: Kalshi `kxmlbbestrecord/worstrecord`
+
+---
+
 ### 2. Name Normalization Consolidation
 **Layer:** backend-utils, backend-routes, backend-tasks, backend-services
 **Touches:** `utils/name_normalization.py` (primary), `routes/playoffs.py`, `routes/golf.py`, `routes/oscars.py`, `services/datagolf_api.py`, `tasks/mlb_sync.py`
