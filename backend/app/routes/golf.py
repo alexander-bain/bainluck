@@ -1968,6 +1968,44 @@ async def get_golf_tournament(
                 g["make_cut_prob"] = round(probs["make_cut"] * 100, 1) if "make_cut" in probs else None
                 g["round_leader_prob"] = round(probs["round_leader"] * 100, 1) if "round_leader" in probs else None
 
+    # ------------------------------------------------------------------
+    # Build "Related Futures" — tournament-specific markets NOT in the grid.
+    # These are H2H matchups, nationality props, hole-in-one, bogey-free, etc.
+    # ------------------------------------------------------------------
+    other_group = next((g for g in sorted_groups if g["type"] == "other"), None)
+    related_futures = []
+    if other_group and other_group["market_ids"]:
+        other_outcomes_result = await db.execute(
+            select(FuturesOutcome)
+            .options(selectinload(FuturesOutcome.market))
+            .where(
+                FuturesOutcome.market_id.in_(other_group["market_ids"]),
+                FuturesOutcome.current_probability.isnot(None),
+            )
+            .order_by(FuturesOutcome.current_probability.desc())
+        )
+        other_outcomes = other_outcomes_result.scalars().all()
+
+        # Group outcomes by market
+        from collections import defaultdict as _defaultdict
+        outcomes_by_market: dict[int, list] = _defaultdict(list)
+        for o in other_outcomes:
+            outcomes_by_market[o.market_id].append({
+                "name": o.name,
+                "probability": round(float(o.current_probability), 4) if o.current_probability else None,
+                "american_odds": o.current_american_odds,
+                "probability_change_24h": round(float(o.probability_change_24h), 4) if o.probability_change_24h else None,
+            })
+
+        for mid in other_group["market_ids"]:
+            mname = id_to_name.get(mid, "")
+            if mid in outcomes_by_market:
+                related_futures.append({
+                    "market_id": mid,
+                    "market_name": mname,
+                    "outcomes": outcomes_by_market[mid],
+                })
+
     return {
         "tournament": {
             "name": tournament["name"],
@@ -1985,6 +2023,7 @@ async def get_golf_tournament(
         },
         "golfers": golfers,
         "markets": sorted_groups,
+        "related_futures": related_futures,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,
         "h2h_matchups": tournament.get("h2h_matchups", []),

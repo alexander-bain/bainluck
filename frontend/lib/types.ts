@@ -1225,6 +1225,16 @@ export interface GolfTournamentDetailResponse {
   };
   golfers: GolfGolfer[];
   markets: GolfMarketGroup[];
+  related_futures?: {
+    market_id: number;
+    market_name: string;
+    outcomes: {
+      name: string;
+      probability: number | null;
+      american_odds: number | null;
+      probability_change_24h: number | null;
+    }[];
+  }[];
   evolution_market_id: number | null;
   biggest_movers: GolfMover[];
   h2h_matchups?: GolfH2HMatchup[];

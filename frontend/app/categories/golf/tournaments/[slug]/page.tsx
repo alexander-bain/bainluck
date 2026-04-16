@@ -465,6 +465,11 @@ export default function GolfTournamentPage() {
           hasSnapshot={leaderboard?.has_snapshot || false}
         />
 
+        {/* Related Futures — tournament-specific markets not in the grid */}
+        {data.related_futures && data.related_futures.length > 0 && (
+          <TournamentRelatedFutures markets={data.related_futures} accentColor={accentColor} />
+        )}
+
         {/* Footer */}
         <p className="text-center text-[11px] text-gray-400">
           Probabilities from {isLive ? "DataGolf in-play model" : "sportsbook consensus"}.
@@ -475,6 +480,90 @@ export default function GolfTournamentPage() {
     </main>
   );
 }
+
+// ============================================================================
+// Tournament Related Futures
+// ============================================================================
+
+interface RelatedFutureMarket {
+  market_id: number;
+  market_name: string;
+  outcomes: {
+    name: string;
+    probability: number | null;
+    american_odds: number | null;
+    probability_change_24h: number | null;
+  }[];
+}
+
+function TournamentRelatedFutures({
+  markets,
+  accentColor,
+}: {
+  markets: RelatedFutureMarket[];
+  accentColor: string;
+}) {
+  if (!markets.length) return null;
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-gray-900 mb-3">More Markets</h2>
+      <div className="space-y-3">
+        {markets.map((market) => (
+          <div
+            key={market.market_id}
+            className="border border-gray-200 rounded-xl p-4 bg-white"
+          >
+            <h3 className="text-xs font-semibold text-gray-700 mb-3">
+              {market.market_name}
+            </h3>
+            <div className="space-y-1.5">
+              {market.outcomes.slice(0, 10).map((outcome, i) => (
+                <div
+                  key={`${outcome.name}-${i}`}
+                  className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50"
+                >
+                  <span className="text-sm text-gray-800 truncate mr-3">
+                    {outcome.name}
+                  </span>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {outcome.probability_change_24h != null &&
+                      Math.abs(outcome.probability_change_24h) >= 0.005 && (
+                        <span
+                          className={`text-[11px] font-medium ${
+                            outcome.probability_change_24h > 0
+                              ? "text-green-600"
+                              : "text-red-500"
+                          }`}
+                        >
+                          {outcome.probability_change_24h > 0 ? "+" : ""}
+                          {(outcome.probability_change_24h * 100).toFixed(1)}
+                        </span>
+                      )}
+                    <span
+                      className="text-sm font-semibold min-w-[48px] text-right"
+                      style={{ color: accentColor }}
+                    >
+                      {outcome.probability != null
+                        ? `${(outcome.probability * 100).toFixed(0)}%`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {market.outcomes.length > 10 && (
+                <p className="text-[11px] text-gray-400 text-center pt-1">
+                  +{market.outcomes.length - 10} more
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 
 // ============================================================================
 // Leaderboard Grid
