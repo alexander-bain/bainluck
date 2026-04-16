@@ -718,10 +718,18 @@ async def _poll_all_odds():
 
                             # Write betting consensus to win_probability_sources
                             # so the multi-source aggregation system sees it.
-                            # Use the event object from find_or_create_event() directly.
-                            sources = event.win_probability_sources or {}
-                            sources["betting"] = round(avg_home, 4)
-                            event.win_probability_sources = sources
+                            # Use raw SQL to merge into JSONB — avoids ORM session
+                            # caching issues with the event object.
+                            from sqlalchemy import text as _text
+                            await session.execute(
+                                _text("""
+                                    UPDATE events
+                                    SET win_probability_sources = COALESCE(win_probability_sources, '{}'::jsonb)
+                                        || jsonb_build_object('betting', :prob::text::jsonb)
+                                    WHERE id = :eid
+                                """),
+                                {"prob": str(round(avg_home, 4)), "eid": event_id},
+                            )
 
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
