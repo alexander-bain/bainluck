@@ -722,6 +722,10 @@ _TIER_4_PATTERNS = [
     re.compile(r"\b(al.east|al.west|al.central|nl.east|nl.west|nl.central)\b", re.I),
     re.compile(r"\b(afc.east|afc.west|afc.north|afc.south|nfc.east|nfc.west|nfc.north|nfc.south)\b", re.I),
     re.compile(r"\b(metropolitan|atlantic.division|pacific.division|central.division)\b", re.I),
+    # Playoff qualification — progression step before championship
+    re.compile(r"\bplayoff.qualif", re.I),
+    re.compile(r"\bmake.(?:the.)?(?:playoffs|postseason)", re.I),
+    re.compile(r"\b(?:playoff|postseason).berth", re.I),
 ]
 
 _NON_SPORT_CATEGORIES = {
