@@ -2883,8 +2883,10 @@ async def backfill_espn_ids(
     cutoff = now - timedelta(days=days)
 
     # Find events without ESPN ID
+    from sqlalchemy.orm import selectinload
     query = (
         select(Event)
+        .options(selectinload(Event.sport))
         .where(
             Event.espn_id.is_(None),
             Event.commence_time >= cutoff,
