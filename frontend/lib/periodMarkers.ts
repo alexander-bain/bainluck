@@ -60,9 +60,12 @@ export function normalizePeriodLabel(raw: string): string {
   const hMatch = s.match(/^(\d+)\w*\s+half$/i);
   if (hMatch) return `${hMatch[1]}H`;
 
-  // Baseball innings: "Top 3rd" / "Bottom 3rd" / "Mid 3rd" -> "3"
-  const iMatch = s.match(/^(?:top|bottom|mid|end)\s+(\d+)/i);
-  if (iMatch) return iMatch[1];
+  // Baseball innings: "Top 3rd" → "T3", "Bottom 5th" → "B5", "Mid 7th" → "M7"
+  const iMatch = s.match(/^(top|bottom|mid|end)\s+(\d+)/i);
+  if (iMatch) {
+    const prefix = iMatch[1][0].toUpperCase();
+    return `${prefix}${iMatch[2]}`;
+  }
 
   // Plain ordinal inning: "3rd" -> "3" (sometimes ESPN just sends this)
   const ordMatch = s.match(/^(\d+)(?:st|nd|rd|th)$/i);

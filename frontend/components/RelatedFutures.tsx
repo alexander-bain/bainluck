@@ -2433,17 +2433,9 @@ export default function RelatedFutures({
       </h3>
       <div className="max-w-2xl mx-auto">
 
-      {/* Title Odds comparison — hidden when grid-based playoff path is available (redundant) */}
-      {showTitleComparison && !hasGridProgression && (
-        <TitleComparison
-          homeChamp={homeChamp!}
-          awayChamp={awayChamp!}
-          homeTeam={homeTeam}
-          awayTeam={awayTeam}
-          homeTeamColor={hColor}
-          awayTeamColor={aColor}
-        />
-      )}
+      {/* Title Odds comparison removed — Playoff Path card shows the same info
+          in a better format. The Title Odds card was showing wrong data (game-level
+          moneyline probabilities misclassified as championship odds). */}
 
       {/* === Level 3: Game Markets === */}
       {gameMarketCount > 0 && (

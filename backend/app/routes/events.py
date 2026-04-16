@@ -2777,12 +2777,21 @@ async def get_related_futures(
     season_market_ids = [row.id for row in season_result.all()]
 
     # Game props (tier 5): only load markets linked to THIS specific event
-    game_prop_result = await db.execute(
-        select(FuturesMarket.id).where(
-            rf_status_filter,
-            FuturesMarket.event_id == event_id,
-            FuturesMarket.market_tier == 5,
+    # Also verify sport matches to prevent cross-sport contamination
+    game_prop_filters = [
+        rf_status_filter,
+        FuturesMarket.event_id == event_id,
+        FuturesMarket.market_tier == 5,
+    ]
+    if event.sport_id:
+        game_prop_filters.append(
+            or_(
+                FuturesMarket.sport_id == event.sport_id,
+                FuturesMarket.sport_id.is_(None),
+            )
         )
+    game_prop_result = await db.execute(
+        select(FuturesMarket.id).where(*game_prop_filters)
     )
     game_prop_ids = [row.id for row in game_prop_result.all()]
 
