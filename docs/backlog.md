@@ -179,20 +179,20 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 ---
 
-### 5. iOS Search & Futures Parity
+### 5. iOS Search & Futures Parity — **SHIPPED April 16** (not build-verified)
 **Layer:** ios
 **Touches:** `ios/Bain Luck/Views/SearchView.swift`, `ios/Bain Luck/Models/`, `ios/Bain Luck/Services/APIClient.swift`, potentially new Views
 **Depends on:** Nothing
 **Conflicts with:** Nothing (iOS is fully isolated)
 **Parallel Safety:** Green — can ALWAYS run in parallel
 
-**Problem:** iOS search has no filter UI (sport, status, league). No dedicated futures browsing. League list is hardcoded. These gaps make the app feel incomplete for new TestFlight users.
+**Status:** Commit `7620535`. Search filters + recent searches + FuturesListView shipped. NOT build-verified (SPM sandbox issue). Dynamic league list skipped (no backend endpoint). See `memory/project_ios_parity_april16.md` for full change log.
 
 **Acceptance criteria:**
-- Search: sport/status filter chips below search bar (match web patterns)
-- Search: recent searches stored in UserDefaults, shown when search field is empty
-- Futures: browsable futures section accessible from main navigation
-- League list: fetched from API, not hardcoded
+- ~~Search: sport/status filter chips below search bar (match web patterns)~~ DONE
+- ~~Search: recent searches stored in UserDefaults, shown when search field is empty~~ DONE
+- ~~Futures: browsable futures section accessible from main navigation~~ DONE (iPad sidebar)
+- League list: fetched from API, not hardcoded — SKIPPED (no backend endpoint)
 
 **Prompt:**
 > Close the iOS feature gaps for TestFlight readiness. The iOS app is at `ios/Bain Luck/`. Key patterns:
