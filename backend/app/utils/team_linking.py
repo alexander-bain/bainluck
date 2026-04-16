@@ -83,6 +83,18 @@ def match_outcome_to_team(
     return None
 
 
+def _strip_diacritics(s: str) -> str:
+    """Remove diacritics/accents for fuzzy name matching.
+
+    'Luka Dončić' → 'Luka Doncic', 'José Ramírez' → 'Jose Ramirez'
+    """
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
 def match_outcome_to_roster(
     outcome_name: str,
     team_rosters: dict[int, list[str]],
@@ -101,13 +113,13 @@ def match_outcome_to_roster(
         return None
 
     # Skip generic outcomes
-    name_lower = outcome_name.lower().strip()
+    name_lower = _strip_diacritics(outcome_name.lower().strip())
     if name_lower in ("yes", "no", "over", "under", "draw", "tie"):
         return None
 
     for team_id, players in team_rosters.items():
         for player in players:
-            player_lower = player.lower()
+            player_lower = _strip_diacritics(player.lower())
             # Require the full player name (first + last) to appear in the outcome.
             # Do NOT match if only a first or last name matches — too many collisions
             # (e.g., "Austin Eckroat" should not match "Austin FC").
