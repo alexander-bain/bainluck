@@ -730,6 +730,20 @@ async def _match_prediction_markets(limit: int = 500):
                 else:
                     stats["snapshots_deduped"] += 1
 
+                # Write to win_probability_sources on the event
+                # so the multi-source aggregation sees it
+                from sqlalchemy import update as _sql_upd
+                _pm_r = await session.execute(
+                    select(Event.win_probability_sources).where(Event.id == market.event_id)
+                )
+                _pm_wps = _pm_r.scalar_one_or_none() or {}
+                _pm_wps[source_key] = round(home_prob, 4)
+                await session.execute(
+                    _sql_upd(Event)
+                    .where(Event.id == market.event_id)
+                    .values(win_probability_sources=_pm_wps)
+                )
+
             except Exception as e:
                 stats["errors"].append(f"market {market.id}: {str(e)}")
                 continue
@@ -1514,6 +1528,19 @@ async def _poll_live_prediction_market_prices():
                     stats["snapshots_written"] += 1
                 else:
                     stats["snapshots_deduped"] += 1
+
+                # Write to win_probability_sources on the event
+                from sqlalchemy import update as _sql_upd2
+                _pm_r2 = await session.execute(
+                    select(Event.win_probability_sources).where(Event.id == event.id)
+                )
+                _pm_wps2 = _pm_r2.scalar_one_or_none() or {}
+                _pm_wps2[market.source] = round(home_prob, 4)
+                await session.execute(
+                    _sql_upd2(Event)
+                    .where(Event.id == event.id)
+                    .values(win_probability_sources=_pm_wps2)
+                )
 
             except Exception as e:
                 stats["errors"].append(f"snapshot_{market.id}: {str(e)[:100]}")
