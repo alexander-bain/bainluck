@@ -2855,6 +2855,135 @@ async def get_canonical_key_status(
 
 
 # ---------------------------------------------------------------------------
+# ESPN ID Backfill — retroactively match events to ESPN
+# ---------------------------------------------------------------------------
+
+@router.post("/espn/backfill-ids")
+async def backfill_espn_ids(
+    secret: str = Query(...),
+    days: int = Query(7, description="How many days back to scan"),
+    sport: Optional[str] = Query(None, description="Sport key filter (e.g., basketball_nba)"),
+    dry_run: bool = Query(True, description="If true, report matches without updating"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retroactively match events to ESPN schedules and set espn_id.
+
+    Scans events from the last N days that have no espn_id, fetches ESPN's
+    schedule for each date, and matches by team names.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.espn_api import ESPNAPIService
+    from app.utils.sport_keys import ESPN_SPORT_MAPPING
+    from app.utils.name_normalization import names_match
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    # Find events without ESPN ID
+    query = (
+        select(Event)
+        .where(
+            Event.espn_id.is_(None),
+            Event.commence_time >= cutoff,
+        )
+        .order_by(Event.commence_time.desc())
+    )
+    if sport:
+        query = query.where(Event.sport.has(key=sport))
+
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    # Group by sport_key + date for efficient ESPN API calls
+    from collections import defaultdict
+    groups: dict[tuple[str, str], list] = defaultdict(list)  # (sport_key, date_str) → [events]
+    for event in events:
+        if not event.sport:
+            continue
+        sport_key = event.sport.key
+        if sport_key not in ESPN_SPORT_MAPPING:
+            continue
+        date_str = event.commence_time.strftime("%Y%m%d")
+        groups[(sport_key, date_str)].append(event)
+
+    # Fetch ESPN schedules and match
+    espn = ESPNAPIService()
+    matched = 0
+    scanned = 0
+    matches = []
+
+    try:
+        for (sport_key, date_str), group_events in groups.items():
+            try:
+                espn_events = await espn.get_scoreboard(sport_key, date=date_str)
+            except Exception as e:
+                continue
+
+            if not espn_events:
+                continue
+
+            for event in group_events:
+                scanned += 1
+                for ee in espn_events:
+                    if not ee.home_team or not ee.away_team:
+                        continue
+                    espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                    espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                    # Match both teams (either orientation)
+                    normal = (
+                        names_match(event.home_team_name, espn_home) and
+                        names_match(event.away_team_name, espn_away)
+                    )
+                    swapped = (
+                        names_match(event.home_team_name, espn_away) and
+                        names_match(event.away_team_name, espn_home)
+                    )
+
+                    if normal or swapped:
+                        matches.append({
+                            "event_id": event.id,
+                            "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                            "espn_teams": f"{espn_home} vs {espn_away}",
+                            "espn_id": ee.espn_id,
+                            "date": date_str,
+                            "sport": sport_key,
+                            "orientation": "normal" if normal else "swapped",
+                        })
+
+                        if not dry_run:
+                            event.espn_id = ee.espn_id
+                            # Also update win prob if ESPN has it
+                            if ee.home_win_probability is not None:
+                                event.espn_win_prob_home = ee.home_win_probability
+                                sources = event.win_probability_sources or {}
+                                sources["espn"] = ee.home_win_probability
+                                event.win_probability_sources = sources
+
+                        matched += 1
+                        break
+
+        if not dry_run:
+            await db.commit()
+
+    finally:
+        await espn.close()
+
+    return {
+        "dry_run": dry_run,
+        "days_scanned": days,
+        "events_without_espn_id": len(events),
+        "events_scanned": scanned,
+        "events_matched": matched,
+        "match_rate": f"{matched*100/scanned:.1f}%" if scanned else "N/A",
+        "matches": matches[:50],  # Cap output
+    }
+
+
+# ---------------------------------------------------------------------------
 # Roster Sync (ESPN + MLB Stats API)
 # ---------------------------------------------------------------------------
 
