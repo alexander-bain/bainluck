@@ -716,6 +716,17 @@ async def _poll_all_odds():
                                 commence_time=commence_time,
                             )
 
+                            # Write betting consensus to win_probability_sources
+                            # so the multi-source aggregation system sees it
+                            evt_result = await session.execute(
+                                select(Event).where(Event.id == event_id)
+                            )
+                            evt = evt_result.scalar_one_or_none()
+                            if evt:
+                                sources = evt.win_probability_sources or {}
+                                sources["betting"] = round(avg_home, 4)
+                                evt.win_probability_sources = sources
+
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
                     continue
