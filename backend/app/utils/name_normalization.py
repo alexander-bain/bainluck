@@ -100,6 +100,10 @@ def normalize_name(name: str) -> str:
     # Unify apostrophe-like characters
     for ch in _APOSTROPHE_CHARS:
         stripped = stripped.replace(ch, "'")
+    # Normalize period-without-space: "St.Louis" → "St. Louis"
+    # Important for matching "St.Louis Cardinals" to "St. Louis Cardinals"
+    import re as _re
+    stripped = _re.sub(r'\.([A-Za-z])', r'. \1', stripped)
     # Lowercase, strip whitespace
     result = stripped.lower().strip()
     # Strip reserve/youth suffixes

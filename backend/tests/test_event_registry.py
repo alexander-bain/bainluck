@@ -147,10 +147,8 @@ class TestNameMatchingForEvents:
         )
 
     def test_st_louis_variants(self):
-        """St.Louis (no space) does NOT match St. Louis currently.
-        Known gap — normalization doesn't handle missing space after period."""
-        # TODO: Fix normalization to handle "St.Louis" → "St. Louis"
-        assert not names_match("St. Louis Cardinals", "St.Louis Cardinals")
+        """St.Louis (no space) matches St. Louis — normalization adds space after period."""
+        assert names_match("St. Louis Cardinals", "St.Louis Cardinals")
 
     def test_short_college_name(self):
         """Short names like 'Duke' don't match 'Duke Blue Devils' because
