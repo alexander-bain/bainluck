@@ -172,12 +172,17 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 "^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9])",  # Game/map labels
                 "^(Odd/Even|Total Kills|First Blood|Both Teams|Any Player|Exact Score)",  # Esports/soccer generics
                 "^[0-9]",                                        # Numeric outcomes ("218.5")
+                "wins (by|the|1H)",                              # Spread descriptions ("Team wins by over 5.5")
+                " over [0-9]",                                   # Point totals ("Team over 119.5 points")
+                " -[0-9]",                                       # Game handicaps ("Frances Tiafoe -1.5 games")
+                "\\(-[0-9]",                                     # Handicap notation ("Team (-2.5)")
+                "^(Double Double|Triple Double|Both Teams to Score|No Goal)",  # Stat/game generics
             )
             skip_regex = "|".join(f"({p})" for p in _SKIP_PATTERNS)
 
             # Prioritize US major sports where we have roster data.
-            # Process these first to maximize value per backfill run.
-            _US_SPORTS = ("basketball", "baseball", "football", "hockey", "golf")
+            # Skip golf — individual sport, no team rosters to match against.
+            _US_SPORTS = ("basketball", "baseball", "football", "hockey")
 
             outcomes_result = await session.execute(
                 select(FuturesOutcome)
