@@ -214,7 +214,6 @@ async def _discover_events():
         total_events = 0
         total_new_events = 0
         total_new_teams = 0
-        total_statpal_attached = 0
         total_espn_corrected = 0
         sports_polled = 0
         sports_skipped = 0
@@ -391,181 +390,36 @@ async def _discover_events():
                                 elif event_status == "scheduled":
                                     event_status = "live"
 
-                        # Check if an event with this external_id already exists
-                        # (prevents UniqueViolation when StatPal attachment
-                        # tries to set external_id on a different event)
-                        existing_event = (await session.execute(
-                            select(Event).where(
-                                Event.external_id == event_data["id"]
-                            ).limit(1)
-                        )).scalar_one_or_none()
+                        # ── Unified event matching via Event Registry ──
+                        from app.services.event_registry import (
+                            find_or_create_event, EventIdentity, EventClaim,
+                        )
+                        identity = EventIdentity(
+                            sport_key=sport_key,
+                            home_team_name=event_data["home_team"],
+                            away_team_name=event_data["away_team"],
+                            commence_time=espn_commence_time or commence_time,
+                            claim=EventClaim("odds_api", event_data["id"]),
+                            commence_time_source="espn" if espn_commence_time else "odds_api",
+                            status=event_status,
+                        )
+                        event, was_created = await find_or_create_event(
+                            session, identity,
+                        )
+                        event_id = event.id
 
-                        # Check if a StatPal-created event matches this Odds API event
-                        statpal_event = None
-                        if not existing_event:
-                            statpal_event = await _find_statpal_event_for_odds_api(
-                                session, sport.id,
-                                event_data["home_team"], event_data["away_team"],
-                                commence_time,
-                            )
+                        # Set ESPN ID if matched and not already set
+                        if espn_event_id and not event.espn_id:
+                            event.espn_id = espn_event_id
 
-                        if statpal_event:
-                            # Guard: ensure external_id isn't already claimed
-                            claimed_by = await _external_id_in_use(session, event_data["id"])
-                            if claimed_by:
-                                logger.info(
-                                    "Skipping StatPal attach: external_id %s already "
-                                    "used by event %d", event_data["id"], claimed_by,
-                                )
-                                event_id = claimed_by
-                            else:
-                                # Attach Odds API external_id to existing StatPal event
-                                statpal_event.external_id = event_data["id"]
-                                statpal_event.home_team_name = event_data["home_team"]
-                                statpal_event.away_team_name = event_data["away_team"]
-                                statpal_event.status = event_status
-                                # Only overwrite commence_time if StatPal didn't set it
-                                if statpal_event.commence_time_source != "statpal":
-                                    statpal_event.commence_time = (
-                                        espn_commence_time or commence_time
-                                    )
-                                    if espn_commence_time:
-                                        statpal_event.commence_time_source = "espn"
-                                # Set ESPN ID if matched and not already set
-                                if espn_event_id and not statpal_event.espn_id:
-                                    statpal_event.espn_id = espn_event_id
-                                event_id = statpal_event.id
-                                total_statpal_attached += 1
-                                logger.info(
-                                    f"Attached Odds API {event_data['id']} to StatPal "
-                                    f"event {event_id} ({event_data['home_team']} vs "
-                                    f"{event_data['away_team']})"
-                                )
-
-                            # Register Odds API identities for the attached event
-                            from app.services.team_identity import team_identity_service
-                            if statpal_event.home_team_id:
-                                await team_identity_service.register_team_identity(
-                                    session, statpal_event.home_team_id,
-                                    "odds_api", sport_key,
-                                    source_name=event_data["home_team"],
-                                )
-                            if statpal_event.away_team_id:
-                                await team_identity_service.register_team_identity(
-                                    session, statpal_event.away_team_id,
-                                    "odds_api", sport_key,
-                                    source_name=event_data["away_team"],
-                                )
-                        else:
-                            # No StatPal match — try broader dedup safety net
-                            # before creating a new event
-                            dedup_event = await _find_existing_event_by_teams(
-                                session, sport.id,
-                                event_data["home_team"], event_data["away_team"],
-                                commence_time,
-                                exclude_external_id=event_data["id"],
-                            )
-
-                            if dedup_event and not dedup_event.external_id:
-                                # Guard: ensure external_id isn't already claimed
-                                claimed_by = await _external_id_in_use(session, event_data["id"])
-                                if claimed_by:
-                                    logger.info(
-                                        "Skipping dedup attach: external_id %s already "
-                                        "used by event %d", event_data["id"], claimed_by,
-                                    )
-                                    event_id = claimed_by
-                                else:
-                                    # Orphan event (no external_id) — attach this one
-                                    dedup_event.external_id = event_data["id"]
-                                    dedup_event.home_team_name = event_data["home_team"]
-                                    dedup_event.away_team_name = event_data["away_team"]
-                                    dedup_event.status = event_status
-                                    if dedup_event.commence_time_source != "statpal":
-                                        dedup_event.commence_time = (
-                                            espn_commence_time or commence_time
-                                        )
-                                        if espn_commence_time:
-                                            dedup_event.commence_time_source = "espn"
-                                    if espn_event_id and not dedup_event.espn_id:
-                                        dedup_event.espn_id = espn_event_id
-                                    event_id = dedup_event.id
-                                    total_statpal_attached += 1
-                                    logger.info(
-                                        "Dedup safety net: attached Odds API %s to "
-                                        "orphan event %d (%s vs %s)",
-                                        event_data["id"], dedup_event.id,
-                                        event_data["home_team"],
-                                        event_data["away_team"],
-                                    )
-                            elif (
-                                dedup_event
-                                and dedup_event.external_id
-                                and dedup_event.external_id != event_data["id"]
-                            ):
-                                # Different external_id — could be a doubleheader
-                                # or different source. Do normal upsert.
-                                logger.info(
-                                    "Dedup safety net: found event %d with "
-                                    "different external_id '%s' for %s vs %s "
-                                    "(new: '%s') — not a duplicate, proceeding",
-                                    dedup_event.id, dedup_event.external_id,
-                                    event_data["home_team"],
-                                    event_data["away_team"],
-                                    event_data["id"],
-                                )
-                                dedup_event = None  # Fall through to normal upsert
-
-                            if not dedup_event:
-                                # Normal upsert (no duplicate found)
-                                insert_vals = {
-                                    "external_id": event_data["id"],
-                                    "sport_id": sport.id,
-                                    "home_team_name": event_data["home_team"],
-                                    "away_team_name": event_data["away_team"],
-                                    "commence_time": (
-                                        espn_commence_time or commence_time
-                                    ),
-                                    "status": event_status,
-                                    "commence_time_source": (
-                                        "espn" if espn_commence_time else "odds_api"
-                                    ),
-                                }
-                                if espn_event_id:
-                                    insert_vals["espn_id"] = espn_event_id
-                                stmt = insert(Event).values(
-                                    **insert_vals
-                                ).on_conflict_do_update(
-                                    index_elements=["external_id"],
-                                    set_={
-                                        "home_team_name": event_data["home_team"],
-                                        "away_team_name": event_data["away_team"],
-                                        # Don't overwrite commence_time — The Odds API occasionally
-                                        # returns local times as UTC. ESPN sync corrects these.
-                                        "status": case(
-                                            (Event.status == "scheduled", event_status),
-                                            else_=Event.status
-                                        ),
-                                    }
-                                ).returning(Event.id)
-
-                                result = await session.execute(stmt)
-                                event_id = result.scalar_one()
+                        if was_created:
+                            total_new_events += 1
 
                         total_events += 1
 
                         # Track team names for auto-creation below
                         all_team_names.add(event_data["home_team"])
                         all_team_names.add(event_data["away_team"])
-
-                        # Check if this was a new event (simple heuristic)
-                        # If the event has no snapshots, it's likely new
-                        snapshot_check = await session.execute(
-                            select(func.count(OddsSnapshot.id))
-                            .where(OddsSnapshot.event_id == event_id)
-                        )
-                        if snapshot_check.scalar() == 0:
-                            total_new_events += 1
 
                         # Also save odds snapshots for this event
                         # This ensures events discovered have odds data immediately
@@ -696,7 +550,6 @@ async def _discover_events():
             "events_found": total_events,
             "new_events": total_new_events,
             "new_teams": total_new_teams,
-            "statpal_attached": total_statpal_attached,
             "espn_corrected": total_espn_corrected,
         }
     finally:
