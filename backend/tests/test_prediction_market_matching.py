@@ -83,20 +83,20 @@ class TestIsGameLevelMarket:
     def test_will_win_over(self):
         assert is_game_level_market("Will the Lakers win over the Celtics?", "championship", 1)
 
-    def test_not_game_prop(self):
-        """Game props (with stat suffix) are NOT game-level moneyline markets."""
-        assert not is_game_level_market(
+    def test_game_prop_is_game_level(self):
+        """Game props ARE game-level — tied to a specific game, need event_id."""
+        assert is_game_level_market(
             "Boston at Golden State: Rebounds", "game_prop", 1,
         )
 
-    def test_not_game_prop_points(self):
-        assert not is_game_level_market(
+    def test_game_prop_points_is_game_level(self):
+        assert is_game_level_market(
             "Lakers vs Clippers: Total Points", "game_prop", 1,
         )
 
-    def test_not_dash_game_prop(self):
-        """Dash-separated game props are NOT game-level."""
-        assert not is_game_level_market(
+    def test_dash_game_prop_is_game_level(self):
+        """Dash-separated game props ARE game-level."""
+        assert is_game_level_market(
             "Bayern Munich - Dortmund: Total Goals", "game_prop", 1,
         )
 
@@ -252,10 +252,13 @@ class TestExtractMatchup:
         assert result.yes_team == "Lakers"
         assert result.format_type == "will_win"
 
-    def test_game_prop_returns_none(self):
-        """Game props should NOT be extracted as matchups."""
+    def test_game_prop_extracts_teams(self):
+        """Game props SHOULD extract teams — they're tied to a game."""
         result = extract_matchup("Boston at Golden State: Rebounds")
-        assert result is None
+        assert result is not None
+        assert result.team_a == "Boston"
+        assert result.team_b == "Golden State"
+        assert result.format_type == "game_prop"
 
     def test_championship_will_win_returns_none(self):
         """Championship questions should NOT match."""
@@ -335,10 +338,13 @@ class TestExtractMatchup:
         assert result.team_a == "Lakers"
         assert result.team_b == "Celtics"
 
-    def test_dash_game_prop_returns_none(self):
-        """Dash-separated game props should NOT be extracted."""
+    def test_dash_game_prop_extracts_teams(self):
+        """Dash-separated game props SHOULD extract teams."""
         result = extract_matchup("Bayern Munich - Dortmund: Total Goals")
-        assert result is None
+        assert result is not None
+        assert result.team_a == "Bayern Munich"
+        assert result.team_b == "Dortmund"
+        assert result.format_type == "game_prop"
 
     def test_not_championship_will_win_expanded(self):
         """Additional non-game keywords shouldn't match."""

@@ -288,11 +288,12 @@ def _check_game_level(name: str) -> bool:
     if not name:
         return False
 
-    # Skip game props (have ": stat" suffix after matchup)
+    # Game prop format ("Team A at Team B: Points") IS game-level — it's
+    # tied to a specific game. Check it as a matchup pattern, not a skip.
     if _GAME_PROP_RE.match(name):
-        return False
+        return True
     if _DASH_PROP_RE.match(name):
-        return False
+        return True
 
     # Check for matchup patterns (order matters: more specific first)
     if _WILL_WIN_AGAINST_RE.match(name):
@@ -406,11 +407,19 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     if not market_name:
         return None
 
-    # Skip game props
-    if _GAME_PROP_RE.match(market_name):
-        return None
-    if _DASH_PROP_RE.match(market_name):
-        return None
+    # Game prop format: "Team A at/vs Team B: Stat Type"
+    # Extract the matchup — these ARE game-level markets that need event linking.
+    # The stat suffix (": Points", ": Spread", etc.) is irrelevant for matching.
+    m = _GAME_PROP_RE.match(market_name)
+    if m:
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
+        return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="game_prop")
+    m = _DASH_PROP_RE.match(market_name)
+    if m:
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
+        return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="game_prop")
 
     # "Will Team A win against/over Team B?" (check before will_win)
     m = _WILL_WIN_AGAINST_RE.match(market_name)
