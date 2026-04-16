@@ -129,6 +129,17 @@ These markets already exist on Kalshi/Polymarket. Need a "Related Futures for To
 - Exclude markets already represented in any grid column (Win, Make Cut, Top 5, etc.) — not just tier 1. Grid already returns `market_id` per column; use those as the exclusion set.
 - Query: all tournament-matching markets MINUS grid market IDs → Related Futures
 
+### Evolution Chart for Golf — Needs Major Refinement
+The golf evolution chart has multiple problems. DataGolf's version is the gold standard — clean, informative, beautiful. Ours is not close yet.
+
+**Known issues:**
+- "24 Hours" and "Today" time ranges make no sense for golf — should be "Round 1", "Round 2", etc. or "Tournament" only
+- "Tournament" time range shows up before the tournament has started
+- Round 1 game state marker shows wrong day (Wednesday instead of Thursday)
+- Time ranges should be tournament-aware: pre-tournament (Season/1M/1W), during tournament (by round), post-tournament (full tournament view)
+- Need round markers (R1/R2/R3/R4) as vertical lines — see backlog item under Golf Features
+- Compare against DataGolf's evolution plot for design reference
+
 ### Strategy Decisions (need Alex's call)
 - Default to PGA Tour only? (Recommendation: yes, "All Tours" toggle)
 - Golf home hierarchy? (Recommendation: hero -> majors -> upcoming -> completed)
