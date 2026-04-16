@@ -510,9 +510,8 @@ async def _sync_espn_live_events():
 
                         # Update ESPN win probability and save snapshot
                         if ee.home_win_probability is not None:
-                            event.espn_win_prob_home = ee.home_win_probability
-                            # Write to win_probability_sources via select+update
-                            # to avoid ORM session caching issues
+                            # Write both espn_win_prob_home AND win_probability_sources
+                            # in one atomic update to keep them in sync
                             from sqlalchemy import update as _sql_update
                             _wps_r = await session.execute(
                                 select(Event.win_probability_sources).where(Event.id == event.id)
@@ -522,7 +521,10 @@ async def _sync_espn_live_events():
                             await session.execute(
                                 _sql_update(Event)
                                 .where(Event.id == event.id)
-                                .values(win_probability_sources=_wps)
+                                .values(
+                                    win_probability_sources=_wps,
+                                    espn_win_prob_home=ee.home_win_probability,
+                                )
                             )
                             changed = True
 
@@ -674,7 +676,6 @@ async def _sync_espn_live_events():
 
                             # Write win probability snapshot
                             if ee.home_win_probability is not None:
-                                event.espn_win_prob_home = ee.home_win_probability
                                 _wps_r3 = await session.execute(
                                     select(Event.win_probability_sources).where(Event.id == event.id)
                                 )
@@ -683,7 +684,10 @@ async def _sync_espn_live_events():
                                 await session.execute(
                                     _sql_update(Event)
                                     .where(Event.id == event.id)
-                                    .values(win_probability_sources=_wps3)
+                                    .values(
+                                        win_probability_sources=_wps3,
+                                        espn_win_prob_home=ee.home_win_probability,
+                                    )
                                 )
 
                                 snapshot = ESPNSnapshot(

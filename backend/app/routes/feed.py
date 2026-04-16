@@ -699,6 +699,10 @@ async def _score_events(
             "away_score": event.away_score,
         }
 
+        # Include win probability sources for multi-source display
+        if event.win_probability_sources:
+            event_data["win_probability_sources"] = event.win_probability_sources
+
         # Include ESPN live data for live events (game clock, period, broadcast)
         if event.status == "live":
             espn_data = {}
