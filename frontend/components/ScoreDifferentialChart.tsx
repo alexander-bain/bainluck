@@ -47,9 +47,9 @@ interface ScoreDifferentialChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
-  /** @deprecated — start is now derived from commenceTime + data. Kept for backward compat. */
+  /** Start timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartStartTime?: string;
-  /** End timestamp (ISO) from the Win Probability chart — extends domain for live games if OddsChart has later data */
+  /** End timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartEndTime?: string;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
@@ -336,18 +336,22 @@ export default function ScoreDifferentialChart({
         ? parseISO(allTimestamps[allTimestamps.length - 1])
         : first;
 
-      // In "Since Start" mode, always start at commenceTime
-      if (timeRange === "live" && commenceTime) {
+      // Sync domain with OddsChart so both charts have identical x-axis
+      if (chartStartTime) {
+        const startFromParent = parseISO(chartStartTime);
+        startFromParent.setSeconds(0, 0);
+        first = startFromParent;
+      } else if (timeRange === "live" && commenceTime) {
+        // Fallback: "Since Start" mode starts at commenceTime
         const gameStart = parseISO(commenceTime);
         gameStart.setSeconds(0, 0);
         if (gameStart < first) first = gameStart;
       }
 
-      // Extend end to match OddsChart if it has later data (e.g., live games)
       if (chartEndTime) {
         const endFromParent = parseISO(chartEndTime);
         endFromParent.setSeconds(0, 0);
-        if (endFromParent > last) last = endFromParent;
+        last = endFromParent;  // Match exactly, don't just extend
       }
 
       first.setSeconds(0, 0);
