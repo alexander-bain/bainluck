@@ -2777,7 +2777,8 @@ async def get_related_futures(
     season_market_ids = [row.id for row in season_result.all()]
 
     # Game props (tier 5): only load markets linked to THIS specific event
-    # Also verify sport matches to prevent cross-sport contamination
+    # Strict sport check — don't allow NULL sport_id through (catches cross-sport
+    # contamination where hockey markets were incorrectly linked to baseball events)
     game_prop_filters = [
         rf_status_filter,
         FuturesMarket.event_id == event_id,
@@ -2787,7 +2788,11 @@ async def get_related_futures(
         game_prop_filters.append(
             or_(
                 FuturesMarket.sport_id == event.sport_id,
-                FuturesMarket.sport_id.is_(None),
+                # For markets without sport_id, check llm_sport_category
+                and_(
+                    FuturesMarket.sport_id.is_(None),
+                    FuturesMarket.llm_sport_category == llm_category,
+                ),
             )
         )
     game_prop_result = await db.execute(
