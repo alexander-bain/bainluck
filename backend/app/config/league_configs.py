@@ -49,6 +49,9 @@ class LeagueConfig:
     # (Kalshi/Polymarket). At least one pattern must match the market name for
     # inclusion. Needed to separate NBA from NCAAB (both llm_sport_category="basketball").
     league_name_patterns: list[str] = field(default_factory=list)
+    # Regex patterns to EXCLUDE markets even if they match league_name_patterns.
+    # Used to separate MLB from college baseball (both match "World Series").
+    league_exclude_patterns: list[str] = field(default_factory=list)
     # Kalshi ticker prefixes that belong to this league. Markets whose
     # external_id starts with any of these prefixes pass the league filter
     # even if their name doesn't match league_name_patterns.
@@ -405,6 +408,12 @@ MLB_CONFIG = LeagueConfig(
         r"\bNational\s+League\b",
         r"\bAL\s+(?:East|West|Central)\b",
         r"\bNL\s+(?:East|West|Central)\b",
+    ],
+    # Exclude college baseball markets that match "World Series" etc.
+    league_exclude_patterns=[
+        r"\bCollege\b",
+        r"\bNCAA\b",
+        r"\bCWS\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),

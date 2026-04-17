@@ -2383,6 +2383,9 @@ async def get_playoff_grid(
     league_patterns = [
         re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
     ] if config.league_name_patterns else []
+    league_exclude = [
+        re.compile(p, re.IGNORECASE) for p in config.league_exclude_patterns
+    ] if config.league_exclude_patterns else []
 
     # Gender exclusion: Men's leagues should not include Women's markets and vice versa
     _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
@@ -2412,7 +2415,8 @@ async def get_playoff_grid(
                 continue
         # Path B.2: Match by league name pattern in market name
         if league_patterns:
-            if any(pat.search(name) for pat in league_patterns):
+            if any(pat.search(name) for pat in league_patterns) and \
+               not any(excl.search(name) for excl in league_exclude):
                 # For Champions League: reject "Champions League Qualification/Spot"
                 # markets from domestic leagues (they're about qualifying TO UCL,
                 # not performance IN the UCL).

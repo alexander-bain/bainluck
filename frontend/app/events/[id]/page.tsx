@@ -1428,7 +1428,7 @@ export default function EventPage({ params }: EventPageProps) {
           {gameMarkets.totals.length < 2 && gameMarkets.pace && gameMarkets.pace.projected_total && (
             <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-text-primary">Total Points Pace</span>
+                <span className="text-xs font-bold text-text-primary">{event.sport?.startsWith('baseball') ? 'Total Runs' : event.sport?.startsWith('icehockey') || event.sport?.startsWith('soccer') ? 'Total Goals' : 'Total Points'} Pace</span>
                 <span className="text-base font-extrabold text-blue-500 tracking-tight">
                   {gameMarkets.pace.projected_total}
                 </span>
@@ -1455,7 +1455,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (
         <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-text-primary">Total Points Pace</span>
+            <span className="text-xs font-bold text-text-primary">{event.sport?.startsWith('baseball') ? 'Total Runs' : event.sport?.startsWith('icehockey') || event.sport?.startsWith('soccer') ? 'Total Goals' : 'Total Points'} Pace</span>
             <span className="text-base font-extrabold text-blue-500 tracking-tight">
               {gameMarkets.pace.projected_total}
             </span>
