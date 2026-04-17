@@ -1705,3 +1705,99 @@ export interface SportHierarchy {
 export interface SportHierarchyListResponse {
   sports: SportHierarchy[];
 }
+
+// ============================================================================
+// WrestleMania 42 Prediction Game
+// ============================================================================
+
+export interface WMOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  decimal_odds: number | null;
+  wikipedia_image_url: string | null;
+  is_winner: boolean | null;
+  case_text: string | null;
+}
+
+export interface WMPick {
+  id: number;
+  outcome_id: number;
+  stake: number;
+  decimal_odds_at_pick: number;
+  result: "won" | "lost" | null;
+  payout: number | null;
+}
+
+export interface WMPublicPick {
+  player: string;
+  outcome_id: number;
+  stake: number;
+  decimal_odds_at_pick: number;
+  result: "won" | "lost" | null;
+}
+
+export interface WMMatch {
+  id: number;
+  match_order: number;
+  night: number;
+  title: string;
+  match_type: string;
+  participants: string[];
+  lock_time: string;
+  status: "open" | "locked" | "resolved";
+  storyline: string | null;
+  outcomes: WMOutcome[];
+  my_pick: WMPick | null;
+  picks: WMPublicPick[];
+}
+
+export interface WMNight {
+  night: number;
+  matches: WMMatch[];
+}
+
+export interface WMPlayer {
+  id: number;
+  display_name: string;
+  player_token: string;
+  bankroll: number;
+}
+
+export interface WMCardResponse {
+  nights: WMNight[];
+  player: WMPlayer | null;
+  updated_at: string;
+}
+
+export interface WMLeaderboardEntry {
+  id: number;
+  display_name: string;
+  bankroll: number;
+  total_staked: number;
+  picks_count: number;
+  wins: number;
+  losses: number;
+  pending: number;
+}
+
+export interface WMLeaderboardResponse {
+  leaderboard: WMLeaderboardEntry[];
+}
+
+export interface WMOddsHistoryPoint {
+  probability: number;
+  recorded_at: string;
+  source: string;
+}
+
+export interface WMOddsHistoryOutcome {
+  id: number;
+  name: string;
+  history: WMOddsHistoryPoint[];
+}
+
+export interface WMOddsHistoryResponse {
+  match_id: number;
+  outcomes: WMOddsHistoryOutcome[];
+}

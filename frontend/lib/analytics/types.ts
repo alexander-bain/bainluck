@@ -52,7 +52,8 @@ export interface PageViewParams {
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool'
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
-    | 'sport_hub' | 'sport_league' | 'sport_event';
+    | 'sport_hub' | 'sport_league' | 'sport_event'
+    | 'wrestlemania';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -231,7 +232,8 @@ export interface ScrollDepthParams {
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool'
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
-    | 'sport_hub' | 'sport_league' | 'sport_event';
+    | 'sport_hub' | 'sport_league' | 'sport_event'
+    | 'wrestlemania';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -248,7 +250,8 @@ export interface TimeOnPageParams {
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool'
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
-    | 'sport_hub' | 'sport_league' | 'sport_event';
+    | 'sport_hub' | 'sport_league' | 'sport_event'
+    | 'wrestlemania';
   seconds: number;
   page_path: string;
   event_id?: number;
