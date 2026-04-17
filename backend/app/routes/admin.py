@@ -2892,6 +2892,31 @@ async def delete_duplicate_events(
     return {"deleted": result.rowcount, "event_ids": ids}
 
 
+@router.post("/teams/add-alias")
+async def add_team_alias(
+    secret: str = Query(...),
+    team_id: int = Query(...),
+    alias: str = Query(..., description="Alias to add to alternate_names"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add an alias to a team's alternate_names list."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import Team
+    team = await db.get(Team, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
+
+    current = team.alternate_names or []
+    if alias not in current:
+        current.append(alias)
+        team.alternate_names = current
+        await db.commit()
+
+    return {"team_id": team_id, "name": team.name, "alternate_names": current}
+
+
 @router.post("/futures/retier")
 async def retier_futures_markets(
     secret: str = Query(...),
