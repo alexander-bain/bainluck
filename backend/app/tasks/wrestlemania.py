@@ -12,7 +12,7 @@ from app.models.wrestlemania import (
     WrestlemaniaPick,
 )
 from app.services.wrestlemania_polymarket import poll_wrestlemania_prices
-from app.tasks.base import get_session
+from app.tasks.base import get_task_session as get_session
 
 logger = logging.getLogger(__name__)
 
