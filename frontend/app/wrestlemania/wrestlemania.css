@@ -141,6 +141,31 @@
   box-shadow: 0 0 10px rgba(255, 46, 147, 0.3), inset 0 0 10px rgba(255, 46, 147, 0.1);
 }
 
+/* Night divider */
+.wm-night-divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 1rem 0.75rem;
+}
+
+.wm-night-divider::before,
+.wm-night-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--wm-neon-pink), transparent);
+}
+
+.wm-night-divider-label {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  font-size: 1.3rem;
+  letter-spacing: 0.1em;
+  color: var(--wm-neon-pink);
+  text-shadow: 0 0 10px rgba(255, 46, 147, 0.4);
+  white-space: nowrap;
+}
+
 /* Match card */
 .wm-match-card {
   background: var(--wm-card-bg);

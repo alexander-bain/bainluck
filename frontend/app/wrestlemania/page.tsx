@@ -50,7 +50,6 @@ export default function WrestlemaniaPage() {
   const [storedPlayer, setStoredPlayer] = useState<StoredPlayer | null>(null);
   const [showNameModal, setShowNameModal] = useState(false);
   const [registering, setRegistering] = useState(false);
-  const [activeNight, setActiveNight] = useState(1);
   const [drawerState, setDrawerState] = useState<{
     match: WMMatch;
     outcome: WMOutcome;
@@ -215,34 +214,24 @@ export default function WrestlemaniaPage() {
       )}
 
       {card && (
-        <>
-          <div className="wm-night-tabs">
-            {nights.map((n) => (
-              <button
-                key={n.night}
-                className={`wm-night-tab ${activeNight === n.night ? "active" : ""}`}
-                onClick={() => setActiveNight(n.night)}
-              >
-                Night {n.night}
-                <span style={{ fontSize: "0.7rem", display: "block", color: "var(--wm-text-muted)" }}>
-                  {n.night === 1 ? "Sat Apr 19" : "Sun Apr 20"}
+        <div className="wm-content">
+          {nights.map((n) => (
+            <div key={n.night}>
+              <div className="wm-night-divider">
+                <span className="wm-night-divider-label">
+                  Night {n.night} — {n.night === 1 ? "Saturday, April 19" : "Sunday, April 20"}
                 </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="wm-content">
-            {nights
-              .find((n) => n.night === activeNight)
-              ?.matches.map((match) => (
+              </div>
+              {n.matches.map((match) => (
                 <MatchCard
                   key={match.id}
                   match={match}
                   onOutcomeClick={handleOutcomeClick}
                 />
               ))}
-          </div>
-        </>
+            </div>
+          ))}
+        </div>
       )}
 
       {drawerState && (
