@@ -32,7 +32,7 @@ export default function RelatedByTag({
     { refreshInterval: 60000 }
   );
 
-  if (isLoading || !data || data.items.length === 0) return null;
+  if (!data || data.items.length === 0) return null;
 
   // Filter out the current item and limit
   const items = data.items

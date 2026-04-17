@@ -432,15 +432,17 @@ class TestRelatedFuturesHelpers:
         patterns = _team_name_patterns("Boston Celtics")
         assert "Boston Celtics" in patterns
         assert "Celtics" in patterns
-        assert len(patterns) == 2
+        assert "Boston" in patterns  # City name for Kalshi outcome matching
+        assert len(patterns) == 3
 
     def test_team_name_patterns_short_last_word(self):
-        """Short last words (< 4 chars) should be excluded."""
+        """Short last words (< 4 chars) excluded, but city name still included."""
         from app.routes.events import _team_name_patterns
         patterns = _team_name_patterns("Phoenix Sun")
-        # "Sun" is only 3 chars, should not be included as separate pattern
+        # "Sun" is only 3 chars, excluded. But "Phoenix" (7 chars) IS included as city.
         assert "Phoenix Sun" in patterns
-        assert len(patterns) == 1
+        assert "Phoenix" in patterns
+        assert len(patterns) == 2
 
     def test_team_name_patterns_single_word(self):
         from app.routes.events import _team_name_patterns
@@ -458,7 +460,8 @@ class TestRelatedFuturesHelpers:
         patterns = _team_name_patterns("New England Patriots")
         assert "New England Patriots" in patterns
         assert "Patriots" in patterns
-        assert len(patterns) == 2
+        assert "New England" in patterns  # City/location name
+        assert len(patterns) == 3
 
     def test_sport_prefix_to_llm_category(self):
         from app.routes.events import _SPORT_PREFIX_TO_LLM_CATEGORY

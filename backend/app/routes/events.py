@@ -2142,7 +2142,13 @@ def _team_name_patterns(full_name: str) -> list[str]:
     """Build ILIKE-safe patterns for matching a team in outcome names.
 
     Returns escaped patterns suitable for use in ILIKE '%pattern%' queries.
-    Includes full team name and short name (last word, if >= 4 chars).
+    Includes full name, city/location, and mascot/short name.
+
+    Examples:
+        "Texas Rangers" → ["Texas Rangers", "Rangers", "Texas"]
+        "Los Angeles Dodgers" → ["Los Angeles Dodgers", "Dodgers", "Los Angeles"]
+        "New York Yankees" → ["New York Yankees", "Yankees", "New York"]
+        "Athletics" → ["Athletics"]
     """
     if not full_name:
         return []
@@ -2151,14 +2157,23 @@ def _team_name_patterns(full_name: str) -> list[str]:
     escaped_full = _escape_like(full_name.strip())
     patterns.append(escaped_full)
 
-    # Short name: last word (e.g., "Celtics" from "Boston Celtics")
     parts = full_name.strip().split()
     if len(parts) > 1:
+        # Mascot/short name: last word (e.g., "Celtics" from "Boston Celtics")
         short = parts[-1]
         if len(short) >= 4:
             escaped_short = _escape_like(short)
             if escaped_short.lower() != escaped_full.lower():
                 patterns.append(escaped_short)
+
+        # City/location name: first word(s) (e.g., "Texas" from "Texas Rangers",
+        # "Los Angeles" from "Los Angeles Dodgers")
+        # Kalshi uses city names as outcome labels ("Texas", "Houston", "Seattle")
+        city = " ".join(parts[:-1])
+        if len(city) >= 4:
+            escaped_city = _escape_like(city)
+            if escaped_city.lower() not in [p.lower() for p in patterns]:
+                patterns.append(escaped_city)
 
     return patterns
 
