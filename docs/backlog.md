@@ -62,34 +62,128 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 - Chart domain sync: ScoreDiff now uses OddsChart's exact domain ✓
 - "More Baseball" ghost text: hidden during loading ✓
 
-**REMAINING (3 items with full details):**
-**Layer:** frontend-components, backend-routes
-**Parallel Safety:** Yellow (touches frontend components + backend routes)
+**REMAINING (3 items):**
 
-**Issues found on Athletics vs Rangers game (screenshot April 16):**
+#### R1. Player prop cards need headshots
+**Layer:** backend-routes, frontend-components
+**Touches:** `backend/app/routes/events.py` (related-futures serialization ~L3050), `frontend/components/RelatedFutures.tsx` (StatPropsSection)
+**Parallel Safety:** Yellow
 
-1. **Baseball game state markers say just "1", "2", "3"** — need "Top 1st", "Mid 3rd", "Bot 5th" etc. Currently showing bare inning numbers that overlap and are unreadable. Must clarify half-inning and space markers so they don't collide.
+**Problem:** Player prop cards show text-only (colored initials circle). The `PlayerStatCard.tsx` component already has `PlayerAvatar` with a 4-step fallback chain: (1) direct `headshotUrl` prop, (2) ESPN headshot via `espnPlayerId`, (3) Wikipedia image search, (4) initials. The data just isn't being passed.
 
-2. **Player props show "points" and "assists" for a baseball game** — these are hockey stat categories leaking into baseball. Vladislav Gavrikov and Mavrik Bourque are hockey players, not baseball. The player props section is pulling from the wrong sport. Likely a sport filter issue in Related Futures.
+**Root cause:** The Related Futures endpoint at `routes/events.py` builds a `player_metadata` dict (line ~2851) from team rosters, mapping `player_name_lower → {espn_id, headshot, name}`. But this metadata is never included in the serialized response. The frontend `StatPropsSection` component passes `headshotUrl` and `espnPlayerId` to `PlayerStatCard`, but they're always undefined because the API doesn't include them.
 
-3. **Player prop cards need headshots** — text-only cards look bad. `PlayerStatCard.tsx` already has `PlayerAvatar` with ESPN headshot support. May just need the `espnPlayerId` or `headshotUrl` to be passed through from the backend.
+**Exact fix:**
+1. In `routes/events.py`, find the Related Futures response serialization (~line 3050-3100 where each future is built as a dict). For outcomes that match a player in `player_metadata`, add `espn_player_id` and `headshot_url` to the response dict:
+```python
+# After building the future dict, check player_metadata
+outcome_name_lower = outcome.name.lower()
+player_meta = player_metadata.get(outcome_name_lower)
+if player_meta:
+    future_dict["espn_player_id"] = player_meta.get("espn_id")
+    future_dict["headshot_url"] = player_meta.get("headshot")
+```
+2. In `frontend/components/RelatedFutures.tsx`, in `StatPropsSection` (~L820-1099), pass these through to `PlayerStatCard`:
+```tsx
+<PlayerStatCard
+  ...existing props...
+  espnPlayerId={future.espn_player_id}
+  headshotUrl={future.headshot_url}
+  sportKey={sportKey}
+/>
+```
 
-4. **Playoff Path card broken for Athletics** — only shows "AL Champ: 2%" with no other columns (Make Playoffs, Division, Championship). Alex provided full Kalshi/Polymarket market links for all MLB progression levels. The `league_configs.py` MLB config may be missing matching rules for these markets.
+**Verification:** Load any live NBA game → Player Props section should show ESPN headshot photos instead of colored initial circles.
 
-5. **Title Odds card shows Rangers at 52%** — impossibly high for mid-season. And it duplicates info that should be in the Playoff Path card. Title Odds card should be removed (we decided this before) or at minimum should agree with the Playoff Path championship column.
+---
 
-6. **Awards & All-Team card** — only shows "Corey Seager" with 5%. Should show many more players. Card title "Awards & All-Team" is awkward — rename to something like "Player Awards" or "Season Awards". Need to populate from the full list of MLB award markets (MVP, Cy Young, ROY, etc. — Alex provided Kalshi/Polymarket links).
+#### R2. Missing 2nd inning marker on baseball chart
+**Layer:** frontend-lib
+**Touches:** `frontend/lib/periodMarkers.ts` (deriveBoundariesFromWinProb, deriveBoundariesFromScoringPlays)
+**Parallel Safety:** Green (frontend-only, no backend changes)
 
-7. **"More Baseball" text at bottom** — shows as plain text with no link or card. Should either link to the MLB league page or be removed.
+**Problem:** The Win Probability chart for the Athletics vs Rangers game showed markers for innings 1, 3, 4, 5, 6, 7, 8, 9 but NOT inning 2. This happens when no `win_prob_snapshot` or `espn_snapshot` captured the transition from inning 1 to inning 2.
 
-**MLB Market Links (from Alex, for Playoff Path + Awards):**
-- Make playoffs: Kalshi `kxmlbplayoffs`, PM `mlb-team-to-make-postseason`
-- Divisions: Kalshi `kxmlbaleast/alcent/alwest/nleast/nlcent/nlwest`, PM equivalents
-- League champions: Kalshi `kxmlbal/kxmlbnl`, PM equivalents
-- World Series: Kalshi `kxmlb`, PM `mlb-world-series-champion-2026`
-- Win totals: Kalshi category, PM `mlb-2026-regular-season-win-totals`
-- Awards: PM has 16+ player award markets (MVP, Cy Young, ROY, Manager, etc.)
-- League leaders: Kalshi category
+**Root cause:** `deriveBoundariesFromWinProb()` in `periodMarkers.ts` (line ~192) iterates through win_prob_history points and extracts period strings from `game_state.inning` + `game_state.half`. If no snapshot was taken during inning 2 (e.g., the inning was very short, or polling interval was too slow), no boundary is generated.
+
+**Exact fix:** After generating boundaries from win_prob_history, fill in gaps. If we see inning 1 and inning 3 but not inning 2, interpolate inning 2's timestamp as the midpoint. In `periodMarkers.ts`, after `deriveBoundariesFromWinProb()` returns:
+```typescript
+// Fill inning gaps for baseball (sport detection via marker format)
+function fillBaseballInningGaps(boundaries: PeriodBoundary[]): PeriodBoundary[] {
+  // Detect baseball: markers like "T1", "B1", "T2", etc.
+  const baseballRe = /^[TBME](\d+)$/;
+  const isBaseball = boundaries.some(b => baseballRe.test(b.label));
+  if (!isBaseball || boundaries.length < 2) return boundaries;
+
+  // Extract inning numbers and find gaps
+  const innings = new Map<number, PeriodBoundary>();
+  for (const b of boundaries) {
+    const m = b.label.match(baseballRe);
+    if (m) innings.set(parseInt(m[1]), b);
+  }
+  
+  const minInning = Math.min(...innings.keys());
+  const maxInning = Math.max(...innings.keys());
+  
+  for (let i = minInning; i <= maxInning; i++) {
+    if (!innings.has(i)) {
+      // Interpolate timestamp between previous and next known innings
+      const prev = innings.get(i - 1);
+      const next = innings.get(i + 1);
+      if (prev && next) {
+        const prevTime = new Date(prev.timestamp).getTime();
+        const nextTime = new Date(next.timestamp).getTime();
+        const midTime = new Date((prevTime + nextTime) / 2).toISOString();
+        boundaries.push({ timestamp: midTime, label: `T${i}` });
+      }
+    }
+  }
+  
+  return boundaries.sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+}
+```
+Call this at the end of `derivePeriodBoundaries()` before returning.
+
+**Verification:** Check the Athletics vs Rangers game chart — all 9 innings should have markers, even if some are interpolated.
+
+---
+
+#### R3. Playoff Path sparse — Kalshi short names not matching as alternate_names
+**Layer:** backend-tasks, backend-admin
+**Touches:** `backend/app/tasks/team_linking.py` or new admin script, Team.alternate_names column
+**Parallel Safety:** Green (data fix, no code behavior changes)
+
+**Problem:** Kalshi uses city-only names as outcome labels ("Texas", "Houston", "Seattle", "A's"). The city name pattern fix (shipped April 16) added city names to the ILIKE search. But teams with non-city short names like "A's" (Athletics) or abbreviated cities like "Los Angeles D" (Dodgers) vs "Los Angeles A" (Angels) still don't match.
+
+**Root cause:** `_team_name_patterns()` generates ["full name", "mascot", "city"]. For "Athletics", this gives ["Athletics"]. Kalshi's outcome is "A's" — not in the pattern list. For "Los Angeles Dodgers", the patterns are ["Los Angeles Dodgers", "Dodgers", "Los Angeles"] — but Kalshi uses "Los Angeles D" which doesn't match any of these.
+
+**The complete list of Kalshi MLB outcome names that DON'T match our team patterns:**
+- "A's" → needs alias on Athletics team record
+- "Los Angeles D" → needs alias on Dodgers
+- "Los Angeles A" → needs alias on Angels  
+- "Chicago C" → needs alias on Cubs
+- "Chicago WS" → needs alias on White Sox
+- "New York Y" → needs alias on Yankees
+- "New York M" → needs alias on Mets
+
+**Exact fix:** Use the `/admin/teams/add-alias` endpoint (already built) to add each alias. OR better: write a one-time script that queries the Kalshi playoff qualifiers market (id=266), gets all 30 outcome names, and for each one, finds the matching team in our DB and adds the Kalshi name as an alternate_name. This is 30 API calls and ensures EVERY team has its Kalshi name.
+
+```python
+# Pseudocode for the script:
+# 1. GET /api/futures/266 → get all 30 outcomes
+# 2. For each outcome name (e.g., "A's", "Los Angeles D"):
+#    a. Try names_match against all 30 MLB teams
+#    b. If match found and outcome name not in team.alternate_names, add it
+#    c. If no match, log for manual review
+```
+
+This could also be an admin endpoint: `/admin/teams/sync-kalshi-aliases?sport=baseball_mlb` that does this automatically.
+
+**Also need:** Run the same process for NBA, NHL, NFL. Kalshi uses similar abbreviations across all sports ("GS" for Golden State, "OKC" for Oklahoma City, etc.).
+
+**Verification:** After adding aliases, hit the Related Futures endpoint for any MLB game. The Playoff Path should show 4 rows (Make Playoffs, Division, AL/NL Champ, World Series) instead of 1.
 - Best/worst record: Kalshi `kxmlbbestrecord/worstrecord`
 
 ---
