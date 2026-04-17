@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchWrestlemaniaCard } from "@/lib/api";
-import type { WMCardResponse, WMMatch } from "@/lib/types";
+import type { WMCardResponse } from "@/lib/types";
 import "../wrestlemania.css";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com";
 
-export default function WrestlemaniaAdminPage() {
+function AdminContent() {
   const searchParams = useSearchParams();
   const secret = searchParams.get("secret") || "";
   const [card, setCard] = useState<WMCardResponse | null>(null);
@@ -104,5 +104,13 @@ export default function WrestlemaniaAdminPage() {
         </div>
       ))}
     </div>
+  );
+}
+
+export default function WrestlemaniaAdminPage() {
+  return (
+    <Suspense fallback={<div className="wrestlemania-theme" style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
+      <AdminContent />
+    </Suspense>
   );
 }
