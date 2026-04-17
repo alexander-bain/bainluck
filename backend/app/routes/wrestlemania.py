@@ -24,7 +24,7 @@ from app.utils.wrestlemania_scoring import compute_bankroll
 
 router = APIRouter()
 
-ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "") or os.getenv("ADMIN_TOKEN", "")
 
 
 # ── Request/Response Models ──────────────────────────────────────────────
