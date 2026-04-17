@@ -50,7 +50,19 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 ---
 
-### 1B. Event Detail Page Quality Issues (discovered April 16, partially fixed)
+### 1B. Event Detail Page Quality Issues (discovered April 16, mostly fixed)
+
+**SHIPPED (April 16):**
+- Baseball markers: T3/B5 format ✓
+- Wrong sport props: strict sport_id + llm_sport_category filter ✓
+- Title Odds card: removed ✓
+- Awards card: renamed to "Season Awards" ✓
+- Playoff tier: qualifiers reclassified to tier 4 (3,263 markets) ✓
+- City name patterns: "Texas", "Houston", etc. now included in ILIKE matching ✓
+- Chart domain sync: ScoreDiff now uses OddsChart's exact domain ✓
+- "More Baseball" ghost text: hidden during loading ✓
+
+**REMAINING (3 items with full details):**
 **Layer:** frontend-components, backend-routes
 **Parallel Safety:** Yellow (touches frontend components + backend routes)
 
