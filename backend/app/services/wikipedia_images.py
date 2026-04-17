@@ -24,7 +24,10 @@ async def fetch_wikipedia_thumbnail(name: str, size: int = 300) -> Optional[str]
         "redirects": 1,
     }
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0,
+            headers={"User-Agent": "BainLuck/1.0 (https://bainluck.com; bain@bainluck.com)"},
+        ) as client:
             r = await client.get(WIKI_API, params=params)
             r.raise_for_status()
             pages = r.json().get("query", {}).get("pages", {})

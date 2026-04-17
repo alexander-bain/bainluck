@@ -1710,6 +1710,11 @@ export interface SportHierarchyListResponse {
 // WrestleMania 42 Prediction Game
 // ============================================================================
 
+export interface WMHistoryPoint {
+  p: number;
+  t: string;
+}
+
 export interface WMOutcome {
   id: number;
   name: string;
@@ -1718,6 +1723,7 @@ export interface WMOutcome {
   wikipedia_image_url: string | null;
   is_winner: boolean | null;
   case_text: string | null;
+  history: WMHistoryPoint[];
 }
 
 export interface WMPick {

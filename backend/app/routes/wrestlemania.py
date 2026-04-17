@@ -19,6 +19,7 @@ from app.models.wrestlemania import (
     WrestlemaniaPick,
 )
 from app.services import get_db
+from app.services.wikipedia_images import resolve_wrestler_image
 from app.utils.wrestlemania_scoring import compute_bankroll
 
 router = APIRouter()
@@ -106,6 +107,23 @@ async def get_card(
         for pick in picks_result.scalars().all():
             picks_by_match[pick.match_id] = pick
 
+    # Pre-fetch all odds history for sparklines
+    all_outcome_ids_result = await session.execute(
+        select(WrestlemaniaOutcome.id, WrestlemaniaOutcome.match_id)
+    )
+    outcome_to_match = {r.id: r.match_id for r in all_outcome_ids_result.all()}
+    all_snaps_result = await session.execute(
+        select(WrestlemaniaOddsSnapshot)
+        .where(WrestlemaniaOddsSnapshot.outcome_id.in_(list(outcome_to_match.keys())))
+        .order_by(WrestlemaniaOddsSnapshot.recorded_at)
+    )
+    history_by_outcome: dict[int, list] = {}
+    for s in all_snaps_result.scalars().all():
+        history_by_outcome.setdefault(s.outcome_id, []).append({
+            "p": float(s.probability),
+            "t": s.recorded_at.isoformat(),
+        })
+
     nights: dict[int, list] = {}
     for match in matches:
         outcomes_result = await session.execute(
@@ -168,6 +186,7 @@ async def get_card(
                     "wikipedia_image_url": o.wikipedia_image_url,
                     "is_winner": o.is_winner,
                     "case_text": o.case_text,
+                    "history": history_by_outcome.get(o.id, []),
                 }
                 for o in outcomes
             ],
@@ -483,3 +502,29 @@ async def add_match(
 
     await session.commit()
     return {"match_id": match.id}
+
+
+@router.post("/admin/refetch-images")
+async def refetch_images(
+    secret: str = Query(),
+    session: AsyncSession = Depends(get_db),
+):
+    _verify_admin(secret)
+
+    outcomes_result = await session.execute(select(WrestlemaniaOutcome))
+    outcomes = outcomes_result.scalars().all()
+    found = 0
+    failed = []
+    for o in outcomes:
+        if "&" in o.name or "," in o.name:
+            continue
+        if o.wikipedia_image_url:
+            continue
+        url = await resolve_wrestler_image(o.name)
+        if url:
+            o.wikipedia_image_url = url
+            found += 1
+        else:
+            failed.append(o.name)
+    await session.commit()
+    return {"found": found, "failed": failed}
