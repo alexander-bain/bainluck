@@ -52,6 +52,7 @@ WIKI_NAME_OVERRIDES = {
     "Je'Von Evans": "Je'Von Evans",
     "Dragon Lee": "Dragon Lee (wrestler)",
     "JD McDonagh": "JD McDonagh",
+    "Nikki": "Nikki Bella",
 }
 
 
