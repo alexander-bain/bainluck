@@ -19,7 +19,8 @@ from app.models.wrestlemania import (
     WrestlemaniaOutcome,
     WrestlemaniaOddsSnapshot,
 )
-from app.services.database import get_session, init_db
+from app.tasks.base import get_task_session as get_session
+from app.services.database import init_db
 from app.services.wikipedia_images import resolve_wrestler_image
 
 
