@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { WMMatch, WMOutcome } from "@/lib/types";
 import OddsSparkline from "./OddsSparkline";
+import WMOddsChart from "./WMOddsChart";
 
 interface MatchCardProps {
   match: WMMatch;
@@ -59,6 +60,8 @@ function PlaceholderAvatar({ name, color }: { name: string; color: string }) {
 
 export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
   const [showStoryline, setShowStoryline] = useState(false);
+  const [showChart, setShowChart] = useState(false);
+  const hasChartData = match.outcomes.some((o) => o.history && o.history.length >= 2);
   const countdown = lockCountdown(match.lock_time);
   const isSoon = countdown !== "Locked" && !countdown.includes("d");
   const isBinary = match.outcomes.length === 2;
@@ -132,15 +135,21 @@ export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
           ))}
         </div>
 
-        {/* Storyline */}
-        {match.storyline && (
-          <div className="wm-storyline">
+        {/* Chart + Storyline toggles */}
+        <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid var(--wm-card-border)" }}>
+          {hasChartData && (
+            <button className="wm-storyline-toggle" onClick={(e) => { e.stopPropagation(); setShowChart(!showChart); }}>
+              {showChart ? "Hide chart ▲" : "📈 Odds chart"}
+            </button>
+          )}
+          {match.storyline && (
             <button className="wm-storyline-toggle" onClick={(e) => { e.stopPropagation(); setShowStoryline(!showStoryline); }}>
               {showStoryline ? "Hide backstory ▲" : "The feud ▼"}
             </button>
-            {showStoryline && <p style={{ marginTop: "0.5rem" }}>{match.storyline}</p>}
-          </div>
-        )}
+          )}
+        </div>
+        {showChart && <div style={{ marginTop: "0.75rem" }}><WMOddsChart outcomes={match.outcomes} /></div>}
+        {showStoryline && match.storyline && <div className="wm-storyline"><p>{match.storyline}</p></div>}
 
         {/* Public picks */}
         {match.picks.length > 0 && (
@@ -211,14 +220,21 @@ export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
         })}
       </div>
 
-      {match.storyline && (
-        <div className="wm-storyline">
+      {/* Chart + Storyline toggles */}
+      <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid var(--wm-card-border)" }}>
+        {hasChartData && (
+          <button className="wm-storyline-toggle" onClick={(e) => { e.stopPropagation(); setShowChart(!showChart); }}>
+            {showChart ? "Hide chart ▲" : "📈 Odds chart"}
+          </button>
+        )}
+        {match.storyline && (
           <button className="wm-storyline-toggle" onClick={(e) => { e.stopPropagation(); setShowStoryline(!showStoryline); }}>
             {showStoryline ? "Hide backstory ▲" : "The feud ▼"}
           </button>
-          {showStoryline && <p style={{ marginTop: "0.5rem" }}>{match.storyline}</p>}
-        </div>
-      )}
+        )}
+      </div>
+      {showChart && <div style={{ marginTop: "0.75rem" }}><WMOddsChart outcomes={match.outcomes} /></div>}
+      {showStoryline && match.storyline && <div className="wm-storyline"><p>{match.storyline}</p></div>}
 
       {match.picks.length > 0 && (
         <div className="wm-picks-list">

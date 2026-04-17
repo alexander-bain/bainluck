@@ -516,11 +516,11 @@ async def refetch_images(
     found = 0
     failed = []
     for o in outcomes:
-        if "&" in o.name or "," in o.name:
-            continue
         if o.wikipedia_image_url:
             continue
-        url = await resolve_wrestler_image(o.name)
+        # For team names like "Nia Jax & Lash Legend", try the first wrestler
+        search_name = o.name.split(" & ")[0].split(", ")[0].strip()
+        url = await resolve_wrestler_image(search_name)
         if url:
             o.wikipedia_image_url = url
             found += 1

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { WMMatch, WMOutcome } from "@/lib/types";
+import WMOddsChart from "./WMOddsChart";
 
 interface PickDrawerProps {
   match: WMMatch;
@@ -75,6 +76,13 @@ export default function PickDrawer({
             }}
           >
             {outcome.case_text}
+          </div>
+        )}
+
+        {/* Full odds chart */}
+        {match.outcomes.some((o) => o.history && o.history.length >= 2) && (
+          <div style={{ marginBottom: "1rem" }}>
+            <WMOddsChart outcomes={match.outcomes} height={180} />
           </div>
         )}
 
