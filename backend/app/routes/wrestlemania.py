@@ -20,7 +20,7 @@ from app.models.wrestlemania import (
 )
 from app.services import get_db
 from app.services.wikipedia_images import resolve_wrestler_image
-from app.utils.wrestlemania_scoring import compute_bankroll
+from app.utils.wrestlemania_scoring import compute_bankroll, compute_max_possible
 
 router = APIRouter()
 
@@ -342,10 +342,31 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
     )
     players = players_result.scalars().all()
 
+    # Pre-fetch all picks with match/outcome names for detail
+    all_picks_result = await session.execute(
+        select(
+            WrestlemaniaPick,
+            WrestlemaniaMatch.title,
+            WrestlemaniaOutcome.name,
+        )
+        .join(WrestlemaniaMatch, WrestlemaniaPick.match_id == WrestlemaniaMatch.id)
+        .join(WrestlemaniaOutcome, WrestlemaniaPick.outcome_id == WrestlemaniaOutcome.id)
+    )
+    picks_by_player: dict[int, list[dict]] = {}
+    for pick, match_title, outcome_name in all_picks_result.all():
+        picks_by_player.setdefault(pick.player_id, []).append({
+            "stake": float(pick.stake),
+            "decimal_odds_at_pick": float(pick.decimal_odds_at_pick),
+            "result": pick.result,
+            "match_title": match_title,
+            "outcome_name": outcome_name,
+        })
+
     leaderboard = []
     for p in players:
-        picks = await _player_picks(session, p.id)
+        picks = picks_by_player.get(p.id, [])
         bankroll = compute_bankroll(picks)
+        max_possible = compute_max_possible(picks)
         total_staked = sum(pk["stake"] for pk in picks)
         wins = sum(1 for pk in picks if pk["result"] == "won")
         losses = sum(1 for pk in picks if pk["result"] == "lost")
@@ -354,11 +375,22 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
             "id": p.id,
             "display_name": p.display_name,
             "bankroll": bankroll,
+            "max_possible": max_possible,
             "total_staked": total_staked,
             "picks_count": len(picks),
             "wins": wins,
             "losses": losses,
             "pending": pending,
+            "pick_details": [
+                {
+                    "match_title": pk["match_title"],
+                    "outcome_name": pk["outcome_name"],
+                    "stake": pk["stake"],
+                    "odds": pk["decimal_odds_at_pick"],
+                    "result": pk["result"],
+                }
+                for pk in picks
+            ],
         })
 
     leaderboard.sort(key=lambda x: x["bankroll"], reverse=True)
@@ -528,3 +560,108 @@ async def refetch_images(
             failed.append(o.name)
     await session.commit()
     return {"found": found, "failed": failed}
+
+
+# ── Commentary ───────────────────────────────────────────────────────────
+
+COMMENTARY_SYSTEM = """You are the world's sassiest wrestling announcer providing live commentary on a WrestleMania prediction pool. You're calling the action for a group of friends and family betting fake money on match outcomes. Be funny, reference wrestling tropes, roast bad picks gently, hype up good ones. Keep it PG — there's a 12-year-old in the audience. 2-3 sentences max."""
+
+
+def _build_commentary_prompt(leaderboard: list[dict], matches: list[dict]) -> str:
+    lines = ["CURRENT LEADERBOARD:"]
+    for i, p in enumerate(leaderboard, 1):
+        picks_str = ", ".join(
+            f"{pk['outcome_name']}({'✓' if pk['result']=='won' else '✗' if pk['result']=='lost' else f'${pk[\"stake\"]:,.0f} at {pk[\"odds\"]:.1f}x'})"
+            for pk in p.get("pick_details", [])
+        )
+        cash_held = p["bankroll"] - p.get("total_staked", 0) + p["bankroll"]  # approximate
+        lines.append(
+            f"#{i} {p['display_name']}: ${p['bankroll']:,.0f} bankroll "
+            f"(max possible ${p['max_possible']:,.0f}) — "
+            f"{p['wins']}W/{p['losses']}L/{p['pending']} pending — "
+            f"Picks: {picks_str or 'none yet'}"
+        )
+
+    resolved = [m for m in matches if m["status"] == "resolved"]
+    if resolved:
+        lines.append("\nRESULTS SO FAR:")
+        for m in resolved:
+            winner = next((o["name"] for o in m["outcomes"] if o.get("is_winner")), "?")
+            lines.append(f"  {m['title']}: {winner} wins")
+
+    upcoming = [m for m in matches if m["status"] in ("open", "locked")]
+    if upcoming:
+        lines.append(f"\n{len(upcoming)} MATCHES REMAINING")
+
+    lines.append("\nGive your latest commentary on this prediction pool. Be specific — name players and their picks. Make it entertaining.")
+    return "\n".join(lines)
+
+
+@router.get("/commentary")
+async def get_commentary(session: AsyncSession = Depends(get_db)):
+    import json
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    cache_key = "bainluck:wm_commentary"
+    feed_key = "bainluck:wm_commentary_feed"
+
+    # Check cache
+    cached = r.get(cache_key)
+    if cached:
+        banner = cached.decode() if isinstance(cached, bytes) else cached
+    else:
+        # Build context from live data
+        lb_response = await get_leaderboard(session)
+        leaderboard = lb_response["leaderboard"]
+
+        matches_result = await session.execute(
+            select(WrestlemaniaMatch).order_by(WrestlemaniaMatch.night, WrestlemaniaMatch.match_order)
+        )
+        matches_raw = matches_result.scalars().all()
+        matches = []
+        for m in matches_raw:
+            outcomes_result = await session.execute(
+                select(WrestlemaniaOutcome).where(WrestlemaniaOutcome.match_id == m.id)
+            )
+            outcomes = [{"name": o.name, "is_winner": o.is_winner, "probability": float(o.probability) if o.probability else None} for o in outcomes_result.scalars().all()]
+            matches.append({"title": m.title, "status": m.status, "outcomes": outcomes})
+
+        prompt = _build_commentary_prompt(leaderboard, matches)
+
+        try:
+            from app.services.llm import _get_client
+            client = _get_client()
+            if client:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": COMMENTARY_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=200,
+                    temperature=0.7,
+                )
+                banner = response.choices[0].message.content.strip()
+            else:
+                banner = "The announcer is warming up... check back soon!"
+        except Exception:
+            banner = "The announcer is warming up... check back soon!"
+
+        r.set(cache_key, banner, ex=120)
+
+        # Push to feed history
+        entry = json.dumps({"text": banner, "timestamp": datetime.now(timezone.utc).isoformat()})
+        r.lpush(feed_key, entry)
+        r.ltrim(feed_key, 0, 19)
+
+    # Read feed
+    raw_feed = r.lrange(feed_key, 0, 19)
+    feed = []
+    for item in raw_feed:
+        try:
+            feed.append(json.loads(item.decode() if isinstance(item, bytes) else item))
+        except Exception:
+            pass
+
+    return {"banner": banner, "feed": feed}

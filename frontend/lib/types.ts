@@ -1776,15 +1776,35 @@ export interface WMCardResponse {
   updated_at: string;
 }
 
+export interface WMPickDetail {
+  match_title: string;
+  outcome_name: string;
+  stake: number;
+  odds: number;
+  result: "won" | "lost" | null;
+}
+
 export interface WMLeaderboardEntry {
   id: number;
   display_name: string;
   bankroll: number;
+  max_possible: number;
   total_staked: number;
   picks_count: number;
   wins: number;
   losses: number;
   pending: number;
+  pick_details: WMPickDetail[];
+}
+
+export interface WMCommentaryEntry {
+  text: string;
+  timestamp: string;
+}
+
+export interface WMCommentaryResponse {
+  banner: string;
+  feed: WMCommentaryEntry[];
 }
 
 export interface WMLeaderboardResponse {

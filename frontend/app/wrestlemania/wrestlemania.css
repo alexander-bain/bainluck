@@ -499,61 +499,196 @@
   color: var(--wm-neon-gold);
 }
 
-/* Leaderboard */
-.wm-leaderboard {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 30;
-  background: linear-gradient(180deg, transparent, var(--wm-dark-bg) 20%);
-  padding: 2rem 1rem 1rem;
-}
-
-.wm-leaderboard-inner {
-  max-width: 600px;
-  margin: 0 auto;
+/* Leaderboard section */
+.wm-leaderboard-section {
   background: var(--wm-card-bg);
   border: 1px solid var(--wm-card-border);
   border-radius: 8px;
   padding: 0.75rem;
 }
 
-.wm-leaderboard-title {
+.wm-leaderboard-header {
   font-family: 'Bebas Neue', Impact, sans-serif;
-  font-size: 0.9rem;
+  font-size: 1.1rem;
   letter-spacing: 0.15em;
   color: var(--wm-neon-cyan);
   text-shadow: 0 0 5px rgba(0, 229, 255, 0.3);
   margin-bottom: 0.5rem;
 }
 
-.wm-leaderboard-row {
+.wm-lb-row {
+  border-bottom: 1px solid var(--wm-card-border);
+  padding: 0.5rem 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.wm-lb-row:last-of-type {
+  border-bottom: none;
+}
+
+.wm-lb-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wm-lb-you {
+  background: rgba(255, 46, 147, 0.05);
+  border-left: 2px solid var(--wm-neon-pink);
+  padding-left: 0.5rem;
+  margin-left: -0.5rem;
+}
+
+.wm-lb-main {
   display: flex;
   align-items: center;
-  padding: 0.25rem 0;
-  font-size: 0.75rem;
+  gap: 0.5rem;
 }
 
-.wm-leaderboard-rank {
-  width: 1.5rem;
+.wm-lb-rank {
   font-weight: 700;
-  color: var(--wm-neon-gold);
+  font-size: 0.9rem;
+  width: 1.5rem;
+  text-align: center;
+  flex-shrink: 0;
 }
 
-.wm-leaderboard-name {
+.wm-lb-info {
   flex: 1;
-  color: var(--wm-text-primary);
+  min-width: 0;
 }
 
-.wm-leaderboard-bankroll {
+.wm-lb-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--wm-text-primary);
+  display: block;
+}
+
+.wm-lb-you-badge {
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--wm-neon-pink);
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.wm-lb-meta {
+  font-size: 0.65rem;
+  color: var(--wm-text-muted);
+  display: block;
+}
+
+.wm-lb-max {
+  color: var(--wm-text-secondary);
+}
+
+.wm-lb-bankroll {
   font-family: 'Space Mono', monospace;
   font-weight: 700;
+  font-size: 0.85rem;
   color: var(--wm-neon-gold);
+  flex-shrink: 0;
 }
 
-.wm-leaderboard-you {
-  color: var(--wm-neon-pink);
+/* Expanded picks detail */
+.wm-lb-picks {
+  margin-top: 0.35rem;
+  padding-left: 2rem;
+}
+
+.wm-lb-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  padding: 0.15rem 0;
+  color: var(--wm-text-secondary);
+}
+
+.wm-lb-pick-result {
+  width: 1rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.wm-lb-pick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-lb-pick-info {
+  font-family: 'Space Mono', monospace;
+  color: var(--wm-text-muted);
+  flex-shrink: 0;
+}
+
+/* Commentary banner */
+.wm-commentary-banner {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(255, 46, 147, 0.08), rgba(0, 229, 255, 0.08));
+  border: 1px solid rgba(255, 46, 147, 0.2);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.wm-commentary-mic {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.wm-commentary-text {
+  font-size: 0.85rem;
+  color: var(--wm-text-primary);
+  line-height: 1.5;
+  margin: 0;
+  font-style: italic;
+}
+
+/* Commentary feed */
+.wm-commentary-feed {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--wm-card-border);
+}
+
+.wm-commentary-feed-title {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--wm-neon-cyan);
+  margin-bottom: 0.5rem;
+}
+
+.wm-commentary-feed-item {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  font-size: 0.7rem;
+}
+
+.wm-commentary-feed-time {
+  color: var(--wm-text-muted);
+  flex-shrink: 0;
+  width: 3.5rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+}
+
+.wm-commentary-feed-text {
+  color: var(--wm-text-secondary);
+  line-height: 1.4;
+  font-style: italic;
 }
 
 /* Name entry modal */
@@ -653,11 +788,53 @@
   color: var(--wm-neon-pink);
 }
 
-/* Content padding for leaderboard */
+/* Two-column layout: cards + sidebar */
+.wm-layout {
+  display: flex;
+  max-width: 1100px;
+  margin: 0 auto;
+  gap: 1rem;
+  padding: 0 0.5rem;
+}
+
+.wm-main-col {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 2rem;
+}
+
+.wm-sidebar {
+  display: none;
+}
+
+.wm-mobile-leaderboard {
+  padding: 0 0.5rem 2rem;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .wm-sidebar {
+    display: block;
+    width: 340px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 1rem 0;
+  }
+
+  .wm-mobile-leaderboard {
+    display: none;
+  }
+}
+
+/* Legacy compat */
 .wm-content {
   max-width: 700px;
   margin: 0 auto;
-  padding-bottom: 140px;
+  padding-bottom: 2rem;
 }
 
 /* Lock time countdown */

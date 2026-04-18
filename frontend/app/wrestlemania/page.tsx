@@ -7,12 +7,14 @@ import {
   submitWMPick,
   deleteWMPick,
   fetchWMLeaderboard,
+  fetchWMCommentary,
 } from "@/lib/api";
 import type {
   WMCardResponse,
   WMMatch,
   WMOutcome,
   WMLeaderboardEntry,
+  WMCommentaryEntry,
 } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import NameEntryModal from "@/components/wrestlemania/NameEntryModal";
@@ -20,6 +22,7 @@ import RetroHero from "@/components/wrestlemania/RetroHero";
 import MatchCard from "@/components/wrestlemania/MatchCard";
 import PickDrawer from "@/components/wrestlemania/PickDrawer";
 import Leaderboard from "@/components/wrestlemania/Leaderboard";
+import CommentaryBanner from "@/components/wrestlemania/CommentaryBanner";
 import "./wrestlemania.css";
 
 const WM_STORAGE_KEY = "wm42_player";
@@ -34,7 +37,6 @@ function isShowtime(): boolean {
   const now = new Date();
   const day = now.getDay();
   const hour = now.getHours();
-  // Sat/Sun 6pm-11pm ET (approximate with local time)
   return (day === 0 || day === 6) && hour >= 18 && hour <= 23;
 }
 
@@ -45,6 +47,8 @@ export default function WrestlemaniaPage() {
 
   const [card, setCard] = useState<WMCardResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<WMLeaderboardEntry[]>([]);
+  const [banner, setBanner] = useState("");
+  const [commentaryFeed, setCommentaryFeed] = useState<WMCommentaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [storedPlayer, setStoredPlayer] = useState<StoredPlayer | null>(null);
@@ -58,8 +62,8 @@ export default function WrestlemaniaPage() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lbPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const commentaryPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load stored player on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(WM_STORAGE_KEY);
@@ -73,18 +77,13 @@ export default function WrestlemaniaPage() {
     }
   }, []);
 
-  // Fetch card data
   const loadCard = useCallback(async () => {
     try {
       const data = await fetchWrestlemaniaCard(storedPlayer?.player_token);
       setCard(data);
       setError(null);
-
-      // If we have a stored player, update bankroll from server
       if (data.player && storedPlayer) {
-        setStoredPlayer((prev) =>
-          prev ? { ...prev } : null
-        );
+        setStoredPlayer((prev) => (prev ? { ...prev } : null));
       }
     } catch (e) {
       setError("Failed to load card");
@@ -94,7 +93,6 @@ export default function WrestlemaniaPage() {
     }
   }, [storedPlayer]);
 
-  // Fetch leaderboard
   const loadLeaderboard = useCallback(async () => {
     try {
       const data = await fetchWMLeaderboard();
@@ -104,22 +102,33 @@ export default function WrestlemaniaPage() {
     }
   }, []);
 
-  // Initial load + polling
+  const loadCommentary = useCallback(async () => {
+    try {
+      const data = await fetchWMCommentary();
+      setBanner(data.banner);
+      setCommentaryFeed(data.feed);
+    } catch (e) {
+      console.error("Commentary fetch failed:", e);
+    }
+  }, []);
+
   useEffect(() => {
     loadCard();
     loadLeaderboard();
+    loadCommentary();
 
     const cardInterval = isShowtime() ? 10_000 : 30_000;
     pollRef.current = setInterval(loadCard, cardInterval);
     lbPollRef.current = setInterval(loadLeaderboard, 15_000);
+    commentaryPollRef.current = setInterval(loadCommentary, isShowtime() ? 60_000 : 120_000);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (lbPollRef.current) clearInterval(lbPollRef.current);
+      if (commentaryPollRef.current) clearInterval(commentaryPollRef.current);
     };
-  }, [loadCard, loadLeaderboard]);
+  }, [loadCard, loadLeaderboard, loadCommentary]);
 
-  // Register player
   const handleRegister = async (name: string) => {
     setRegistering(true);
     try {
@@ -132,7 +141,6 @@ export default function WrestlemaniaPage() {
       localStorage.setItem(WM_STORAGE_KEY, JSON.stringify(stored));
       setStoredPlayer(stored);
       setShowNameModal(false);
-      // Reload card with player token
       const data = await fetchWrestlemaniaCard(player.player_token);
       setCard(data);
     } catch (e) {
@@ -143,12 +151,7 @@ export default function WrestlemaniaPage() {
     }
   };
 
-  // Submit pick
-  const handleSubmitPick = async (
-    matchId: number,
-    outcomeId: number,
-    stake: number
-  ) => {
+  const handleSubmitPick = async (matchId: number, outcomeId: number, stake: number) => {
     if (!storedPlayer) return;
     setSubmitting(true);
     try {
@@ -164,7 +167,6 @@ export default function WrestlemaniaPage() {
     }
   };
 
-  // Delete pick
   const handleDeletePick = async (pickId: number) => {
     if (!storedPlayer) return;
     try {
@@ -177,7 +179,6 @@ export default function WrestlemaniaPage() {
     }
   };
 
-  // Open drawer
   const handleOutcomeClick = (match: WMMatch, outcome: WMOutcome) => {
     if (!storedPlayer) {
       setShowNameModal(true);
@@ -196,10 +197,9 @@ export default function WrestlemaniaPage() {
         <NameEntryModal onSubmit={handleRegister} loading={registering} />
       )}
 
-      <RetroHero
-        bankroll={bankroll}
-        playerName={storedPlayer?.display_name}
-      />
+      <RetroHero bankroll={bankroll} playerName={storedPlayer?.display_name} />
+
+      {banner && <CommentaryBanner text={banner} />}
 
       {error && (
         <div style={{ textAlign: "center", padding: "2rem", color: "var(--wm-neon-pink)" }}>
@@ -214,23 +214,42 @@ export default function WrestlemaniaPage() {
       )}
 
       {card && (
-        <div className="wm-content">
-          {nights.map((n) => (
-            <div key={n.night}>
-              <div className="wm-night-divider">
-                <span className="wm-night-divider-label">
-                  Night {n.night} — {n.night === 1 ? "Saturday, April 19" : "Sunday, April 20"}
-                </span>
+        <div className="wm-layout">
+          {/* Main column: match cards */}
+          <div className="wm-main-col">
+            {nights.map((n) => (
+              <div key={n.night}>
+                <div className="wm-night-divider">
+                  <span className="wm-night-divider-label">
+                    Night {n.night} — {n.night === 1 ? "Saturday, April 19" : "Sunday, April 20"}
+                  </span>
+                </div>
+                {n.matches.map((match) => (
+                  <MatchCard key={match.id} match={match} onOutcomeClick={handleOutcomeClick} />
+                ))}
               </div>
-              {n.matches.map((match) => (
-                <MatchCard
-                  key={match.id}
-                  match={match}
-                  onOutcomeClick={handleOutcomeClick}
-                />
-              ))}
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Sidebar: leaderboard + commentary (desktop) */}
+          <div className="wm-sidebar">
+            <Leaderboard
+              entries={leaderboard}
+              currentPlayerId={card?.player?.id}
+              commentaryFeed={commentaryFeed}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Mobile: leaderboard below cards (hidden on desktop via CSS) */}
+      {card && (
+        <div className="wm-mobile-leaderboard">
+          <Leaderboard
+            entries={leaderboard}
+            currentPlayerId={card?.player?.id}
+            commentaryFeed={commentaryFeed}
+          />
         </div>
       )}
 
@@ -245,11 +264,6 @@ export default function WrestlemaniaPage() {
           submitting={submitting}
         />
       )}
-
-      <Leaderboard
-        entries={leaderboard}
-        currentPlayerId={card?.player?.id}
-      />
     </div>
   );
 }

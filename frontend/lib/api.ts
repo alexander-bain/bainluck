@@ -1198,6 +1198,7 @@ import type {
   WMPlayer,
   WMLeaderboardResponse,
   WMOddsHistoryResponse,
+  WMCommentaryResponse,
 } from "./types";
 
 export async function fetchWrestlemaniaCard(
@@ -1254,4 +1255,8 @@ export async function fetchWMOddsHistory(
   return apiFetch<WMOddsHistoryResponse>(
     `/api/wrestlemania/odds-history/${matchId}`
   );
+}
+
+export async function fetchWMCommentary(): Promise<WMCommentaryResponse> {
+  return apiFetch<WMCommentaryResponse>("/api/wrestlemania/commentary");
 }

@@ -1,39 +1,87 @@
 "use client";
 
-import type { WMLeaderboardEntry } from "@/lib/types";
+import { useState } from "react";
+import type { WMLeaderboardEntry, WMCommentaryEntry } from "@/lib/types";
+import CommentaryFeed from "./CommentaryFeed";
 
 interface LeaderboardProps {
   entries: WMLeaderboardEntry[];
   currentPlayerId?: number;
+  commentaryFeed?: WMCommentaryEntry[];
 }
 
-export default function Leaderboard({ entries, currentPlayerId }: LeaderboardProps) {
-  const top5 = entries.slice(0, 5);
+function formatMoney(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1000)}k`;
+  return `$${Math.round(n)}`;
+}
 
-  if (top5.length === 0) return null;
+function resultIcon(result: "won" | "lost" | null): string {
+  if (result === "won") return "✓";
+  if (result === "lost") return "✗";
+  return "⏳";
+}
+
+export default function Leaderboard({ entries, currentPlayerId, commentaryFeed }: LeaderboardProps) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  if (entries.length === 0) return null;
 
   return (
-    <div className="wm-leaderboard">
-      <div className="wm-leaderboard-inner">
-        <div className="wm-leaderboard-title">Leaderboard</div>
-        {top5.map((entry, i) => (
+    <div className="wm-leaderboard-section">
+      <div className="wm-leaderboard-header">Leaderboard</div>
+
+      {entries.map((entry, i) => {
+        const isYou = entry.id === currentPlayerId;
+        const isExpanded = expandedId === entry.id;
+        const rankColors = ["var(--wm-neon-gold)", "var(--wm-text-primary)", "var(--wm-text-secondary)"];
+        const rankColor = i < 3 ? rankColors[i] : "var(--wm-text-muted)";
+
+        return (
           <div
             key={entry.id}
-            className={`wm-leaderboard-row ${
-              entry.id === currentPlayerId ? "wm-leaderboard-you" : ""
-            }`}
+            className={`wm-lb-row ${isYou ? "wm-lb-you" : ""}`}
+            onClick={() => setExpandedId(isExpanded ? null : entry.id)}
           >
-            <span className="wm-leaderboard-rank">{i + 1}</span>
-            <span className="wm-leaderboard-name">
-              {entry.display_name}
-              {entry.id === currentPlayerId ? " (you)" : ""}
-            </span>
-            <span className="wm-leaderboard-bankroll">
-              ${entry.bankroll.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-            </span>
+            <div className="wm-lb-main">
+              <span className="wm-lb-rank" style={{ color: rankColor }}>
+                {i === 0 ? "👑" : i + 1}
+              </span>
+              <div className="wm-lb-info">
+                <span className="wm-lb-name">
+                  {entry.display_name}
+                  {isYou && <span className="wm-lb-you-badge">you</span>}
+                </span>
+                <span className="wm-lb-meta">
+                  {entry.wins}W {entry.losses}L {entry.pending}P
+                  {entry.pending > 0 && (
+                    <span className="wm-lb-max"> · max {formatMoney(entry.max_possible)}</span>
+                  )}
+                </span>
+              </div>
+              <span className="wm-lb-bankroll">{formatMoney(entry.bankroll)}</span>
+            </div>
+
+            {isExpanded && entry.pick_details.length > 0 && (
+              <div className="wm-lb-picks">
+                {entry.pick_details.map((pk, j) => (
+                  <div key={j} className="wm-lb-pick">
+                    <span className="wm-lb-pick-result">{resultIcon(pk.result)}</span>
+                    <span className="wm-lb-pick-name">{pk.outcome_name}</span>
+                    <span className="wm-lb-pick-info">
+                      {formatMoney(pk.stake)} @ {pk.odds.toFixed(1)}x
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        );
+      })}
+
+      {commentaryFeed && commentaryFeed.length > 0 && (
+        <CommentaryFeed entries={commentaryFeed} />
+      )}
     </div>
   );
 }
