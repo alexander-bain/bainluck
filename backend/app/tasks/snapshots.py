@@ -38,10 +38,20 @@ async def _create_or_update_win_prob_snapshot(
     )
     existing = result.scalar_one_or_none()
 
-    # Compare home_win_probability (the primary value)
+    # Compare probability AND game period — a new inning/quarter with the same
+    # probability is still a distinct observation worth recording, otherwise
+    # we lose period markers on charts when short innings don't move the line.
     is_same = False
     if existing is not None and existing.home_win_probability is not None and home_win_probability is not None:
-        is_same = float(existing.home_win_probability) == float(home_win_probability)
+        prob_same = float(existing.home_win_probability) == float(home_win_probability)
+        period_same = True
+        if prob_same and game_state and existing.game_state:
+            old_gs = existing.game_state if isinstance(existing.game_state, dict) else {}
+            new_period = game_state.get("period") or game_state.get("inning")
+            old_period = old_gs.get("period") or old_gs.get("inning")
+            if new_period and old_period and str(new_period) != str(old_period):
+                period_same = False
+        is_same = prob_same and period_same
 
     if existing is None or not is_same:
         # Value changed — close out the old row and create a new one
