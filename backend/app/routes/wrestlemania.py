@@ -570,14 +570,22 @@ COMMENTARY_SYSTEM = """You are the world's sassiest wrestling announcer providin
 def _build_commentary_prompt(leaderboard: list[dict], matches: list[dict]) -> str:
     lines = ["CURRENT LEADERBOARD:"]
     for i, p in enumerate(leaderboard, 1):
-        picks_str = ", ".join(
-            f"{pk['outcome_name']}({'✓' if pk['result']=='won' else '✗' if pk['result']=='lost' else f'${pk[\"stake\"]:,.0f} at {pk[\"odds\"]:.1f}x'})"
-            for pk in p.get("pick_details", [])
-        )
-        cash_held = p["bankroll"] - p.get("total_staked", 0) + p["bankroll"]  # approximate
+        pick_parts = []
+        for pk in p.get("pick_details", []):
+            if pk["result"] == "won":
+                pick_parts.append(f"{pk['outcome_name']}(✓)")
+            elif pk["result"] == "lost":
+                pick_parts.append(f"{pk['outcome_name']}(✗)")
+            else:
+                stake = pk["stake"]
+                odds = pk["odds"]
+                pick_parts.append(f"{pk['outcome_name']}(${stake:,.0f} at {odds:.1f}x)")
+        picks_str = ", ".join(pick_parts)
+        bankroll = p["bankroll"]
+        max_pos = p["max_possible"]
         lines.append(
-            f"#{i} {p['display_name']}: ${p['bankroll']:,.0f} bankroll "
-            f"(max possible ${p['max_possible']:,.0f}) — "
+            f"#{i} {p['display_name']}: ${bankroll:,.0f} bankroll "
+            f"(max possible ${max_pos:,.0f}) — "
             f"{p['wins']}W/{p['losses']}L/{p['pending']} pending — "
             f"Picks: {picks_str or 'none yet'}"
         )
