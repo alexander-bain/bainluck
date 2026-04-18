@@ -72,6 +72,8 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(hart.trophy|vezina|calder|conn.smythe|norris.trophy|selke|lady.byng|rocket.richard)\b", re.I), "hockey"),
     (re.compile(r"\bhockey\b", re.I), "hockey"),
 
+    # Monte-Carlo Masters is tennis, not golf — must precede golf "masters" pattern
+    (re.compile(r"\bmonte[\s._-]?carlo\b.*\bmasters\b|\batp\b.*\bmasters\b", re.I), "tennis"),
     # Golf - Major championships and tours
     (re.compile(r"\b(pga|masters|british.open|the.open|ryder.cup)\b", re.I), "golf"),
     (re.compile(r"\b(lpga|liv.golf|dp.world)\b", re.I), "golf"),

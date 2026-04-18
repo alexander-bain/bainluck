@@ -865,12 +865,21 @@ async def _fix_outcome_names_impl():
                 .group_by(FuturesOutcome.market_id, FuturesOutcome.name)
                 .having(sqla_func.count(FuturesOutcome.id) > 1)
             )
-            dup_result = await session.execute(dup_query)
+            # Also find Polymarket markets with generic "Yes"/"No" outcome names
+            yes_no_query = (
+                select(FuturesOutcome.market_id)
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesOutcome.name.in_(["Yes", "No"]),
+                )
+            )
+            dup_result = await session.execute(dup_query.union(yes_no_query))
             affected_market_ids = list(set(row[0] for row in dup_result.all()))
 
             if not affected_market_ids:
                 await service.close()
-                logger.info("fix_outcome_names: no markets with duplicate outcome names found")
+                logger.info("fix_outcome_names: no markets with duplicate or Yes/No outcome names found")
                 return stats
 
             for market_id in affected_market_ids:
