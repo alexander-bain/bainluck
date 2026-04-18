@@ -488,14 +488,14 @@ But 1,858 markets remain unlinked. Possible failure points:
 **Conflicts with:** Any work on golf.py
 **Parallel Safety:** Yellow
 
-**Known bugs (7, each small and independent):**
+**Known bugs (5 remaining, each small and independent):**
 1. Tour misclassification (Hainan = Asian Tour, not PGA Tour)
 2. "Augusta National Invitational" ghost tournament
-3. Categories page chart showing "Yes" (Polymarket binary label)
+3. ~~Categories page chart showing "Yes" (Polymarket binary label)~~ **SHIPPED April 17** — expanded `fix_outcome_names` task to process Yes/No binary markets
 4. "To win" label on card probabilities
 5. H2H matchups filtered out on tournament detail (~L608 in golf.py)
 6. Make Cut column missing on tournament detail
-7. ATP Monte-Carlo "Masters" markets leaking into golf
+7. ~~ATP Monte-Carlo "Masters" markets leaking into golf~~ **SHIPPED April 17** — added tennis Monte-Carlo/ATP pattern before golf "masters" in `futures_categorization.py`
 
 **Prompt:**
 > Fix 7 golf data quality bugs. Read `routes/golf.py`, `tasks/datagolf.py`, and `utils/futures_categorization.py`.

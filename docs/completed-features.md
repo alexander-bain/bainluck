@@ -1,4 +1,12 @@
 # Completed Features (Shipped)
+
+## April 17-18, 2026
+- ✅ WrestleMania 42 prediction game (`/wrestlemania`) — 13-match card, Polymarket live odds, $1M bankroll stake-and-lose scoring, retro neon theme, storylines + case-for-each-side, wrestler images, leaderboard, admin resolution page. Throwaway — remove after April 20.
+- ✅ Win prob snapshot dedup fix — new snapshots now written when inning/period changes even if probability is flat. Fixes missing inning markers on baseball charts.
+- ✅ Golf: Monte-Carlo tennis "Masters" leak fixed — added tennis disambiguation pattern before golf in `futures_categorization.py`
+- ✅ Golf: Polymarket "Yes" labels fixed — `fix_outcome_names` task now processes binary Yes/No markets via union query
+- ✅ Alembic multi-head fix — Procfile now uses `alembic upgrade heads` (plural)
+
 <details>
 <summary>Shipped features (click to expand)</summary>
 
