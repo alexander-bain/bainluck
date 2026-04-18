@@ -114,7 +114,7 @@ export function derivePeriodBoundaries(
       timestamp: m.timestamp,
       label: normalizePeriodLabel(m.period),
     })).filter((b) => b.label);
-    if (boundaries.length > 0) return fillBaseballInningGaps(applyCommenceTime(boundaries, commenceTime));
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Prefer win prob history — its timestamps are always present in chartData
@@ -123,19 +123,19 @@ export function derivePeriodBoundaries(
   // have matching entries in the chart data when win_prob_snapshots deduped them.
   if (winProbHistory) {
     const boundaries = deriveBoundariesFromWinProb(winProbHistory);
-    if (boundaries.length > 0) return fillBaseballInningGaps(applyCommenceTime(boundaries, commenceTime));
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Fallback to ESPN history (explicit period field, different table)
   if (espnHistory && espnHistory.length > 1) {
     const boundaries = deriveBoundariesFromEspn(espnHistory);
-    if (boundaries.length > 0) return fillBaseballInningGaps(applyCommenceTime(boundaries, commenceTime));
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Try scoring plays
   if (scoringPlays && scoringPlays.length > 1) {
     const boundaries = deriveBoundariesFromScoringPlays(scoringPlays);
-    if (boundaries.length > 0) return fillBaseballInningGaps(applyCommenceTime(boundaries, commenceTime));
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   return [];
@@ -269,59 +269,4 @@ function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[
   return Array.from(firstSeen.entries())
     .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
     .map(([label, timestamp]) => ({ timestamp, label }));
-}
-
-/**
- * Fill gaps in baseball inning markers.
- * If we see T1, T3, T4 but no T2, interpolate T2's timestamp
- * as the midpoint between the surrounding known innings.
- */
-function fillBaseballInningGaps(boundaries: PeriodBoundary[]): PeriodBoundary[] {
-  const baseballRe = /^[TBME](\d+)$/;
-  const isBaseball = boundaries.some((b) => baseballRe.test(b.label));
-  if (!isBaseball || boundaries.length < 2) return boundaries;
-
-  // Map each inning number to its first boundary (regardless of T/B/M/E prefix)
-  const inningToBoundary = new Map<number, PeriodBoundary>();
-  for (const b of boundaries) {
-    const m = b.label.match(baseballRe);
-    if (m) {
-      const inning = parseInt(m[1]);
-      if (!inningToBoundary.has(inning)) {
-        inningToBoundary.set(inning, b);
-      }
-    }
-  }
-
-  if (inningToBoundary.size < 2) return boundaries;
-
-  const minInning = Math.min(...inningToBoundary.keys());
-  const maxInning = Math.max(...inningToBoundary.keys());
-  const result = [...boundaries];
-
-  for (let i = minInning + 1; i < maxInning; i++) {
-    if (inningToBoundary.has(i)) continue;
-
-    // Find nearest known innings before and after
-    let prevInning = i - 1;
-    while (prevInning >= minInning && !inningToBoundary.has(prevInning)) prevInning--;
-    let nextInning = i + 1;
-    while (nextInning <= maxInning && !inningToBoundary.has(nextInning)) nextInning++;
-
-    const prev = inningToBoundary.get(prevInning);
-    const next = inningToBoundary.get(nextInning);
-    if (prev && next) {
-      const prevTime = new Date(prev.timestamp).getTime();
-      const nextTime = new Date(next.timestamp).getTime();
-      const fraction = (i - prevInning) / (nextInning - prevInning);
-      const interpolated = new Date(prevTime + fraction * (nextTime - prevTime)).toISOString();
-      const newBoundary = { timestamp: interpolated, label: `T${i}` };
-      result.push(newBoundary);
-      inningToBoundary.set(i, newBoundary);
-    }
-  }
-
-  return result.sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
 }
