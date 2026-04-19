@@ -1794,6 +1794,7 @@ export interface WMLeaderboardEntry {
   wins: number;
   losses: number;
   pending: number;
+  win_probability: number;
   pick_details: WMPickDetail[];
 }
 

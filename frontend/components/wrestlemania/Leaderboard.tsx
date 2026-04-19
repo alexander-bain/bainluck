@@ -59,6 +59,22 @@ export default function Leaderboard({ entries, currentPlayerId, commentaryFeed }
                   )}
                 </span>
               </div>
+              {entry.win_probability != null && (
+                <span
+                  className="wm-lb-winprob"
+                  style={{
+                    color: entry.win_probability > 30
+                      ? "var(--wm-neon-gold)"
+                      : entry.win_probability > 10
+                      ? "var(--wm-text-primary)"
+                      : "var(--wm-text-muted)",
+                  }}
+                >
+                  {entry.win_probability > 0
+                    ? `${entry.win_probability}%`
+                    : "<1%"}
+                </span>
+              )}
               <span className="wm-lb-bankroll">{formatMoney(entry.bankroll)}</span>
             </div>
 

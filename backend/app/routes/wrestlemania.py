@@ -20,7 +20,7 @@ from app.models.wrestlemania import (
 )
 from app.services import get_db
 from app.services.wikipedia_images import resolve_wrestler_image
-from app.utils.wrestlemania_scoring import compute_bankroll, compute_max_possible
+from app.utils.wrestlemania_scoring import compute_bankroll, compute_max_possible, compute_win_probabilities
 
 router = APIRouter()
 
@@ -356,16 +356,54 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
         .join(WrestlemaniaOutcome, WrestlemaniaPick.outcome_id == WrestlemaniaOutcome.id)
     )
     picks_by_player: dict[int, list[dict]] = {}
+    raw_picks_by_player: dict[int, list[dict]] = {}
     for pick, match_title, outcome_name in all_picks_result.all():
-        picks_by_player.setdefault(pick.player_id, []).append({
+        pick_dict = {
             "stake": float(pick.stake),
             "decimal_odds_at_pick": float(pick.decimal_odds_at_pick),
             "result": pick.result,
             "match_title": match_title,
             "outcome_name": outcome_name,
+        }
+        picks_by_player.setdefault(pick.player_id, []).append(pick_dict)
+        raw_picks_by_player.setdefault(pick.player_id, []).append({
+            "match_id": pick.match_id,
+            "outcome_id": pick.outcome_id,
+            "stake": float(pick.stake),
+            "decimal_odds_at_pick": float(pick.decimal_odds_at_pick),
+            "result": pick.result,
         })
 
+    # Fetch unresolved matches with current outcome probabilities
+    unresolved_result = await session.execute(
+        select(WrestlemaniaMatch)
+        .where(WrestlemaniaMatch.status.in_(["open", "locked"]))
+        .options()
+    )
+    unresolved_matches_db = unresolved_result.scalars().all()
+    unresolved_match_ids = [m.id for m in unresolved_matches_db]
+
+    unresolved_matches = []
+    if unresolved_match_ids:
+        outcomes_result = await session.execute(
+            select(WrestlemaniaOutcome).where(
+                WrestlemaniaOutcome.match_id.in_(unresolved_match_ids)
+            )
+        )
+        outcomes_by_match: dict[int, list[dict]] = {}
+        for o in outcomes_result.scalars().all():
+            prob = float(o.probability) if o.probability else 0.0
+            outcomes_by_match.setdefault(o.match_id, []).append({
+                "outcome_id": o.id,
+                "probability": prob,
+            })
+        for mid in unresolved_match_ids:
+            outs = outcomes_by_match.get(mid, [])
+            if outs:
+                unresolved_matches.append({"match_id": mid, "outcomes": outs})
+
     leaderboard = []
+    player_data_for_wp = []
     for p in players:
         picks = picks_by_player.get(p.id, [])
         bankroll = compute_bankroll(picks)
@@ -384,6 +422,7 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
             "wins": wins,
             "losses": losses,
             "pending": pending,
+            "win_probability": 0.0,
             "pick_details": [
                 {
                     "match_title": pk["match_title"],
@@ -395,6 +434,22 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
                 for pk in picks
             ],
         })
+
+        # Base bankroll = bankroll with all stakes deducted and resolved payouts added
+        # (pending picks already have stakes deducted but no payout yet)
+        player_data_for_wp.append({
+            "id": p.id,
+            "base_bankroll": bankroll,
+            "picks": raw_picks_by_player.get(p.id, []),
+        })
+
+    # Compute win probabilities
+    try:
+        win_probs = compute_win_probabilities(player_data_for_wp, unresolved_matches)
+        for entry in leaderboard:
+            entry["win_probability"] = round(win_probs.get(entry["id"], 0.0) * 100, 1)
+    except Exception:
+        pass
 
     leaderboard.sort(key=lambda x: x["bankroll"], reverse=True)
     return {"leaderboard": leaderboard}
