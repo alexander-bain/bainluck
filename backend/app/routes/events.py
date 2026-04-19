@@ -3234,7 +3234,8 @@ async def get_related_futures(
         }
 
         # Add matched player metadata (ESPN headshot) when outcome matches a roster player
-        matched = player_metadata.get(outcome.name.lower())
+        player_lookup = outcome.name.split(":")[0].strip().lower()
+        matched = player_metadata.get(player_lookup)
         if matched:
             entry["matched_player"] = matched
 
