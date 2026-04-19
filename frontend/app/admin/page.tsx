@@ -162,6 +162,21 @@ interface MatchingMetricsEntry {
   matched_events: number;
 }
 
+interface GameStateSportRow {
+  sport_key: string;
+  total_events: number;
+  min_indicators: number;
+  max_indicators: number;
+  avg_indicators: number;
+  zero_count: number;
+  expected: number | null;
+  type: "fixed" | "variable";
+  met?: number;
+  under?: number;
+  over?: number;
+  pct_met?: number;
+}
+
 interface DashboardData {
   generated_at: string;
   quota: {
@@ -183,6 +198,7 @@ interface DashboardData {
   };
   database: DatabaseHealth;
   matching_metrics?: MatchingMetricsEntry[];
+  game_state_coverage?: GameStateSportRow[];
 }
 
 // --- Helpers ---
@@ -437,12 +453,13 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
     return recent.map((d) => {
       const task = taskMap.get(d.date);
       // If we have task breakdown, use it; otherwise show total as "other"
-      if (task && ((task.poll_odds || 0) + (task.discover_events || 0) + (task.poll_futures || 0)) > 0) {
+      if (task && ((task.poll_odds || 0) + (task.discover_events || 0) + (task.poll_futures || 0) + (task.score_fetch || 0)) > 0) {
         return {
           date: d.date,
           poll_odds: task.poll_odds || 0,
           discover_events: task.discover_events || 0,
           poll_futures: task.poll_futures || 0,
+          score_fetch: task.score_fetch || 0,
         };
       }
       return {
@@ -450,6 +467,7 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
         poll_odds: d.daily_requests,
         discover_events: 0,
         poll_futures: 0,
+        score_fetch: 0,
       };
     });
   }, [data, byTask]);
@@ -471,6 +489,7 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
                   poll_odds: "Live Polling",
                   discover_events: "Discovery",
                   poll_futures: "Futures",
+                  score_fetch: "Scores",
                 };
                 return [formatNum(val), labels[name] || name];
               }}
@@ -481,6 +500,7 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
                   poll_odds: "Live Polling",
                   discover_events: "Discovery",
                   poll_futures: "Futures",
+                  score_fetch: "Scores",
                 };
                 return labels[value] || value;
               }}
@@ -488,11 +508,115 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
             />
             <Bar dataKey="poll_odds" stackId="a" fill="#3b82f6" radius={[0, 0, 0, 0]} />
             <Bar dataKey="discover_events" stackId="a" fill="#f59e0b" radius={[0, 0, 0, 0]} />
-            <Bar dataKey="poll_futures" stackId="a" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="poll_futures" stackId="a" fill="#8b5cf6" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="score_fetch" stackId="a" fill="#10b981" radius={[3, 3, 0, 0]} />
             <ReferenceLine y={dailyBudget} stroke="#ef4444" strokeDasharray="6 3" label={{ value: "Budget", fill: "#ef4444", fontSize: 10, position: "right" }} />
           </BarChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+function GameStateCoverageChart({ data }: { data: GameStateSportRow[] }) {
+  const fixedSports = data
+    .filter((d) => d.type === "fixed" && d.total_events > 0)
+    .sort((a, b) => (b.pct_met ?? 0) - (a.pct_met ?? 0));
+  const variableSports = data
+    .filter((d) => d.type === "variable" && d.total_events > 0)
+    .sort((a, b) => b.total_events - a.total_events);
+
+  if (!fixedSports.length && !variableSports.length) return null;
+
+  const sportLabel = (key: string) => {
+    const parts = key.split("_");
+    return parts.length > 1 ? parts.slice(1).join(" ").toUpperCase() : key.toUpperCase();
+  };
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <h3 className="text-sm font-semibold text-text-primary mb-1">Game State Indicators by Sport</h3>
+      <p className="text-xs text-text-muted mb-3">Period/quarter/inning coverage for completed events (14 days)</p>
+
+      {fixedSports.length > 0 && (
+        <div className="space-y-1.5 mb-4">
+          {fixedSports.map((s) => {
+            const total = s.total_events;
+            const met = s.met ?? 0;
+            const under = s.under ?? 0;
+            const over = s.over ?? 0;
+            const pctMet = total > 0 ? (met / total) * 100 : 0;
+            const pctUnder = total > 0 ? (under / total) * 100 : 0;
+            const pctOver = total > 0 ? (over / total) * 100 : 0;
+
+            return (
+              <div key={s.sport_key} className="flex items-center gap-2">
+                <span className="text-xs text-text-secondary w-20 truncate text-right" title={s.sport_key}>
+                  {sportLabel(s.sport_key)}
+                </span>
+                <div className="flex-1 flex h-4 rounded overflow-hidden bg-surface-elevated">
+                  {pctMet > 0 && (
+                    <div
+                      className="bg-emerald-500 transition-all"
+                      style={{ width: `${pctMet}%` }}
+                      title={`Met (=${s.expected}): ${met} events`}
+                    />
+                  )}
+                  {pctUnder > 0 && (
+                    <div
+                      className="bg-amber-400 transition-all"
+                      style={{ width: `${pctUnder}%` }}
+                      title={`Under (<${s.expected}): ${under} events`}
+                    />
+                  )}
+                  {pctOver > 0 && (
+                    <div
+                      className="bg-sky-400 transition-all"
+                      style={{ width: `${pctOver}%` }}
+                      title={`Over (>${s.expected}): ${over} events`}
+                    />
+                  )}
+                </div>
+                <span className="text-xs text-text-muted w-12 text-right">{Math.round(pctMet)}%</span>
+                <span className="text-xs text-text-muted w-8 text-right">{total}</span>
+              </div>
+            );
+          })}
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-text-muted">
+            <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Met</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-400" /> Under</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-sky-400" /> Over (OT)</span>
+          </div>
+        </div>
+      )}
+
+      {variableSports.length > 0 && (
+        <div>
+          <p className="text-xs text-text-muted mb-1">Variable-round sports</p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-text-muted border-b border-surface-border">
+                <th className="text-left py-1 font-medium">Sport</th>
+                <th className="text-right py-1 font-medium">Events</th>
+                <th className="text-right py-1 font-medium">Avg</th>
+                <th className="text-right py-1 font-medium">Min</th>
+                <th className="text-right py-1 font-medium">Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {variableSports.map((s) => (
+                <tr key={s.sport_key} className="border-b border-surface-border/50">
+                  <td className="py-1 text-text-secondary">{sportLabel(s.sport_key)}</td>
+                  <td className="py-1 text-right text-text-muted">{s.total_events}</td>
+                  <td className="py-1 text-right text-text-primary">{s.avg_indicators}</td>
+                  <td className="py-1 text-right text-text-muted">{s.min_indicators}</td>
+                  <td className="py-1 text-right text-text-muted">{s.max_indicators}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1110,6 +1234,9 @@ export default function AdminDashboard() {
           <div className="grid md:grid-cols-2 gap-4">
             {data.matching_metrics && data.matching_metrics.length > 0 && (
               <MatchingCoverageChart data={data.matching_metrics} />
+            )}
+            {data.game_state_coverage && data.game_state_coverage.length > 0 && (
+              <GameStateCoverageChart data={data.game_state_coverage} />
             )}
             <DatabaseCard db={data.database} />
             <div className="space-y-4">

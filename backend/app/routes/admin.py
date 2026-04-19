@@ -7224,6 +7224,163 @@ async def operations_dashboard(
     except Exception:
         matching_history = []
 
+    # --- 7. Game State Indicators by Sport ---
+    game_state_section: list[dict] = []
+    try:
+        from app.utils.sport_keys import EXPECTED_GAME_STATE_INDICATORS
+
+        gs_sql = text("""
+            SET LOCAL statement_timeout = '15s';
+
+            WITH completed_events AS (
+                SELECT e.id AS event_id, s.key AS sport_key
+                FROM events e
+                JOIN sports s ON s.id = e.sport_id
+                WHERE e.status IN ('completed', 'closed')
+                  AND e.commence_time >= NOW() - INTERVAL '14 days'
+                  AND e.espn_id IS NOT NULL
+            ),
+            indicators AS (
+                SELECT ce.event_id, ce.sport_key, sp.period AS indicator
+                FROM completed_events ce
+                JOIN scoring_plays sp ON sp.event_id = ce.event_id
+                WHERE sp.period IS NOT NULL
+                UNION
+                SELECT ce.event_id, ce.sport_key, es.period AS indicator
+                FROM completed_events ce
+                JOIN espn_snapshots es ON es.event_id = ce.event_id
+                WHERE es.period IS NOT NULL
+                UNION
+                SELECT ce.event_id, ce.sport_key,
+                       wp.game_state->>'period' AS indicator
+                FROM completed_events ce
+                JOIN win_prob_snapshots wp ON wp.event_id = ce.event_id
+                WHERE wp.game_state->>'period' IS NOT NULL
+            ),
+            per_event AS (
+                SELECT event_id, sport_key,
+                       COUNT(DISTINCT indicator) AS indicator_count
+                FROM indicators
+                GROUP BY event_id, sport_key
+            )
+            SELECT sport_key,
+                   COUNT(*) AS total_events,
+                   MIN(indicator_count) AS min_indicators,
+                   MAX(indicator_count) AS max_indicators,
+                   ROUND(AVG(indicator_count), 1) AS avg_indicators,
+                   COUNT(*) FILTER (WHERE indicator_count = 0) AS zero_count
+            FROM per_event
+            GROUP BY sport_key
+            ORDER BY total_events DESC
+        """)
+        gs_result = await db.execute(gs_sql)
+        gs_rows = gs_result.fetchall()
+
+        for row in gs_rows:
+            sport_key = row[0]
+            total = int(row[1])
+            min_ind = int(row[2])
+            max_ind = int(row[3])
+            avg_ind = float(row[4])
+            zero_count = int(row[5])
+            expected = EXPECTED_GAME_STATE_INDICATORS.get(sport_key)
+
+            entry: dict = {
+                "sport_key": sport_key,
+                "total_events": total,
+                "min_indicators": min_ind,
+                "max_indicators": max_ind,
+                "avg_indicators": avg_ind,
+                "zero_count": zero_count,
+                "expected": expected,
+            }
+
+            if expected is not None:
+                # Fixed-period sport: bucket into met/under/over
+                # Re-query would be expensive; approximate from aggregates.
+                # We already have min/max/total — query per-bucket counts.
+                entry["type"] = "fixed"
+            else:
+                entry["type"] = "variable"
+
+            game_state_section.append(entry)
+
+        # Second pass for fixed sports: get actual bucket counts.
+        if any(e["type"] == "fixed" for e in game_state_section):
+            bucket_sql = text("""
+                SET LOCAL statement_timeout = '15s';
+
+                WITH completed_events AS (
+                    SELECT e.id AS event_id, s.key AS sport_key
+                    FROM events e
+                    JOIN sports s ON s.id = e.sport_id
+                    WHERE e.status IN ('completed', 'closed')
+                      AND e.commence_time >= NOW() - INTERVAL '14 days'
+                      AND e.espn_id IS NOT NULL
+                ),
+                indicators AS (
+                    SELECT ce.event_id, ce.sport_key, sp.period AS indicator
+                    FROM completed_events ce
+                    JOIN scoring_plays sp ON sp.event_id = ce.event_id
+                    WHERE sp.period IS NOT NULL
+                    UNION
+                    SELECT ce.event_id, ce.sport_key, es.period AS indicator
+                    FROM completed_events ce
+                    JOIN espn_snapshots es ON es.event_id = ce.event_id
+                    WHERE es.period IS NOT NULL
+                    UNION
+                    SELECT ce.event_id, ce.sport_key,
+                           wp.game_state->>'period' AS indicator
+                    FROM completed_events ce
+                    JOIN win_prob_snapshots wp ON wp.event_id = ce.event_id
+                    WHERE wp.game_state->>'period' IS NOT NULL
+                ),
+                per_event AS (
+                    SELECT event_id, sport_key,
+                           COUNT(DISTINCT indicator) AS indicator_count
+                    FROM indicators
+                    GROUP BY event_id, sport_key
+                )
+                SELECT sport_key, indicator_count, COUNT(*) AS cnt
+                FROM per_event
+                GROUP BY sport_key, indicator_count
+                ORDER BY sport_key, indicator_count
+            """)
+            bucket_result = await db.execute(bucket_sql)
+            bucket_rows = bucket_result.fetchall()
+
+            # Build lookup: sport_key -> {indicator_count: count}
+            buckets: dict[str, dict[int, int]] = {}
+            for brow in bucket_rows:
+                sk = brow[0]
+                ic = int(brow[1])
+                cnt = int(brow[2])
+                buckets.setdefault(sk, {})[ic] = cnt
+
+            for entry in game_state_section:
+                if entry["type"] != "fixed":
+                    continue
+                sk = entry["sport_key"]
+                expected = entry["expected"]
+                sport_buckets = buckets.get(sk, {})
+                met = 0
+                under = 0
+                over = 0
+                for ic, cnt in sport_buckets.items():
+                    if ic == expected:
+                        met += cnt
+                    elif ic < expected:
+                        under += cnt
+                    else:
+                        over += cnt
+                entry["met"] = met
+                entry["under"] = under
+                entry["over"] = over
+                entry["pct_met"] = round(met / max(entry["total_events"], 1) * 100, 1)
+
+    except Exception as e:
+        game_state_section = [{"error": str(e)}]
+
     return {
         "generated_at": now.isoformat(),
         "quota": quota_section,
@@ -7233,6 +7390,7 @@ async def operations_dashboard(
         "worker": worker_section,
         "database": db_section,
         "matching_metrics": matching_history,
+        "game_state_coverage": game_state_section,
     }
 
 

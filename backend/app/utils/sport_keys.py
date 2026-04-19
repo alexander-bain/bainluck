@@ -61,6 +61,60 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
 
 
 # =============================================================================
+# 1b. EXPECTED_GAME_STATE_INDICATORS — how many distinct period/quarter/inning
+#     labels we expect to see for a COMPLETED event in each sport.
+#
+#     Used by the admin dashboard to grade game-state data completeness.
+#     int  → fixed-period sport (NFL = 4 quarters, NBA = 4, etc.)
+#     None → variable-round sport (tennis, MMA, boxing, golf)
+# =============================================================================
+
+EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
+    # Football — 4 quarters
+    "americanfootball_nfl": 4,
+    "americanfootball_ncaaf": 4,
+    "americanfootball_cfl": 4,
+    "americanfootball_ufl": 4,
+    # Basketball — 4 quarters (halves for college, but ESPN reports 2 halves)
+    "basketball_nba": 4,
+    "basketball_wnba": 4,
+    "basketball_ncaab": 2,
+    "basketball_wncaab": 2,
+    # Baseball — 9 innings
+    "baseball_mlb": 9,
+    "baseball_mlb_preseason": 9,
+    "baseball_ncaa": 9,
+    # Hockey — 3 periods
+    "icehockey_nhl": 3,
+    # Soccer — 2 halves
+    "soccer_epl": 2,
+    "soccer_usa_mls": 2,
+    "soccer_uefa_champs_league": 2,
+    "soccer_spain_la_liga": 2,
+    "soccer_germany_bundesliga": 2,
+    "soccer_italy_serie_a": 2,
+    "soccer_france_ligue_one": 2,
+    # Lacrosse — 4 quarters
+    "lacrosse_ncaa": 4,
+    "lacrosse_pll": 4,
+    # Aussie Rules — 4 quarters
+    "aussierules_afl": 4,
+    # Variable-round sports
+    "golf_pga": None,
+    "golf_lpga": None,
+    "tennis_atp": None,
+    "tennis_wta": None,
+    "mma_ufc": None,
+    "mma_mixed_martial_arts": None,
+    # confirm after first render
+    "boxing_boxing": None,
+    "cricket_ipl": None,
+    "baseball_kbo": None,
+    "baseball_milb": None,
+}
+
+
+# =============================================================================
 # 2. ESPN_SPORT_MAPPING — Odds API key → ESPN path string ("sport/league")
 # =============================================================================
 
