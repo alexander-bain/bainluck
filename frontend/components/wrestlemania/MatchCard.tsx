@@ -61,7 +61,7 @@ function PlaceholderAvatar({ name, color }: { name: string; color: string }) {
 export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
   const [showStoryline, setShowStoryline] = useState(false);
   const [showChart, setShowChart] = useState(false);
-  const hasChartData = match.outcomes.some((o) => o.history && o.history.length >= 2);
+  const hasChartData = false; // Spoiler guard: hide live odds charts during event
   const countdown = lockCountdown(match.lock_time);
   const isSoon = countdown !== "Locked" && !countdown.includes("d");
   const isBinary = match.outcomes.length === 2;
@@ -118,8 +118,8 @@ export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
               </div>
               <div className="wm-outcome-odds">{outcome.decimal_odds ? formatOdds(outcome.decimal_odds) : ""}</div>
 
-              {/* Sparkline */}
-              {outcome.history && outcome.history.length >= 2 && (
+              {/* Sparkline — hidden during live event (spoiler guard) */}
+              {false && outcome.history && outcome.history.length >= 2 && (
                 <div style={{ marginTop: "0.5rem" }}>
                   <OddsSparkline history={outcome.history} color={color} width={100} height={32} />
                 </div>
