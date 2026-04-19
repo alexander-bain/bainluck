@@ -666,8 +666,9 @@ def track_statpal_usage():
 
 @celery_app.task(bind=True, name="app.tasks.poll_wrestlemania_odds")
 def poll_wrestlemania_odds(self):
-    """Poll WrestleMania odds from Polymarket — PAUSED to avoid spoilers during live viewing."""
-    return {"skipped": True, "reason": "spoiler_guard"}
+    """Poll WrestleMania odds from Polymarket (every 60s)."""
+    from app.tasks.wrestlemania import _poll_wrestlemania_odds
+    return _tracked_run("wrestlemania_odds", _poll_wrestlemania_odds())
 
 
 # --- Heartbeat ---

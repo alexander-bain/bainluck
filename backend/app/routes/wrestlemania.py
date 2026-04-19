@@ -118,11 +118,14 @@ async def get_card(
         .order_by(WrestlemaniaOddsSnapshot.recorded_at)
     )
     history_by_outcome: dict[int, list] = {}
+    opening_prob: dict[int, float] = {}
     for s in all_snaps_result.scalars().all():
         history_by_outcome.setdefault(s.outcome_id, []).append({
             "p": float(s.probability),
             "t": s.recorded_at.isoformat(),
         })
+        if s.outcome_id not in opening_prob:
+            opening_prob[s.outcome_id] = float(s.probability)
 
     nights: dict[int, list] = {}
     for match in matches:
@@ -181,12 +184,12 @@ async def get_card(
                 {
                     "id": o.id,
                     "name": o.name,
-                    "probability": float(o.probability) if o.probability else None,
-                    "decimal_odds": float(o.decimal_odds) if o.decimal_odds else None,
+                    "probability": opening_prob.get(o.id, float(o.probability) if o.probability else None),
+                    "decimal_odds": round(1.0 / opening_prob[o.id], 3) if o.id in opening_prob and opening_prob[o.id] > 0.01 else (float(o.decimal_odds) if o.decimal_odds else None),
                     "wikipedia_image_url": o.wikipedia_image_url,
                     "is_winner": o.is_winner,
                     "case_text": o.case_text,
-                    "history": history_by_outcome.get(o.id, []),
+                    "history": [],
                 }
                 for o in outcomes
             ],
