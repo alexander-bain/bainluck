@@ -267,7 +267,7 @@ function WrestlemaniaContent() {
               <div key={n.night}>
                 <div className="wm-night-divider">
                   <span className="wm-night-divider-label">
-                    Night {n.night} — {n.night === 1 ? "Saturday, April 19" : "Sunday, April 20"}
+                    Night {n.night} — {n.night === 1 ? "Friday, April 18" : "Saturday, April 19"}
                   </span>
                 </div>
                 {n.matches.map((match) => (
