@@ -1,0 +1,168 @@
+{
+  "events_all_markets": [
+    {
+      "id": "abc123def456",
+      "sport_key": "basketball_nba",
+      "sport_title": "NBA",
+      "commence_time": "2026-04-10T23:30:00Z",
+      "home_team": "Boston Celtics",
+      "away_team": "Los Angeles Lakers",
+      "bookmakers": [
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": -180},
+                {"name": "Los Angeles Lakers", "price": 150}
+              ]
+            },
+            {
+              "key": "spreads",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": -110, "point": -4.5},
+                {"name": "Los Angeles Lakers", "price": -110, "point": 4.5}
+              ]
+            },
+            {
+              "key": "totals",
+              "outcomes": [
+                {"name": "Over", "price": -110, "point": 215.5},
+                {"name": "Under", "price": -110, "point": 215.5}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "draftkings",
+          "title": "DraftKings",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": -175},
+                {"name": "Los Angeles Lakers", "price": 145}
+              ]
+            },
+            {
+              "key": "spreads",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": -108, "point": -4.0},
+                {"name": "Los Angeles Lakers", "price": -112, "point": 4.0}
+              ]
+            },
+            {
+              "key": "totals",
+              "outcomes": [
+                {"name": "Over", "price": -105, "point": 216.0},
+                {"name": "Under", "price": -115, "point": 216.0}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event_h2h_only": [
+    {
+      "id": "h2h-only-001",
+      "sport_key": "icehockey_nhl",
+      "sport_title": "NHL",
+      "commence_time": "2026-04-11T00:00:00Z",
+      "home_team": "Toronto Maple Leafs",
+      "away_team": "Montreal Canadiens",
+      "bookmakers": [
+        {
+          "key": "betmgm",
+          "title": "BetMGM",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Toronto Maple Leafs", "price": -200},
+                {"name": "Montreal Canadiens", "price": 170}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event_no_bookmakers": [
+    {
+      "id": "no-books-001",
+      "sport_key": "soccer_epl",
+      "sport_title": "EPL",
+      "commence_time": "2026-04-12T15:00:00Z",
+      "home_team": "Arsenal",
+      "away_team": "Chelsea",
+      "bookmakers": []
+    }
+  ],
+  "futures_outrights": [
+    {
+      "id": "futures-nba-champ",
+      "sport_key": "basketball_nba_championship",
+      "sport_title": "NBA Championship Winner",
+      "commence_time": "2026-06-30T00:00:00Z",
+      "home_team": "NBA",
+      "away_team": "NBA",
+      "bookmakers": [
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "markets": [
+            {
+              "key": "outrights",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": 350},
+                {"name": "Oklahoma City Thunder", "price": 400},
+                {"name": "Denver Nuggets", "price": 800}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "draftkings",
+          "title": "DraftKings",
+          "markets": [
+            {
+              "key": "outrights",
+              "outcomes": [
+                {"name": "Boston Celtics", "price": 375},
+                {"name": "Oklahoma City Thunder", "price": 425}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "futures_non_outrights": [
+    {
+      "id": "futures-wrong-market",
+      "sport_key": "basketball_nba_championship",
+      "sport_title": "NBA Championship Winner",
+      "commence_time": "2026-06-30T00:00:00Z",
+      "home_team": "NBA",
+      "away_team": "NBA",
+      "bookmakers": [
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "markets": [
+            {
+              "key": "h2h",
+              "outcomes": [
+                {"name": "Team A", "price": -150},
+                {"name": "Team B", "price": 130}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

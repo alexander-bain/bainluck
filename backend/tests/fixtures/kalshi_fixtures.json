@@ -1,0 +1,107 @@
+{
+  "market_dollars_format": {
+    "ticker": "KXNBA-CELTICS-WIN-2026",
+    "event_ticker": "KXNBA-CELTICS-2026",
+    "title": "Will the Celtics win?",
+    "subtitle": "Game 7 Championship",
+    "yes_sub_title": "Celtics win",
+    "no_sub_title": "Celtics lose",
+    "status": "active",
+    "open_time": "2026-04-10T15:00:00Z",
+    "close_time": "2026-04-11T03:00:00Z",
+    "expiration_time": "2026-04-11T06:00:00Z",
+    "yes_bid": 55,
+    "yes_ask": 58,
+    "no_bid": 42,
+    "no_ask": 45,
+    "last_price": 56,
+    "yes_bid_dollars": "0.6500",
+    "yes_ask_dollars": "0.6800",
+    "no_bid_dollars": "0.3200",
+    "no_ask_dollars": "0.3500",
+    "last_price_dollars": "0.6600",
+    "volume": 10000,
+    "volume_24h": 500,
+    "open_interest": 3000,
+    "volume_fp": "12345",
+    "volume_24h_fp": "678",
+    "open_interest_fp": "4500",
+    "result": null
+  },
+  "market_cents_only": {
+    "ticker": "KXNHL-BRUINS-WIN",
+    "event_ticker": "KXNHL-BRUINS",
+    "title": "Will the Bruins win?",
+    "status": "active",
+    "yes_bid": 72,
+    "yes_ask": 75,
+    "no_bid": 25,
+    "no_ask": 28,
+    "last_price": 73,
+    "volume": 5000,
+    "volume_24h": 200,
+    "open_interest": 1500
+  },
+  "market_zero_dollar_bid": {
+    "ticker": "KXMLB-LONGSHOT",
+    "event_ticker": "KXMLB-LONGSHOT-EVT",
+    "title": "Will the longshot win?",
+    "status": "active",
+    "yes_bid_dollars": "0.0000",
+    "yes_ask_dollars": "0.0100",
+    "no_bid_dollars": "0.9900",
+    "no_ask_dollars": "1.0000",
+    "last_price_dollars": "0.0100"
+  },
+  "market_minimal": {
+    "ticker": "KXMIN",
+    "event_ticker": "KXMIN-EVT",
+    "title": "Minimal market",
+    "status": "closed"
+  },
+  "market_settled": {
+    "ticker": "KXSET-YES",
+    "event_ticker": "KXSET-EVT",
+    "title": "Settled market",
+    "status": "settled",
+    "last_price_dollars": "1.0000",
+    "result": "yes",
+    "volume_fp": "99999"
+  },
+  "event_with_markets": {
+    "event_ticker": "KXNBA-GAME1",
+    "title": "NBA Game 1",
+    "sub_title": "Eastern Conference Finals",
+    "category": "Sports",
+    "mutually_exclusive": true,
+    "markets": [
+      {
+        "ticker": "KXNBA-GAME1-WIN",
+        "event_ticker": "KXNBA-GAME1",
+        "title": "Winner",
+        "status": "active",
+        "yes_bid_dollars": "0.5500",
+        "yes_ask_dollars": "0.5700"
+      },
+      {
+        "ticker": "KXNBA-GAME1-TOTAL",
+        "event_ticker": "KXNBA-GAME1",
+        "title": "Over 210.5 points",
+        "status": "active",
+        "yes_bid_dollars": "0.4800",
+        "yes_ask_dollars": "0.5200"
+      }
+    ]
+  },
+  "event_empty_markets": {
+    "event_ticker": "KXEMPTY-EVT",
+    "title": "Event with no markets",
+    "category": "Sports",
+    "markets": []
+  },
+  "event_no_subtitle": {
+    "event_ticker": "KXNOSUB",
+    "title": "Event without subtitle",
+    "category": "Politics"
+  }
+}
