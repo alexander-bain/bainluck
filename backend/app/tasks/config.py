@@ -79,6 +79,20 @@ SPORT_POLLING_TIERS: dict[str, int] = {
     "soccer_uefa_champs_league": 2,
     "mma_mixed_martial_arts": 2,
 }
+
+# Per-sport region overrides (temporary or permanent).
+# When set, overrides the default tier-based region selection for live/soon polls.
+# TODO(May 2026): Remove baseball_mlb override — restore to us,us2.
+SPORT_REGION_OVERRIDES: dict[str, str] = {
+    "baseball_mlb": "us",
+}
+
+# Per-sport minimum poll intervals (seconds). Applied as a floor AFTER tier
+# multipliers and adaptive slowdown. Useful for high-event-count sports where
+# even Tier 3 defaults are too aggressive.
+SPORT_MIN_POLL_INTERVALS: dict[str, int] = {
+    "aussierules_afl": 600,  # 10 minutes
+}
 SPORT_POLLING_DEFAULT_TIER = 3
 
 # Interval multipliers: applied to base poll_interval (live/soon/later)

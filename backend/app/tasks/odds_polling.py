@@ -28,6 +28,8 @@ from app.tasks.config import (
     SPORT_POLLING_TIERS,
     SPORT_POLLING_DEFAULT_TIER,
     SPORT_TIER_MULTIPLIERS,
+    SPORT_REGION_OVERRIDES,
+    SPORT_MIN_POLL_INTERVALS,
 )
 from app.tasks.redis_state import (
     get_redis_client,
@@ -580,6 +582,11 @@ async def _poll_all_odds():
                 # - "soon"/"later" tiers: primary US bookmakers only (saves 1/2)
                 # - "live" tier: full params for maximum coverage
                 # - Conservation mode: always h2h + us only (even live)
+                # Per-sport minimum poll interval (e.g., 10min for AFL)
+                sport_min = SPORT_MIN_POLL_INTERVALS.get(sport_key)
+                if sport_min:
+                    poll_interval = max(poll_interval, sport_min)
+
                 if quota_conservation:
                     api_markets = "h2h"
                     api_regions = "us"
@@ -595,6 +602,11 @@ async def _poll_all_odds():
                 else:  # "later" — h2h only, primary US only (saves ~83% vs live)
                     api_markets = "h2h"
                     api_regions = "us"
+
+                # Per-sport region override (e.g., MLB -> us only for quota savings)
+                region_override = SPORT_REGION_OVERRIDES.get(sport_key)
+                if region_override and not quota_conservation:
+                    api_regions = region_override
 
                 try:
                     pre_used = service.last_requests_used
@@ -748,21 +760,19 @@ async def _poll_all_odds():
                     print(f"Error polling {sport_key}: {e}")
                     continue
 
-            # Fetch scores for sports with events that have started
-            # Use a 3-day window to capture longer events like tennis matches
-            # that may start one day and finish the next
-            # Include "scheduled" events that have started - the scores API will
-            # update their status to "live" or "completed" as appropriate
-            # Include "closed" events too — the staleness checker may close events
-            # before the Scores API reports final scores, especially for minor
-            # leagues. Including them here lets us backfill scores on the next poll.
+            # Fetch scores for sports with events that have started.
+            # Rate-limited per-sport: ESPN-matched sports already get scores every
+            # 60s from ESPN sync, so we only need the Odds API scores as a backup
+            # for non-ESPN sports and for status transitions (completed detection).
+            # 5-minute interval keeps scores fresh without burning quota every 30s.
+            SCORE_FETCH_INTERVAL = 300  # 5 minutes per sport
             sports_needing_scores = await session.execute(
                 select(Sport.key)
                 .join(Event)
                 .where(
                     Sport.active == True,
-                    Event.commence_time <= now,  # Event has started
-                    Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
+                    Event.commence_time <= now,
+                    Event.commence_time >= now - timedelta(days=3),
                     Event.status.in_(["scheduled", "live", "completed", "closed"]),
                 )
                 .distinct()
@@ -770,9 +780,39 @@ async def _poll_all_odds():
             sports_for_scores = [row[0] for row in sports_needing_scores.all()]
 
             for sport_key in sports_for_scores:
+                # Per-sport rate limiting for score fetches
+                if r:
+                    try:
+                        last_score_key = f"bainluck:last_score_fetch:{sport_key}"
+                        last_score = r.get(last_score_key)
+                        if last_score:
+                            elapsed = now.timestamp() - float(last_score.decode())
+                            if elapsed < SCORE_FETCH_INTERVAL:
+                                continue
+                    except Exception:
+                        pass
+
                 try:
-                    # Request scores from last 3 days to match the query window
+                    pre_used = service.last_requests_used
                     scores_data = await service.get_scores(sport_key, days_from=3)
+
+                    # Track score API quota usage
+                    if service.last_requests_remaining is not None:
+                        from app.tasks.redis_state import record_odds_api_quota
+                        record_odds_api_quota(
+                            service.last_requests_remaining,
+                            service.last_requests_used or 0,
+                            "score_fetch",
+                            pre_call_used=pre_used,
+                            sport_key=sport_key,
+                        )
+
+                    # Record last fetch time for rate limiting
+                    if r:
+                        try:
+                            r.set(f"bainluck:last_score_fetch:{sport_key}", str(now.timestamp()), ex=3600)
+                        except Exception:
+                            pass
 
                     for score_event in scores_data:
                         try:

@@ -287,8 +287,9 @@ QUOTA_SPORT_HOURLY_PREFIX = "bainluck:odds_api_quota:sport_hourly"
 QUOTA_ALERT_THRESHOLD = 500_000
 QUOTA_WARNING_THRESHOLD = 1_000_000
 
-# Emergency quota guard thresholds
-# When remaining calls drop below these, non-essential polling is disabled.
+# Emergency quota guard thresholds — TRUE EMERGENCIES ONLY.
+# This is a last-resort circuit breaker, not a routine optimization tool.
+# Prefer rate-limiting, tier adjustments, and region trimming first.
 # Guard auto-expires on QUOTA_GUARD_EXPIRY (next billing cycle reset).
 QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
 QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls (except priority sports)
