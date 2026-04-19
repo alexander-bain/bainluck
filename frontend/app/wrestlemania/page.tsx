@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   fetchWrestlemaniaCard,
   registerWMPlayer,
@@ -41,9 +42,22 @@ function isShowtime(): boolean {
 }
 
 export default function WrestlemaniaPage() {
+  return (
+    <Suspense fallback={<div className="wrestlemania-theme" style={{ minHeight: "100vh" }} />}>
+      <WrestlemaniaContent />
+    </Suspense>
+  );
+}
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com";
+
+function WrestlemaniaContent() {
   usePageTracking({ pageType: "wrestlemania", pageTitle: "WrestleMania 42" });
   useScrollDepth({ pageType: "wrestlemania" });
   useEngagementTime({ pageType: "wrestlemania" });
+
+  const searchParams = useSearchParams();
+  const adminSecret = searchParams.get("secret") || undefined;
 
   const [card, setCard] = useState<WMCardResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<WMLeaderboardEntry[]>([]);
@@ -179,6 +193,38 @@ export default function WrestlemaniaPage() {
     }
   };
 
+  const handleResolve = async (matchId: number, outcomeId: number) => {
+    if (!adminSecret) return;
+    try {
+      await fetch(`${API_URL}/api/wrestlemania/admin/resolve?secret=${encodeURIComponent(adminSecret)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ match_id: matchId, winner_outcome_id: outcomeId }),
+      });
+      await loadCard();
+      await loadLeaderboard();
+      await loadCommentary();
+    } catch (e) {
+      console.error("Resolve failed:", e);
+    }
+  };
+
+  const handleUnresolve = async (matchId: number) => {
+    if (!adminSecret) return;
+    try {
+      await fetch(`${API_URL}/api/wrestlemania/admin/unresolve?secret=${encodeURIComponent(adminSecret)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ match_id: matchId, winner_outcome_id: 0 }),
+      });
+      await loadCard();
+      await loadLeaderboard();
+      await loadCommentary();
+    } catch (e) {
+      console.error("Unresolve failed:", e);
+    }
+  };
+
   const handleOutcomeClick = (match: WMMatch, outcome: WMOutcome) => {
     if (!storedPlayer) {
       setShowNameModal(true);
@@ -225,7 +271,7 @@ export default function WrestlemaniaPage() {
                   </span>
                 </div>
                 {n.matches.map((match) => (
-                  <MatchCard key={match.id} match={match} onOutcomeClick={handleOutcomeClick} />
+                  <MatchCard key={match.id} match={match} onOutcomeClick={handleOutcomeClick} adminSecret={adminSecret} onResolve={handleResolve} onUnresolve={handleUnresolve} />
                 ))}
               </div>
             ))}

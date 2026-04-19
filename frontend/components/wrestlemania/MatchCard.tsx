@@ -8,6 +8,9 @@ import WMOddsChart from "./WMOddsChart";
 interface MatchCardProps {
   match: WMMatch;
   onOutcomeClick: (match: WMMatch, outcome: WMOutcome) => void;
+  adminSecret?: string;
+  onResolve?: (matchId: number, outcomeId: number) => void;
+  onUnresolve?: (matchId: number) => void;
 }
 
 function formatOdds(decimal: number | null): string {
@@ -58,7 +61,7 @@ function PlaceholderAvatar({ name, color }: { name: string; color: string }) {
   );
 }
 
-export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
+export default function MatchCard({ match, onOutcomeClick, adminSecret, onResolve, onUnresolve }: MatchCardProps) {
   const [showStoryline, setShowStoryline] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const hasChartData = false; // Spoiler guard: hide live odds charts during event
@@ -166,6 +169,8 @@ export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
             ))}
           </div>
         )}
+
+        {adminSecret && <AdminControls match={match} onResolve={onResolve} onUnresolve={onUnresolve} />}
       </div>
     );
   }
@@ -243,6 +248,37 @@ export default function MatchCard({ match, onOutcomeClick }: MatchCardProps) {
               <span className="wm-pick-player">{pick.player} → {match.outcomes.find((o) => o.id === pick.outcome_id)?.name}</span>
               <span className="wm-pick-stake">${pick.stake.toLocaleString()}{pick.result === "won" ? " ✓" : pick.result === "lost" ? " ✗" : ""}</span>
             </div>
+          ))}
+        </div>
+      )}
+
+      {adminSecret && <AdminControls match={match} onResolve={onResolve} onUnresolve={onUnresolve} />}
+    </div>
+  );
+}
+
+
+function AdminControls({ match, onResolve, onUnresolve }: { match: WMMatch; onResolve?: (matchId: number, outcomeId: number) => void; onUnresolve?: (matchId: number) => void }) {
+  return (
+    <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid var(--wm-card-border)" }}>
+      <div style={{ fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--wm-neon-pink)", marginBottom: "0.35rem" }}>Admin</div>
+      {match.status === "resolved" ? (
+        <button
+          onClick={(e) => { e.stopPropagation(); onUnresolve?.(match.id); }}
+          style={{ padding: "0.35rem 0.75rem", background: "var(--wm-dark-bg)", border: "1px solid var(--wm-card-border)", color: "var(--wm-text-secondary)", borderRadius: 4, cursor: "pointer", fontSize: "0.7rem" }}
+        >
+          Undo result
+        </button>
+      ) : (
+        <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+          {match.outcomes.map((o) => (
+            <button
+              key={o.id}
+              onClick={(e) => { e.stopPropagation(); onResolve?.(match.id, o.id); }}
+              style={{ padding: "0.35rem 0.6rem", background: "var(--wm-dark-bg)", border: "1px solid var(--wm-card-border)", color: "var(--wm-text-primary)", borderRadius: 4, cursor: "pointer", fontSize: "0.7rem" }}
+            >
+              {o.name} wins
+            </button>
           ))}
         </div>
       )}

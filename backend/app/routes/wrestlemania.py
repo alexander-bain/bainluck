@@ -505,6 +505,34 @@ async def resolve_match(
     return {"resolved": True, "match_id": match.id, "winner": winner.name, "settled_picks": settled}
 
 
+@router.post("/admin/unresolve")
+async def unresolve_match(
+    req: ResolveRequest,
+    secret: str = Query(),
+    session: AsyncSession = Depends(get_db),
+):
+    _verify_admin(secret)
+    match_id = req.match_id
+
+    await session.execute(
+        update(WrestlemaniaMatch)
+        .where(WrestlemaniaMatch.id == match_id)
+        .values(status="locked", winner_outcome_id=None)
+    )
+    await session.execute(
+        update(WrestlemaniaOutcome)
+        .where(WrestlemaniaOutcome.match_id == match_id)
+        .values(is_winner=None)
+    )
+    await session.execute(
+        update(WrestlemaniaPick)
+        .where(WrestlemaniaPick.match_id == match_id)
+        .values(result=None, payout=None)
+    )
+    await session.commit()
+    return {"unresolved": True, "match_id": match_id}
+
+
 @router.post("/admin/add-match")
 async def add_match(
     req: AddMatchRequest,
