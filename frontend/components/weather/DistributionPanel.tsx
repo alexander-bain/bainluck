@@ -197,8 +197,8 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
           textAlign: "center",
         }}
       >
-        Click any pin on the map &middot; {bucketCount} outcome buckets (
-        {srcLabel})
+        Click any pin on the map &middot; {bucketCount} outcome buckets
+        {isCrossSource ? " · showing Polymarket distribution" : ` (${srcLabel})`}
       </div>
     </div>
   );
