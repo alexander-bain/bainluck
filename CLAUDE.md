@@ -29,7 +29,7 @@ These docs contain detailed reference material. **Read them when working in thei
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+) | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3121 tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -96,7 +96,7 @@ Development happens primarily through **Claude Code**. No local dev environment 
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v`
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3121 tests as of April 19)
 - **Frontend tests**: `cd frontend && npx jest`
 
 ### Querying the Production API
@@ -171,6 +171,7 @@ ei_percentiles      — EI percentile lookup table
 oscars_pools/members/picks — Oscars pool game data
 tournaments/tournament_odds — Tournament tracking
 venues              — Venue data
+wrestlemania_matches/players/picks — WrestleMania 42 prediction game (throwaway, remove after April 20)
 ```
 
 **Key identity columns:** `Event.statpal_fixture_id` (nullable `external_id` for schedule-first), `Event.commence_time_source`, `Team.statpal_team_id`, `Event.raw_ei` / `ei_metadata`, `Event.event_tags` (JSONB)

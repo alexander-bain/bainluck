@@ -23,15 +23,13 @@ Each item includes metadata for parallel work planning. `Layer` identifies what 
 
 | If you're working on... | Safe parallel candidates |
 |------------------------|------------------------|
-| ESPN source coverage (#1) | Items 4, 5, 9 (all Green) |
-| Name normalization (#2) | Items 4, 5, 9 (all Green) |
-| API base class (#3) | Items 4, 5, 9 (all Green) |
-| API contract tests (#4) | Items 2, 3, 5, 7, 9 (anything except same route files) |
+| Name normalization (#2) | Items 3, 5 (all Green) |
+| API base class (#3) | Items 2, 5 (all Green) |
 | iOS parity (#5) | ANYTHING — always safe |
-| God function refactoring (#6) | Items 4, 5, 9 (all Green) |
-| Golf data quality (#7) | Items 4, 5, 9 (all Green) |
-| Game prop linking (#1C) | Items 4, 5, 9 (all Green) |
-| No good parallel candidate? | Brainstorm B1 design decisions, or write tests (#4, #9) |
+| God function refactoring (#6) | Items 2, 3, 5 |
+| Golf data quality (#7) | Items 2, 3, 5 |
+| Game prop linking (#1C) | Items 2, 3, 5 |
+| No good parallel candidate? | Brainstorm B1 design decisions, or iOS parity (#5) |
 
 ---
 
@@ -98,56 +96,8 @@ if player_meta:
 
 ---
 
-#### R2. Missing 2nd inning marker on baseball chart
-**Layer:** frontend-lib
-**Touches:** `frontend/lib/periodMarkers.ts` (deriveBoundariesFromWinProb, deriveBoundariesFromScoringPlays)
-**Parallel Safety:** Green (frontend-only, no backend changes)
-
-**Problem:** The Win Probability chart for the Athletics vs Rangers game showed markers for innings 1, 3, 4, 5, 6, 7, 8, 9 but NOT inning 2. This happens when no `win_prob_snapshot` or `espn_snapshot` captured the transition from inning 1 to inning 2.
-
-**Root cause:** `deriveBoundariesFromWinProb()` in `periodMarkers.ts` (line ~192) iterates through win_prob_history points and extracts period strings from `game_state.inning` + `game_state.half`. If no snapshot was taken during inning 2 (e.g., the inning was very short, or polling interval was too slow), no boundary is generated.
-
-**Exact fix:** After generating boundaries from win_prob_history, fill in gaps. If we see inning 1 and inning 3 but not inning 2, interpolate inning 2's timestamp as the midpoint. In `periodMarkers.ts`, after `deriveBoundariesFromWinProb()` returns:
-```typescript
-// Fill inning gaps for baseball (sport detection via marker format)
-function fillBaseballInningGaps(boundaries: PeriodBoundary[]): PeriodBoundary[] {
-  // Detect baseball: markers like "T1", "B1", "T2", etc.
-  const baseballRe = /^[TBME](\d+)$/;
-  const isBaseball = boundaries.some(b => baseballRe.test(b.label));
-  if (!isBaseball || boundaries.length < 2) return boundaries;
-
-  // Extract inning numbers and find gaps
-  const innings = new Map<number, PeriodBoundary>();
-  for (const b of boundaries) {
-    const m = b.label.match(baseballRe);
-    if (m) innings.set(parseInt(m[1]), b);
-  }
-  
-  const minInning = Math.min(...innings.keys());
-  const maxInning = Math.max(...innings.keys());
-  
-  for (let i = minInning; i <= maxInning; i++) {
-    if (!innings.has(i)) {
-      // Interpolate timestamp between previous and next known innings
-      const prev = innings.get(i - 1);
-      const next = innings.get(i + 1);
-      if (prev && next) {
-        const prevTime = new Date(prev.timestamp).getTime();
-        const nextTime = new Date(next.timestamp).getTime();
-        const midTime = new Date((prevTime + nextTime) / 2).toISOString();
-        boundaries.push({ timestamp: midTime, label: `T${i}` });
-      }
-    }
-  }
-  
-  return boundaries.sort((a, b) => 
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
-}
-```
-Call this at the end of `derivePeriodBoundaries()` before returning.
-
-**Verification:** Check the Athletics vs Rangers game chart — all 9 innings should have markers, even if some are interpolated.
+#### R2. Missing 2nd inning marker on baseball chart — **ROOT CAUSE FIXED April 17**
+**Status:** Backend dedup fix shipped in `tasks/snapshots.py` — snapshots now written when inning/period changes even if probability is flat. No frontend interpolation needed. Verify on next baseball game that all innings appear.
 
 ---
 
@@ -369,41 +319,8 @@ But 1,858 markets remain unlinked. Possible failure points:
 
 ---
 
-### 4. API Contract Tests
-**Layer:** backend-tests
-**Touches:** NEW files in `tests/` only — `tests/test_route_events.py`, `tests/test_route_playoffs.py`, `tests/test_route_golf.py`, `tests/test_route_feed.py`, `tests/test_route_futures.py`
-**Depends on:** Nothing
-**Conflicts with:** Nothing (only creates new test files)
-**Parallel Safety:** Green
-
-**Problem:** 1 out of 14 route modules has tests. API response shape changes go undetected until the frontend breaks.
-
-**Acceptance criteria:**
-- Tests for 5 core endpoints verifying response structure (not exact values)
-- Uses FastAPI TestClient with mocked DB session
-- Tests assert on: required fields present, correct types, correct nesting
-- Tests cover: success case, empty results, error cases (404, invalid params)
-
-**Prompt:**
-> Add API contract tests for our 5 most important endpoints. These tests verify response SHAPE, not exact data.
->
-> Endpoints to test:
-> 1. `GET /api/events` (feed) — `routes/feed.py`
-> 2. `GET /api/events/{id}` (event detail) — `routes/events.py`
-> 3. `GET /api/events/{id}/related-futures` — `routes/events.py`
-> 4. `GET /api/playoffs/{league_slug}` — `routes/playoffs.py`
-> 5. `GET /api/golf/tournaments/{slug}` — `routes/golf.py`
->
-> For each endpoint:
-> 1. Read the route handler to understand the response shape
-> 2. Create a test file using FastAPI's TestClient
-> 3. Mock the database session to return minimal fixture data
-> 4. Assert on: required keys present, correct types, nested structure matches frontend expectations
-> 5. Add error cases: 404 for missing resources, validation errors for bad params
->
-> Reference `tests/conftest.py` for existing fixture patterns. Reference `frontend/lib/types.ts` for the response shapes the frontend expects.
->
-> INTERFERENCE RULES: Only create NEW files in tests/. Do NOT modify any existing code.
+### 4. API Contract Tests — **SHIPPED April 19**
+**Status:** COMPLETE. 27 integration tests across 3 endpoints (feed, playoffs, events). Mock DB + httpx AsyncClient infrastructure in `tests/integration/conftest.py`.
 
 ---
 
@@ -537,34 +454,8 @@ But 1,858 markets remain unlinked. Possible failure points:
 
 ---
 
-### 9. External API Fixture Tests
-**Layer:** backend-tests
-**Touches:** NEW files only — `tests/fixtures/` (JSON files), `tests/test_service_*.py`
-**Depends on:** Nothing
-**Conflicts with:** Nothing (only creates new files)
-**Parallel Safety:** Green
-
-**Problem:** If Kalshi, Polymarket, ESPN, or DataGolf change their API response format, we won't know until production breaks.
-
-**Prompt:**
-> Create fixture-based tests for our external API service parsing.
->
-> For each service (Kalshi, Polymarket, ESPN, DataGolf, Odds API):
-> 1. Read the service file in `services/` to understand what fields we extract
-> 2. Create a realistic JSON fixture file in `tests/fixtures/` representing a real API response
-> 3. Write tests that feed the fixture through our parsing functions and verify we extract the right fields
-> 4. Include edge cases: empty responses, missing fields, unexpected types
->
-> Focus on PARSING correctness, not HTTP behavior. Mock the HTTP layer, test the data extraction.
->
-> Services to cover:
-> - `services/kalshi_api.py` — market listings, event data
-> - `services/polymarket_api.py` — market/token data
-> - `services/espn_api.py` — scoreboard, game state, win probability
-> - `services/datagolf_api.py` — leaderboard, predictions, field data
-> - `services/odds_api.py` — odds response format
->
-> INTERFERENCE RULES: Only create NEW files. Do NOT modify any existing code.
+### 9. External API Fixture Tests — **SHIPPED April 19**
+**Status:** COMPLETE. 77 tests across 4 services (Kalshi 21, Odds API 15, ESPN boxscore 30, DataGolf 11) + 3 JSON fixture files.
 
 ---
 

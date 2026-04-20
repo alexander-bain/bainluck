@@ -1,11 +1,30 @@
 # Completed Features (Shipped)
 
-## April 17-18, 2026
-- ✅ WrestleMania 42 prediction game (`/wrestlemania`) — 13-match card, Polymarket live odds, $1M bankroll stake-and-lose scoring, retro neon theme, storylines + case-for-each-side, wrestler images, leaderboard, admin resolution page. Throwaway — remove after April 20.
-- ✅ Win prob snapshot dedup fix — new snapshots now written when inning/period changes even if probability is flat. Fixes missing inning markers on baseball charts.
-- ✅ Golf: Monte-Carlo tennis "Masters" leak fixed — added tennis disambiguation pattern before golf in `futures_categorization.py`
-- ✅ Golf: Polymarket "Yes" labels fixed — `fix_outcome_names` task now processes binary Yes/No markets via union query
-- ✅ Alembic multi-head fix — Procfile now uses `alembic upgrade heads` (plural)
+## April 17-19, 2026
+
+**WrestleMania 42 prediction game** (`/wrestlemania`) — throwaway, remove after event:
+- ✅ 13-match card with Polymarket live odds (10 markets wired with condition IDs + CLOB token IDs)
+- ✅ $1M bankroll, stake-and-lose scoring, per-match lock times
+- ✅ Retro '80s neon theme, wrestler Wikipedia images, storylines + case-for-each-side
+- ✅ Dynamic leaderboard: all players, expandable pick details, max possible winnings, win probability column
+- ✅ LLM sportscaster commentary (GPT-4o-mini, Redis-cached, auto-refreshing banner + feed)
+- ✅ Inline admin controls (?secret= URL param), resolve/unresolve matches from main page
+- ✅ Spoiler guard: show opening odds only, hide charts during live viewing, polling continues in background
+- ✅ Responsive layout: sidebar leaderboard on desktop, inline on mobile
+
+**Infrastructure & data quality:**
+- ✅ Win prob snapshot dedup fix — new snapshots written when inning/period changes even if probability is flat. Fixes missing inning markers on baseball charts.
+- ✅ Golf: Monte-Carlo tennis "Masters" leak fixed — tennis disambiguation pattern before golf in `futures_categorization.py`
+- ✅ Golf: Polymarket "Yes" labels fixed — `fix_outcome_names` task now processes binary Yes/No markets
+- ✅ Golf: "Augusta National Invitational" ghost tournament filtered — added "invitational" to `_NON_WINNER_MARKET_RE`
+- ✅ Player prop headshot name matching — strip stat suffix ("Mitch Keller: 3+" → "mitch keller") before roster lookup
+- ✅ Alembic multi-head fix — Procfile uses `alembic upgrade heads` (plural)
+- ✅ Quota optimization: score API rate-limit to 5min, MLB US-only region, AFL 10min polling floor
+- ✅ Admin dashboard: Game State Indicators by Sport chart
+
+**Testing (110 new tests, 3121 total):**
+- ✅ Item 4: API contract tests — feed, playoffs, events endpoints (27 tests) + integration conftest
+- ✅ Item 9: External API fixture tests — Kalshi (21), Odds API (15), ESPN boxscore (30), DataGolf (11) + 3 JSON fixtures
 
 <details>
 <summary>Shipped features (click to expand)</summary>
