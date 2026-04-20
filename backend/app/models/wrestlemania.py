@@ -123,5 +123,5 @@ class WrestlemaniaPick(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("player_id", "match_id", name="uq_one_pick_per_match"),
+        UniqueConstraint("player_id", "outcome_id", name="uq_one_pick_per_outcome"),
     )

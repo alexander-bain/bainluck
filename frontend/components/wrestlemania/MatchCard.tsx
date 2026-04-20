@@ -74,8 +74,10 @@ export default function MatchCard({ match, onOutcomeClick, adminSecret, onResolv
     const [left, right] = match.outcomes;
     const leftProb = left.probability ?? 0.5;
     const rightProb = right.probability ?? 0.5;
-    const leftPicked = match.my_pick?.outcome_id === left.id;
-    const rightPicked = match.my_pick?.outcome_id === right.id;
+    const leftPick = match.my_picks.find((p) => p.outcome_id === left.id);
+    const rightPick = match.my_picks.find((p) => p.outcome_id === right.id);
+    const leftPicked = !!leftPick;
+    const rightPicked = !!rightPick;
 
     return (
       <div className={`wm-match-card ${match.status === "resolved" ? "resolved" : ""}`}>
@@ -129,7 +131,7 @@ export default function MatchCard({ match, onOutcomeClick, adminSecret, onResolv
               )}
 
               {picked && (
-                <div className="wm-pick-badge">Your pick: ${match.my_pick!.stake.toLocaleString()}</div>
+                <div className="wm-pick-badge">Your pick: ${(outcome === left ? leftPick! : rightPick!).stake.toLocaleString()}</div>
               )}
               {outcome.is_winner === true && (
                 <div className="wm-pick-badge" style={{ background: "rgba(255,215,0,0.2)", color: "#FFD700" }}>Winner</div>
@@ -201,7 +203,8 @@ export default function MatchCard({ match, onOutcomeClick, adminSecret, onResolv
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(match.outcomes.length, 3)}, 1fr)`, gap: "0.5rem" }}>
         {match.outcomes.map((outcome, i) => {
           const color = OUTCOME_COLORS[i % OUTCOME_COLORS.length];
-          const isPicked = match.my_pick?.outcome_id === outcome.id;
+          const myPick = match.my_picks.find((p) => p.outcome_id === outcome.id);
+          const isPicked = !!myPick;
           return (
             <div
               key={outcome.id}
@@ -218,7 +221,7 @@ export default function MatchCard({ match, onOutcomeClick, adminSecret, onResolv
               <div className="wm-outcome-prob" style={{ color, fontSize: "1.1rem" }}>
                 {outcome.probability ? `${Math.round(outcome.probability * 100)}%` : "—"}
               </div>
-              {isPicked && <div className="wm-pick-badge">${match.my_pick!.stake.toLocaleString()}</div>}
+              {isPicked && <div className="wm-pick-badge">${myPick!.stake.toLocaleString()}</div>}
               {outcome.is_winner === true && <div className="wm-pick-badge" style={{ background: "rgba(255,215,0,0.2)", color: "#FFD700" }}>Winner</div>}
             </div>
           );

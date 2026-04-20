@@ -1754,7 +1754,7 @@ export interface WMMatch {
   status: "open" | "locked" | "resolved";
   storyline: string | null;
   outcomes: WMOutcome[];
-  my_pick: WMPick | null;
+  my_picks: WMPick[];
   picks: WMPublicPick[];
 }
 

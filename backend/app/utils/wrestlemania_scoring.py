@@ -67,17 +67,18 @@ def compute_win_probabilities(
         match_outcomes.append(outcomes)
         match_ids.append(m["match_id"])
 
-    # Index each player's pending picks by match_id -> (outcome_id, stake, odds)
-    player_pending: dict[int, dict[int, tuple[int, float, float]]] = {}
+    # Index each player's pending picks by match_id -> list of (outcome_id, stake, odds)
+    player_pending: dict[int, dict[int, list[tuple[int, float, float]]]] = {}
+    match_id_set = set(match_ids)
     for p in players:
-        pending = {}
+        pending: dict[int, list[tuple[int, float, float]]] = {}
         for pk in p["picks"]:
-            if pk["result"] is None and pk["match_id"] in set(match_ids):
-                pending[pk["match_id"]] = (
+            if pk["result"] is None and pk["match_id"] in match_id_set:
+                pending.setdefault(pk["match_id"], []).append((
                     pk["outcome_id"],
                     pk["stake"],
                     pk["decimal_odds_at_pick"],
-                )
+                ))
         player_pending[p["id"]] = pending
 
     win_counts: dict[int, float] = {p["id"]: 0.0 for p in players}
@@ -102,9 +103,8 @@ def compute_win_probabilities(
             bankroll = p["base_bankroll"]
             pending = player_pending[p["id"]]
             for mid, winning_oid in winners.items():
-                pick = pending.get(mid)
-                if pick:
-                    picked_oid, stake, odds = pick
+                picks = pending.get(mid, [])
+                for picked_oid, stake, odds in picks:
                     if picked_oid == winning_oid:
                         bankroll += stake * odds
 

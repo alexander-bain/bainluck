@@ -70,9 +70,11 @@ export default function Leaderboard({ entries, currentPlayerId, commentaryFeed }
                       : "var(--wm-text-muted)",
                   }}
                 >
-                  {entry.win_probability > 0
+                  {entry.win_probability >= 1
                     ? `${entry.win_probability}%`
-                    : "<1%"}
+                    : entry.win_probability > 0
+                    ? "<1%"
+                    : "0%"}
                 </span>
               )}
               <span className="wm-lb-bankroll">{formatMoney(entry.bankroll)}</span>

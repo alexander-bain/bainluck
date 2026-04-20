@@ -32,7 +32,7 @@ export default function PickDrawer({
   const potentialPayout = stake * decimalOdds;
   const potentialProfit = potentialPayout - stake;
 
-  const existingPick = match.my_pick;
+  const existingPick = match.my_picks.find((p) => p.outcome_id === outcome.id);
 
   return (
     <div className="wm-drawer-overlay" onClick={onClose}>

@@ -97,7 +97,7 @@ async def get_card(
     )
     matches = matches_result.scalars().all()
 
-    picks_by_match = {}
+    picks_by_match: dict[int, list] = {}
     if player:
         picks_result = await session.execute(
             select(WrestlemaniaPick).where(
@@ -105,7 +105,7 @@ async def get_card(
             )
         )
         for pick in picks_result.scalars().all():
-            picks_by_match[pick.match_id] = pick
+            picks_by_match.setdefault(pick.match_id, []).append(pick)
 
     # Pre-fetch all odds history for sparklines
     all_outcome_ids_result = await session.execute(
@@ -136,10 +136,8 @@ async def get_card(
         )
         outcomes = outcomes_result.scalars().all()
 
-        pick = picks_by_match.get(match.id)
-        my_pick = None
-        if pick:
-            my_pick = {
+        my_picks = [
+            {
                 "id": pick.id,
                 "outcome_id": pick.outcome_id,
                 "stake": float(pick.stake),
@@ -147,6 +145,8 @@ async def get_card(
                 "result": pick.result,
                 "payout": float(pick.payout) if pick.payout else None,
             }
+            for pick in picks_by_match.get(match.id, [])
+        ]
 
         all_picks_result = await session.execute(
             select(
@@ -193,7 +193,7 @@ async def get_card(
                 }
                 for o in outcomes
             ],
-            "my_pick": my_pick,
+            "my_picks": my_picks,
             "picks": public_picks,
         }
         nights.setdefault(match.night, []).append(match_data)
@@ -283,15 +283,24 @@ async def submit_pick(
 
     picks = await _player_picks(session, player.id)
     bankroll = compute_bankroll(picks)
+
+    # If replacing an existing pick on this outcome, refund that stake first
+    existing = await session.execute(
+        select(WrestlemaniaPick).where(
+            WrestlemaniaPick.player_id == player.id,
+            WrestlemaniaPick.outcome_id == outcome.id,
+        )
+    )
+    old_pick = existing.scalar_one_or_none()
+    if old_pick:
+        bankroll += float(old_pick.stake)
+
     if req.stake > bankroll:
         raise HTTPException(400, f"Insufficient bankroll (${bankroll:,.0f})")
 
-    await session.execute(
-        delete(WrestlemaniaPick).where(
-            WrestlemaniaPick.player_id == player.id,
-            WrestlemaniaPick.match_id == match.id,
-        )
-    )
+    if old_pick:
+        await session.delete(old_pick)
+        await session.flush()
 
     decimal_odds = float(outcome.decimal_odds) if outcome.decimal_odds else 2.0
     pick = WrestlemaniaPick(
@@ -390,9 +399,24 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
                 WrestlemaniaOutcome.match_id.in_(unresolved_match_ids)
             )
         )
+        unresolved_outcomes = outcomes_result.scalars().all()
+        unresolved_outcome_ids = [o.id for o in unresolved_outcomes]
+
+        # Use latest odds snapshot probabilities instead of stale seed values
+        latest_probs: dict[int, float] = {}
+        if unresolved_outcome_ids:
+            snaps_result = await session.execute(
+                select(WrestlemaniaOddsSnapshot)
+                .where(WrestlemaniaOddsSnapshot.outcome_id.in_(unresolved_outcome_ids))
+                .order_by(WrestlemaniaOddsSnapshot.recorded_at.desc())
+            )
+            for s in snaps_result.scalars().all():
+                if s.outcome_id not in latest_probs:
+                    latest_probs[s.outcome_id] = float(s.probability)
+
         outcomes_by_match: dict[int, list[dict]] = {}
-        for o in outcomes_result.scalars().all():
-            prob = float(o.probability) if o.probability else 0.0
+        for o in unresolved_outcomes:
+            prob = latest_probs.get(o.id, float(o.probability) if o.probability else 0.0)
             outcomes_by_match.setdefault(o.match_id, []).append({
                 "outcome_id": o.id,
                 "probability": prob,
@@ -447,7 +471,11 @@ async def get_leaderboard(session: AsyncSession = Depends(get_db)):
     try:
         win_probs = compute_win_probabilities(player_data_for_wp, unresolved_matches)
         for entry in leaderboard:
-            entry["win_probability"] = round(win_probs.get(entry["id"], 0.0) * 100, 1)
+            raw = win_probs.get(entry["id"], 0.0)
+            pct = round(raw * 100, 1)
+            if pct == 100.0 and raw < 1.0:
+                pct = 99.9
+            entry["win_probability"] = pct
     except Exception:
         pass
 
