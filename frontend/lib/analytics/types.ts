@@ -53,7 +53,8 @@ export interface PageViewParams {
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
-    | 'wrestlemania';
+    | 'wrestlemania'
+    | 'weather';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -233,7 +234,8 @@ export interface ScrollDepthParams {
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
-    | 'wrestlemania';
+    | 'wrestlemania'
+    | 'weather';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -251,7 +253,8 @@ export interface TimeOnPageParams {
     | 'leagues_index' | 'admin_dashboard' | 'admin_eval'
     | 'masters_live'
     | 'sport_hub' | 'sport_league' | 'sport_event'
-    | 'wrestlemania';
+    | 'wrestlemania'
+    | 'weather';
   seconds: number;
   page_path: string;
   event_id?: number;

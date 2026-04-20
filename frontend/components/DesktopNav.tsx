@@ -22,6 +22,11 @@ export default function DesktopNav() {
       isActive: pathname === "/search",
     },
     {
+      label: "Weather",
+      href: "/weather",
+      isActive: pathname === "/weather",
+    },
+    {
       label: "My Stuff",
       href: "/my-stuff",
       isActive: pathname === "/my-stuff" || pathname === "/preferences" || pathname === "/onboarding",
