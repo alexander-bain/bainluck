@@ -283,6 +283,158 @@ export const CITIES: CityData[] = [
       { label: "22-23", prob: 1 }, { label: "24-25", prob: 0 }, { label: "26°C+", prob: 0 },
     ] },
   },
+  // Kalshi-only US cities (6 outcome buckets for high + low)
+  { id: "bos", name: "Boston", x: 32, y: 38, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 71.5, dist: [
+      { label: "<65°F", prob: 5 }, { label: "65-67", prob: 12 }, { label: "68-70", prob: 22 }, { label: "71-73", prob: 35 }, { label: "74-76", prob: 18 }, { label: "77°F+", prob: 8 },
+    ] },
+  },
+  { id: "atl", name: "Atlanta", x: 28, y: 47, region: "Americas", srcs: ["polymarket", "kalshi"],
+    high: { unit: "F", mode: 74.5, dist: [
+      { label: "<68°F", prob: 3 }, { label: "68-70", prob: 8 }, { label: "71-73", prob: 18 }, { label: "74-76", prob: 42 }, { label: "77-79", prob: 20 }, { label: "80-81", prob: 6 },
+      { label: "82-83", prob: 2 }, { label: "84-85", prob: 1 }, { label: "86-87", prob: 0 }, { label: "88-89", prob: 0 }, { label: "90°F+", prob: 0 },
+    ] },
+  },
+  { id: "hou", name: "Houston", x: 24, y: 51, region: "Americas", srcs: ["polymarket", "kalshi"],
+    high: { unit: "F", mode: 81, dist: [
+      { label: "<74°F", prob: 2 }, { label: "74-75", prob: 5 }, { label: "76-77", prob: 10 }, { label: "78-79", prob: 16 },
+      { label: "80-81", prob: 34 }, { label: "82-83", prob: 19 }, { label: "84-85", prob: 9 }, { label: "86-87", prob: 3 },
+      { label: "88-89", prob: 1 }, { label: "90-91", prob: 1 }, { label: "92°F+", prob: 0 },
+    ] },
+  },
+  { id: "den", name: "Denver", x: 21, y: 42, region: "Americas", srcs: ["polymarket", "kalshi"],
+    high: { unit: "F", mode: 73.5, dist: [
+      { label: "<66°F", prob: 4 }, { label: "66-68", prob: 10 }, { label: "69-71", prob: 20 }, { label: "72-74", prob: 32 }, { label: "75-77", prob: 22 }, { label: "78°F+", prob: 12 },
+    ] },
+  },
+  { id: "sea", name: "Seattle", x: 17, y: 34, region: "Americas", srcs: ["polymarket", "kalshi"],
+    high: { unit: "F", mode: 62, dist: [
+      { label: "<56°F", prob: 5 }, { label: "56-58", prob: 12 }, { label: "59-61", prob: 25 }, { label: "62-64", prob: 35 }, { label: "65-67", prob: 16 }, { label: "68°F+", prob: 7 },
+    ] },
+  },
+  { id: "phx", name: "Phoenix", x: 19.5, y: 47, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 80.5, dist: [
+      { label: "<74°F", prob: 3 }, { label: "74-76", prob: 8 }, { label: "77-79", prob: 18 }, { label: "80-82", prob: 38 }, { label: "83-85", prob: 22 }, { label: "86°F+", prob: 11 },
+    ] },
+  },
+  { id: "min", name: "Minneapolis", x: 24, y: 36, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 72.5, dist: [
+      { label: "<66°F", prob: 5 }, { label: "66-68", prob: 12 }, { label: "69-71", prob: 22 }, { label: "72-74", prob: 32 }, { label: "75-77", prob: 20 }, { label: "78°F+", prob: 9 },
+    ] },
+  },
+  { id: "phi", name: "Philadelphia", x: 31, y: 40, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 80.5, dist: [
+      { label: "<74°F", prob: 3 }, { label: "74-76", prob: 8 }, { label: "77-79", prob: 18 }, { label: "80-82", prob: 38 }, { label: "83-85", prob: 22 }, { label: "86°F+", prob: 11 },
+    ] },
+  },
+  { id: "lv", name: "Las Vegas", x: 19, y: 45, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 70.5, dist: [
+      { label: "<64°F", prob: 4 }, { label: "64-66", prob: 10 }, { label: "67-69", prob: 22 }, { label: "70-72", prob: 35 }, { label: "73-75", prob: 20 }, { label: "76°F+", prob: 9 },
+    ] },
+  },
+  { id: "okc", name: "Oklahoma City", x: 23.5, y: 45, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 85.5, dist: [
+      { label: "<78°F", prob: 3 }, { label: "78-80", prob: 8 }, { label: "81-83", prob: 18 }, { label: "84-86", prob: 38 }, { label: "87-89", prob: 22 }, { label: "90°F+", prob: 11 },
+    ] },
+  },
+  { id: "sat", name: "San Antonio", x: 23, y: 50, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 89, dist: [
+      { label: "<82°F", prob: 3 }, { label: "82-84", prob: 8 }, { label: "85-87", prob: 18 }, { label: "88-90", prob: 38 }, { label: "91-93", prob: 22 }, { label: "94°F+", prob: 11 },
+    ] },
+  },
+  { id: "nol", name: "New Orleans", x: 26, y: 50, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 81.5, dist: [
+      { label: "<76°F", prob: 3 }, { label: "76-78", prob: 8 }, { label: "79-81", prob: 22 }, { label: "82-84", prob: 38 }, { label: "85-87", prob: 20 }, { label: "88°F+", prob: 9 },
+    ] },
+  },
+  { id: "wdc", name: "Washington DC", x: 30.5, y: 42, region: "Americas", srcs: ["kalshi"],
+    high: { unit: "F", mode: 84, dist: [
+      { label: "<78°F", prob: 3 }, { label: "78-80", prob: 9 }, { label: "81-83", prob: 22 }, { label: "84-86", prob: 36 }, { label: "87-89", prob: 20 }, { label: "90°F+", prob: 10 },
+    ] },
+  },
+  { id: "aus", name: "Austin", x: 23.5, y: 49, region: "Americas", srcs: ["polymarket", "kalshi"],
+    high: { unit: "F", mode: 88.5, dist: [
+      { label: "<82°F", prob: 2 }, { label: "82-84", prob: 6 }, { label: "85-87", prob: 16 }, { label: "88-90", prob: 40 }, { label: "91-93", prob: 24 }, { label: "94°F+", prob: 12 },
+    ] },
+  },
+  // Additional Polymarket global cities
+  { id: "ams", name: "Amsterdam", x: 50.5, y: 31, region: "Europe", srcs: ["polymarket"],
+    high: { unit: "C", mode: 12, dist: [
+      { label: "<8°C", prob: 3 }, { label: "8-9", prob: 9 }, { label: "10-11", prob: 22 }, { label: "12", prob: 45 },
+      { label: "13", prob: 12 }, { label: "14-15", prob: 6 }, { label: "16-17", prob: 2 }, { label: "18-19", prob: 1 },
+      { label: "20-21", prob: 0 }, { label: "22-23", prob: 0 }, { label: "24°C+", prob: 0 },
+    ] },
+  },
+  { id: "hel", name: "Helsinki", x: 54, y: 26, region: "Europe", srcs: ["polymarket"],
+    high: { unit: "C", mode: 13, dist: [
+      { label: "<8°C", prob: 4 }, { label: "8-9", prob: 10 }, { label: "10-11", prob: 20 }, { label: "12", prob: 22 },
+      { label: "13", prob: 26 }, { label: "14-15", prob: 12 }, { label: "16-17", prob: 4 }, { label: "18-19", prob: 1 },
+      { label: "20-21", prob: 1 }, { label: "22-23", prob: 0 }, { label: "24°C+", prob: 0 },
+    ] },
+  },
+  { id: "tlv", name: "Tel Aviv", x: 57, y: 44, region: "Asia", srcs: ["polymarket"],
+    high: { unit: "C", mode: 22, dist: [
+      { label: "<17°C", prob: 2 }, { label: "17-18", prob: 6 }, { label: "19-20", prob: 16 }, { label: "21", prob: 24 },
+      { label: "22", prob: 30 }, { label: "23", prob: 14 }, { label: "24-25", prob: 5 }, { label: "26-27", prob: 2 },
+      { label: "28-29", prob: 1 }, { label: "30-31", prob: 0 }, { label: "32°C+", prob: 0 },
+    ] },
+  },
+  { id: "jed", name: "Jeddah", x: 59, y: 51, region: "Asia", srcs: ["polymarket"],
+    high: { unit: "C", mode: 34, dist: [
+      { label: "<29°C", prob: 2 }, { label: "29-30", prob: 6 }, { label: "31-32", prob: 16 }, { label: "33", prob: 24 },
+      { label: "34", prob: 31 }, { label: "35", prob: 13 }, { label: "36-37", prob: 5 }, { label: "38-39", prob: 2 },
+      { label: "40-41", prob: 1 }, { label: "42-43", prob: 0 }, { label: "44°C+", prob: 0 },
+    ] },
+  },
+  { id: "bus", name: "Busan", x: 82, y: 40, region: "Asia", srcs: ["polymarket"],
+    high: { unit: "C", mode: 22, dist: [
+      { label: "<17°C", prob: 3 }, { label: "17-18", prob: 8 }, { label: "19-20", prob: 19 }, { label: "21", prob: 24 },
+      { label: "22", prob: 28 }, { label: "23", prob: 11 }, { label: "24-25", prob: 5 }, { label: "26-27", prob: 1 },
+      { label: "28-29", prob: 1 }, { label: "30-31", prob: 0 }, { label: "32°C+", prob: 0 },
+    ] },
+  },
+  { id: "szn", name: "Shenzhen", x: 79, y: 51, region: "Asia", srcs: ["polymarket"],
+    high: { unit: "C", mode: 29, dist: [
+      { label: "<24°C", prob: 2 }, { label: "24-25", prob: 5 }, { label: "26-27", prob: 14 }, { label: "28", prob: 22 },
+      { label: "29", prob: 33 }, { label: "30", prob: 14 }, { label: "31-32", prob: 6 }, { label: "33-34", prob: 3 },
+      { label: "35-36", prob: 1 }, { label: "37-38", prob: 0 }, { label: "39°C+", prob: 0 },
+    ] },
+  },
+  { id: "kul", name: "Kuala Lumpur", x: 77, y: 56, region: "Asia", srcs: ["polymarket"],
+    high: { unit: "C", mode: 32, dist: [
+      { label: "<27°C", prob: 1 }, { label: "27-28", prob: 4 }, { label: "29-30", prob: 12 }, { label: "31", prob: 25 },
+      { label: "32", prob: 33 }, { label: "33", prob: 15 }, { label: "34-35", prob: 6 }, { label: "36-37", prob: 3 },
+      { label: "38-39", prob: 1 }, { label: "40-41", prob: 0 }, { label: "42°C+", prob: 0 },
+    ] },
+  },
+  { id: "mil", name: "Milan", x: 51, y: 36, region: "Europe", srcs: ["polymarket"],
+    high: { unit: "C", mode: 21, dist: [
+      { label: "<16°C", prob: 3 }, { label: "16-17", prob: 7 }, { label: "18-19", prob: 18 }, { label: "20", prob: 25 },
+      { label: "21", prob: 28 }, { label: "22", prob: 12 }, { label: "23-24", prob: 4 }, { label: "25-26", prob: 2 },
+      { label: "27-28", prob: 1 }, { label: "29-30", prob: 0 }, { label: "31°C+", prob: 0 },
+    ] },
+  },
+  { id: "pnm", name: "Panama City", x: 26.5, y: 55, region: "Americas", srcs: ["polymarket"],
+    high: { unit: "C", mode: 31, dist: [
+      { label: "<26°C", prob: 1 }, { label: "26-27", prob: 3 }, { label: "28-29", prob: 10 }, { label: "30", prob: 22 },
+      { label: "31", prob: 36 }, { label: "32", prob: 18 }, { label: "33-34", prob: 7 }, { label: "35-36", prob: 2 },
+      { label: "37-38", prob: 1 }, { label: "39-40", prob: 0 }, { label: "41°C+", prob: 0 },
+    ] },
+  },
+  { id: "ank", name: "Ankara", x: 56, y: 41, region: "Europe", srcs: ["polymarket"],
+    high: { unit: "C", mode: 13, dist: [
+      { label: "<8°C", prob: 3 }, { label: "8-9", prob: 8 }, { label: "10-11", prob: 18 }, { label: "12", prob: 24 },
+      { label: "13", prob: 28 }, { label: "14-15", prob: 12 }, { label: "16-17", prob: 4 }, { label: "18-19", prob: 2 },
+      { label: "20-21", prob: 1 }, { label: "22-23", prob: 0 }, { label: "24°C+", prob: 0 },
+    ] },
+  },
+  { id: "wrw", name: "Warsaw", x: 53, y: 30, region: "Europe", srcs: ["polymarket"],
+    high: { unit: "C", mode: 14, dist: [
+      { label: "<9°C", prob: 3 }, { label: "9-10", prob: 8 }, { label: "11-12", prob: 18 }, { label: "13", prob: 24 },
+      { label: "14", prob: 28 }, { label: "15-16", prob: 12 }, { label: "17-18", prob: 4 }, { label: "19-20", prob: 2 },
+      { label: "21-22", prob: 1 }, { label: "23-24", prob: 0 }, { label: "25°C+", prob: 0 },
+    ] },
+  },
 ];
 
 export const NYC_RAIN: RainDay[] = [

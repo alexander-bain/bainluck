@@ -156,7 +156,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
                     width: "100%",
                     height: `${barHeight}%`,
                     minHeight: bucket.prob > 0 ? 2 : 0,
-                    backgroundColor: isPeak ? color : color + "33",
+                    backgroundColor: isPeak ? color : color + "55",
                     borderRadius: "3px 3px 0 0",
                     transition: "height 300ms ease",
                   }}
