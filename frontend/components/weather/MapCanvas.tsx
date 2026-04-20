@@ -110,8 +110,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M280,120 L350,100 L480,110 L580,130 L640,160 L680,220 L700,300 L680,380 L640,420 L580,480 L520,520 L460,540 L400,530 L360,500 L320,440 L300,380 L280,320 L260,260 L250,200 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* South America */}
           <path
@@ -119,8 +119,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M520,560 L580,550 L640,570 L680,620 L700,680 L690,740 L660,800 L620,850 L570,880 L530,870 L500,830 L480,770 L470,710 L480,650 L500,600 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* Europe */}
           <path
@@ -128,8 +128,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M900,200 L920,170 L960,150 L1000,160 L1040,150 L1080,170 L1120,160 L1160,180 L1200,200 L1180,240 L1200,280 L1180,320 L1140,350 L1100,380 L1060,400 L1020,420 L980,400 L940,380 L920,340 L900,300 L880,260 L890,220 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* Africa */}
           <path
@@ -137,8 +137,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M960,420 L1000,410 L1040,420 L1080,430 L1120,420 L1160,440 L1180,480 L1200,540 L1190,600 L1170,660 L1140,720 L1100,770 L1060,790 L1020,780 L990,740 L970,680 L960,620 L950,560 L940,500 L950,460 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* Asia */}
           <path
@@ -146,8 +146,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M1200,180 L1280,150 L1360,130 L1440,120 L1520,140 L1600,160 L1680,200 L1740,250 L1780,300 L1760,360 L1720,400 L1680,440 L1620,480 L1560,520 L1500,540 L1440,560 L1380,540 L1320,500 L1280,450 L1240,400 L1220,340 L1200,280 L1190,230 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* Southeast Asia / Indonesia */}
           <path
@@ -155,8 +155,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M1560,520 L1600,510 L1660,530 L1720,540 L1780,560 L1820,580 L1800,610 L1750,620 L1700,610 L1640,590 L1580,570 L1550,550 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
           {/* Australia */}
           <path
@@ -164,8 +164,8 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
             d="M1620,680 L1680,660 L1750,670 L1820,690 L1870,720 L1890,770 L1870,820 L1830,850 L1770,860 L1710,840 L1660,810 L1630,770 L1610,730 Z"
             fill="none"
             stroke="#E2E5E9"
-            strokeWidth="1.5"
-            opacity="0.5"
+            strokeWidth="2"
+            opacity="0.7"
           />
 
           {[200, 400, 600, 800].map(y => (
@@ -174,7 +174,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
           {[500, 1000, 1500].map(x => (
             <line key={`lng-${x}`} x1={x} y1="0" x2={x} y2="1000" stroke="#E5E7EB" strokeWidth="1" strokeDasharray="8 6" />
           ))}
-          <line x1="0" y1="500" x2="2000" y2="500" stroke="#D1D5DB" strokeWidth="1.5" strokeDasharray="12 4" />
+          <line x1="0" y1="500" x2="2000" y2="500" stroke="#D1D5DB" strokeWidth="2" strokeDasharray="12 4" />
         </svg>
 
         {/* Region labels */}
