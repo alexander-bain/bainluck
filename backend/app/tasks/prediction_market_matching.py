@@ -681,16 +681,12 @@ async def _match_prediction_markets(limit: int = 500):
                 break
             phase2_processed += 1
             try:
-                # Re-extract matchup to determine team mapping
-                # Uses ticker fallback for generic-named Kalshi markets
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
                 )
                 if not matchup:
                     continue
 
-                # Get ALL outcomes for this market (game events may have
-                # moneyline + spread + totals bundled together)
                 outcome_result = await session.execute(
                     select(FuturesOutcome)
                     .where(FuturesOutcome.market_id == market.id)
@@ -700,7 +696,6 @@ async def _match_prediction_markets(limit: int = 500):
                 if not all_outcomes:
                     continue
 
-                # Find the moneyline outcome by matching team names
                 ml_result = find_moneyline_outcome(
                     all_outcomes, matchup,
                     event.home_team_name, event.away_team_name,
@@ -711,20 +706,17 @@ async def _match_prediction_markets(limit: int = 500):
                 outcome, yes_is_home = ml_result
                 yes_prob = float(outcome.current_probability)
 
-                # Convert prediction market probability to home/away
                 if yes_is_home:
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
 
-                # Cross-check against sportsbook consensus to catch inversions
                 home_prob = await _check_and_fix_inversion(
                     session, market.event_id, home_prob, market.source,
                 )
                 away_prob = 1.0 - home_prob
 
-                # Write to win_prob_snapshots with deduplication
-                source_key = market.source  # "kalshi" or "polymarket"
+                source_key = market.source
                 snapshot, is_new = await _create_or_update_win_prob_snapshot(
                     session,
                     event_id=market.event_id,
@@ -747,8 +739,6 @@ async def _match_prediction_markets(limit: int = 500):
                 else:
                     stats["snapshots_deduped"] += 1
 
-                # Write to win_probability_sources on the event
-                # so the multi-source aggregation sees it
                 from sqlalchemy import update as _sql_upd
                 _pm_r = await session.execute(
                     select(Event.win_probability_sources).where(Event.id == market.event_id)
@@ -761,11 +751,18 @@ async def _match_prediction_markets(limit: int = 500):
                     .values(win_probability_sources=_pm_wps)
                 )
 
-            except Exception as e:
-                stats["errors"].append(f"market {market.id}: {str(e)}")
-                continue
+                # Commit per-market to avoid deadlocks with live polling task
+                await session.commit()
 
-        await session.commit()
+            except Exception as e:
+                err_str = str(e)
+                if "deadlock" in err_str.lower():
+                    await session.rollback()
+                    stats["funnel"].setdefault("phase2_deadlocks", 0)
+                    stats["funnel"]["phase2_deadlocks"] += 1
+                else:
+                    stats["errors"].append(f"market {market.id}: {err_str[:100]}")
+                continue
 
     # ── Phase 3: Backfill Polymarket price history for newly linked markets ──
     # Runs outside the main DB session to avoid holding transactions open
