@@ -523,10 +523,17 @@ async def _process_event_batch(
                 if event.neg_risk and len(event.markets) > 1:
                     # NegRisk multi-outcome event: each market is one outcome
                     for market in event.markets:
-                        if not market.outcome_prices:
-                            continue
-
                         prob = market.outcome_prices[0] if market.outcome_prices else None
+
+                        if prob is None or prob <= 0:
+                            if (market.best_bid is not None and market.best_bid > 0
+                                    and market.best_ask is not None and market.best_ask > 0):
+                                prob = (market.best_bid + market.best_ask) / 2
+                            elif market.last_trade_price is not None and market.last_trade_price > 0:
+                                prob = market.last_trade_price
+                            elif market.best_ask is not None and market.best_ask > 0:
+                                prob = market.best_ask
+
                         if prob is None or prob <= 0:
                             continue
 
@@ -546,10 +553,17 @@ async def _process_event_batch(
                 else:
                     # Single-market or non-negRisk event
                     for market in event.markets:
-                        if not market.outcome_prices:
-                            continue
-
                         prob = market.outcome_prices[0] if market.outcome_prices else None
+
+                        if prob is None or prob <= 0:
+                            if (market.best_bid is not None and market.best_bid > 0
+                                    and market.best_ask is not None and market.best_ask > 0):
+                                prob = (market.best_bid + market.best_ask) / 2
+                            elif market.last_trade_price is not None and market.last_trade_price > 0:
+                                prob = market.last_trade_price
+                            elif market.best_ask is not None and market.best_ask > 0:
+                                prob = market.best_ask
+
                         if prob is None or prob <= 0:
                             continue
 
