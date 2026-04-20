@@ -564,16 +564,21 @@ async def get_climate(db: AsyncSession = Depends(get_db)):
     markets: list[FuturesMarket] = list(result.scalars().all())
 
     _EXCLUDE_RE = re.compile(
-        r"\b(?:hurricane|earthquake|quake|tornado|volcano|supervolcano|arctic|solar|Ifo|temperature|rain|snow)\b",
+        r"\b(?:hurricane|earthquake|quake|tornado|tornadoes|volcano|supervolcano|arctic|solar|Ifo|temperature|rain|snow|tropical\s+storm)\b",
         re.I,
     )
 
+    seen_names: set[str] = set()
     items = []
     for m in markets:
         if not m.outcomes:
             continue
         if _EXCLUDE_RE.search(m.name):
             continue
+        dedup_key = m.name.lower().strip()
+        if dedup_key in seen_names:
+            continue
+        seen_names.add(dedup_key)
         scale = _classify_scale(m)
         items.append({
             "q": m.name,
