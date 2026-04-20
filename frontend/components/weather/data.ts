@@ -44,6 +44,7 @@ export type MonthlyRain = {
   city: string;
   prob: number;
   src: Source;
+  delta24h?: number;
 };
 
 export type EventMarket = {
@@ -486,16 +487,16 @@ export const NYC_RAIN: RainDay[] = [
 ];
 
 export const MONTHLY_RAIN: MonthlyRain[] = [
-  { city: "NYC", prob: 92, src: "kalshi" },
-  { city: "Seattle", prob: 85, src: "kalshi" },
-  { city: "Miami", prob: 74, src: "kalshi" },
-  { city: "Houston", prob: 62, src: "kalshi" },
-  { city: "Chicago", prob: 58, src: "kalshi" },
-  { city: "Austin", prob: 51, src: "kalshi" },
-  { city: "San Francisco", prob: 42, src: "kalshi" },
-  { city: "Dallas", prob: 38, src: "kalshi" },
-  { city: "Denver", prob: 34, src: "kalshi" },
-  { city: "Los Angeles", prob: 10, src: "kalshi" },
+  { city: "NYC", prob: 92, src: "kalshi", delta24h: 0 },
+  { city: "Seattle", prob: 85, src: "kalshi", delta24h: -2 },
+  { city: "Miami", prob: 74, src: "kalshi", delta24h: 3 },
+  { city: "Houston", prob: 62, src: "kalshi", delta24h: -1 },
+  { city: "Chicago", prob: 58, src: "kalshi", delta24h: 4 },
+  { city: "Austin", prob: 51, src: "kalshi", delta24h: -3 },
+  { city: "San Francisco", prob: 42, src: "kalshi", delta24h: 0 },
+  { city: "Dallas", prob: 38, src: "kalshi", delta24h: 2 },
+  { city: "Denver", prob: 34, src: "kalshi", delta24h: -5 },
+  { city: "Los Angeles", prob: 10, src: "kalshi", delta24h: 0 },
 ];
 
 export const HURRICANE: EventMarket[] = [

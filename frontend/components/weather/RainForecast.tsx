@@ -53,9 +53,13 @@ function rainTextColor(prob: number): string {
 
 const RAIN_CITIES = [
   { id: "nyc", name: "NYC", data: NYC_RAIN },
-  // When API endpoints exist, these will fetch from /weather/rain/{city}
-  // For now NYC is the only city with daily rain markets on Kalshi
 ];
+
+function currentMonth(): string {
+  const months = ["January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"];
+  return months[new Date().getMonth()];
+}
 
 /* ── Main Component ──────────────────────────────────────────────────── */
 
@@ -65,6 +69,7 @@ export default function RainForecast() {
   const rain = city.data;
   const monthly = MONTHLY_RAIN;
   const maxMonthly = Math.max(...monthly.map((m) => m.prob));
+  const month = currentMonth();
 
   return (
     <section className="pt-14 px-6">
@@ -74,7 +79,6 @@ export default function RainForecast() {
         <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3.5">
           {/* Left card — 7-day rain */}
           <div className="bg-white rounded-2xl border border-surface-border p-6">
-            {/* Header with city picker */}
             <div className="flex items-start justify-between mb-1">
               <div>
                 <div className="flex items-center gap-2">
@@ -82,24 +86,25 @@ export default function RainForecast() {
                     className="text-text-primary"
                     style={{ fontSize: 20, fontWeight: 600 }}
                   >
-                    {city.name} · 7-day rain probability
+                    7-day rain probability
                   </h3>
-                  {RAIN_CITIES.length > 1 && (
-                    <select
-                      value={cityIdx}
-                      onChange={(e) => setCityIdx(Number(e.target.value))}
-                      className="text-sm border border-surface-border rounded-lg px-2 py-1 bg-white text-text-secondary"
-                    >
-                      {RAIN_CITIES.map((c, i) => (
-                        <option key={c.id} value={i}>{c.name}</option>
-                      ))}
-                    </select>
-                  )}
                 </div>
-                <p className="text-text-secondary text-sm mt-0.5">
-                  Daily &ldquo;Will it rain?&rdquo; markets from Kalshi.{" "}
-                  {RAIN_CITIES.length === 1 ? "NYC-only for now." : ""}
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <select
+                    value={cityIdx}
+                    onChange={(e) => setCityIdx(Number(e.target.value))}
+                    className="text-sm font-semibold border border-surface-border rounded-lg px-2.5 py-1 bg-white text-text-primary appearance-none cursor-pointer"
+                    style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: 24 }}
+                  >
+                    {RAIN_CITIES.map((c, i) => (
+                      <option key={c.id} value={i}>{c.name}</option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-text-muted">
+                    Daily &ldquo;Will it rain?&rdquo; markets from Kalshi
+                    {RAIN_CITIES.length === 1 && " · NYC-only for now"}
+                  </span>
+                </div>
               </div>
               <SourceBadge src="kalshi" />
             </div>
@@ -152,10 +157,7 @@ export default function RainForecast() {
                       >
                         <div
                           className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${d.prob}%`,
-                            backgroundColor: barCol,
-                          }}
+                          style={{ width: `${d.prob}%`, backgroundColor: barCol }}
                         />
                       </div>
                     </div>
@@ -175,31 +177,32 @@ export default function RainForecast() {
             </div>
           </div>
 
-          {/* Right card — April rainfall */}
+          {/* Right card — Monthly rainfall */}
           <div className="bg-white rounded-2xl border border-surface-border p-6">
             <div className="flex items-start justify-between mb-1">
               <h3
                 className="text-text-primary"
                 style={{ fontSize: 20, fontWeight: 600 }}
               >
-                April rainfall
+                {month} rainfall
               </h3>
               <SourceBadge src="kalshi" />
             </div>
             <p className="text-text-secondary text-sm mb-5">
-              Above 1 inch this month — 10 cities
+              &ldquo;Above 1 inch this month&rdquo; — 10 cities
             </p>
 
             <div className="flex flex-col gap-2.5">
               {monthly.map((m: MonthlyRainType) => {
                 const col = probColor(m.prob);
                 const barWidth = Math.max(4, (m.prob / maxMonthly) * 100);
+                const delta = m.delta24h ?? 0;
 
                 return (
                   <div
                     key={m.city}
-                    className="grid items-center gap-3"
-                    style={{ gridTemplateColumns: "110px 1fr 42px" }}
+                    className="grid items-center gap-2"
+                    style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
                   >
                     <span className="text-sm text-text-primary font-medium truncate">
                       {m.city}
@@ -207,10 +210,7 @@ export default function RainForecast() {
                     <div className="h-[7px] rounded-full overflow-hidden bg-surface-elevated">
                       <div
                         className="h-full rounded-full transition-all duration-700 ease-out"
-                        style={{
-                          width: `${barWidth}%`,
-                          backgroundColor: col,
-                        }}
+                        style={{ width: `${barWidth}%`, backgroundColor: col }}
                       />
                     </div>
                     <span
@@ -219,9 +219,22 @@ export default function RainForecast() {
                     >
                       {m.prob}%
                     </span>
+                    <span
+                      className="text-right font-mono text-[10px]"
+                      style={{
+                        color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#9CA3AF",
+                      }}
+                    >
+                      {delta > 0 ? `+${delta}` : delta === 0 ? "—" : delta}
+                    </span>
                   </div>
                 );
               })}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
+              <span>24h change shown at right</span>
+              <span className="font-mono">Kalshi · 10 cities</span>
             </div>
           </div>
         </div>

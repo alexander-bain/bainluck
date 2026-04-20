@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import { CITIES, SOURCES, tempColorC, toC } from "./data";
+import type { CityData } from "./data";
 
 interface MapCanvasProps {
   selected: string;
@@ -11,37 +13,54 @@ interface MapCanvasProps {
 
 const CROSS_SOURCE_COUNT = CITIES.filter((c) => c.srcs.length > 1).length;
 
+function spreadOverlappingPins(cities: CityData[]): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  cities.forEach(c => positions.set(c.id, { x: c.x, y: c.y }));
+
+  const MIN_DIST = 3.5;
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 0; i < cities.length; i++) {
+      for (let j = i + 1; j < cities.length; j++) {
+        const a = positions.get(cities[i].id)!;
+        const b = positions.get(cities[j].id)!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < MIN_DIST && dist > 0) {
+          const overlap = (MIN_DIST - dist) / 2;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          a.x -= nx * overlap;
+          a.y -= ny * overlap;
+          b.x += nx * overlap;
+          b.y += ny * overlap;
+        }
+      }
+    }
+  }
+  return positions;
+}
+
 export default function MapCanvas({
   selected,
   hover,
   onHover,
   onSelect,
 }: MapCanvasProps) {
+  const adjustedPositions = useMemo(() => spreadOverlappingPins(CITIES), []);
+
   return (
-    <div className="bg-white rounded-2xl overflow-hidden">
+    <div
+      className="bg-white border border-surface-border overflow-hidden"
+      style={{ borderRadius: 16 }}
+    >
       {/* Toolbar */}
       <div
-        className="flex items-center justify-between"
-        style={{ padding: "14px 18px", borderBottom: "1px solid #E5E7EB" }}
+        className="flex items-center justify-between flex-wrap gap-3"
+        style={{ padding: "14px 18px", borderBottom: "1px solid var(--surface-border)" }}
       >
-        {/* Temperature gradient legend */}
-        <div
-          style={{
-            width: 160,
-            height: 8,
-            borderRadius: 9999,
-            background:
-              "linear-gradient(to right, rgb(37,99,235), rgb(56,189,248), rgb(148,163,184), rgb(245,158,11), rgb(239,68,68), rgb(159,18,57))",
-          }}
-        />
-        <span
-          style={{
-            fontFamily: "monospace",
-            fontSize: 11,
-            color: "#9CA3AF",
-            letterSpacing: "0.04em",
-          }}
-        >
+        <TempLegend />
+        <span className="font-mono" style={{ fontSize: 11, color: "#9CA3AF" }}>
           HIGH &middot; APR 20, 2026
         </span>
       </div>
@@ -50,68 +69,31 @@ export default function MapCanvas({
       <div
         className="relative"
         style={{
-          aspectRatio: "2/1",
+          aspectRatio: "2 / 1",
           minHeight: 360,
-          background: "linear-gradient(180deg, #F9FAFB 0%, #F3F4F6 100%)",
+          background: "linear-gradient(180deg, #FAFAFB 0%, #F5F5F7 100%)",
         }}
       >
-        {/* SVG dotted grid + lines */}
+        {/* Grid pattern */}
         <svg
           viewBox="0 0 2000 1000"
           preserveAspectRatio="none"
           className="absolute inset-0 w-full h-full"
-          style={{ pointerEvents: "none" }}
         >
           <defs>
-            <pattern
-              id="dot-grid"
-              width="24"
-              height="24"
-              patternUnits="userSpaceOnUse"
-            >
-              <circle cx="12" cy="12" r="1.8" fill="#E5E7EB" />
+            <pattern id="worldDots" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="1.8" cy="1.8" r="1.8" fill="#E5E7EB" />
             </pattern>
           </defs>
-          <rect width="2000" height="1000" fill="url(#dot-grid)" />
+          <rect width="2000" height="1000" fill="url(#worldDots)" opacity="0.7" />
 
-          {/* Latitude lines */}
           {[200, 400, 600, 800].map((y) => (
-            <line
-              key={`lat-${y}`}
-              x1="0"
-              y1={y}
-              x2="2000"
-              y2={y}
-              stroke="#E5E7EB"
-              strokeWidth="1"
-              strokeDasharray="8 6"
-            />
+            <line key={`lat-${y}`} x1="0" y1={y} x2="2000" y2={y} stroke="#E5E7EB" strokeWidth="1" strokeDasharray="8 6" />
           ))}
-
-          {/* Longitude lines */}
           {[500, 1000, 1500].map((x) => (
-            <line
-              key={`lng-${x}`}
-              x1={x}
-              y1="0"
-              x2={x}
-              y2="1000"
-              stroke="#E5E7EB"
-              strokeWidth="1"
-              strokeDasharray="8 6"
-            />
+            <line key={`lng-${x}`} x1={x} y1="0" x2={x} y2="1000" stroke="#E5E7EB" strokeWidth="1" strokeDasharray="8 6" />
           ))}
-
-          {/* Equator */}
-          <line
-            x1="0"
-            y1="500"
-            x2="2000"
-            y2="500"
-            stroke="#D1D5DB"
-            strokeWidth="1.5"
-            strokeDasharray="12 4"
-          />
+          <line x1="0" y1="500" x2="2000" y2="500" stroke="#D1D5DB" strokeWidth="1.5" strokeDasharray="12 4" />
         </svg>
 
         {/* Region labels */}
@@ -122,18 +104,8 @@ export default function MapCanvas({
         ].map((r) => (
           <span
             key={r.label}
-            className="absolute"
-            style={{
-              left: r.left,
-              top: 16,
-              transform: "translateX(-50%)",
-              fontFamily: "monospace",
-              fontSize: 10,
-              color: "#D1D5DB",
-              letterSpacing: "0.08em",
-              pointerEvents: "none",
-              userSelect: "none",
-            }}
+            className="absolute font-mono pointer-events-none select-none"
+            style={{ left: r.left, top: 16, fontSize: 10, color: "#D1D5DB", letterSpacing: "0.08em" }}
           >
             {r.label}
           </span>
@@ -141,25 +113,20 @@ export default function MapCanvas({
 
         {/* City pins */}
         {CITIES.map((city) => {
+          const pos = adjustedPositions.get(city.id) ?? { x: city.x, y: city.y };
           const isSelected = city.id === selected;
           const isHovered = city.id === hover;
           const color = tempColorC(toC(city));
-          const tempC = toC(city);
-          const displayTemp =
-            city.high.unit === "F"
-              ? `${Math.round(city.high.mode)}°F`
-              : `${Math.round(city.high.mode)}°C`;
-
-          const size = isSelected ? 34 : isHovered ? 30 : 22;
           const isCrossSource = city.srcs.length > 1;
+          const size = isSelected ? 30 : isHovered ? 26 : 18;
 
           return (
             <div
               key={city.id}
               className="absolute"
               style={{
-                left: `${city.x}%`,
-                top: `${city.y}%`,
+                left: `${pos.x}%`,
+                top: `${pos.y}%`,
                 transform: "translate(-50%, -50%)",
                 zIndex: isSelected ? 30 : isHovered ? 20 : 10,
               }}
@@ -168,30 +135,29 @@ export default function MapCanvas({
                 onClick={() => onSelect(city.id)}
                 onMouseEnter={() => onHover(city.id)}
                 onMouseLeave={() => onHover(null)}
+                className="p-0 border-0"
                 style={{
                   width: size,
                   height: size,
                   borderRadius: 9999,
                   backgroundColor: color,
-                  border: "none",
                   cursor: "pointer",
-                  transition: "transform 180ms ease, width 180ms ease, height 180ms ease",
+                  transition: "all 180ms ease",
                   boxShadow: isSelected
                     ? `0 0 0 3px white, 0 0 0 5px ${color}, 0 4px 16px rgba(0,0,0,0.25)`
                     : `0 0 0 2px white, 0 2px 6px rgba(0,0,0,0.15)`,
                   position: "relative",
                 }}
-                aria-label={`${city.name} ${displayTemp}`}
+                aria-label={`${city.name} ${Math.round(city.high.mode)}°${city.high.unit}`}
               >
-                {/* Cross-source indicator dot */}
                 {isCrossSource && (
                   <span
                     style={{
                       position: "absolute",
                       top: -2,
                       right: -2,
-                      width: 10,
-                      height: 10,
+                      width: 8,
+                      height: 8,
                       borderRadius: 9999,
                       background: `linear-gradient(135deg, ${SOURCES.polymarket.color} 50%, ${SOURCES.kalshi.color} 50%)`,
                       border: "1.5px solid white",
@@ -200,33 +166,27 @@ export default function MapCanvas({
                 )}
               </button>
 
-              {/* City label pill */}
               {(isSelected || isHovered) && (
                 <div
+                  className="absolute pointer-events-none"
                   style={{
-                    position: "absolute",
                     top: "100%",
                     left: "50%",
                     transform: "translateX(-50%)",
-                    marginTop: 6,
+                    marginTop: 4,
                     whiteSpace: "nowrap",
                     background: "white",
                     borderRadius: 9999,
-                    padding: "3px 10px",
+                    padding: "2px 8px",
                     boxShadow: "0 1px 6px rgba(0,0,0,0.12)",
-                    fontFamily: "monospace",
-                    fontSize: 11,
+                    fontSize: 10,
                     color: "#374151",
-                    pointerEvents: "none",
                     zIndex: 40,
                   }}
                 >
-                  {city.name}{" "}
-                  <span style={{ color, fontWeight: 600 }}>
-                    {Math.round(
-                      city.high.unit === "C" ? city.high.mode : tempC
-                    )}
-                    &deg;
+                  <span className="font-medium">{city.name}</span>{" "}
+                  <span className="font-mono" style={{ color, fontWeight: 600 }}>
+                    {Math.round(city.high.mode)}&deg;
                   </span>
                 </div>
               )}
@@ -237,31 +197,31 @@ export default function MapCanvas({
 
       {/* Footer */}
       <div
-        className="flex items-center justify-between"
-        style={{
-          padding: "10px 18px",
-          borderTop: "1px solid #F3F4F6",
-        }}
+        className="flex items-center justify-between font-mono"
+        style={{ padding: "10px 18px", borderTop: "1px solid #F3F4F6", fontSize: 11, color: "#9CA3AF" }}
       >
-        <span
-          style={{
-            fontFamily: "monospace",
-            fontSize: 11,
-            color: "#9CA3AF",
-          }}
-        >
-          {CITIES.length} cities shown &middot; tap a pin for distribution
-        </span>
-        <span
-          style={{
-            fontFamily: "monospace",
-            fontSize: 11,
-            color: "#9CA3AF",
-          }}
-        >
-          {CROSS_SOURCE_COUNT} cross-source
-        </span>
+        <span>{CITIES.length} cities shown &middot; tap a pin for distribution</span>
+        <span>{CROSS_SOURCE_COUNT} cross-source</span>
       </div>
+    </div>
+  );
+}
+
+function TempLegend() {
+  const stops = [-5, 5, 15, 22, 30, 40].map(t => tempColorC(t));
+  return (
+    <div className="flex items-center gap-2.5">
+      <div
+        style={{
+          width: 160,
+          height: 8,
+          borderRadius: 9999,
+          background: `linear-gradient(90deg, ${stops.join(",")})`,
+        }}
+      />
+      <span className="font-mono" style={{ fontSize: 11, color: "#6B7280" }}>
+        -5°C &nbsp;→&nbsp; 40°C
+      </span>
     </div>
   );
 }
