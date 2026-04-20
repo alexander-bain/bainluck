@@ -2873,12 +2873,26 @@ async def get_playoff_grid(
             for t in teams
         )
         expected = _EXPECTED_SUMS.get(col.key)
-        if expected and col_sum > expected * 2.5:
+        if not expected:
+            continue
+        if col_sum > expected * 2.5:
             logger.warning(
                 "Column %s sum=%.1f%% exceeds 2.5× expected %.0f%% for %s — "
                 "possible misclassified markets",
                 col.key, col_sum * 100, expected * 100, config.slug,
             )
+        elif 0 < col_sum < expected * 0.85:
+            scale = expected / col_sum
+            logger.info(
+                "Normalizing %s column from %.1f%% to %.0f%% (×%.2f) for %s",
+                col.key, col_sum * 100, expected * 100, scale, config.slug,
+            )
+            for t in teams:
+                cell = t["cells"].get(col.key)
+                if cell and cell.get("merged_probability") is not None:
+                    cell["merged_probability"] = round(cell["merged_probability"] * scale, 4)
+                    for src in cell.get("sources", []):
+                        src["probability"] = round(src["probability"] * scale, 4)
 
     # -----------------------------------------------------------------------
     # 4c. Apply admin exclude overrides
