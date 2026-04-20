@@ -32,6 +32,7 @@ from app.utils.prediction_market_matching import (
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
+    _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
     MAX_TIME_DELTA,
     MAX_PAST_GAME_DELTA,
@@ -264,6 +265,8 @@ async def _match_prediction_markets(limit: int = 500):
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
+                if matched_event.get("sport_id"):
+                    market.sport_id = matched_event["sport_id"]
                 stats["newly_linked"] += 1
                 stats["funnel"]["linked"] += 1
                 logger.info(
@@ -284,6 +287,8 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                     if auto_event:
                         market.event_id = auto_event["event_id"]
+                        if auto_event.get("sport_id"):
+                            market.sport_id = auto_event["sport_id"]
                         stats["newly_linked"] += 1
                         stats["funnel"]["linked"] += 1
                         stats["funnel"].setdefault("auto_created_events", 0)
@@ -424,6 +429,8 @@ async def _match_prediction_markets(limit: int = 500):
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
+                if matched_event.get("sport_id"):
+                    market.sport_id = matched_event["sport_id"]
                 stats["newly_linked"] += 1
                 stats["funnel"]["linked"] += 1
                 logger.info(
@@ -448,6 +455,8 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                     if auto_event:
                         market.event_id = auto_event["event_id"]
+                        if auto_event.get("sport_id"):
+                            market.sport_id = auto_event["sport_id"]
                         stats["newly_linked"] += 1
                         stats["funnel"]["linked"] += 1
                         stats["funnel"].setdefault("auto_created_events", 0)
@@ -522,6 +531,12 @@ async def _match_prediction_markets(limit: int = 500):
                 break
             stats["funnel"]["phase15_checked"] += 1
             try:
+                # Backfill sport_id from event if missing on market
+                if market.sport_id is None and linked_event.sport_id:
+                    market.sport_id = linked_event.sport_id
+                    stats["funnel"].setdefault("sport_id_backfilled", 0)
+                    stats["funnel"]["sport_id_backfilled"] += 1
+
                 if not is_game_level_market(
                     market.name, market.category,
                     external_id=market.external_id,
@@ -589,6 +604,8 @@ async def _match_prediction_markets(limit: int = 500):
                         )
                         stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = better_match["event_id"]
+                    if better_match.get("sport_id"):
+                        market.sport_id = better_match["sport_id"]
                     if is_auto_created:
                         stats["funnel"].setdefault("auto_created_relinked", 0)
                         stats["funnel"]["auto_created_relinked"] += 1
@@ -810,12 +827,16 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     if matchup.team_b:
         teams_to_search.append(matchup.team_b)
 
-    # Create ILIKE conditions for team names
+    # Create ILIKE conditions for team names.
+    # _expand_team_search_terms produces multiple patterns for abbreviated
+    # names (e.g., "WSH Capitals" → ["WSH Capitals", "Capitals"]) so that
+    # ILIKE '%Capitals%' matches "Washington Capitals" in the events table.
     ilike_conditions = []
     for team in teams_to_search:
-        pattern = f"%{_escape_like(team)}%"
-        ilike_conditions.append(Event.home_team_name.ilike(pattern))
-        ilike_conditions.append(Event.away_team_name.ilike(pattern))
+        for search_term in _expand_team_search_terms(team):
+            pattern = f"%{_escape_like(search_term)}%"
+            ilike_conditions.append(Event.home_team_name.ilike(pattern))
+            ilike_conditions.append(Event.away_team_name.ilike(pattern))
 
     # Also restrict: don't match events that started more than 6 hours ago
     # (unless they're still live)
@@ -963,6 +984,7 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
                 "away_team": event.away_team_name,
                 "yes_is_home": team_match["yes_is_home"],
                 "score": score,
+                "sport_id": event.sport_id,
             }
 
     return best_match
@@ -1029,9 +1051,8 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
             "event_id": event.id,
             "home_team": event.home_team_name,
             "away_team": event.away_team_name,
-            # Default to True — Phase 2 will determine correct mapping
-            # from outcome names or bid/ask data
             "yes_is_home": True,
+            "sport_id": event.sport_id,
         }
 
     if len(candidates) > 1:
@@ -1061,6 +1082,7 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
                     "home_team": best_event.home_team_name,
                     "away_team": best_event.away_team_name,
                     "yes_is_home": True,
+                    "sport_id": best_event.sport_id,
                 }
 
         logger.debug(

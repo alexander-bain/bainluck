@@ -26,9 +26,11 @@ from app.utils.prediction_market_matching import (
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
+    _expand_team_search_terms,
     _looks_like_team_name,
     _strip_category_prefix,
     _is_prop_or_spread_outcome,
+    _SPORT_ABBREV_SUFFIX,
     MatchupInfo,
 )
 from app.tasks.kalshi import (
@@ -1968,3 +1970,126 @@ class TestFragmentMatch:
     def test_ohi_matches_ohio_state(self):
         score = _score_fragment_match("OHI", "MIC", "Ohio State Buckeyes", "Michigan Wolverines")
         assert score == 2
+
+
+# =============================================================================
+# _expand_team_search_terms
+# =============================================================================
+
+class TestExpandTeamSearchTerms:
+    def test_abbreviated_name_extracts_mascot(self):
+        terms = _expand_team_search_terms("WSH Capitals")
+        assert "WSH Capitals" in terms
+        assert "Capitals" in terms
+
+    def test_full_name_extracts_mascot(self):
+        terms = _expand_team_search_terms("Washington Capitals")
+        assert "Washington Capitals" in terms
+        assert "Capitals" in terms
+
+    def test_short_mascot_not_extracted(self):
+        """Mascots < 5 chars are too ambiguous for ILIKE."""
+        terms = _expand_team_search_terms("New York Mets")
+        assert len(terms) == 1
+        assert terms[0] == "New York Mets"
+
+    def test_single_word_no_expansion(self):
+        terms = _expand_team_search_terms("Pittsburgh")
+        assert terms == ["Pittsburgh"]
+
+    def test_nj_devils(self):
+        terms = _expand_team_search_terms("NJ Devils")
+        assert "Devils" in terms
+
+    def test_new_york_y(self):
+        """City + abbreviation — abbreviation is too short."""
+        terms = _expand_team_search_terms("New York Y")
+        assert len(terms) == 1
+
+
+# =============================================================================
+# Game prop ticker-derived team names
+# =============================================================================
+
+class TestGamePropTickerFallback:
+    def test_nhl_game_prop_uses_ticker_teams(self):
+        """Game prop with abbreviated names should use ticker-derived mascots."""
+        matchup = extract_matchup_with_ticker_fallback(
+            "WSH Capitals at NJ Devils: Assists",
+            external_id="KXNHLAST-26APR19WSHNJD",
+        )
+        assert matchup is not None
+        assert matchup.format_type == "game_prop"
+        assert matchup.team_a == "Capitals"
+        assert matchup.team_b == "Devils"
+
+    def test_nba_game_prop_with_digit_ticker(self):
+        """Tickers with digits (KXNBA2D) can't parse team abbreviations,
+        but name extraction still provides usable city names."""
+        matchup = extract_matchup_with_ticker_fallback(
+            "Phoenix at Oklahoma City: Double Doubles",
+            external_id="KXNBA2D-26APR22PHXOKC",
+        )
+        assert matchup is not None
+        assert matchup.format_type == "game_prop"
+        # City names from name extraction — still ILIKE-matchable
+        assert "Phoenix" in matchup.team_a or "Suns" in matchup.team_a
+
+    def test_nba_standard_prop_uses_ticker_teams(self):
+        """Standard prop tickers (KXNBAPTS) should resolve to mascots."""
+        matchup = extract_matchup_with_ticker_fallback(
+            "PHX Suns at OKC Thunder: Points",
+            external_id="KXNBAPTS-26APR22PHXOKC",
+        )
+        assert matchup is not None
+        assert matchup.team_a == "Suns"
+        assert matchup.team_b == "Thunder"
+
+    def test_mlb_game_prop_uses_ticker_teams(self):
+        matchup = extract_matchup_with_ticker_fallback(
+            "Pittsburgh vs Texas: First Inning Run",
+            external_id="KXMLBRFI-26APR222005PITTEX",
+        )
+        assert matchup is not None
+        assert matchup.format_type == "game_prop"
+        # Ticker should resolve to mascot names
+        assert matchup.team_a is not None
+        assert matchup.team_b is not None
+
+    def test_bare_matchup_not_overridden(self):
+        """Non-game-prop formats should NOT have team names overridden."""
+        matchup = extract_matchup_with_ticker_fallback(
+            "Phoenix vs Oklahoma City",
+            external_id="KXNBAGAME-26APR22PHXOKC",
+        )
+        assert matchup is not None
+        assert matchup.format_type == "bare_matchup"
+        assert matchup.team_a == "Phoenix"
+
+
+# =============================================================================
+# _SPORT_ABBREV_SUFFIX coverage
+# =============================================================================
+
+class TestSportAbbrevSuffix:
+    def test_covers_all_game_tickers(self):
+        """Every prefix in KALSHI_TICKER_TO_SPORT_KEY must be in _SPORT_ABBREV_SUFFIX."""
+        from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
+        for prefix in KALSHI_TICKER_TO_SPORT_KEY:
+            assert prefix in _SPORT_ABBREV_SUFFIX, f"Missing: {prefix}"
+
+    def test_nhl_props_have_suffix(self):
+        assert _SPORT_ABBREV_SUFFIX.get("kxnhlast") == "_nhl"
+        assert _SPORT_ABBREV_SUFFIX.get("kxnhlgoal") == "_nhl"
+
+    def test_mlb_props_have_suffix(self):
+        assert _SPORT_ABBREV_SUFFIX.get("kxmlbhit") == "_mlb"
+        assert _SPORT_ABBREV_SUFFIX.get("kxmlbhr") == "_mlb"
+
+    def test_nba_props_no_suffix(self):
+        assert _SPORT_ABBREV_SUFFIX.get("kxnbapts") == ""
+        assert _SPORT_ABBREV_SUFFIX.get("kxnbareb") == ""
+
+    def test_nfl_props_have_suffix(self):
+        assert _SPORT_ABBREV_SUFFIX.get("kxnflpasstds") == "_nfl"
+        assert _SPORT_ABBREV_SUFFIX.get("kxnflanytd") == "_nfl"

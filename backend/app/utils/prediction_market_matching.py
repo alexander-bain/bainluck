@@ -709,7 +709,7 @@ def find_moneyline_outcome(
 # After the date, the remaining characters are the team abbreviations.
 
 _TICKER_DATE_RE = re.compile(
-    r'^[a-z]+-(\d{2}[a-z]{3}\d{1,2})(.+)$',
+    r'^[a-z0-9]+-(\d{2}[a-z]{3}\d{1,2})(.+)$',
     re.IGNORECASE,
 )
 
@@ -761,11 +761,17 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
 
 # Sport-specific abbreviation subsets (no suffix needed for primary sport)
 # The abbreviation lookup tries exact first, then sport-specific suffixed keys.
+# Derived from KALSHI_TICKER_TO_SPORT_KEY to cover ALL game/prop ticker prefixes.
+_SPORT_KEY_TO_ABBREV_SUFFIX: dict[str, str] = {
+    "americanfootball_nfl": "_nfl",
+    "americanfootball_ncaaf": "_nfl",
+    "icehockey_nhl": "_nhl",
+    "baseball_mlb": "_mlb",
+    "baseball_ncaa": "_mlb",
+}
 _SPORT_ABBREV_SUFFIX: dict[str, str] = {
-    "kxnbagame": "", "kxwnbagame": "", "kxncaabgame": "",
-    "kxnflgame": "_nfl", "kxncaafgame": "_nfl",
-    "kxnhlgame": "_nhl",
-    "kxmlbgame": "_mlb",
+    prefix: _SPORT_KEY_TO_ABBREV_SUFFIX.get(sport_key, "")
+    for prefix, sport_key in _TICKER_TO_SPORT_PREFIX.items()
 }
 
 
@@ -878,11 +884,20 @@ def extract_matchup_with_ticker_fallback(
     1. Name-based extraction via extract_matchup()
     2. Ticker-based team extraction via extract_teams_from_ticker()
 
-    The ticker fallback creates a MatchupInfo with team name fragments
-    (e.g., "Pistons" and "Bulls") that can be fuzzy-matched against events.
+    For game props (format_type="game_prop"), the name-based extraction often
+    yields abbreviated team names ("WSH Capitals") that fail SQL ILIKE matching
+    against full event team names ("Washington Capitals"). When a ticker is
+    available, we override with ticker-derived mascot names ("Capitals") which
+    ILIKE-match reliably.
     """
-    # Try name-based extraction first
     matchup = extract_matchup(market_name, external_id=external_id)
+
+    if matchup and matchup.format_type == "game_prop" and external_id:
+        ticker_teams = extract_teams_from_ticker(external_id)
+        if ticker_teams:
+            matchup.team_a = ticker_teams[0]
+            matchup.team_b = ticker_teams[1]
+
     if matchup:
         return matchup
 
@@ -894,11 +909,30 @@ def extract_matchup_with_ticker_fallback(
             return MatchupInfo(
                 team_a=team_a,
                 team_b=team_b,
-                yes_team=team_a,  # First team in ticker = "yes" team
+                yes_team=team_a,
                 format_type="ticker_parsed",
             )
 
     return None
+
+
+def _expand_team_search_terms(team: str) -> list[str]:
+    """Generate multiple ILIKE-friendly search terms from a team name.
+
+    For abbreviated or partial names like "New York Y" or "WSH Capitals",
+    extracts the last word (mascot) as an additional search term. This allows
+    ILIKE '%Capitals%' to match "Washington Capitals" even when the full
+    extracted name doesn't substring-match.
+
+    Returns [original, mascot] if mascot is >= 5 chars, else [original].
+    """
+    terms = [team]
+    words = team.split()
+    if len(words) >= 2:
+        mascot = words[-1]
+        if len(mascot) >= 5 and mascot != team:
+            terms.append(mascot)
+    return terms
 
 
 # ── Ticker fragment extraction for college team disambiguation ────────────
