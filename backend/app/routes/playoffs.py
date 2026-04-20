@@ -709,7 +709,7 @@ def _match_market_to_column(
         if re.search(r"\bmake\b.*\b(?:playoffs|postseason)\b", name_lower):
             return "make_playoffs"
         if re.search(r"\bplay.in\s+tournament\b", name_lower):
-            return "make_playoffs"
+            return None  # Play-in ≠ make playoffs — top seeds have 0% play-in but 99% playoffs
 
     # 1. Try league config matching rules (most specific)
     for rule in config.matching_rules:
