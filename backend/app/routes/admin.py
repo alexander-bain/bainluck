@@ -3430,6 +3430,50 @@ async def prediction_market_status(
     }
 
 
+@router.post("/prediction-markets/fix-sport-categories")
+async def fix_sport_categories(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk-fix llm_sport_category for Kalshi markets based on ticker prefix."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY, KALSHI_FUTURES_TICKER_TO_SPORT_KEY, SPORT_PREFIX_TO_LLM_CATEGORY
+
+    all_tickers = {**KALSHI_TICKER_TO_SPORT_KEY, **KALSHI_FUTURES_TICKER_TO_SPORT_KEY}
+
+    fixed_by_sport: dict[str, int] = {}
+    total_fixed = 0
+
+    for prefix, sport_key in all_tickers.items():
+        sport_prefix = sport_key.split("_")[0]
+        correct_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_prefix)
+        if not correct_category:
+            continue
+
+        result = await db.execute(
+            text(
+                "UPDATE futures_markets "
+                "SET llm_sport_category = :category "
+                "WHERE source = 'kalshi' "
+                "AND LOWER(external_id) LIKE :pattern "
+                "AND (llm_sport_category IS NULL OR llm_sport_category != :category)"
+            ),
+            {"category": correct_category, "pattern": f"{prefix}%"},
+        )
+        if result.rowcount > 0:
+            fixed_by_sport[correct_category] = fixed_by_sport.get(correct_category, 0) + result.rowcount
+            total_fixed += result.rowcount
+
+    await db.commit()
+
+    return {
+        "total_fixed": total_fixed,
+        "by_sport": fixed_by_sport,
+    }
+
+
 @router.get("/prediction-markets/link-rate")
 async def prediction_market_link_rate(
     secret: str = Query(..., description="Admin secret for authorization"),

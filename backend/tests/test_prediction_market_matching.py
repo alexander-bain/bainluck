@@ -2071,6 +2071,53 @@ class TestGamePropTickerFallback:
 # " - More Markets" suffix stripping
 # =============================================================================
 
+class TestCityAbbrevExpansion:
+    def test_min_expands_to_minnesota(self):
+        terms = _expand_team_search_terms("MIN")
+        assert "Minnesota" in terms
+
+    def test_dal_expands_to_dallas(self):
+        terms = _expand_team_search_terms("DAL")
+        assert "Dallas" in terms
+
+    def test_wsh_expands_to_washington(self):
+        terms = _expand_team_search_terms("WSH")
+        assert "Washington" in terms
+
+    def test_okc_expands_to_oklahoma_city(self):
+        terms = _expand_team_search_terms("OKC")
+        assert "Oklahoma City" in terms
+
+    def test_long_city_name_no_expansion(self):
+        """Full city names like 'Pittsburgh' (>4 chars) don't need abbreviation lookup."""
+        terms = _expand_team_search_terms("Pittsburgh")
+        assert len(terms) == 1
+        assert terms[0] == "Pittsburgh"
+
+    def test_unknown_abbrev_no_expansion(self):
+        terms = _expand_team_search_terms("XYZ")
+        assert terms == ["XYZ"]
+
+
+class TestGameNumberPrefixStripping:
+    def test_game_2_prefix_stripped(self):
+        matchup = extract_matchup("Game 2: Minnesota at Dallas: Total Points")
+        assert matchup is not None
+        assert "Game" not in matchup.team_a
+        assert matchup.team_a == "Minnesota"
+        assert matchup.team_b == "Dallas"
+
+    def test_game_7_prefix_stripped(self):
+        matchup = extract_matchup("Game 7: Boston vs Miami")
+        assert matchup is not None
+        assert matchup.team_a == "Boston"
+
+    def test_no_game_prefix_unchanged(self):
+        matchup = extract_matchup("Boston vs Miami")
+        assert matchup is not None
+        assert matchup.team_a == "Boston"
+
+
 class TestMoreMarketsSuffix:
     def test_polymarket_more_markets_stripped(self):
         matchup = extract_matchup("CF Estrela da Amadora vs. FC Porto - More Markets")

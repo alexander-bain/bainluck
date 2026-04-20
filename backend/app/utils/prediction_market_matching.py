@@ -141,6 +141,9 @@ def _strip_category_prefix(market_name: str) -> str:
 # Polymarket " - More Markets" suffix on related markets
 _MORE_MARKETS_RE = re.compile(r'\s*-\s*More Markets\s*$', re.IGNORECASE)
 
+# "Game N:" prefix on playoff series markets (e.g., "Game 2: Minnesota at Dallas: Total Points")
+_GAME_NUMBER_PREFIX_RE = re.compile(r'^Game\s+\d+\s*:\s*', re.IGNORECASE)
+
 # Trailing parenthetical context like "(Lightweight, Main Card)" or "(Round 5)"
 # Common in Polymarket fight/UFC markets.
 _TRAILING_PAREN_RE = re.compile(r'\s*\([^)]+\)\s*$')
@@ -390,8 +393,9 @@ def _normalize_variants(market_name: str) -> list:
       → strip championship: "USA vs Canada"
       → matches _BARE_MATCHUP_RE!
     """
-    # Strip " - More Markets" first — it's a suffix that pollutes team names
+    # Strip suffixes/prefixes that pollute team names
     base = _strip_more_markets(market_name)
+    base = _GAME_NUMBER_PREFIX_RE.sub("", base).strip() or base
     # Start with the cleaner base if different, then fall back to raw
     variants = [base] if base != market_name else [market_name]
     stripped_prefix = _strip_category_prefix(base)
@@ -928,23 +932,55 @@ def extract_matchup_with_ticker_fallback(
     return None
 
 
+# Common 2-4 letter city/team abbreviations used by Kalshi in market names.
+# Maps abbreviation → full city name for ILIKE expansion.
+_CITY_ABBREV_TO_NAME: dict[str, str] = {
+    "atl": "Atlanta", "bos": "Boston", "bkn": "Brooklyn", "cha": "Charlotte",
+    "chi": "Chicago", "cle": "Cleveland", "dal": "Dallas", "den": "Denver",
+    "det": "Detroit", "hou": "Houston", "ind": "Indiana", "lac": "Clippers",
+    "lal": "Lakers", "mem": "Memphis", "mia": "Miami", "mil": "Milwaukee",
+    "min": "Minnesota", "nop": "New Orleans", "nyk": "New York",
+    "okc": "Oklahoma City", "orl": "Orlando", "phi": "Philadelphia",
+    "phx": "Phoenix", "por": "Portland", "sac": "Sacramento",
+    "sas": "San Antonio", "tor": "Toronto", "uta": "Utah", "was": "Washington",
+    "wsh": "Washington", "nj": "New Jersey", "sf": "San Francisco",
+    "sea": "Seattle", "pit": "Pittsburgh", "buf": "Buffalo", "bal": "Baltimore",
+    "gb": "Green Bay", "kc": "Kansas City", "ne": "New England",
+    "tb": "Tampa Bay", "car": "Carolina", "cin": "Cincinnati",
+    "jax": "Jacksonville", "ten": "Tennessee", "no": "New Orleans",
+    "lv": "Las Vegas", "la": "Los Angeles", "ny": "New York",
+    "stl": "St. Louis", "sd": "San Diego", "oak": "Oakland",
+    "col": "Colorado", "ana": "Anaheim", "van": "Vancouver",
+    "cgy": "Calgary", "edm": "Edmonton", "wpg": "Winnipeg",
+    "ott": "Ottawa", "mtl": "Montreal",
+}
+
+
 def _expand_team_search_terms(team: str) -> list[str]:
     """Generate multiple ILIKE-friendly search terms from a team name.
 
-    For abbreviated names like "WSH Capitals", extracts the last word (mascot)
-    as an additional search term. For city-only names like "Pittsburgh",
-    the original already works as an ILIKE pattern since it's a substring of
-    "Pittsburgh Pirates". Multi-word cities like "New York" also match
-    "New York Yankees" via ILIKE '%New York%'.
+    Handles:
+    - Abbreviated names ("WSH Capitals" → also search "Capitals")
+    - City abbreviations ("MIN" → also search "Minnesota")
+    - City-only names ("Pittsburgh" → already matches "Pittsburgh Pirates")
 
-    Returns [original] plus the mascot word if it's >= 5 chars.
+    Returns [original] plus expanded terms.
     """
     terms = [team]
     words = team.split()
+
+    # Multi-word: extract mascot (last word) if long enough
     if len(words) >= 2:
         mascot = words[-1]
         if len(mascot) >= 5 and mascot != team:
             terms.append(mascot)
+
+    # Single short word or abbreviation: try city lookup
+    if len(words) == 1 and len(team) <= 4:
+        expanded = _CITY_ABBREV_TO_NAME.get(team.lower())
+        if expanded:
+            terms.append(expanded)
+
     return terms
 
 
