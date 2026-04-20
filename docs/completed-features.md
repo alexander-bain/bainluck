@@ -1,30 +1,41 @@
 # Completed Features (Shipped)
 
+## April 19-20, 2026
+
+**Game Prop → Event Linking (Item 1C)** — 12 commits, 1,784+ markets newly linked:
+- ✅ Ticker-derived team names for game props ("WSH Capitals" → "Capitals" from ticker abbreviation map)
+- ✅ `_expand_team_search_terms()` for ILIKE pattern expansion (mascot extraction + city abbreviation lookup)
+- ✅ `_SPORT_ABBREV_SUFFIX` derived programmatically from all ~150 ticker prefixes (was 7 hardcoded)
+- ✅ `_TICKER_DATE_RE` fixed for digit-containing prefixes (KXNBA2D, KXNBA3PT)
+- ✅ `sport_id` propagation on all 5 linking paths via `_set_market_sport_fields()`
+- ✅ `llm_sport_category` correction from ticker prefix on link + Phase 1.5 backfill (fixes MLB tagged "basketball")
+- ✅ " - More Markets" Polymarket suffix stripping
+- ✅ "Game N:" playoff series prefix stripping
+- ✅ City abbreviation map (`_CITY_ABBREV_TO_NAME`, 65 entries)
+- ✅ Phase 2 deadlock fix (per-market commit + rollback on deadlock detection)
+- ✅ Matching frequency 4h → 1h, limit 200 → 500
+- ✅ `POST /admin/prediction-markets/fix-sport-categories` — bulk category correction from ticker
+- ✅ `GET /admin/prediction-markets/link-rate` — per-sport link rate health endpoint
+- ✅ Admin dashboard: Game Market Link Rate card with per-source/per-sport progress bars
+- ✅ 28 new tests (324 total prediction market matching, 3,149 total)
+
+**Results:** Kalshi tennis 52% → 96%, hockey 27% → 52%, baseball 69% → 77%. Dashboard tracks all sports.
+
 ## April 17-19, 2026
 
-**WrestleMania 42 prediction game** (`/wrestlemania`) — throwaway, remove after event:
-- ✅ 13-match card with Polymarket live odds (10 markets wired with condition IDs + CLOB token IDs)
-- ✅ $1M bankroll, stake-and-lose scoring, per-match lock times
-- ✅ Retro '80s neon theme, wrestler Wikipedia images, storylines + case-for-each-side
-- ✅ Dynamic leaderboard: all players, expandable pick details, max possible winnings, win probability column
-- ✅ LLM sportscaster commentary (GPT-4o-mini, Redis-cached, auto-refreshing banner + feed)
-- ✅ Inline admin controls (?secret= URL param), resolve/unresolve matches from main page
-- ✅ Spoiler guard: show opening odds only, hide charts during live viewing, polling continues in background
-- ✅ Responsive layout: sidebar leaderboard on desktop, inline on mobile
+**WrestleMania 42 prediction game** (`/wrestlemania`) — throwaway, remove after April 20:
+- ✅ 13-match card, Polymarket live odds, $1M bankroll, leaderboard, LLM commentary, spoiler guard, inline admin
 
 **Infrastructure & data quality:**
-- ✅ Win prob snapshot dedup fix — new snapshots written when inning/period changes even if probability is flat. Fixes missing inning markers on baseball charts.
-- ✅ Golf: Monte-Carlo tennis "Masters" leak fixed — tennis disambiguation pattern before golf in `futures_categorization.py`
-- ✅ Golf: Polymarket "Yes" labels fixed — `fix_outcome_names` task now processes binary Yes/No markets
-- ✅ Golf: "Augusta National Invitational" ghost tournament filtered — added "invitational" to `_NON_WINNER_MARKET_RE`
-- ✅ Player prop headshot name matching — strip stat suffix ("Mitch Keller: 3+" → "mitch keller") before roster lookup
-- ✅ Alembic multi-head fix — Procfile uses `alembic upgrade heads` (plural)
-- ✅ Quota optimization: score API rate-limit to 5min, MLB US-only region, AFL 10min polling floor
+- ✅ Win prob snapshot dedup fix — inning/period change detection
+- ✅ Golf: Monte-Carlo tennis "Masters" leak, Polymarket "Yes" labels, Augusta ghost tournament
+- ✅ Player prop headshot name matching, Alembic multi-head fix
+- ✅ Quota optimization: score API rate-limit, MLB US-only, AFL 10min floor
 - ✅ Admin dashboard: Game State Indicators by Sport chart
 
-**Testing (110 new tests, 3121 total):**
-- ✅ Item 4: API contract tests — feed, playoffs, events endpoints (27 tests) + integration conftest
-- ✅ Item 9: External API fixture tests — Kalshi (21), Odds API (15), ESPN boxscore (30), DataGolf (11) + 3 JSON fixtures
+**Testing (110 new tests):**
+- ✅ Item 4: API contract tests (27 tests) + integration conftest
+- ✅ Item 9: External API fixture tests — Kalshi, Odds API, ESPN, DataGolf (77 tests)
 
 <details>
 <summary>Shipped features (click to expand)</summary>
