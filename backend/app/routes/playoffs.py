@@ -700,12 +700,15 @@ def _match_market_to_column(
     if not _is_playoff_relevant_market(name):
         return None
 
-    # 0b. Qualifier/berth keywords always mean make_playoffs, even if the
-    # name also contains a championship term (e.g., "Stanley Cup® Playoff Qualifiers").
+    # 0b. Qualifier/berth/play-in keywords always mean make_playoffs, even if
+    # the name also contains a conference term (e.g., "Teams to Make the
+    # Eastern Conference Play-In Tournament").
     if any(c.key == "make_playoffs" for c in config.columns):
         if re.search(r"\b(?:playoff|postseason)\s*(?:qualif|berth)\b", name_lower):
             return "make_playoffs"
         if re.search(r"\bmake\b.*\b(?:playoffs|postseason)\b", name_lower):
+            return "make_playoffs"
+        if re.search(r"\bplay.in\s+tournament\b", name_lower):
             return "make_playoffs"
 
     # 1. Try league config matching rules (most specific)

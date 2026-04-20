@@ -779,7 +779,30 @@ async def _poll_all_odds():
             )
             sports_for_scores = [row[0] for row in sports_needing_scores.all()]
 
+            from app.utils.sport_keys import ESPN_SPORT_MAPPING
+
+            # Skip score fetching for ESPN-mapped sports where ALL recent
+            # events have espn_event_id (ESPN already provides scores faster).
+            espn_covered_sports = set()
             for sport_key in sports_for_scores:
+                if sport_key in ESPN_SPORT_MAPPING:
+                    unmatched = await session.execute(
+                        select(func.count(Event.id))
+                        .where(
+                            Event.sport_key == sport_key,
+                            Event.commence_time <= now,
+                            Event.commence_time >= now - timedelta(days=3),
+                            Event.status.in_(["scheduled", "live"]),
+                            Event.espn_event_id.is_(None),
+                        )
+                    )
+                    if (unmatched.scalar() or 0) == 0:
+                        espn_covered_sports.add(sport_key)
+
+            for sport_key in sports_for_scores:
+                if sport_key in espn_covered_sports:
+                    continue
+
                 # Per-sport rate limiting for score fetches
                 if r:
                     try:
