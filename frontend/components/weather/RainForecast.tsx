@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { NYC_RAIN, MONTHLY_RAIN, probColor } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
@@ -51,19 +50,6 @@ function rainTextColor(prob: number): string {
   return "var(--text-secondary)";
 }
 
-const RAIN_CITIES = [
-  { id: "nyc", name: "NYC", data: NYC_RAIN },
-  { id: "sea", name: "Seattle", data: null },
-  { id: "mia", name: "Miami", data: null },
-  { id: "hou", name: "Houston", data: null },
-  { id: "chi", name: "Chicago", data: null },
-  { id: "aus", name: "Austin", data: null },
-  { id: "sfo", name: "San Francisco", data: null },
-  { id: "dal", name: "Dallas", data: null },
-  { id: "den", name: "Denver", data: null },
-  { id: "la", name: "Los Angeles", data: null },
-];
-
 function currentMonth(): string {
   const months = ["January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"];
@@ -73,9 +59,7 @@ function currentMonth(): string {
 /* ── Main Component ──────────────────────────────────────────────────── */
 
 export default function RainForecast() {
-  const [cityIdx, setCityIdx] = useState(0);
-  const city = RAIN_CITIES[cityIdx];
-  const rain = city.data as RainDay[] | null;
+  const rain = NYC_RAIN;
   const monthly = MONTHLY_RAIN;
   const maxMonthly = Math.max(...monthly.map((m) => m.prob));
   const month = currentMonth();
@@ -90,50 +74,19 @@ export default function RainForecast() {
           <div className="bg-white rounded-2xl border border-surface-border p-6">
             <div className="flex items-start justify-between mb-1">
               <div>
-                <div className="flex items-center gap-2">
-                  <h3
-                    className="text-text-primary"
-                    style={{ fontSize: 20, fontWeight: 600 }}
-                  >
-                    7-day rain probability
-                  </h3>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <select
-                    value={cityIdx}
-                    onChange={(e) => setCityIdx(Number(e.target.value))}
-                    className="text-sm font-semibold border border-surface-border rounded-lg px-2.5 py-1 bg-white text-text-primary appearance-none cursor-pointer"
-                    style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 8px center", paddingRight: 24 }}
-                  >
-                    {RAIN_CITIES.map((c, i) => (
-                      <option key={c.id} value={i}>{c.name}</option>
-                    ))}
-                  </select>
-                  <span className="text-xs text-text-muted">
-                    Daily &ldquo;Will it rain?&rdquo; markets from Kalshi
-                    {RAIN_CITIES.length === 1 && " · NYC-only for now"}
-                  </span>
-                </div>
+                <h3
+                  className="text-text-primary"
+                  style={{ fontSize: 20, fontWeight: 600 }}
+                >
+                  NYC · 7-day rain probability
+                </h3>
+                <p className="text-text-secondary text-sm mt-0.5">
+                  Daily &ldquo;Will it rain?&rdquo; markets from Kalshi
+                </p>
               </div>
               <SourceBadge src="kalshi" />
             </div>
 
-            {/* 7-column grid or placeholder */}
-            {!rain ? (
-              <div className="flex items-center justify-center mt-5 py-12 text-center">
-                <div>
-                  <div className="text-3xl mb-3">🌧️</div>
-                  <div className="text-sm text-text-secondary font-medium">
-                    Daily rain markets not yet available for {city.name}
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">
-                    Kalshi currently only offers daily rain markets for NYC.
-                    <br />Check the monthly rainfall card for {city.name}&apos;s data.
-                  </div>
-                </div>
-              </div>
-            ) : (
-            <>
               <div
                 className="grid gap-2 mt-5 overflow-x-auto"
                 style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
@@ -198,8 +151,6 @@ export default function RainForecast() {
                   {rain[0].date} – {rain[rain.length - 1].date}
                 </span>
               </div>
-            </>
-            )}
           </div>
 
           {/* Right card — Monthly rainfall */}
