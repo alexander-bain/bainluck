@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { CITIES, SOURCES, tempColorC, toC } from "./data";
 import type { CityData } from "./data";
 
@@ -13,44 +13,60 @@ interface MapCanvasProps {
 
 const CROSS_SOURCE_COUNT = CITIES.filter((c) => c.srcs.length > 1).length;
 
-function spreadOverlappingPins(cities: CityData[]): Map<string, { x: number; y: number }> {
-  const positions = new Map<string, { x: number; y: number }>();
-  cities.forEach(c => positions.set(c.id, { x: c.x, y: c.y }));
+type ResolvedCity = CityData & { rx: number; ry: number };
 
-  const MIN_DIST = 3.5;
-  for (let pass = 0; pass < 4; pass++) {
-    for (let i = 0; i < cities.length; i++) {
-      for (let j = i + 1; j < cities.length; j++) {
-        const a = positions.get(cities[i].id)!;
-        const b = positions.get(cities[j].id)!;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < MIN_DIST && dist > 0) {
-          const overlap = (MIN_DIST - dist) / 2;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          a.x -= nx * overlap;
-          a.y -= ny * overlap;
-          b.x += nx * overlap;
-          b.y += ny * overlap;
+function resolveCollisions(cities: CityData[], minDist: number): ResolvedCity[] {
+  const pins = cities.map(c => ({ ...c, rx: c.preferredX, ry: c.preferredY }));
+  const ITERATIONS = 40;
+  for (let it = 0; it < ITERATIONS; it++) {
+    let moved = false;
+    for (let i = 0; i < pins.length; i++) {
+      for (let j = i + 1; j < pins.length; j++) {
+        const a = pins[i], b = pins[j];
+        const dx = b.rx - a.rx, dy = b.ry - a.ry;
+        const d = Math.hypot(dx, dy);
+        if (d < minDist && d > 0.01) {
+          const push = (minDist - d) / 2;
+          const ux = dx / d, uy = dy / d;
+          a.rx -= ux * push; a.ry -= uy * push;
+          b.rx += ux * push; b.ry += uy * push;
+          moved = true;
+        } else if (d <= 0.01) {
+          b.rx += 0.5; b.ry += 0.5;
+          moved = true;
         }
       }
     }
+    if (!moved) break;
   }
-  return positions;
+  pins.forEach(p => {
+    p.rx = Math.max(2, Math.min(98, p.rx));
+    p.ry = Math.max(4, Math.min(94, p.ry));
+  });
+  return pins;
 }
 
-export default function MapCanvas({
-  selected,
-  hover,
-  onHover,
-  onSelect,
-}: MapCanvasProps) {
-  const adjustedPositions = useMemo(() => spreadOverlappingPins(CITIES), []);
+export default function MapCanvas({ selected, hover, onHover, onSelect }: MapCanvasProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      if (containerRef.current) {
+        setIsNarrow(containerRef.current.offsetWidth < 700);
+      }
+    };
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  const minDist = isNarrow ? 3.2 : 2.4;
+  const resolvedCities = useMemo(() => resolveCollisions(CITIES, minDist), [minDist]);
 
   return (
     <div
+      ref={containerRef}
       className="bg-white border border-surface-border overflow-hidden"
       style={{ borderRadius: 16 }}
     >
@@ -65,12 +81,12 @@ export default function MapCanvas({
         </span>
       </div>
 
-      {/* Map plane */}
+      {/* Map plane — 1.55:1 aspect, min 560px tall */}
       <div
         className="relative"
         style={{
-          aspectRatio: "2 / 1",
-          minHeight: 360,
+          aspectRatio: "1.55 / 1",
+          minHeight: 560,
           background: "linear-gradient(180deg, #FAFAFB 0%, #F5F5F7 100%)",
         }}
       >
@@ -86,11 +102,10 @@ export default function MapCanvas({
             </pattern>
           </defs>
           <rect width="2000" height="1000" fill="url(#worldDots)" opacity="0.7" />
-
-          {[200, 400, 600, 800].map((y) => (
+          {[200, 400, 600, 800].map(y => (
             <line key={`lat-${y}`} x1="0" y1={y} x2="2000" y2={y} stroke="#E5E7EB" strokeWidth="1" strokeDasharray="8 6" />
           ))}
-          {[500, 1000, 1500].map((x) => (
+          {[500, 1000, 1500].map(x => (
             <line key={`lng-${x}`} x1={x} y1="0" x2={x} y2="1000" stroke="#E5E7EB" strokeWidth="1" strokeDasharray="8 6" />
           ))}
           <line x1="0" y1="500" x2="2000" y2="500" stroke="#D1D5DB" strokeWidth="1.5" strokeDasharray="12 4" />
@@ -101,7 +116,7 @@ export default function MapCanvas({
           { label: "AMERICAS", left: "18%" },
           { label: "EUROPE / AFRICA", left: "48%" },
           { label: "ASIA / OCEANIA", left: "78%" },
-        ].map((r) => (
+        ].map(r => (
           <span
             key={r.label}
             className="absolute font-mono pointer-events-none select-none"
@@ -112,21 +127,20 @@ export default function MapCanvas({
         ))}
 
         {/* City pins */}
-        {CITIES.map((city) => {
-          const pos = adjustedPositions.get(city.id) ?? { x: city.x, y: city.y };
+        {resolvedCities.map(city => {
           const isSelected = city.id === selected;
           const isHovered = city.id === hover;
           const color = tempColorC(toC(city));
           const isCrossSource = city.srcs.length > 1;
-          const size = isSelected ? 30 : isHovered ? 26 : 18;
+          const size = isSelected ? 28 : isHovered ? 22 : 14;
 
           return (
             <div
               key={city.id}
               className="absolute"
               style={{
-                left: `${pos.x}%`,
-                top: `${pos.y}%`,
+                left: `${city.rx}%`,
+                top: `${city.ry}%`,
                 transform: "translate(-50%, -50%)",
                 zIndex: isSelected ? 30 : isHovered ? 20 : 10,
               }}
@@ -144,8 +158,8 @@ export default function MapCanvas({
                   cursor: "pointer",
                   transition: "all 180ms ease",
                   boxShadow: isSelected
-                    ? `0 0 0 3px white, 0 0 0 5px ${color}, 0 4px 16px rgba(0,0,0,0.25)`
-                    : `0 0 0 2px white, 0 2px 6px rgba(0,0,0,0.15)`,
+                    ? `0 0 0 3px white, 0 0 0 6px ${color}, 0 8px 20px -6px ${color}aa`
+                    : `0 0 0 1.5px white, 0 2px 6px rgba(0,0,0,0.15)`,
                   position: "relative",
                 }}
                 aria-label={`${city.name} ${Math.round(city.high.mode)}°${city.high.unit}`}
@@ -156,11 +170,11 @@ export default function MapCanvas({
                       position: "absolute",
                       top: -2,
                       right: -2,
-                      width: 8,
-                      height: 8,
+                      width: 7,
+                      height: 7,
                       borderRadius: 9999,
                       background: `linear-gradient(135deg, ${SOURCES.polymarket.color} 50%, ${SOURCES.kalshi.color} 50%)`,
-                      border: "1.5px solid white",
+                      border: "1px solid white",
                     }}
                   />
                 )}
