@@ -127,7 +127,21 @@ function SingleSourceHistogram({
           const isPeak = i === peakIdx;
           const barHeight = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
           return (
-            <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
+            <div
+              key={i}
+              className="flex-1 flex flex-col items-center justify-end group relative"
+              style={{ height: "100%", cursor: bucket.prob > 0 ? "pointer" : "default" }}
+            >
+              {/* Tooltip on hover */}
+              {bucket.prob > 0 && (
+                <div
+                  className="absolute -top-6 left-1/2 -translate-x-1/2 hidden group-hover:block font-mono px-1.5 py-0.5 rounded bg-gray-800 text-white whitespace-nowrap z-10"
+                  style={{ fontSize: 10, fontWeight: 600 }}
+                >
+                  {bucket.prob}%
+                </div>
+              )}
+              {/* Always-visible label on peak */}
               {isPeak && (
                 <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
                   {bucket.prob}%
@@ -137,10 +151,11 @@ function SingleSourceHistogram({
                 style={{
                   width: "100%",
                   height: `${barHeight}%`,
-                  minHeight: bucket.prob > 0 ? 2 : 0,
-                  backgroundColor: isPeak ? color : color + "55",
+                  minHeight: bucket.prob > 0 ? 3 : 0,
+                  backgroundColor: color,
+                  opacity: isPeak ? 1 : 0.35 + (bucket.prob / maxProb) * 0.45,
                   borderRadius: "3px 3px 0 0",
-                  transition: "height 300ms ease",
+                  transition: "height 300ms ease, opacity 150ms ease",
                 }}
               />
             </div>
@@ -193,8 +208,19 @@ function GroupedBarHistogram({
           const kalshiH = maxProb > 0 ? (kalshi.prob / maxProb) * 100 : 0;
           const polyIsPeak = i === polyPeakIdx;
 
+          const containerH = Math.max(polyH, kalshiH);
           return (
-            <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
+            <div key={i} className="flex-1 flex flex-col items-center justify-end group relative" style={{ height: "100%", cursor: "pointer" }}>
+              {/* Tooltip on hover — shows both values */}
+              <div
+                className="absolute -top-7 left-1/2 -translate-x-1/2 hidden group-hover:flex items-center gap-1.5 font-mono px-2 py-1 rounded bg-gray-800 text-white whitespace-nowrap z-10"
+                style={{ fontSize: 10, fontWeight: 600 }}
+              >
+                <span style={{ color: "#93C5FD" }}>{bucket.prob}%</span>
+                <span style={{ color: "#6B7280" }}>/</span>
+                <span style={{ color: "#86EFAC" }}>{kalshi.prob}%</span>
+              </div>
+
               {/* Peak labels */}
               {(polyIsPeak || kalshi.isPeak) && (
                 <div className="flex gap-0.5 mb-1" style={{ fontSize: 9, fontWeight: 600 }}>
@@ -206,26 +232,24 @@ function GroupedBarHistogram({
               )}
 
               {/* Paired bars */}
-              <div className="flex items-end gap-px w-full" style={{ height: `${Math.max(polyH, kalshiH)}%` }}>
-                {/* Polymarket bar */}
+              <div className="flex items-end gap-px w-full" style={{ height: containerH > 0 ? `${containerH}%` : 0 }}>
                 <div
                   style={{
                     flex: 1,
-                    height: polyH > 0 ? `${(polyH / Math.max(polyH, kalshiH)) * 100}%` : 0,
-                    minHeight: bucket.prob > 0 ? 2 : 0,
+                    height: polyH > 0 && containerH > 0 ? `${(polyH / containerH) * 100}%` : 0,
+                    minHeight: bucket.prob > 0 ? 3 : 0,
                     backgroundColor: polyColor,
-                    opacity: polyIsPeak ? 0.85 : 0.5,
+                    opacity: 0.4 + (bucket.prob / maxProb) * 0.5,
                     borderRadius: "2px 0 0 0",
                   }}
                 />
-                {/* Kalshi bar */}
                 <div
                   style={{
                     flex: 1,
-                    height: kalshiH > 0 ? `${(kalshiH / Math.max(polyH, kalshiH)) * 100}%` : 0,
-                    minHeight: kalshi.prob > 0 ? 2 : 0,
+                    height: kalshiH > 0 && containerH > 0 ? `${(kalshiH / containerH) * 100}%` : 0,
+                    minHeight: kalshi.prob > 0 ? 3 : 0,
                     backgroundColor: kalshiColor,
-                    opacity: kalshi.isPeak ? 0.75 : 0.4,
+                    opacity: 0.35 + (kalshi.prob / maxProb) * 0.5,
                     borderRadius: "0 2px 0 0",
                   }}
                 />
