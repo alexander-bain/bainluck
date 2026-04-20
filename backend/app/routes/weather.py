@@ -333,20 +333,21 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
         if not info:
             continue
 
-        # Pick the latest-date market per city (most imminent forecast)
-        mkts_with_date = [m for m in mkts if m.resolution_date]
-        if mkts_with_date:
-            mkts_with_date.sort(key=lambda m: m.resolution_date)  # type: ignore[arg-type]
-            chosen = mkts_with_date[-1]  # latest date
-        elif mkts:
-            chosen = mkts[0]
-        else:
+        # For cross-source cities, prefer the market with MORE outcomes
+        # (Polymarket has 11 buckets, Kalshi has 6 — finer grain is better).
+        # Among same-outcome-count markets, prefer latest date.
+        mkts_with_outcomes = [m for m in mkts if m.outcomes and m.resolution_date]
+        if not mkts_with_outcomes:
             continue
+        mkts_with_outcomes.sort(
+            key=lambda m: (len(m.outcomes), m.resolution_date),  # type: ignore[arg-type]
+            reverse=True,
+        )
+        chosen = mkts_with_outcomes[0]
 
         if not chosen.outcomes:
             continue
 
-        # Build distribution from outcomes
         dist = []
         mode_prob = 0.0
         mode_label = ""
@@ -355,10 +356,15 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
 
         for o in chosen.outcomes:
             p = round(float(o.current_probability or 0) * 100)
-            dist.append({"label": o.name, "prob": p})
+            sort_key = _extract_sort_temp(o.name)
+            dist.append({"label": o.name, "prob": p, "_sort": sort_key})
             if float(o.current_probability or 0) > mode_prob:
                 mode_prob = float(o.current_probability or 0)
                 mode_label = o.name
+
+        dist.sort(key=lambda d: d["_sort"])
+        for d in dist:
+            del d["_sort"]
 
         # Extract numeric mode value from label (e.g., "50-55°F" -> 52.5)
         mode_val = _extract_mode_value(mode_label)
@@ -385,6 +391,21 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
         })
 
     return cities
+
+
+def _extract_sort_temp(label: str) -> float:
+    """Extract a numeric temperature for sorting outcome buckets low→high.
+
+    'or below' / '<' labels get a low sort key; 'or above' / '+' get a high one.
+    """
+    if re.search(r"or below|or lower|<", label, re.I):
+        m = re.search(r"(\d+(?:\.\d+)?)", label)
+        return float(m.group(1)) - 100 if m else -999
+    if re.search(r"or above|or higher|\+|≥", label, re.I):
+        m = re.search(r"(\d+(?:\.\d+)?)", label)
+        return float(m.group(1)) + 100 if m else 999
+    m = re.search(r"(\d+(?:\.\d+)?)", label)
+    return float(m.group(1)) if m else 0
 
 
 def _extract_mode_value(label: str) -> float | None:
@@ -564,7 +585,7 @@ async def get_climate(db: AsyncSession = Depends(get_db)):
     markets: list[FuturesMarket] = list(result.scalars().all())
 
     _EXCLUDE_RE = re.compile(
-        r"\b(?:hurricane|earthquake|quake|tornado|tornadoes|volcano|supervolcano|arctic|solar|Ifo|temperature|rain|snow|tropical\s+storm)\b",
+        r"\b(?:Ifo|temperature|rain |snow |daily)\b",
         re.I,
     )
 
