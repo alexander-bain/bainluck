@@ -100,8 +100,8 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         className="font-mono"
         style={{ fontSize: 11, color: "#9CA3AF", marginTop: isCrossSource ? 6 : 16, textAlign: "center" }}
       >
-        Click any pin on the map
-        {!isCrossSource && ` · ${dist.length} outcome buckets (${city.srcs.length === 1 ? SOURCES[city.srcs[0]].label : "Polymarket"})`}
+        Click any pin on the map &middot; {dist.length} outcome buckets
+        {city.srcs.length > 1 ? " (Polymarket)" : ` (${SOURCES[city.srcs[0]].label})`}
       </div>
     </div>
   );

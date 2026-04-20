@@ -85,8 +85,8 @@ export default function MapCanvas({ selected, hover, onHover, onSelect }: MapCan
       <div
         className="relative"
         style={{
-          aspectRatio: "1.55 / 1",
-          minHeight: 560,
+          aspectRatio: "1.8 / 1",
+          minHeight: 420,
           background: "linear-gradient(180deg, #FAFAFB 0%, #F5F5F7 100%)",
         }}
       >
@@ -234,7 +234,7 @@ function TempLegend() {
         }}
       />
       <span className="font-mono" style={{ fontSize: 11, color: "#6B7280" }}>
-        -5°C &nbsp;→&nbsp; 40°C
+        23°F &nbsp;→&nbsp; 104°F
       </span>
     </div>
   );

@@ -18,7 +18,6 @@ export default function WeatherPage() {
     <div className="-mx-3 md:-mx-6 -mt-4">
       <WeatherHero />
       <TemperatureMap />
-      <RainForecast />
       <NaturalEvents />
       <section className="pt-14 px-4 md:px-6">
         <div className="max-w-[1280px] mx-auto">
@@ -40,6 +39,8 @@ export default function WeatherPage() {
           <WildCards />
         </div>
       </section>
+
+      <RainForecast />
 
       {/* Footer */}
       <footer className="mt-[72px] border-t border-surface-border bg-white">
