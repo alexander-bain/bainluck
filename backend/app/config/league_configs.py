@@ -437,20 +437,20 @@ MLB_CONFIG = LeagueConfig(
             canonical_prefix="baseball_mlb_championship",
         ),
         MarketMatchingRule(
-            column="pennant",
-            tier=2,
-            name_patterns=[
-                r"(?:American|National)\s+League\s+(?:Pennant|Champion|Winner)",
-                r"(?:AL|NL)\s+(?:Pennant|Champion|Winner)",
-                r"MLB.*(?:AL|NL)\b",
-            ],
-        ),
-        MarketMatchingRule(
             column="division",
             tier=4,
             name_patterns=[
                 r"\bDivision\b",
                 r"(?:AL|NL)\s+(?:East|West|Central)\b",
+            ],
+        ),
+        MarketMatchingRule(
+            column="pennant",
+            tier=2,
+            name_patterns=[
+                r"(?:American|National)\s+League\s+(?:Pennant|Champion|Winner)",
+                r"(?:AL|NL)\s+(?:Pennant|Champion|Winner)",
+                r"\b(?:ALCS|NLCS)\b",
             ],
         ),
         MarketMatchingRule(
