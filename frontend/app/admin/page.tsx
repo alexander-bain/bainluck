@@ -670,6 +670,91 @@ function MatchingCoverageChart({ data }: { data: MatchingMetricsEntry[] }) {
   );
 }
 
+interface LinkRateSport {
+  sport: string;
+  total: number;
+  linked: number;
+  link_rate: number;
+  open_total: number;
+  open_linked: number;
+  open_link_rate: number;
+}
+interface LinkRateSource {
+  totals: { total: number; linked: number; link_rate_pct: number; open_total: number; open_linked: number };
+  by_sport: LinkRateSport[];
+}
+interface LinkRateData {
+  overall: { total_game_markets: number; linked: number; link_rate_pct: number };
+  kalshi: LinkRateSource;
+  polymarket: LinkRateSource;
+}
+
+function LinkRateCard({ secret }: { secret: string }) {
+  const { data } = useSWR<LinkRateData>(
+    secret ? ["link-rate", secret] : null,
+    () =>
+      fetch(API_URL + "/api/admin/prediction-markets/link-rate?secret=" + encodeURIComponent(secret))
+        .then((r) => r.ok ? r.json() : null),
+    { refreshInterval: 300000 }
+  );
+
+  if (!data) return null;
+
+  const rateColor = (pct: number) =>
+    pct >= 80 ? "text-green-400" : pct >= 50 ? "text-yellow-400" : "text-red-400";
+
+  const barWidth = (pct: number) => Math.max(2, Math.min(100, pct));
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <h3 className="text-sm font-semibold text-text-primary mb-1">Game Market Link Rate</h3>
+      <p className="text-xs text-text-muted mb-3">
+        % of sports game markets linked to events (excludes politics/crypto/weather)
+      </p>
+      <div className="flex items-end gap-2 mb-3">
+        <span className={"text-3xl font-bold " + rateColor(data.overall.link_rate_pct)}>
+          {data.overall.link_rate_pct}%
+        </span>
+        <span className="text-xs text-text-muted mb-1">
+          {data.overall.linked.toLocaleString()} / {data.overall.total_game_markets.toLocaleString()} markets
+        </span>
+      </div>
+      {(["kalshi", "polymarket"] as const).map((src) => {
+        const s = data[src];
+        return (
+          <div key={src} className="mb-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-text-secondary capitalize">{src}</span>
+              <span className={"text-xs font-bold " + rateColor(s.totals.link_rate_pct)}>
+                {s.totals.link_rate_pct}%
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {s.by_sport.slice(0, 8).map((sp) => (
+                <div key={sp.sport} className="flex items-center gap-2 text-xs">
+                  <span className="w-16 text-text-muted truncate">{sp.sport}</span>
+                  <div className="flex-1 h-3 bg-surface-elevated rounded-full overflow-hidden">
+                    <div
+                      className={
+                        "h-full rounded-full " +
+                        (sp.link_rate >= 80 ? "bg-green-500/60" : sp.link_rate >= 50 ? "bg-yellow-500/60" : "bg-red-500/60")
+                      }
+                      style={{ width: barWidth(sp.link_rate) + "%" }}
+                    />
+                  </div>
+                  <span className={"w-10 text-right font-mono " + rateColor(sp.link_rate)}>
+                    {sp.link_rate}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function DatabaseCard({ db }: { db: DatabaseHealth }) {
   const pct = db.plan?.storage_pct || 0;
   const health = pct >= 95 ? "critical" : pct >= 80 ? "warning" : "healthy";
@@ -1239,6 +1324,7 @@ export default function AdminDashboard() {
             {data.matching_metrics && data.matching_metrics.length > 0 && (
               <MatchingCoverageChart data={data.matching_metrics} />
             )}
+            <LinkRateCard secret={submittedSecret!} />
             {data.game_state_coverage && data.game_state_coverage.length > 0 && (
               <GameStateCoverageChart data={data.game_state_coverage} />
             )}
