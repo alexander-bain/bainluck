@@ -372,6 +372,8 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
             "id": city_id,
             "name": info["name"],
             "region": info["region"],
+            "preferredX": info["x"],
+            "preferredY": info["y"],
             "x": info["x"],
             "y": info["y"],
             "srcs": sorted(sources),
@@ -446,16 +448,19 @@ async def get_rain(db: AsyncSession = Depends(get_db)):
     monthly_rain = []
     for m in monthly_markets:
         prob = _get_yes_probability(m)
-        # Extract city name from "Rain in NYC in April 2026"
-        city_match = re.search(r"Rain in (\w+)", m.name, re.I)
-        city_name = city_match.group(1) if city_match else m.name
+        city_match = re.search(r"Rain in (.+?) in \w+ \d{4}", m.name, re.I)
+        city_name = city_match.group(1).strip() if city_match else m.name
 
-        # Calculate 24h delta from outcomes
         delta = 0
+        best_prob = 0.0
         for o in m.outcomes:
-            if o.current_probability is not None and o.probability_change_24h is not None:
-                delta = round(float(o.probability_change_24h) * 100)
-                break
+            p = float(o.current_probability or 0)
+            if p > best_prob:
+                best_prob = p
+                if o.probability_change_24h is not None:
+                    delta = round(float(o.probability_change_24h) * 100)
+                else:
+                    delta = 0
 
         monthly_rain.append({
             "city": city_name,
@@ -558,9 +563,16 @@ async def get_climate(db: AsyncSession = Depends(get_db)):
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
 
+    _EXCLUDE_RE = re.compile(
+        r"\b(?:hurricane|earthquake|quake|tornado|volcano|supervolcano|arctic|solar|Ifo|temperature|rain|snow)\b",
+        re.I,
+    )
+
     items = []
     for m in markets:
         if not m.outcomes:
+            continue
+        if _EXCLUDE_RE.search(m.name):
             continue
         scale = _classify_scale(m)
         items.append({
