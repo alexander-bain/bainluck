@@ -7,7 +7,7 @@ import EventList from "./EventList";
 
 export default function NaturalEvents() {
   return (
-    <section className="pt-14 px-6">
+    <section className="pt-14 px-4 md:px-6">
       <div className="max-w-[1280px] mx-auto">
         <SectionHeader
           kicker="Natural events"

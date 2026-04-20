@@ -32,10 +32,10 @@ export default function WeatherHero() {
   const spark = sparkFrom(idx * 7 + 3, current.prob);
 
   return (
-    <section className="mb-10">
+    <section className="mb-10 px-4 md:px-6 pt-6">
       <style>{fadeUpKeyframes}</style>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-7">
+      <div className="max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-7">
         {/* Left — headline */}
         <div className="flex flex-col justify-center">
           {/* Pill */}
@@ -51,8 +51,8 @@ export default function WeatherHero() {
 
           {/* Headline */}
           <h1
-            className="text-text-primary mb-3"
-            style={{ fontSize: 52, fontWeight: 600, letterSpacing: "-0.028em", lineHeight: 1.08 }}
+            className="text-text-primary mb-3 text-3xl md:text-4xl lg:text-[52px]"
+            style={{ fontWeight: 600, letterSpacing: "-0.028em", lineHeight: 1.08 }}
           >
             What are the{" "}
             <span className="text-accent-brand">odds</span> it rains tomorrow?

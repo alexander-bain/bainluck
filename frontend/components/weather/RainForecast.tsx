@@ -53,6 +53,15 @@ function rainTextColor(prob: number): string {
 
 const RAIN_CITIES = [
   { id: "nyc", name: "NYC", data: NYC_RAIN },
+  { id: "sea", name: "Seattle", data: null },
+  { id: "mia", name: "Miami", data: null },
+  { id: "hou", name: "Houston", data: null },
+  { id: "chi", name: "Chicago", data: null },
+  { id: "aus", name: "Austin", data: null },
+  { id: "sfo", name: "San Francisco", data: null },
+  { id: "dal", name: "Dallas", data: null },
+  { id: "den", name: "Denver", data: null },
+  { id: "la", name: "Los Angeles", data: null },
 ];
 
 function currentMonth(): string {
@@ -66,13 +75,13 @@ function currentMonth(): string {
 export default function RainForecast() {
   const [cityIdx, setCityIdx] = useState(0);
   const city = RAIN_CITIES[cityIdx];
-  const rain = city.data;
+  const rain = city.data as RainDay[] | null;
   const monthly = MONTHLY_RAIN;
   const maxMonthly = Math.max(...monthly.map((m) => m.prob));
   const month = currentMonth();
 
   return (
-    <section className="pt-14 px-6">
+    <section className="pt-14 px-4 md:px-6">
       <div className="max-w-[1280px] mx-auto">
         <SectionHeader kicker="Precipitation" title="Rain & rainfall" />
 
@@ -109,72 +118,88 @@ export default function RainForecast() {
               <SourceBadge src="kalshi" />
             </div>
 
-            {/* 7-column grid */}
-            <div
-              className="grid gap-2 mt-5"
-              style={{ gridTemplateColumns: "repeat(7, 1fr)" }}
-            >
-              {rain.map((d: RainDay, i: number) => {
-                const isToday = i === 0;
-                const barCol = rainBarColor(d.prob);
-                const txtCol = rainTextColor(d.prob);
+            {/* 7-column grid or placeholder */}
+            {!rain ? (
+              <div className="flex items-center justify-center mt-5 py-12 text-center">
+                <div>
+                  <div className="text-3xl mb-3">🌧️</div>
+                  <div className="text-sm text-text-secondary font-medium">
+                    Daily rain markets not yet available for {city.name}
+                  </div>
+                  <div className="text-xs text-text-muted mt-1">
+                    Kalshi currently only offers daily rain markets for NYC.
+                    <br />Check the monthly rainfall card for {city.name}&apos;s data.
+                  </div>
+                </div>
+              </div>
+            ) : (
+            <>
+              <div
+                className="grid gap-2 mt-5 overflow-x-auto"
+                style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
+              >
+                {rain.map((d: RainDay, i: number) => {
+                  const isToday = i === 0;
+                  const barCol = rainBarColor(d.prob);
+                  const txtCol = rainTextColor(d.prob);
 
-                return (
-                  <div
-                    key={d.date}
-                    className="flex flex-col items-center text-center border py-3 px-1"
-                    style={{
-                      borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
-                      backgroundColor: isToday ? "#F0F9FF" : "transparent",
-                      borderRadius: 12,
-                    }}
-                  >
-                    <span className="text-xs font-semibold text-text-secondary">
-                      {isToday ? "Today" : d.day}
-                    </span>
-                    <span className="text-[10px] font-mono text-text-muted mt-0.5">
-                      {d.date}
-                    </span>
-                    <span className="mt-2 mb-2" style={{ fontSize: 26 }}>
-                      {d.icon}
-                    </span>
-                    <span
-                      className="font-mono font-bold"
-                      style={{ fontSize: 20, color: txtCol }}
+                  return (
+                    <div
+                      key={d.date}
+                      className="flex flex-col items-center text-center border py-3 px-1"
+                      style={{
+                        borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
+                        backgroundColor: isToday ? "#F0F9FF" : "transparent",
+                        borderRadius: 12,
+                      }}
                     >
-                      {d.prob}%
-                    </span>
-                    <div className="w-full mt-2 px-1">
-                      <div
-                        className="rounded-full overflow-hidden"
-                        style={{
-                          height: 4,
-                          backgroundColor:
-                            d.prob >= 35
-                              ? `${barCol}20`
-                              : "var(--surface-elevated)",
-                        }}
+                      <span className="text-xs font-semibold text-text-secondary">
+                        {isToday ? "Today" : d.day}
+                      </span>
+                      <span className="text-[10px] font-mono text-text-muted mt-0.5">
+                        {d.date}
+                      </span>
+                      <span className="mt-2 mb-2" style={{ fontSize: 26 }}>
+                        {d.icon}
+                      </span>
+                      <span
+                        className="font-mono font-bold"
+                        style={{ fontSize: 20, color: txtCol }}
                       >
+                        {d.prob}%
+                      </span>
+                      <div className="w-full mt-2 px-1">
                         <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${d.prob}%`, backgroundColor: barCol }}
-                        />
+                          className="rounded-full overflow-hidden"
+                          style={{
+                            height: 4,
+                            backgroundColor:
+                              d.prob >= 35
+                                ? `${barCol}20`
+                                : "var(--surface-elevated)",
+                          }}
+                        >
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${d.prob}%`, backgroundColor: barCol }}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
 
-            {/* Footer */}
-            <div className="mt-4 pt-3 border-t border-dashed border-surface-border flex items-center justify-between">
-              <span className="text-xs text-text-muted">
-                Resolves daily at midnight ET
-              </span>
-              <span className="text-xs text-text-muted font-mono">
-                {rain[0].date} – {rain[rain.length - 1].date}
-              </span>
-            </div>
+              <div className="mt-4 pt-3 border-t border-dashed border-surface-border flex items-center justify-between">
+                <span className="text-xs text-text-muted">
+                  Resolves daily at midnight ET
+                </span>
+                <span className="text-xs text-text-muted font-mono">
+                  {rain[0].date} – {rain[rain.length - 1].date}
+                </span>
+              </div>
+            </>
+            )}
           </div>
 
           {/* Right card — Monthly rainfall */}

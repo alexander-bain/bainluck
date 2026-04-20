@@ -20,7 +20,7 @@ export default function WeatherPage() {
       <TemperatureMap />
       <RainForecast />
       <NaturalEvents />
-      <section className="pt-14 px-6">
+      <section className="pt-14 px-4 md:px-6">
         <div className="max-w-[1280px] mx-auto">
           <SectionHeader
             kicker="Climate dashboard"
@@ -31,7 +31,7 @@ export default function WeatherPage() {
         </div>
       </section>
 
-      <section className="pt-14 px-6">
+      <section className="pt-14 px-4 md:px-6">
         <div className="max-w-[1280px] mx-auto">
           <SectionHeader
             kicker="Wild cards"
@@ -43,7 +43,7 @@ export default function WeatherPage() {
 
       {/* Footer */}
       <footer className="mt-[72px] border-t border-surface-border bg-white">
-        <div className="max-w-[1280px] mx-auto px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
+        <div className="max-w-[1280px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
           <span>Data from Kalshi &amp; Polymarket prediction markets · Not weather forecasts. Not financial advice.</span>
           <span className="font-mono">bainluck.com/weather · 521 active · updated 2m ago</span>
         </div>

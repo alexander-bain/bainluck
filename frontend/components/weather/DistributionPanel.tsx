@@ -22,9 +22,6 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
   const modeDisplay = Math.round(city.high.mode);
 
   const kalshiDist = city.kalshiHigh?.dist;
-  const kalshiPeakIdx = kalshiDist
-    ? kalshiDist.reduce((best, b, i) => (b.prob > kalshiDist[best].prob ? i : best), 0)
-    : -1;
 
   const allProbs = [
     ...dist.map(b => b.prob),
@@ -42,13 +39,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         <div>
           <div
             className="font-mono"
-            style={{
-              fontSize: 11,
-              color: "#9CA3AF",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              marginBottom: 4,
-            }}
+            style={{ fontSize: 11, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}
           >
             {city.region}
           </div>
@@ -59,37 +50,23 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         {isCrossSource ? <CrossSourceBadge /> : <SourceBadge src={city.srcs[0]} />}
       </div>
 
-      {/* Subtitle */}
-      <div
-        className="font-mono"
-        style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}
-      >
+      <div className="font-mono" style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>
         Tomorrow&apos;s high temperature &middot; Apr 20, 2026
       </div>
 
       {/* Peak display */}
       <div className="flex items-baseline" style={{ marginTop: 20, gap: 4 }}>
-        <span
-          className="font-mono"
-          style={{ fontSize: 64, fontWeight: 700, color, lineHeight: 1 }}
-        >
+        <span className="font-mono" style={{ fontSize: 64, fontWeight: 700, color, lineHeight: 1 }}>
           {modeDisplay}
         </span>
-        <span style={{ fontSize: 28, fontWeight: 500, color, lineHeight: 1 }}>
-          &deg;{unit}
-        </span>
+        <span style={{ fontSize: 28, fontWeight: 500, color, lineHeight: 1 }}>&deg;{unit}</span>
       </div>
 
       <div className="flex items-baseline" style={{ marginTop: 8, gap: 8 }}>
-        <span
-          className="font-mono"
-          style={{ fontSize: 20, fontWeight: 600, color: "#374151" }}
-        >
+        <span className="font-mono" style={{ fontSize: 20, fontWeight: 600, color: "#374151" }}>
           {peak.prob}%
         </span>
-        <span style={{ fontSize: 12, color: "#9CA3AF" }}>
-          most likely bucket
-        </span>
+        <span style={{ fontSize: 12, color: "#9CA3AF" }}>most likely bucket</span>
       </div>
 
       <div style={{ fontSize: 13, color: "#6B7280", marginTop: 6, marginBottom: 16 }}>
@@ -99,43 +76,29 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
       {/* Histogram */}
       <div className="flex-1 flex flex-col justify-end">
         {isCrossSource && kalshiDist ? (
-          <CrossSourceHistogram
-            polyDist={dist}
-            kalshiDist={kalshiDist}
-            maxProb={maxProb}
-            polyPeakIdx={peakIdx}
-            kalshiPeakIdx={kalshiPeakIdx}
-          />
+          <GroupedBarHistogram polyDist={dist} kalshiDist={kalshiDist} maxProb={maxProb} />
         ) : (
-          <SingleSourceHistogram
-            dist={dist}
-            maxProb={maxProb}
-            peakIdx={peakIdx}
-            color={color}
-          />
+          <SingleSourceHistogram dist={dist} maxProb={maxProb} peakIdx={peakIdx} color={color} />
         )}
       </div>
 
-      {/* Legend + Footer */}
+      {/* Legend */}
       {isCrossSource && (
-        <div
-          className="flex items-center justify-center gap-4"
-          style={{ marginTop: 10, fontSize: 11, color: "#6B7280" }}
-        >
+        <div className="flex items-center justify-center gap-5" style={{ marginTop: 12, fontSize: 11, color: "#6B7280" }}>
           <span className="flex items-center gap-1.5">
-            <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: SOURCES.polymarket.color, opacity: 0.55 }} />
-            Polymarket (11 buckets)
+            <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: SOURCES.polymarket.color }} />
+            Polymarket
           </span>
           <span className="flex items-center gap-1.5">
-            <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: SOURCES.kalshi.color, opacity: 0.55 }} />
-            Kalshi (6 buckets)
+            <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: SOURCES.kalshi.color }} />
+            Kalshi
           </span>
         </div>
       )}
 
       <div
         className="font-mono"
-        style={{ fontSize: 11, color: "#9CA3AF", marginTop: isCrossSource ? 8 : 16, textAlign: "center" }}
+        style={{ fontSize: 11, color: "#9CA3AF", marginTop: isCrossSource ? 6 : 16, textAlign: "center" }}
       >
         Click any pin on the map
         {!isCrossSource && ` · ${dist.length} outcome buckets (${city.srcs.length === 1 ? SOURCES[city.srcs[0]].label : "Polymarket"})`}
@@ -143,6 +106,8 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
     </div>
   );
 }
+
+/* ── Single-source histogram ─────────────────────────────────────────── */
 
 function SingleSourceHistogram({
   dist,
@@ -162,11 +127,7 @@ function SingleSourceHistogram({
           const isPeak = i === peakIdx;
           const barHeight = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
           return (
-            <div
-              key={i}
-              className="flex-1 flex flex-col items-center justify-end"
-              style={{ height: "100%" }}
-            >
+            <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
               {isPeak && (
                 <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
                   {bucket.prob}%
@@ -188,11 +149,7 @@ function SingleSourceHistogram({
       </div>
       <div className="flex" style={{ gap: 2, marginTop: 4 }}>
         {dist.map((bucket, i) => (
-          <div
-            key={i}
-            className="flex-1 text-center font-mono"
-            style={{ fontSize: 9, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
+          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 9, color: "#9CA3AF" }}>
             {bucket.label}
           </div>
         ))}
@@ -201,118 +158,88 @@ function SingleSourceHistogram({
   );
 }
 
-function CrossSourceHistogram({
+/* ── Grouped bar histogram (cross-source) ────────────────────────────── */
+
+function GroupedBarHistogram({
   polyDist,
   kalshiDist,
   maxProb,
-  polyPeakIdx,
-  kalshiPeakIdx,
 }: {
   polyDist: Array<{ label: string; prob: number }>;
   kalshiDist: Array<{ label: string; prob: number }>;
   maxProb: number;
-  polyPeakIdx: number;
-  kalshiPeakIdx: number;
 }) {
   const polyColor = SOURCES.polymarket.color;
   const kalshiColor = SOURCES.kalshi.color;
 
-  const polyCount = polyDist.length;
-  const kalshiCount = kalshiDist.length;
-  const totalSlots = polyCount;
+  const polyPeakIdx = polyDist.reduce((best, b, i) => (b.prob > polyDist[best].prob ? i : best), 0);
+  const kalshiPeakIdx = kalshiDist.reduce((best, b, i) => (b.prob > kalshiDist[best].prob ? i : best), 0);
 
-  const kalshiBarWidth = totalSlots / kalshiCount;
+  // Map each Kalshi bucket to Polymarket bucket indices.
+  // Kalshi has 6 buckets spanning the same temp range as Poly's 11.
+  // We distribute each Kalshi bucket across ~2 Poly slots.
+  const kalshiPerSlot = polyDist.length / kalshiDist.length;
+  const kalshiByPolyIdx = polyDist.map((_, pi) => {
+    const ki = Math.min(Math.floor(pi / kalshiPerSlot), kalshiDist.length - 1);
+    return { prob: kalshiDist[ki].prob, isPeak: ki === kalshiPeakIdx, ki };
+  });
 
   return (
     <>
-      <div style={{ position: "relative", height: 140 }}>
-        {/* Polymarket bars (front, narrower, blue) */}
-        <div
-          className="flex items-end"
-          style={{ position: "absolute", inset: 0, gap: 2, zIndex: 2 }}
-        >
-          {polyDist.map((bucket, i) => {
-            const barHeight = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
-            const isPeak = i === polyPeakIdx;
-            return (
-              <div
-                key={i}
-                className="flex-1 flex flex-col items-center justify-end"
-                style={{ height: "100%" }}
-              >
-                {isPeak && (
-                  <div
-                    className="font-mono"
-                    style={{ fontSize: 10, fontWeight: 600, color: SOURCES.polymarket.fg, marginBottom: 3 }}
-                  >
-                    {bucket.prob}%
-                  </div>
-                )}
+      <div className="flex items-end" style={{ height: 140, gap: 1 }}>
+        {polyDist.map((bucket, i) => {
+          const polyH = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
+          const kalshi = kalshiByPolyIdx[i];
+          const kalshiH = maxProb > 0 ? (kalshi.prob / maxProb) * 100 : 0;
+          const polyIsPeak = i === polyPeakIdx;
+
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
+              {/* Peak labels */}
+              {(polyIsPeak || kalshi.isPeak) && (
+                <div className="flex gap-0.5 mb-1" style={{ fontSize: 9, fontWeight: 600 }}>
+                  {polyIsPeak && <span style={{ color: SOURCES.polymarket.fg }}>{bucket.prob}%</span>}
+                  {kalshi.isPeak && i === polyDist.findIndex((_, j) => kalshiByPolyIdx[j].ki === kalshiPeakIdx) && (
+                    <span style={{ color: SOURCES.kalshi.fg }}>{kalshi.prob}%</span>
+                  )}
+                </div>
+              )}
+
+              {/* Paired bars */}
+              <div className="flex items-end gap-px w-full" style={{ height: `${Math.max(polyH, kalshiH)}%` }}>
+                {/* Polymarket bar */}
                 <div
                   style={{
-                    width: "70%",
-                    height: `${barHeight}%`,
+                    flex: 1,
+                    height: polyH > 0 ? `${(polyH / Math.max(polyH, kalshiH)) * 100}%` : 0,
                     minHeight: bucket.prob > 0 ? 2 : 0,
                     backgroundColor: polyColor,
-                    opacity: isPeak ? 0.7 : 0.4,
-                    borderRadius: "2px 2px 0 0",
-                    transition: "height 300ms ease",
+                    opacity: polyIsPeak ? 0.85 : 0.5,
+                    borderRadius: "2px 0 0 0",
                   }}
                 />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Kalshi bars (back, wider, green) */}
-        <div
-          className="flex items-end"
-          style={{ position: "absolute", inset: 0, zIndex: 1 }}
-        >
-          {kalshiDist.map((bucket, i) => {
-            const barHeight = maxProb > 0 ? (bucket.prob / maxProb) * 100 : 0;
-            const isPeak = i === kalshiPeakIdx;
-            const widthPct = (kalshiBarWidth / totalSlots) * 100;
-            return (
-              <div
-                key={i}
-                className="flex flex-col items-center justify-end"
-                style={{ width: `${widthPct}%`, height: "100%" }}
-              >
-                {isPeak && (
-                  <div
-                    className="font-mono"
-                    style={{ fontSize: 10, fontWeight: 600, color: SOURCES.kalshi.fg, marginBottom: 3 }}
-                  >
-                    {bucket.prob}%
-                  </div>
-                )}
+                {/* Kalshi bar */}
                 <div
                   style={{
-                    width: "85%",
-                    height: `${barHeight}%`,
-                    minHeight: bucket.prob > 0 ? 2 : 0,
+                    flex: 1,
+                    height: kalshiH > 0 ? `${(kalshiH / Math.max(polyH, kalshiH)) * 100}%` : 0,
+                    minHeight: kalshi.prob > 0 ? 2 : 0,
                     backgroundColor: kalshiColor,
-                    opacity: isPeak ? 0.55 : 0.25,
-                    borderRadius: "3px 3px 0 0",
-                    transition: "height 300ms ease",
+                    opacity: kalshi.isPeak ? 0.75 : 0.4,
+                    borderRadius: "0 2px 0 0",
                   }}
                 />
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* X-axis: show Polymarket labels (finer grain) */}
-      <div className="flex" style={{ gap: 2, marginTop: 4 }}>
+      {/* X-axis labels — show every other to reduce clutter */}
+      <div className="flex" style={{ gap: 1, marginTop: 4 }}>
         {polyDist.map((bucket, i) => (
-          <div
-            key={i}
-            className="flex-1 text-center font-mono"
-            style={{ fontSize: 9, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {bucket.label}
+          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 8, color: "#9CA3AF" }}>
+            {i % 2 === 0 || i === polyDist.length - 1 ? bucket.label : ""}
           </div>
         ))}
       </div>

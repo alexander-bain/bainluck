@@ -12,7 +12,7 @@ export default function TemperatureMap() {
   const city = CITIES.find(c => c.id === selected) ?? CITIES[0];
 
   return (
-    <section className="pt-10 px-6">
+    <section className="pt-10 px-4 md:px-6">
       <div className="max-w-[1280px] mx-auto">
         <SectionHeader
           kicker="Global temperature map"
