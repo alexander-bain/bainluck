@@ -23,8 +23,7 @@ def _check_admin_secret(secret: str) -> bool:
     """Verify admin secret for protected endpoints."""
     expected = os.getenv("ADMIN_SECRET")
     if not expected:
-        # If no secret configured, allow access (development mode)
-        return True
+        return False
     return secret == expected
 
 
