@@ -139,109 +139,222 @@ This could also be an admin endpoint: `/admin/teams/sync-kalshi-aliases?sport=ba
 
 ---
 
-### 1C. Revive Related Futures Cards: Fix Game Prop → Event Linking
-**Layer:** backend-tasks, backend-routes
-**Touches:** `tasks/prediction_market_matching.py`, `routes/events.py` (get_related_futures), `utils/prediction_market_matching.py`
-**Depends on:** Nothing (Event Registry is shipped)
-**Conflicts with:** Any work on prediction_market_matching.py or events.py related futures section
+### 1C. Game Prop → Event Linking — **PARTIALLY SHIPPED April 19-20**
+
+**Status:** Core linking infrastructure shipped. 1,784+ markets newly linked. Link rate dashboard deployed at `/admin` and via `GET /api/admin/prediction-markets/link-rate`.
+
+**What shipped (April 19-20):**
+- Ticker-derived team names for game props ("WSH Capitals" → "Capitals" from ticker)
+- `_expand_team_search_terms()` for ILIKE pattern expansion
+- `_SPORT_ABBREV_SUFFIX` derived from all ~150 ticker prefixes (was 7)
+- `_TICKER_DATE_RE` fixed for digit-containing prefixes (KXNBA2D, KXNBA3PT)
+- `sport_id` propagation on all 5 linking paths + Phase 1.5 backfill
+- `llm_sport_category` correction from ticker on link + backfill
+- " - More Markets" Polymarket suffix stripping
+- Phase 2 deadlock fix (per-market commit + rollback on deadlock)
+- Matching frequency 4h → 1h, limit 200 → 500
+- Link rate API endpoint + admin dashboard visualization
+- 19 new tests (315 total prediction market matching tests)
+
+**Current link rates (April 20, 2026):**
+
+| Sport | Kalshi (open) | Polymarket (open) | Target | Blocking issue |
+|-------|--------------|-------------------|--------|----------------|
+| Basketball | 67.7% | 89.5% | >90% | See 1C-a |
+| Baseball | 68.6% | 71.2% | >90% | See 1C-a |
+| Hockey | 26.6% | 50.0% | >80% | See 1C-b |
+| Soccer | 33.2% | 98.5% | varies | See 1C-c |
+| MMA | 75.4% | 25.0% | >80% | See 1C-d |
+| Tennis | 51.6% | 0.3% | 50%+ | See 1C-e |
+| Esports | 13.5% | 3.9% | ~20% | See 1C-f |
+| Golf | 1.4% | — | N/A | See 1C-g |
+| Football | 0.0% | — | N/A | Offseason |
+| Cricket | — | 20.7% | 50%+ | See 1C-h |
+
+**Monitor:** `GET /api/admin/prediction-markets/link-rate?secret=$ADMIN_SECRET` or admin dashboard.
+
+---
+
+#### 1C-a. Basketball + Baseball: 70% → 90%+ link rate
+**Layer:** backend-tasks
+**Touches:** `tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
+**Impact:** HIGH — these are the two biggest sport categories on Kalshi
 
-**Problem:** We designed and built 19 Related Futures card components (frontend + iOS). The code is complete and correct. But users only see ~5 card types (championship, conference, awards, playoff path). The other cards — **PlayerStatCard with probability gauges, GameMarketsGrid, WinTotalsGauge, MatchupGrid** — never appear because the data they need isn't linked.
+**Problem:** ~30% of Kalshi basketball/baseball game props remain unlinked despite team name fixes. Diagnosis shows two remaining causes:
 
-**Root cause:** There are **1,858 Kalshi game_prop markets** in the database (873 basketball, 720 soccer, 154 hockey, 80 baseball) including player points, assists, rebounds, goals, total points, etc. But they have `event_id=NULL` and `sport=None`. The `get_related_futures()` query in `routes/events.py` (line 2783) filters game props by `FuturesMarket.event_id == event_id` — if `event_id` is NULL, they never appear.
+1. **Markets created before events exist.** Kalshi creates game prop markets 2-7 days before games. Our events are created from The Odds API discovery task, which runs on a shorter horizon. When the matching task scans these markets, there's no event to link to. On the NEXT run (after events are created), the market may not be re-scanned if it was already processed.
 
-**The matching system exists but isn't linking these markets.** `tasks/prediction_market_matching.py` has a full pipeline:
-1. Scans Kalshi markets where `event_id IS NULL` and ticker matches `_KALSHI_GAME_TICKER_PREFIXES`
-2. Extracts team names via `extract_matchup_with_ticker_fallback()`
-3. Matches to events via `_find_matching_event()` (time window + team name scoring)
-4. Sets `market.event_id = matched_event["event_id"]`
+2. **`llm_sport_category` misclassification.** The Kalshi polling task sets `llm_sport_category` from its own LLM classification, which is often wrong (MLB games tagged "basketball"). Our fix corrects this ON LINK, but markets that failed to link on the first attempt still have the wrong category, and the `get_related_futures()` sport filter rejects them even if they later get linked.
 
-But 1,858 markets remain unlinked. Possible failure points:
-- **Ticker prefix not in `_KALSHI_GAME_TICKER_PREFIXES`** — the market ticker may not match any known prefix, so it's never scanned
-- **`extract_matchup_with_ticker_fallback()` fails** — can't parse team names from market name like "WSH Capitals at NJ Devils: Assists"
-- **`_find_matching_event()` fails** — time window too narrow, or team name matching too strict
-- **`sport=None`** — market has no sport classification, making sport-based matching harder
-- **Market tier classification** — the market might not be classified as tier 5 (game_prop), so even if linked, `get_related_futures()` won't load it in the game props pass
+**Fix:**
+1. In `_match_prediction_markets()` Phase 1, don't skip markets that were already processed in a previous run if they're still unlinked. Currently Pass 1 (ticker scan) queries `event_id IS NULL` so it DOES re-scan — but some markets fail because the event didn't exist yet. The fix is to ensure the hourly cadence keeps retrying. This may already be working with the 4h→1h change — monitor for a few days to see if rates climb naturally.
 
-**Verified example:** Market id=8633585 "WSH Capitals at NJ Devils: Assists" (Kalshi):
-- `sport=None`, `event_id=NULL`, `source=kalshi`
-- 25 outcomes (Jakob Chychrun: 1+, Jesper Bratt: 1+, etc.)
-- `commence_time=2026-04-16T23:30:00+00:00` (this is the RESOLUTION date, not the game date)
-- The actual game "Capitals at Devils" exists in our events table
-- Matching should work but doesn't — likely ticker prefix or date extraction issue
+2. Add a one-time backfill SQL to fix `llm_sport_category` for all Kalshi markets based on their ticker prefix:
+```sql
+-- Run via admin endpoint or migration
+UPDATE futures_markets fm
+SET llm_sport_category = CASE
+    WHEN external_id ILIKE 'kxnba%' THEN 'basketball'
+    WHEN external_id ILIKE 'kxnfl%' THEN 'football'
+    WHEN external_id ILIKE 'kxnhl%' THEN 'hockey'
+    WHEN external_id ILIKE 'kxmlb%' THEN 'baseball'
+    WHEN external_id ILIKE 'kxncaab%' OR external_id ILIKE 'kxncaamb%' THEN 'basketball'
+    WHEN external_id ILIKE 'kxncaaf%' THEN 'football'
+    WHEN external_id ILIKE 'kxncaawb%' THEN 'basketball'
+    WHEN external_id ILIKE 'kxwnba%' THEN 'basketball'
+    WHEN external_id ILIKE 'kxmlsgame%' OR external_id ILIKE 'kxmls%' THEN 'soccer'
+    WHEN external_id ILIKE 'kxufc%' THEN 'mma'
+    WHEN external_id ILIKE 'kxboxing%' THEN 'boxing'
+    WHEN external_id ILIKE 'kxatp%' OR external_id ILIKE 'kxwta%' THEN 'tennis'
+    WHEN external_id ILIKE 'kxlol%' OR external_id ILIKE 'kxcs2%' OR external_id ILIKE 'kxvalorant%' THEN 'esports'
+    ELSE llm_sport_category
+END
+WHERE source = 'kalshi'
+  AND external_id IS NOT NULL
+  AND llm_sport_category != CASE ... END;  -- only update wrong ones
+```
 
-**Cards this unblocks (all already implemented, just need data):**
-
-| Card | Component | What it shows | File |
-|------|-----------|--------------|------|
-| **PlayerStatCard** | `StatPropsSection` | Pre-game: probability gauge. Live: progress bar toward line. Completed: hit/miss badge. Player headshots. | `frontend/components/RelatedFutures.tsx` L820-1099 |
-| **GameMarketsGrid** | `GameMarketsGrid` | 2-column grid of upcoming game matchups with probabilities | `frontend/components/RelatedFutures.tsx` L562-719 |
-| **GameMarketsPair** | `GameMarketsPair` | Paired upcoming games with moneyline probabilities | `frontend/components/RelatedFutures.tsx` L2158-2185 |
-
-**Also worth verifying (may need small data format fixes):**
-
-| Card | Component | Issue | File |
-|------|-----------|-------|------|
-| **WinTotalsGauge** | `WinTotalsPair` | Semi-circular gauge for season win totals. Data exists (`display_category=season_stat`) but gauge needs structured over/under threshold data — verify format matches | `frontend/components/RelatedFutures.tsx` L1520-1660 |
-| **MatchupGrid** | `MatchupGrid` | Conference/Finals matchup probability grid. Playoff path markets exist but may need specific formatting for the grid | `frontend/components/RelatedFutures.tsx` L1834-1978 |
-
-**Investigation steps (do first, before coding):**
-1. Check `_KALSHI_GAME_TICKER_PREFIXES` — are the tickers for these 1,858 markets included?
-   ```python
-   # Find what tickers these unlinked markets actually have
-   SELECT DISTINCT LEFT(external_id, 10), COUNT(*)
-   FROM futures_markets
-   WHERE source = 'kalshi' AND event_id IS NULL AND market_tier = 5
-   GROUP BY 1 ORDER BY 2 DESC;
-   ```
-2. Check the matching task logs — look for `_match_prediction_markets` stats: what does `no_matchup_extracted` count show? What are the `sample_game_level_no_event` examples?
-3. Check if the Kalshi `commence_time` issue is the blocker — Kalshi sets `commence_time` to the market RESOLUTION date, not the game date. `extract_game_date_from_ticker()` exists to handle this but may not cover all ticker formats.
-4. Run a manual matching test: take the "WSH Capitals at NJ Devils: Assists" market and trace through the matching pipeline step by step.
-
-**Acceptance criteria:**
-- >80% of Kalshi game_prop markets have `event_id` set (currently 0%)
-- Event detail pages for NBA/NHL/MLB games show the PlayerStatCard section with player props
-- Live games show progress bars with box score data flowing into stat props
-- Completed games show hit/miss badges on player props
-- GameMarketsGrid appears in the "Game Markets" section of Related Futures
-- WinTotalsGauge renders when win total markets exist for the teams
+**Acceptance criteria:** Basketball open link rate >85%, Baseball open link rate >85% on the link-rate dashboard.
 
 **Prompt:**
-> The Related Futures section has 19 card components but only 5 show up. The biggest unlock is fixing game_prop → event linking so PlayerStatCard, GameMarketsGrid, and GameMarketsPair start receiving data.
+> Write an admin endpoint `POST /api/admin/prediction-markets/fix-sport-categories` that runs the SQL above to bulk-fix `llm_sport_category` for all Kalshi markets based on their ticker prefix. Return the count of rows updated per sport. Then monitor `/api/admin/prediction-markets/link-rate` to see if rates improve.
 >
-> **Phase 1: Diagnose why 1,858 Kalshi game_prop markets have event_id=NULL**
+> INTERFERENCE RULES: Do NOT modify the matching pipeline logic. This is a data fix only.
+
+---
+
+#### 1C-b. Hockey: 27% → 80%+ link rate
+**Layer:** backend-tasks
+**Touches:** `tasks/prediction_market_matching.py`, `utils/prediction_market_matching.py`
+**Parallel Safety:** Yellow
+**Impact:** MEDIUM — NHL playoffs happening now, lots of active props
+
+**Problem:** NHL game props have two specific issues beyond the general category fix (1C-a):
+
+1. **Kalshi NHL props use abbreviated city names** that don't match our event names. Examples from diagnostics:
+   - Market: `"MIN at DAL: Total Points"` → team_a="MIN", team_b="DAL"
+   - Our event: "Minnesota Wild at Dallas Stars"
+   - "MIN" is 3 chars, below the `_expand_team_search_terms` threshold (5 chars), and doesn't ILIKE-match "Minnesota Wild"
+
+2. **Playoff series markets are classified as game-level.** `"Game 2: Minnesota at Dallas: Total Points"` has a "Game N:" prefix that gets captured as part of team_a ("Game 2: Minnesota") instead of being stripped.
+
+**Fix:**
+1. Add a `_CITY_ABBREV_TO_NAME` map for common 2-3 letter city abbreviations used by Kalshi: `{"MIN": "Minnesota", "DAL": "Dallas", "PHX": "Phoenix", "OKC": "Oklahoma City", "WSH": "Washington", "NJ": "New Jersey", "LA": "Los Angeles", "NY": "New York", "CHI": "Chicago", "DET": "Detroit", "BOS": "Boston", "ATL": "Atlanta", "MIA": "Miami", "SF": "San Francisco", "SEA": "Seattle", ...}`. Use this in `_expand_team_search_terms()` to expand abbreviations.
+
+2. Add a `_GAME_NUMBER_PREFIX_RE` pattern like `r'^Game\s+\d+\s*:\s*'` and strip it in `_normalize_variants()` before matchup extraction.
+
+**Verification:** Check link-rate after fix. NHL open link rate should jump from ~27% to >70%.
+
+**Prompt:**
+> Fix two NHL linking issues:
 >
-> 1. Read `utils/sport_keys.py` → `KALSHI_GAME_TICKER_PREFIXES`. Check if the tickers for unlinked markets are covered.
-> 2. Read `tasks/prediction_market_matching.py` → `_match_prediction_markets()`. Trace the linking pipeline. Find where unlinked game_prop markets fall out.
-> 3. Hit the admin API to see matching task stats: `curl "https://api.bainluck.com/api/admin/dashboard?secret=$ADMIN_SECRET"` — look for prediction market matching metrics.
-> 4. Pick 3 specific unlinked markets and manually trace them through `extract_matchup_with_ticker_fallback()` and `_find_matching_event()`. Find exactly why matching fails.
+> 1. In `utils/prediction_market_matching.py`, add `_CITY_ABBREV_TO_NAME` dict mapping 2-3 letter city abbreviations to full city names. Update `_expand_team_search_terms()` to check if the team name is a known abbreviation and add the full name as an ILIKE term. For example, `_expand_team_search_terms("MIN")` should return `["MIN", "Minnesota"]`.
 >
-> **Phase 2: Fix the linking gaps**
+> 2. In `_normalize_variants()`, add stripping for "Game N:" prefix pattern. Add `_GAME_NUMBER_PREFIX_RE = re.compile(r'^Game\s+\d+\s*:\s*', re.IGNORECASE)` and strip it from the base name alongside " - More Markets".
 >
-> Based on diagnosis, the fix is likely one or more of:
-> - Add missing ticker prefixes to `KALSHI_GAME_TICKER_PREFIXES` in `utils/sport_keys.py`
-> - Fix `extract_matchup_with_ticker_fallback()` to handle the "Team A at Team B: Stat Type" format
-> - Fix `extract_game_date_from_ticker()` for ticker formats that aren't covered
-> - Widen time window in `_find_matching_event()` if games aren't found
+> Add tests for both. Run: `python3 -m pytest tests/test_prediction_market_matching.py -v`
 >
-> **Phase 3: Verify cards appear**
->
-> After fixing linking, check that Related Futures now returns game_prop data:
-> ```bash
-> curl "https://api.bainluck.com/api/events/{nba_event_id}/related-futures" | python3 -c "
-> import sys,json; d=json.load(sys.stdin)
-> all_items = d.get('home_team_futures',[]) + d.get('away_team_futures',[])
-> game_props = [i for i in all_items if i.get('display_category') == 'game_prop']
-> print(f'Game props: {len(game_props)}')"
-> ```
->
-> **Phase 4: Verify WinTotalsGauge and MatchupGrid data format**
->
-> Check if the season_stat markets have the right structure for the WinTotalsGauge component. The gauge needs over/under threshold data with probabilities. Read the frontend component to understand what data shape it expects, then check if the backend response matches.
->
-> Run tests: `python3 -m pytest tests/ -v -k "prediction_market or related"`
->
-> INTERFERENCE RULES: Do NOT modify `services/event_registry.py`. Do NOT modify `tasks/config.py` or `tasks/odds_polling.py` (quota optimization was just deployed).
+> INTERFERENCE RULES: Do NOT modify `tasks/prediction_market_matching.py` — these are pure utility function changes.
+
+---
+
+#### 1C-c. Soccer: 33% → varies by league
+**Layer:** backend-tasks, backend-services
+**Touches:** `tasks/prediction_market_matching.py`, `services/event_registry.py`
+**Parallel Safety:** Yellow
+**Impact:** LOW-MEDIUM — most soccer users are on Polymarket (98.5% linked)
+
+**Problem:** Kalshi soccer is 33% because we don't create events for many leagues they cover:
+- Liga MX (Mexican): Kalshi tickers `KXLIGAMXGAME-...` → we have no Liga MX events
+- Saudi Pro League: `KXSAUDIPLGAME-...` → no events
+- Danish Superliga: `KXDENSUPERLIGAGAME-...` → no events
+- USL (US lower division): `KXUSLGAME-...` → no events
+- Allsvenskan (Swedish): `KXALLSVENSKANGAME-...` → no events
+
+These are all leagues NOT covered by The Odds API. Events could be auto-created from prediction markets (the infrastructure exists in `_create_event_from_prediction_market()`), but these sport keys are blocked by `_ODDS_API_COVERED_PREFIXES` because they're classified as generic "soccer" which IS covered.
+
+**Fix:** Add new sport key entries for these specific leagues so auto-creation works:
+1. Add to `sport_keys.py`: `"kxligamxgame": "soccer_liga_mx"`, `"kxsaudiplgame": "soccer_saudi_pro"`, etc.
+2. These sport keys don't need Odds API coverage — they'll only be created from prediction markets
+3. Update `_ODDS_API_COVERED_PREFIXES` to NOT block these specific keys (only block `soccer_usa_mls` and `soccer_epl` which ARE covered)
+
+**Alternative (simpler):** Accept lower soccer link rate on Kalshi. Polymarket soccer is already 98.5%. The ROI of adding minor league support is low unless users specifically want Liga MX or Saudi Pro League odds.
+
+**Recommendation:** Don't fix yet. Monitor whether users actually visit events from these leagues.
+
+---
+
+#### 1C-d. MMA: Polymarket 25% → 70%+
+**Layer:** backend-utils
+**Touches:** `utils/prediction_market_matching.py`
+**Parallel Safety:** Green
+**Impact:** MEDIUM — UFC events are popular
+
+**Problem:** Polymarket MMA markets use fighter names (e.g., "Oliveira vs. Holloway") which match fine. But 75% of markets are for specific bout outcomes (method of finish, rounds, distance) that are structured as separate markets, not as outcomes within the fight market. Our matching only looks for "vs" patterns — these secondary markets have names like "Does Oliveira vs Holloway go the distance?" which should match but may fail due to the "Does...?" prefix.
+
+**Investigation needed:** Sample 20 unlinked Polymarket MMA markets to identify the actual name patterns:
+```bash
+curl "https://api.bainluck.com/api/admin/prediction-markets/debug?secret=$ADMIN_SECRET&sample_size=30&source=polymarket" | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+for s in d.get('sample_game_level',[]):
+    if s.get('llm_sport_category')=='mma': print(s['name'])
+"
+```
+
+**Likely fix:** Add "Does X vs Y...?" pattern to `_normalize_variants()` or `_WILL_WIN_RE`. Also Polymarket bout markets may need `_strip_trailing_paren()` for "(Lightweight, Main Card)" suffixes — this exists but may not fire for all variants.
+
+**Prompt:**
+> Diagnose why 75% of Polymarket MMA markets aren't linking. Sample unlinked markets via the debug endpoint. Identify the name patterns that fail matchup extraction. Add regex patterns and/or stripping logic to handle them. Add tests.
+
+---
+
+#### 1C-e. Tennis: Kalshi 52% → 70%+
+**Layer:** backend-utils
+**Touches:** `utils/prediction_market_matching.py`
+**Parallel Safety:** Green
+**Impact:** LOW — tennis is niche on the site
+
+**Problem:** Kalshi tennis tickers (`KXATPMATCH-...`, `KXWTAMATCH-...`) are game-level match markets. 52% open link rate means about half are matching. The failures are likely due to:
+- Player name format differences: Kalshi uses "Sinner vs. Djokovic" but our events (from Odds API) use "Jannik Sinner vs Novak Djokovic" (full names). "Sinner" is ≥5 chars so `_expand_team_search_terms` should produce it, but the full name match in `_score_candidates` may fail because `_fuzzy_team_match("Sinner", "Jannik Sinner")` should work (substring match). Need to investigate specific failing cases.
+- Prop markets (set winners, game totals) may fail because they're classified as game-level but have different name formats.
+
+**Polymarket tennis is 0.3%** — almost nothing links. This is likely because Polymarket tennis markets are for individual matches with generic names, and we don't create events for most ATP/WTA matches (only major tournaments).
+
+**Fix:** Investigate specific failing Kalshi matches first. The Polymarket rate won't improve without adding ATP/WTA event creation from prediction markets.
+
+---
+
+#### 1C-f. Esports: ~14% / ~4% — structural limit
+**Layer:** backend-services
+**Parallel Safety:** Green
+**Impact:** LOW — esports is not a priority
+
+**Problem:** Hundreds of leagues (LoL LCK/LEC/LCS, CS2 IEM/Blast, Valorant VCT, Dota DPC). No centralized event source — we don't poll any esports data API. Markets are for specific map winners, series results, total maps. Our event creation is limited to auto-creation from prediction markets, which works for "Team A vs Team B" but not "Team A vs Team B Map 1".
+
+**Realistic target:** ~20% link rate. Focus on series-level markets (which DO look like game matchups) and accept that map-level/total-maps markets won't link.
+
+**Fix (low priority):**
+1. Strip " Map N" suffix from esports market names before matchup extraction
+2. Auto-create events from esports prediction markets (unblock in `_ODDS_API_COVERED_PREFIXES`)
+
+---
+
+#### 1C-g. Golf: 1.4% — not a bug
+**Impact:** NONE
+
+Golf Kalshi markets are futures (tournament winner, top 5, make cut), NOT game-level matchups. They're correctly classified as futures via `compute_market_tier()` and appear in the golf grid/tournament pages. The low "link rate" is expected because they don't have `event_id` — they have `sport_id` and appear via market tier queries instead. No action needed.
+
+---
+
+#### 1C-h. Cricket: Polymarket 21% → 50%+
+**Layer:** backend-services
+**Parallel Safety:** Green
+**Impact:** LOW — cricket is niche
+
+**Problem:** We don't have a cricket odds source — no events to link to. Polymarket cricket markets are for IPL, international test matches, T20 World Cup. Auto-creation from prediction markets works but is blocked for "cricket_other" sport keys.
+
+**Fix:** Unblock cricket in `_ODDS_API_COVERED_PREFIXES` to allow auto-creation. Add cricket event sources if IPL viewership grows.
 
 ---
 
@@ -456,6 +569,42 @@ But 1,858 markets remain unlinked. Possible failure points:
 
 ### 9. External API Fixture Tests — **SHIPPED April 19**
 **Status:** COMPLETE. 77 tests across 4 services (Kalshi 21, Odds API 15, ESPN boxscore 30, DataGolf 11) + 3 JSON fixture files.
+
+---
+
+### 16. Playoff Series Matchup Markets
+**Layer:** backend-routes, backend-config, backend-tasks
+**Touches:** `config/league_configs.py`, `utils/tournament_stages.py`, `routes/playoffs.py`
+**Depends on:** Nothing (grid infrastructure exists)
+**Conflicts with:** Grid/playoffs work
+**Parallel Safety:** Yellow
+
+**Opportunity:** Polymarket has rich playoff series matchup markets (e.g., "Celtics vs Cavaliers" series winner). Source: `polymarket.com/sports/nba/props`. These are perfect for two surfaces:
+
+1. **Championship grid**: New column(s) showing current-round series win probability per team. Could be a "Current Round" or "Series" column that dynamically updates as rounds progress.
+2. **Event detail pages**: Related Futures section could show the series matchup market alongside individual game odds, giving users the "bigger picture" context for any playoff game.
+
+**Implementation sketch:**
+- **Stage classification**: Add a `series` or `current_round` stage to `tournament_stages.py` for basketball/hockey. Patterns: `r"vs\b"`, `r"series\b"`, `r"advance\b"` (careful not to collide with game-level "vs" — filter by market type/source).
+- **Grid column**: Add `GridColumn(key="current_round", label="Series", order=1.5)` — between make_playoffs and conference. Only show when fill rate is meaningful (playoff season).
+- **Ingestion**: Polymarket polls should already pick these up. Verify they're classified as the right `llm_sport_category`. May need name-pattern matching to route into the grid.
+- **Event detail**: Match series markets to events by team names + playoff round. Show "Series: Celtics 72% — Cavaliers 28%" on any Celtics playoff game detail page.
+- **Trend data**: These markets move fast during series — trend charts would be very engaging.
+
+**Open questions:**
+- Should the grid show current-round only, or all active series?
+- How to handle series that span multiple rounds (team advances, new matchup appears)?
+- Should series markets appear as a grid column or as a separate "Active Series" section below the grid?
+
+**Prompt:**
+> Read `routes/playoffs.py` (grid builder) and `config/league_configs.py`. Polymarket has playoff series matchup markets (e.g., "Celtics vs Cavaliers"). These need to:
+> 1. Be classified into a new "current_round" stage in `tournament_stages.py`
+> 2. Appear in the championship grid as a dynamic column showing series win probability
+> 3. Appear in event detail pages as Related Futures for playoff games
+>
+> Start by checking what series markets exist in the DB: query `futures_markets` for Polymarket markets with "vs" or "series" in the name and `llm_sport_category` in ('basketball', 'hockey'). Then design the classification patterns and grid column.
+>
+> INTERFERENCE RULES: Do NOT modify event matching, score tracking, or non-playoff routes.
 
 ---
 
