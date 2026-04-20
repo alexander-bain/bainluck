@@ -79,6 +79,7 @@ NBA_CONFIG = LeagueConfig(
         r"\bNBA\b",
         r"\bPro\s+Basketball\b",
     ],
+    external_id_prefixes=["KXNBA"],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="conference", label="Conference", order=2),
@@ -126,6 +127,7 @@ NHL_CONFIG = LeagueConfig(
     sport_category="hockey",
     sport_keys=["icehockey_nhl"],
     stage_key="hockey",
+    external_id_prefixes=["KXNHL"],
     league_name_patterns=[
         r"\bNHL\b",
         r"\bStanley\s+Cup\b",
@@ -399,6 +401,7 @@ MLB_CONFIG = LeagueConfig(
     sport_category="baseball",
     sport_keys=["baseball_mlb"],
     stage_key="baseball",
+    external_id_prefixes=["KXMLB"],
     league_name_patterns=[
         r"\bMLB\b",
         r"\bWorld\s+Series\b",
