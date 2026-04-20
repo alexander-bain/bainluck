@@ -311,10 +311,9 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
     """Return temperature distribution data grouped by city."""
     query = _open_weather_query().where(
         or_(
-            FuturesMarket.name.ilike("%highest temperature%"),
-            FuturesMarket.name.ilike("%temperature on%"),
-            FuturesMarket.name.ilike("%temperature in%"),
-            FuturesMarket.name.ilike("%temperature at%"),
+            FuturesMarket.name.ilike("Highest temperature in%"),
+            FuturesMarket.name.ilike("Lowest temperature in%"),
+            FuturesMarket.name.ilike("Highest temperature in%on%"),
         )
     )
     result = await db.execute(query)
