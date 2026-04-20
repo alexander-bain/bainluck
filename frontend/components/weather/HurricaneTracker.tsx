@@ -1,6 +1,6 @@
 "use client";
 
-import { HURRICANE, probColor, type EventMarket } from "./data";
+import { probColor, type EventMarket } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
 
@@ -14,8 +14,8 @@ const months = [
   { m: "Nov", p: 24 },
 ];
 
-export default function HurricaneTracker() {
-  const marketRows = HURRICANE.slice(0, 4);
+export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
+  const marketRows = items.slice(0, 4);
 
   return (
     <div

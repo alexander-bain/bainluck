@@ -1,6 +1,8 @@
 "use client";
 
-import { WILDCARDS, probColor, probLabel, sparkFrom, SOURCES } from "./data";
+import useSWR from "swr";
+import { WILDCARDS, probColor, probLabel, sparkFrom, SOURCES, type WildCard } from "./data";
+import { fetchWildCards } from "@/lib/weatherApi";
 import Sparkline from "./Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
@@ -18,6 +20,9 @@ function pillFg(label: string): string {
 }
 
 export default function WildCards() {
+  const { data: liveCards } = useSWR("weather-wildcards", fetchWildCards, { refreshInterval: 21600000 });
+  const cards: WildCard[] = (liveCards as WildCard[])?.length ? (liveCards as WildCard[]) : WILDCARDS;
+
   return (
     <div
       className="grid gap-3.5"
@@ -25,7 +30,7 @@ export default function WildCards() {
         gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
       }}
     >
-      {WILDCARDS.map((card, i) => {
+      {cards.map((card, i) => {
         const color = probColor(card.prob);
         const label = probLabel(card.prob);
         const spark = sparkFrom(i * 137 + 42, card.prob);

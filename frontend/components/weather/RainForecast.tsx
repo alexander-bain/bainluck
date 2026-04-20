@@ -1,8 +1,10 @@
 "use client";
 
+import useSWR from "swr";
 import { NYC_RAIN, MONTHLY_RAIN, probColor } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
+import { fetchRain } from "@/lib/weatherApi";
 
 /* ── SectionHeader ───────────────────────────────────────────────────── */
 
@@ -59,8 +61,10 @@ function currentMonth(): string {
 /* ── Main Component ──────────────────────────────────────────────────── */
 
 export default function RainForecast() {
-  const rain = NYC_RAIN;
-  const monthly = MONTHLY_RAIN;
+  const { data: liveRain } = useSWR("weather-rain", fetchRain, { refreshInterval: 3600000 });
+  const rain: RainDay[] = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : NYC_RAIN;
+  const monthlyLive = (liveRain as { monthly: MonthlyRainType[] })?.monthly;
+  const monthly: MonthlyRainType[] = monthlyLive?.length ? monthlyLive : MONTHLY_RAIN;
   const maxMonthly = Math.max(...monthly.map((m) => m.prob));
   const month = currentMonth();
 

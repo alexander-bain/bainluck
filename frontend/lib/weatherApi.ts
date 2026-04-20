@@ -1,11 +1,31 @@
-import { HERO_FEATURED, CITIES, NYC_RAIN, MONTHLY_RAIN, HURRICANE, EARTHQUAKE, TORNADOES, CLIMATE, WILDCARDS } from "@/components/weather/data";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export function fetchWeatherFeatured() { return Promise.resolve(HERO_FEATURED); }
-export function fetchCities() { return Promise.resolve(CITIES); }
-export function fetchNycRain() { return Promise.resolve(NYC_RAIN); }
-export function fetchMonthlyRain() { return Promise.resolve(MONTHLY_RAIN); }
-export function fetchHurricane() { return Promise.resolve(HURRICANE); }
-export function fetchEarthquake() { return Promise.resolve(EARTHQUAKE); }
-export function fetchTornadoes() { return Promise.resolve(TORNADOES); }
-export function fetchClimate() { return Promise.resolve(CLIMATE); }
-export function fetchWildCards() { return Promise.resolve(WILDCARDS); }
+async function fetchJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`);
+  if (!res.ok) throw new Error(`Weather API error: ${res.status}`);
+  return res.json();
+}
+
+export function fetchWeatherFeatured() {
+  return fetchJson("/api/weather/featured");
+}
+
+export function fetchCities() {
+  return fetchJson("/api/weather/cities");
+}
+
+export function fetchRain() {
+  return fetchJson<{ daily: unknown[]; monthly: unknown[] }>("/api/weather/rain");
+}
+
+export function fetchNaturalEvents() {
+  return fetchJson<{ hurricane: unknown[]; earthquake: unknown[]; tornadoes: unknown[] }>("/api/weather/events");
+}
+
+export function fetchClimate() {
+  return fetchJson("/api/weather/climate");
+}
+
+export function fetchWildCards() {
+  return fetchJson("/api/weather/wildcards");
+}

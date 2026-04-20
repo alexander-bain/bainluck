@@ -1,6 +1,8 @@
 "use client";
 
+import useSWR from "swr";
 import { CLIMATE, probColor, type ClimateMarket } from "./data";
+import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
 
 const COLUMNS: { scale: ClimateMarket["scale"]; label: string; kicker: string }[] = [
@@ -122,10 +124,13 @@ function ClimateColumn({
 }
 
 export default function ClimateDashboard() {
+  const { data: liveClimate } = useSWR("weather-climate", fetchClimate, { refreshInterval: 21600000 });
+  const climate: ClimateMarket[] = (liveClimate as ClimateMarket[])?.length ? (liveClimate as ClimateMarket[]) : CLIMATE;
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
       {COLUMNS.map((col) => {
-        const items = CLIMATE.filter((c) => c.scale === col.scale);
+        const items = climate.filter((c) => c.scale === col.scale);
         return (
           <ClimateColumn
             key={col.scale}

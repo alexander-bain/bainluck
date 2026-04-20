@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import useSWR from "swr";
 import { HERO_FEATURED, SOURCES, probColor, probLabel, sparkFrom } from "./data";
 import type { FeaturedMarket } from "./data";
+import { fetchWeatherFeatured } from "@/lib/weatherApi";
 import Sparkline from "./Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
@@ -16,7 +18,8 @@ const fadeUpKeyframes = `
 
 export default function WeatherHero() {
   const [idx, setIdx] = useState(0);
-  const items = HERO_FEATURED;
+  const { data: liveItems } = useSWR("weather-featured", fetchWeatherFeatured, { refreshInterval: 300000 });
+  const items: FeaturedMarket[] = (liveItems as FeaturedMarket[])?.length ? (liveItems as FeaturedMarket[]) : HERO_FEATURED;
   const current: FeaturedMarket = items[idx];
 
   const advance = useCallback(() => {
