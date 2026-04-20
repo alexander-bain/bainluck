@@ -312,6 +312,84 @@ Multiple problems: "24 Hours" and "Today" time ranges make no sense for golf, ro
 
 ---
 
+### 21. Non-Sports Category Pages (Economics, Politics, Tech & Science)
+
+**Goal:** Build themed landing pages that aggregate Kalshi + Polymarket markets into consumable, sub-themed dashboards — like we did for the weather page. Each page should feel like a "Bloomberg terminal for normies" for its topic.
+
+**Design constraint:** Every page needs **programmatic market discovery and grouping**, not hardcoded market lists. Markets appear and expire constantly — a page that requires manual curation is a page that rots. The system must:
+1. **Detect new markets** as they're ingested from Kalshi/Polymarket polling tasks
+2. **Classify into sub-themes** automatically (via LLM category + regex patterns on market names + ticker prefix mapping)
+3. **Expire resolved markets** gracefully (show outcome, then archive after N days)
+4. **Handle lifecycle changes** — when 2026 election markets resolve, 2028 markets should auto-populate without code changes
+
+**Implementation pattern (reusable across all category pages):**
+- Backend: `GET /api/categories/{slug}` endpoint that queries `futures_markets` by `llm_sport_category` + sub-theme classification rules
+- Sub-theme classification: regex patterns on market names + Kalshi ticker prefix mapping (e.g., `kxcpi*` → Inflation, `kxfedfunds*` → Fed)
+- Frontend: Shared `CategoryPage` component with configurable sub-theme sections, hero stats, trend charts
+- Config: `config/category_pages.py` with per-category sub-theme definitions, hero market selection rules, sort/display preferences
+
+**Parallel Safety:** Green (new routes, new frontend pages, no existing file conflicts)
+
+---
+
+#### 21a. Economics Page — **DESIGN READY, HIGHEST PRIORITY**
+
+The strongest candidate: deep markets on both sources, natural sub-themes, evergreen relevance, calendar-driven urgency (monthly data releases), and highly differentiated (nobody visualizes economic prediction markets as a consumer dashboard).
+
+**Sub-themes and known market inventory:**
+
+| Sub-theme | Hero stat | Kalshi markets | Polymarket markets | Ticker patterns |
+|-----------|-----------|---------------|-------------------|-----------------|
+| **Inflation & CPI** | "72% chance CPI falls below 3%" | Monthly CPI brackets, PCE readings, Argentina/country inflation | Inflation above/below thresholds | `kxcpi*`, `kxpce*`, `kxinflation*` |
+| **Federal Reserve** | "64% chance of June rate cut" | Fed funds rate per meeting (Jan-Dec), number of cuts/hikes in 2026 | ECB rate decisions | `kxfedfunds*`, `kxfedcuts*` |
+| **Jobs & Employment** | "Unemployment: markets say 4.1%" | Unemployment rate brackets, nonfarm payrolls, jobless claims | Jobs report outcomes | `kxunemployment*`, `kxjobless*`, `kxnonfarm*` |
+| **GDP & Recession** | "23% recession probability" | Quarterly GDP brackets, recession Y/N, consecutive negative quarters | Recession timing, GDP growth | `kxgdp*`, `kxrecession*` |
+| **Markets & Indices** | "S&P 500 at close today" | Nasdaq-100 daily/weekly price brackets, S&P targets, VIX levels | Daily up/down, weekly range targets | `kxnasdaq*`, `kxsp500*`, `kxvix*` |
+| **Energy & Commodities** | "Gas price: 78% stays under $4" | Gas prices (national + California), oil (WTI + Brent), daily/weekly targets | Oil price thresholds | `kxgasprice*`, `kxoil*`, `kxbrent*` |
+| **Housing & Mortgages** | "30yr mortgage rate direction" | Mortgage rate brackets, Case-Shiller direction | Mortgage rate thresholds for 2026 | `kxmortgage*`, `kxhousing*` |
+| **Trade & Tariffs** | "Will tariffs increase?" | Tariff-related policy markets, trade war outcomes | Tariff policy markets | `kxtariff*`, `kxtrade*` |
+| **Government & Fiscal** | "Debt ceiling status" | Government shutdown, debt ceiling, spending bills | Shutdown probability, DOGE savings | `kxshutdown*`, `kxdebt*` |
+
+**Calendar integration opportunity:** A "This Week's Data Releases" section showing which sub-themes have upcoming catalysts (CPI report Tuesday, jobs report Friday, FOMC meeting Wednesday). Markets become more engaging when you know the resolution date.
+
+---
+
+#### 21b. Politics & Elections Page
+
+Deepest market category on both platforms. Risk: every prediction market site does politics. Our differentiation is cross-source probability aggregation + visual clarity.
+
+**Sub-themes:**
+| Sub-theme | Kalshi tickers | Polymarket coverage |
+|-----------|---------------|-------------------|
+| **Presidential 2028** | `kxpres*`, `kxpresnomd*`, `kxpresnomd*` | Nominee odds, approval ratings |
+| **Congressional 2026** | `kxhouserace*`, `kxsenaterace*`, `kxhousecontrol*` | Senate/House control, key races |
+| **Gubernatorial** | `kxgov*` | State-level races |
+| **Policy & Legislation** | `kxbill*`, `kxexecorder*` | Specific bills, executive actions |
+| **Supreme Court** | `kxscotus*` | Rulings, retirements |
+| **International** | Various | UK, France, Brazil elections |
+
+**Lifecycle concern:** Election markets have a hard expiry (election day). Need automatic transition: 2026 midterm markets → show results → archive → 2028 presidential markets populate naturally. The sub-theme structure (Presidential, Congressional, etc.) is stable across cycles — only the specific markets rotate.
+
+---
+
+#### 21c. Tech & Science Page
+
+Fun, viral-friendly markets. Less structured than economics but more shareable.
+
+**Sub-themes:**
+| Sub-theme | Example markets |
+|-----------|----------------|
+| **AI & LLMs** | GPT-5 release, AI regulation, benchmark milestones, Anthropic/OpenAI valuations |
+| **Space** | SpaceX launches, Starship milestones, Artemis, Mars mission timelines |
+| **Big Tech** | Earnings beats, antitrust rulings, TikTok ban, product launches |
+| **Social Media** | Platform user milestones, regulatory actions, CEO changes |
+| **Science & Health** | FDA approvals, fusion milestones, pandemic-related |
+| **Crypto Overlap** | Bitcoin/Ethereum prices (from crypto category) that have tech implications |
+
+**Note:** Kalshi has `kxai*`, `kxtiktok*`, `kxtesla*` ticker patterns. Polymarket has rich tech/AI coverage. Markets here tend to be spiky (viral moments) rather than steady (monthly reports), so the page design needs to handle variable density.
+
+---
+
 ## Tier 4 — Someday / Maybe
 
 - Entity pages (`/[sport]/[league]/[team]`) — SEO upside, depends on B1
