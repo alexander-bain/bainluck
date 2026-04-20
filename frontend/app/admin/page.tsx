@@ -452,19 +452,23 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
 
     return recent.map((d) => {
       const task = taskMap.get(d.date);
-      // If we have task breakdown, use it; otherwise show total as "other"
-      if (task && ((task.poll_odds || 0) + (task.discover_events || 0) + (task.poll_futures || 0) + (task.score_fetch || 0)) > 0) {
-        return {
-          date: d.date,
-          poll_odds: task.poll_odds || 0,
-          discover_events: task.discover_events || 0,
-          poll_futures: task.poll_futures || 0,
-          score_fetch: task.score_fetch || 0,
-        };
+      const total = d.daily_requests;
+      if (task) {
+        const tracked = (task.poll_odds || 0) + (task.discover_events || 0) + (task.poll_futures || 0) + (task.score_fetch || 0);
+        if (tracked > 0) {
+          const scale = total / tracked;
+          return {
+            date: d.date,
+            poll_odds: Math.round((task.poll_odds || 0) * scale),
+            discover_events: Math.round((task.discover_events || 0) * scale),
+            poll_futures: Math.round((task.poll_futures || 0) * scale),
+            score_fetch: Math.round((task.score_fetch || 0) * scale),
+          };
+        }
       }
       return {
         date: d.date,
-        poll_odds: d.daily_requests,
+        poll_odds: total,
         discover_events: 0,
         poll_futures: 0,
         score_fetch: 0,
