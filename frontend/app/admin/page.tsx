@@ -711,13 +711,21 @@ function LinkRateCard({ secret }: { secret: string }) {
       <p className="text-xs text-text-muted mb-3">
         % of sports game markets linked to events (excludes politics/crypto/weather)
       </p>
-      <div className="flex items-end gap-2 mb-3">
-        <span className={"text-3xl font-bold " + rateColor(data.overall.link_rate_pct)}>
-          {data.overall.link_rate_pct}%
-        </span>
-        <span className="text-xs text-text-muted mb-1">
-          {data.overall.linked.toLocaleString()} / {data.overall.total_game_markets.toLocaleString()} markets
-        </span>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        {(["kalshi", "polymarket"] as const).map((src) => {
+          const s = data[src];
+          return (
+            <div key={src} className="text-center">
+              <span className={"text-2xl font-bold " + rateColor(s.totals.link_rate_pct)}>
+                {s.totals.link_rate_pct}%
+              </span>
+              <div className="text-xs text-text-muted capitalize">{src}</div>
+              <div className="text-micro text-text-muted">
+                {s.totals.linked.toLocaleString()} / {s.totals.total.toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
       </div>
       {(["kalshi", "polymarket"] as const).map((src) => {
         const s = data[src];
