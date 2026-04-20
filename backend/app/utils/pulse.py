@@ -282,7 +282,7 @@ def calculate_pulse(
             delta_stdev = stdev(deltas)
             # Normalize: high variance = unpredictable = exciting
             arrhythmia = min(1.0, delta_stdev / 0.10)
-        except:
+        except Exception:
             arrhythmia = 0.0
     else:
         arrhythmia = 0.0

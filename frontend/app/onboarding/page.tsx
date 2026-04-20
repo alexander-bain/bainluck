@@ -447,7 +447,7 @@ export default function OnboardingPage() {
     // If no token, offer to re-sign-in inline rather than redirecting away
     if (!token) {
       try {
-        console.log("[Onboarding] Token expired, attempting silent re-auth...");
+        // Token expired — attempt silent re-auth
         await signInWithGoogle();
         // Wait a moment for auth state to propagate
         await new Promise((r) => setTimeout(r, 500));
