@@ -20,6 +20,11 @@ export type CityData = {
     mode: number;
     dist: Array<{ label: string; prob: number }>;
   };
+  kalshiHigh?: {
+    unit: "C" | "F";
+    mode: number;
+    dist: Array<{ label: string; prob: number }>;
+  };
   low?: {
     unit: "C" | "F";
     mode: number;
@@ -82,6 +87,9 @@ export const CITIES: CityData[] = [
       { label: "50-51", prob: 33 }, { label: "52-53", prob: 10 }, { label: "54-55", prob: 5 }, { label: "56-57", prob: 2 },
       { label: "58-59", prob: 1 }, { label: "60-61", prob: 1 }, { label: "62°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 51.5, dist: [
+      { label: "49° or below", prob: 25 }, { label: "50-51°", prob: 42 }, { label: "52-53°", prob: 20 }, { label: "54-55°", prob: 8 }, { label: "56-57°", prob: 4 }, { label: "58°+", prob: 1 },
+    ] },
     low: { unit: "F", mode: 38, dist: [
       { label: "<34°F", prob: 9 }, { label: "34-36", prob: 14 }, { label: "37-39", prob: 36 }, { label: "40-42", prob: 28 }, { label: "43-45", prob: 10 }, { label: "46°F+", prob: 3 },
     ] },
@@ -93,12 +101,18 @@ export const CITIES: CityData[] = [
       { label: "68-69", prob: 37 }, { label: "70-71", prob: 18 }, { label: "72-73", prob: 7 }, { label: "74-75", prob: 3 },
       { label: "76-77", prob: 1 }, { label: "78-79", prob: 0 }, { label: "80°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 66.5, dist: [
+      { label: "62° or below", prob: 4 }, { label: "63-64°", prob: 10 }, { label: "65-66°", prob: 22 }, { label: "67-68°", prob: 38 }, { label: "69-70°", prob: 18 }, { label: "71°+", prob: 8 },
+    ] },
   },
   { id: "mia", name: "Miami", x: 31.2, y: 51, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 82.5, dist: [
       { label: "<76°F", prob: 1 }, { label: "76-77", prob: 2 }, { label: "78-79", prob: 7 }, { label: "80-81", prob: 18 },
       { label: "82-83", prob: 42 }, { label: "84-85", prob: 18 }, { label: "86-87", prob: 8 }, { label: "88-89", prob: 3 },
       { label: "90-91", prob: 1 }, { label: "92-93", prob: 0 }, { label: "94°F+", prob: 0 },
+    ] },
+    kalshiHigh: { unit: "F", mode: 82, dist: [
+      { label: "78° or below", prob: 5 }, { label: "79-80°", prob: 14 }, { label: "81-82°", prob: 40 }, { label: "83-84°", prob: 25 }, { label: "85-86°", prob: 12 }, { label: "87°+", prob: 4 },
     ] },
   },
   { id: "chi", name: "Chicago", x: 26, y: 38, region: "Americas", srcs: ["polymarket", "kalshi"],
@@ -107,6 +121,9 @@ export const CITIES: CityData[] = [
       { label: "58-59", prob: 28 }, { label: "60-61", prob: 14 }, { label: "62-63", prob: 6 }, { label: "64-65", prob: 3 },
       { label: "66-67", prob: 1 }, { label: "68-69", prob: 1 }, { label: "70°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 59, dist: [
+      { label: "54° or below", prob: 8 }, { label: "55-57°", prob: 18 }, { label: "58-59°", prob: 35 }, { label: "60-61°", prob: 22 }, { label: "62-63°", prob: 12 }, { label: "64°+", prob: 5 },
+    ] },
   },
   { id: "sfo", name: "San Francisco", x: 16.5, y: 42, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 63.5, dist: [
@@ -114,12 +131,18 @@ export const CITIES: CityData[] = [
       { label: "64-65", prob: 24 }, { label: "66-67", prob: 12 }, { label: "68-69", prob: 5 }, { label: "70-71", prob: 1 },
       { label: "72-73", prob: 1 }, { label: "74-75", prob: 0 }, { label: "76°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 63.5, dist: [
+      { label: "58° or below", prob: 6 }, { label: "59-61°", prob: 20 }, { label: "62-63°", prob: 38 }, { label: "64-65°", prob: 22 }, { label: "66-67°", prob: 10 }, { label: "68°+", prob: 4 },
+    ] },
   },
   { id: "dal", name: "Dallas", x: 24.5, y: 47, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 78.5, dist: [
       { label: "<72°F", prob: 2 }, { label: "72-73", prob: 5 }, { label: "74-75", prob: 10 }, { label: "76-77", prob: 18 },
       { label: "78-79", prob: 30 }, { label: "80-81", prob: 18 }, { label: "82-83", prob: 10 }, { label: "84-85", prob: 5 },
       { label: "86-87", prob: 1 }, { label: "88-89", prob: 1 }, { label: "90°F+", prob: 0 },
+    ] },
+    kalshiHigh: { unit: "F", mode: 79.5, dist: [
+      { label: "74° or below", prob: 5 }, { label: "75-77°", prob: 15 }, { label: "78-79°", prob: 35 }, { label: "80-81°", prob: 25 }, { label: "82-83°", prob: 14 }, { label: "84°+", prob: 6 },
     ] },
   },
   { id: "tor", name: "Toronto", x: 29, y: 37, region: "Americas", srcs: ["polymarket"],
@@ -294,6 +317,9 @@ export const CITIES: CityData[] = [
       { label: "<68°F", prob: 3 }, { label: "68-70", prob: 8 }, { label: "71-73", prob: 18 }, { label: "74-76", prob: 42 }, { label: "77-79", prob: 20 }, { label: "80-81", prob: 6 },
       { label: "82-83", prob: 2 }, { label: "84-85", prob: 1 }, { label: "86-87", prob: 0 }, { label: "88-89", prob: 0 }, { label: "90°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 75, dist: [
+      { label: "70° or below", prob: 4 }, { label: "71-73°", prob: 16 }, { label: "74-75°", prob: 38 }, { label: "76-77°", prob: 24 }, { label: "78-79°", prob: 12 }, { label: "80°+", prob: 6 },
+    ] },
   },
   { id: "hou", name: "Houston", x: 24, y: 51, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 81, dist: [
@@ -301,15 +327,24 @@ export const CITIES: CityData[] = [
       { label: "80-81", prob: 34 }, { label: "82-83", prob: 19 }, { label: "84-85", prob: 9 }, { label: "86-87", prob: 3 },
       { label: "88-89", prob: 1 }, { label: "90-91", prob: 1 }, { label: "92°F+", prob: 0 },
     ] },
+    kalshiHigh: { unit: "F", mode: 81, dist: [
+      { label: "76° or below", prob: 5 }, { label: "77-79°", prob: 14 }, { label: "80-81°", prob: 38 }, { label: "82-83°", prob: 26 }, { label: "84-85°", prob: 12 }, { label: "86°+", prob: 5 },
+    ] },
   },
   { id: "den", name: "Denver", x: 21, y: 42, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 73.5, dist: [
       { label: "<66°F", prob: 4 }, { label: "66-68", prob: 10 }, { label: "69-71", prob: 20 }, { label: "72-74", prob: 32 }, { label: "75-77", prob: 22 }, { label: "78°F+", prob: 12 },
     ] },
+    kalshiHigh: { unit: "F", mode: 73.5, dist: [
+      { label: "68° or below", prob: 8 }, { label: "69-71°", prob: 18 }, { label: "72-73°", prob: 34 }, { label: "74-75°", prob: 22 }, { label: "76-77°", prob: 12 }, { label: "78°+", prob: 6 },
+    ] },
   },
   { id: "sea", name: "Seattle", x: 17, y: 34, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 62, dist: [
       { label: "<56°F", prob: 5 }, { label: "56-58", prob: 12 }, { label: "59-61", prob: 25 }, { label: "62-64", prob: 35 }, { label: "65-67", prob: 16 }, { label: "68°F+", prob: 7 },
+    ] },
+    kalshiHigh: { unit: "F", mode: 62, dist: [
+      { label: "56° or below", prob: 8 }, { label: "57-59°", prob: 18 }, { label: "60-62°", prob: 36 }, { label: "63-65°", prob: 24 }, { label: "66-67°", prob: 10 }, { label: "68°+", prob: 4 },
     ] },
   },
   { id: "phx", name: "Phoenix", x: 19.5, y: 47, region: "Americas", srcs: ["kalshi"],
@@ -355,6 +390,9 @@ export const CITIES: CityData[] = [
   { id: "aus", name: "Austin", x: 23.5, y: 49, region: "Americas", srcs: ["polymarket", "kalshi"],
     high: { unit: "F", mode: 88.5, dist: [
       { label: "<82°F", prob: 2 }, { label: "82-84", prob: 6 }, { label: "85-87", prob: 16 }, { label: "88-90", prob: 40 }, { label: "91-93", prob: 24 }, { label: "94°F+", prob: 12 },
+    ] },
+    kalshiHigh: { unit: "F", mode: 88.5, dist: [
+      { label: "82° or below", prob: 4 }, { label: "83-85°", prob: 12 }, { label: "86-88°", prob: 34 }, { label: "89-91°", prob: 32 }, { label: "92-93°", prob: 12 }, { label: "94°+", prob: 6 },
     ] },
   },
   // Additional Polymarket global cities
