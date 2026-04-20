@@ -3430,6 +3430,133 @@ async def prediction_market_status(
     }
 
 
+@router.get("/prediction-markets/link-rate")
+async def prediction_market_link_rate(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Game-level market link rate — the metric that matters.
+
+    Filters to only markets that SHOULD be linked (game-level sports markets,
+    excluding politics/crypto/weather) and reports what % are actually linked,
+    broken down by sport.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
+
+    # Sport categories that represent actual games (exclude non-sports)
+    _SPORT_CATEGORIES = {
+        "basketball", "football", "baseball", "hockey", "soccer",
+        "golf", "tennis", "mma", "boxing", "cricket", "rugby",
+        "lacrosse", "esports", "aussierules",
+    }
+
+    # Build ticker prefix → sport family mapping for Kalshi
+    _prefix_to_family: dict[str, str] = {}
+    for prefix, sport_key in KALSHI_TICKER_TO_SPORT_KEY.items():
+        family = sport_key.split("_")[0]
+        _prefix_to_family[prefix] = family
+
+    # Query: all Kalshi markets with game ticker prefixes, grouped by sport
+    # Use a single SQL query with CASE expressions for efficiency
+    kalshi_result = await db.execute(
+        text("""
+            SELECT
+                COALESCE(llm_sport_category, 'unknown') as sport,
+                COUNT(*) as total,
+                COUNT(event_id) as linked,
+                COUNT(*) FILTER (WHERE status = 'open') as open_total,
+                COUNT(event_id) FILTER (WHERE status = 'open') as open_linked
+            FROM futures_markets
+            WHERE source = 'kalshi'
+              AND llm_sport_category IS NOT NULL
+              AND llm_sport_category IN :categories
+            GROUP BY llm_sport_category
+            ORDER BY COUNT(*) DESC
+        """),
+        {"categories": tuple(_SPORT_CATEGORIES)},
+    )
+    kalshi_by_sport = []
+    kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    for row in kalshi_result.all():
+        sport_data = {
+            "sport": row.sport,
+            "total": row.total,
+            "linked": row.linked,
+            "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
+            "open_total": row.open_total,
+            "open_linked": row.open_linked,
+            "open_link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
+        }
+        kalshi_by_sport.append(sport_data)
+        for k in kalshi_totals:
+            kalshi_totals[k] += sport_data[k]
+
+    # Polymarket: game-level = has "vs" or "at" in name + sports category
+    poly_result = await db.execute(
+        text("""
+            SELECT
+                COALESCE(llm_sport_category, 'unknown') as sport,
+                COUNT(*) as total,
+                COUNT(event_id) as linked,
+                COUNT(*) FILTER (WHERE status = 'open') as open_total,
+                COUNT(event_id) FILTER (WHERE status = 'open') as open_linked
+            FROM futures_markets
+            WHERE source = 'polymarket'
+              AND llm_sport_category IS NOT NULL
+              AND llm_sport_category IN :categories
+              AND (name ILIKE '%% vs.%%' OR name ILIKE '%% vs %%'
+                   OR name ILIKE '%% at %%' OR name ILIKE '%% – %%')
+            GROUP BY llm_sport_category
+            ORDER BY COUNT(*) DESC
+        """),
+        {"categories": tuple(_SPORT_CATEGORIES)},
+    )
+    poly_by_sport = []
+    poly_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    for row in poly_result.all():
+        sport_data = {
+            "sport": row.sport,
+            "total": row.total,
+            "linked": row.linked,
+            "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
+            "open_total": row.open_total,
+            "open_linked": row.open_linked,
+            "open_link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
+        }
+        poly_by_sport.append(sport_data)
+        for k in poly_totals:
+            poly_totals[k] += sport_data[k]
+
+    grand_total = kalshi_totals["total"] + poly_totals["total"]
+    grand_linked = kalshi_totals["linked"] + poly_totals["linked"]
+
+    return {
+        "overall": {
+            "total_game_markets": grand_total,
+            "linked": grand_linked,
+            "link_rate_pct": round(grand_linked / grand_total * 100, 1) if grand_total else 0,
+        },
+        "kalshi": {
+            "totals": {
+                **kalshi_totals,
+                "link_rate_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
+            },
+            "by_sport": kalshi_by_sport,
+        },
+        "polymarket": {
+            "totals": {
+                **poly_totals,
+                "link_rate_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
+            },
+            "by_sport": poly_by_sport,
+        },
+    }
+
+
 @router.get("/prediction-markets/game-diagnostics")
 async def prediction_market_game_diagnostics(
     secret: str = Query(..., description="Admin secret for authorization"),
