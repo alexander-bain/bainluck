@@ -3445,39 +3445,30 @@ async def prediction_market_link_rate(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
-
-    # Sport categories that represent actual games (exclude non-sports)
-    _SPORT_CATEGORIES = {
+    _SPORT_CATEGORIES = [
         "basketball", "football", "baseball", "hockey", "soccer",
         "golf", "tennis", "mma", "boxing", "cricket", "rugby",
         "lacrosse", "esports", "aussierules",
-    }
+    ]
 
-    # Build ticker prefix → sport family mapping for Kalshi
-    _prefix_to_family: dict[str, str] = {}
-    for prefix, sport_key in KALSHI_TICKER_TO_SPORT_KEY.items():
-        family = sport_key.split("_")[0]
-        _prefix_to_family[prefix] = family
+    from sqlalchemy import case
 
-    # Query: all Kalshi markets with game ticker prefixes, grouped by sport
-    # Use a single SQL query with CASE expressions for efficiency
+    # Kalshi: all sports-category markets (excluding politics/crypto/weather)
     kalshi_result = await db.execute(
-        text("""
-            SELECT
-                COALESCE(llm_sport_category, 'unknown') as sport,
-                COUNT(*) as total,
-                COUNT(event_id) as linked,
-                COUNT(*) FILTER (WHERE status = 'open') as open_total,
-                COUNT(event_id) FILTER (WHERE status = 'open') as open_linked
-            FROM futures_markets
-            WHERE source = 'kalshi'
-              AND llm_sport_category IS NOT NULL
-              AND llm_sport_category IN :categories
-            GROUP BY llm_sport_category
-            ORDER BY COUNT(*) DESC
-        """),
-        {"categories": tuple(_SPORT_CATEGORIES)},
+        select(
+            FuturesMarket.llm_sport_category.label("sport"),
+            func.count().label("total"),
+            func.count(FuturesMarket.event_id).label("linked"),
+            func.count().filter(FuturesMarket.status == "open").label("open_total"),
+            func.count(FuturesMarket.event_id).filter(FuturesMarket.status == "open").label("open_linked"),
+        )
+        .where(
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.llm_sport_category.isnot(None),
+            FuturesMarket.llm_sport_category.in_(_SPORT_CATEGORIES),
+        )
+        .group_by(FuturesMarket.llm_sport_category)
+        .order_by(func.count().desc())
     )
     kalshi_by_sport = []
     kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
@@ -3495,25 +3486,27 @@ async def prediction_market_link_rate(
         for k in kalshi_totals:
             kalshi_totals[k] += sport_data[k]
 
-    # Polymarket: game-level = has "vs" or "at" in name + sports category
+    # Polymarket: game-level = has "vs"/"at" in name + sports category
     poly_result = await db.execute(
-        text("""
-            SELECT
-                COALESCE(llm_sport_category, 'unknown') as sport,
-                COUNT(*) as total,
-                COUNT(event_id) as linked,
-                COUNT(*) FILTER (WHERE status = 'open') as open_total,
-                COUNT(event_id) FILTER (WHERE status = 'open') as open_linked
-            FROM futures_markets
-            WHERE source = 'polymarket'
-              AND llm_sport_category IS NOT NULL
-              AND llm_sport_category IN :categories
-              AND (name ILIKE '%% vs.%%' OR name ILIKE '%% vs %%'
-                   OR name ILIKE '%% at %%' OR name ILIKE '%% – %%')
-            GROUP BY llm_sport_category
-            ORDER BY COUNT(*) DESC
-        """),
-        {"categories": tuple(_SPORT_CATEGORIES)},
+        select(
+            FuturesMarket.llm_sport_category.label("sport"),
+            func.count().label("total"),
+            func.count(FuturesMarket.event_id).label("linked"),
+            func.count().filter(FuturesMarket.status == "open").label("open_total"),
+            func.count(FuturesMarket.event_id).filter(FuturesMarket.status == "open").label("open_linked"),
+        )
+        .where(
+            FuturesMarket.source == "polymarket",
+            FuturesMarket.llm_sport_category.isnot(None),
+            FuturesMarket.llm_sport_category.in_(_SPORT_CATEGORIES),
+            or_(
+                FuturesMarket.name.ilike("% vs.%"),
+                FuturesMarket.name.ilike("% vs %"),
+                FuturesMarket.name.ilike("% at %"),
+            ),
+        )
+        .group_by(FuturesMarket.llm_sport_category)
+        .order_by(func.count().desc())
     )
     poly_by_sport = []
     poly_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
