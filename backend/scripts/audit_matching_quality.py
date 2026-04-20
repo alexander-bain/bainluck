@@ -799,30 +799,16 @@ def check_grid_source_coverage(grid_data: dict, report: AuditReport):
                 else:
                     multi_source_count += 1
 
-        # Flag if column uses only 1 source but other sources also have
-        # data for this column (not just grid-wide). If only one source
-        # offers this market type at all, it's expected, not a warning.
+        # Flag if column uses only 1 source but multiple are available
         if len(col_sources) == 1 and len(available_sources) > 1:
             the_source = list(col_sources)[0]
-            # Check if other sources actually have data for ANY team in this column
-            other_sources_have_data = False
-            for t in teams:
-                cell = t.get("cells", {}).get(col_key)
-                if cell and cell.get("sources"):
-                    for s in cell["sources"]:
-                        if s.get("source") != the_source:
-                            other_sources_have_data = True
-                            break
-                if other_sources_have_data:
-                    break
-            if other_sources_have_data:
-                report.add(AuditFinding(
-                    check="grid_single_source",
-                    severity=SEVERITY_WARNING,
-                    category="grid",
-                    description=f"'{col_label}' column uses only {the_source} — {', '.join(available_sources - col_sources)} not contributing",
-                    details={"column": col_label, "sole_source": the_source, "missing_sources": list(available_sources - col_sources)},
-                ))
+            report.add(AuditFinding(
+                check="grid_single_source",
+                severity=SEVERITY_WARNING,
+                category="grid",
+                description=f"'{col_label}' column uses only {the_source} — {', '.join(available_sources - col_sources)} not contributing",
+                details={"column": col_label, "sole_source": the_source, "missing_sources": list(available_sources - col_sources)},
+            ))
 
 
 def check_grid_missing_columns(grid_data: dict, league: str, report: AuditReport):

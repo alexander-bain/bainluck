@@ -93,7 +93,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth", r"playoff.appearance"],
+            "patterns": [r"make.playoffs", r"make.postseason", r"make\b.*\bplayoffs", r"make\b.*\bpostseason", r"playoff.berth", r"postseason.berth", r"playoff.appearance"],
         },
         {
             "key": "division",
@@ -122,7 +122,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make.postseason", r"make\b.*\bplayoffs", r"make\b.*\bpostseason", r"playoff.berth", r"postseason.berth"],
         },
         {
             "key": "conference",
@@ -153,7 +153,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make.postseason", r"make\b.*\bplayoffs", r"make\b.*\bpostseason", r"playoff.berth", r"postseason.berth"],
         },
         {
             "key": "division",
@@ -193,7 +193,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth", r"playoff.qualif"],
+            "patterns": [r"make.playoffs", r"make.postseason", r"make\b.*\bplayoffs", r"make\b.*\bpostseason", r"playoff.berth", r"postseason.berth", r"playoff.qualif"],
         },
         {
             "key": "division",
@@ -461,7 +461,7 @@ def classify_market_stage(
     stage_keys = {s["key"] for s in stages}
     if "make_playoffs" in stage_keys:
         _MAKE_PLAYOFFS_RE = re.compile(
-            r"\bplayoff.qualif|\bqualif.*playoff|\bplayoff.berth",
+            r"\bplayoff.qualif|\bqualif.*playoff|\bplayoff.berth|\bpostseason.qualif|\bqualif.*postseason|\bpostseason.berth",
             re.IGNORECASE,
         )
         if _MAKE_PLAYOFFS_RE.search(name_lower):

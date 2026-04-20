@@ -108,8 +108,8 @@ NBA_CONFIG = LeagueConfig(
             column="make_playoffs",
             tier=4,
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
@@ -167,8 +167,8 @@ NHL_CONFIG = LeagueConfig(
         MarketMatchingRule(
             column="make_playoffs",
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
@@ -381,8 +381,8 @@ NFL_CONFIG = LeagueConfig(
         MarketMatchingRule(
             column="make_playoffs",
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
@@ -453,8 +453,8 @@ MLB_CONFIG = LeagueConfig(
         MarketMatchingRule(
             column="make_playoffs",
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
@@ -503,8 +503,8 @@ WNBA_CONFIG = LeagueConfig(
         MarketMatchingRule(
             column="make_playoffs",
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
@@ -553,8 +553,8 @@ MLS_CONFIG = LeagueConfig(
         MarketMatchingRule(
             column="make_playoffs",
             name_patterns=[
-                r"Make\s+Playoffs",
-                r"Playoff\s+(?:Berth|Qualif)",
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
