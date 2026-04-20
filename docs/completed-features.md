@@ -2,6 +2,37 @@
 
 ## April 19-20, 2026
 
+**Weather Page** (`/weather`) — new top-level page with 6 sections, all live data:
+- ✅ Hero rotator (top 5 featured weather markets, auto-advancing)
+- ✅ Global temperature map — 49 cities, collision-resolved pins, histogram distribution panel
+- ✅ Cross-source comparison — 9 cities with both Kalshi + Polymarket data
+- ✅ NYC 7-day rain forecast (Kalshi daily markets)
+- ✅ Monthly rainfall for 10 US cities with 24h movement deltas
+- ✅ Natural events tracker — hurricane season strip, earthquake/tornado market lists
+- ✅ Climate dashboard — 2026/2030/2050 horizon columns
+- ✅ Wild cards — rare event probabilities (supervolcano, solar storms, etc.)
+- ✅ Continent outline SVGs on abstract world map
+- ✅ Backend: 6 new API endpoints at `/api/weather/*` serving real data from 521 weather markets
+- ✅ Frontend: SWR hooks with static fallback, responsive design, hover tooltips on histogram bars
+- ✅ "Weather" nav link added to DesktopNav
+- ✅ GA4 analytics: `weather` page type registered
+
+**Polymarket Neg-Risk Probability Fix** — root cause of grid health failures:
+- ✅ Polymarket poller now uses bid/ask midpoint fallback when `outcomePrices` is empty (neg-risk markets)
+- ✅ All Polymarket championship/conference futures outcomes now have correct probabilities
+- ✅ NBA grid health: 0 → 97/100
+- ✅ NHL grid health: 97 → 100/100
+- ✅ Overall grid health: 62 → ~95/100
+
+**Grid Matching Fixes:**
+- ✅ Play-in tournament markets excluded from grid (was contaminating conference column with "Eastern Conference Play-In" at 3.5% vs real conference champion at 42%)
+- ✅ Audit disagreement threshold: 15pp→25pp critical, 15pp warning (genuine Kalshi vs Polymarket pricing differences no longer tank health score)
+
+**Admin Dashboard Fixes:**
+- ✅ Daily burn chart: bar heights now use official Odds API counter, task proportions scaled to match (no more retroactive shrinking)
+- ✅ EOM quota forecast: excludes today's partial day, uses trailing 2 complete days
+- ✅ Score fetching skipped for ESPN-mapped sports (NBA/NHL/MLB/NFL) when all events have ESPN match — saves ~60-70% of score API cost
+
 **Game Prop → Event Linking (Item 1C)** — 12 commits, 1,784+ markets newly linked:
 - ✅ Ticker-derived team names for game props ("WSH Capitals" → "Capitals" from ticker abbreviation map)
 - ✅ `_expand_team_search_terms()` for ILIKE pattern expansion (mascot extraction + city abbreviation lookup)

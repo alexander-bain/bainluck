@@ -92,9 +92,9 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (23 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,149 pytest items
+│   └── tests/                   # 3,340+ pytest items
 ├── frontend/
-│   ├── app/                     # Next.js app router (30+ pages)
+│   ├── app/                     # Next.js app router (30+ pages, incl. /weather)
 │   ├── components/              # React components (RelatedFutures, OddsChart, etc.)
 │   └── lib/                     # API client, types, utilities
 ├── ios/Bain Luck/               # iOS app (SwiftUI, 54 Swift files)
@@ -224,6 +224,9 @@ When fixing ANY data quality, matching, or display issue:
 | What | Where |
 |------|-------|
 | Admin dashboard | https://bainluck.com/admin |
+| Weather page | https://bainluck.com/weather |
+| Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
+| Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_SECRET` |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` |
 | API docs | https://api.bainluck.com/docs |
 | Backlog | `docs/backlog.md` |

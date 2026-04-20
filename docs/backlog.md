@@ -419,6 +419,13 @@ Fun, viral-friendly markets. Less structured than economics but more shareable.
 | ESPN Source Coverage (#1) | Shipped April 16 | All 6 sources write to `win_probability_sources` |
 | Admin Auth Security Fix | Shipped April 20 | `routes/admin.py` — `_check_admin_secret()` now rejects when `ADMIN_SECRET` unset |
 | Grid Health: Normalization + Multi-Source | Shipped April 19-20 | Postseason patterns, Kalshi ticker prefixes, championship normalization, division rule ordering |
+| Weather Page (`/weather`) | Shipped April 19-20 | 6-section page with live data from 521 markets, 6 backend API endpoints, continent map |
+| Polymarket Neg-Risk Probability Fix | Shipped April 20 | bid/ask fallback for neg-risk markets — NBA grid 0→97, overall 62→95 |
+| Play-In Market Grid Exclusion | Shipped April 20 | Play-in ≠ playoffs — excluded from grid to prevent monotonicity poisoning |
+| Admin Chart: Daily Burn Fix | Shipped April 20 | Official counter as bar height, scaled task proportions |
+| Admin: EOM Forecast Fix | Shipped April 20 | Excludes today's partial day from trailing average |
+| Score Fetch Optimization | Shipped April 20 | Skip Odds API scores for ESPN-mapped sports — ~60-70% reduction |
+| Grid Audit Threshold | Shipped April 20 | 15pp→25pp critical, genuine disagreements now warnings |
 
 ---
 

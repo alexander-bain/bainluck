@@ -30,3 +30,14 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 37. **Related Futures requires Kalshi ticker prefix matching** — Kalshi futures tickers (KXNBA, KXMLB, etc.) don't start with the Odds API sport key (basketball_nba, baseball_mlb). The sport filter in `get_related_futures()` needs `_SPORT_TO_KALSHI_ROOTS` to find championship/award markets. Without this, only game-level Kalshi markets (which DO have sport-key external_ids) are discoverable.
 38. **`FuturesMarket.market_tier` is NULL for most markets** — The `market_tier` field was designed to filter championships (1) from game props (5), but most markets have NULL. This prevents efficient querying for Related Futures. Fix: populate tier during Kalshi/Polymarket task upserts using `MarketMatchingRule` from `league_configs.py`.
 39. **Team model uses `logo_url_small` not `logo_small`** — The column name is `logo_url_small` (and `logo_url` for full size). Using `Team.logo_small` crashes with AttributeError.
+
+
+40. **Polymarket neg-risk markets need bid/ask fallback** — The Gamma API bulk `/events` endpoint returns `outcomePrices` as null for neg-risk multi-outcome markets (championships, conference winners). The poller must fall back to `bestBid`/`bestAsk` midpoint or `lastTradePrice`. Without this, all championship/conference outcome probabilities are 0%.
+
+41. **Play-in ≠ Make Playoffs** — Kalshi's "Teams to Make the Eastern Conference Play-In Tournament" contains "Eastern Conference" but is NOT a conference championship market. Top seeds have ~0% play-in probability but ~99% playoff probability. Play-in markets must be excluded from the grid entirely (return `None` from `_match_market_to_column`), not routed to make_playoffs.
+
+42. **Odds API score fetching is partially redundant** — ESPN provides scores every 60s for mapped sports (NBA, NHL, MLB, NFL). The Odds API `/scores` endpoint is only needed for non-ESPN sports (tennis, cricket, rugby). Score fetching is now skipped for ESPN-mapped sports where all recent events have `espn_event_id`.
+
+43. **Admin daily burn chart uses two counting systems** — The official count (`x-requests-used` header) and the per-task incremental tracking can diverge. The chart scales task proportions to match the official total to prevent retroactive shrinking.
+
+44. **EOM quota forecast must exclude today's partial day** — Using today's incomplete data in the trailing average makes the forecast artificially optimistic as the day progresses. Always use the two most recent *complete* days.
