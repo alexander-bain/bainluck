@@ -933,11 +933,20 @@ def check_grid_source_disagreement(grid_data: dict, report: AuditReport):
             probs = [s.get("probability", 0) for s in meaningful_sources]
             if len(probs) >= 2:
                 max_diff = max(probs) - min(probs)
-                if max_diff > 0.15:
+                if max_diff > 0.25:
                     source_detail = ", ".join(f"{s.get('source', '?')}: {s.get('probability', 0)*100:.1f}%" for s in meaningful_sources)
                     report.add(AuditFinding(
                         check="grid_source_disagreement",
                         severity=SEVERITY_CRITICAL,
+                        category="grid",
+                        description=f"{name} → {col_label}: {max_diff*100:.1f}pp disagreement ({source_detail})",
+                        details={"team": name, "column": col_label, "diff_pp": max_diff * 100},
+                    ))
+                elif max_diff > 0.15:
+                    source_detail = ", ".join(f"{s.get('source', '?')}: {s.get('probability', 0)*100:.1f}%" for s in meaningful_sources)
+                    report.add(AuditFinding(
+                        check="grid_source_disagreement",
+                        severity=SEVERITY_WARNING,
                         category="grid",
                         description=f"{name} → {col_label}: {max_diff*100:.1f}pp disagreement ({source_detail})",
                         details={"team": name, "column": col_label, "diff_pp": max_diff * 100},
