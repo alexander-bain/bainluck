@@ -138,6 +138,9 @@ def _strip_category_prefix(market_name: str) -> str:
     return _CATEGORY_PREFIX_RE.sub("", market_name).strip()
 
 
+# Polymarket " - More Markets" suffix on related markets
+_MORE_MARKETS_RE = re.compile(r'\s*-\s*More Markets\s*$', re.IGNORECASE)
+
 # Trailing parenthetical context like "(Lightweight, Main Card)" or "(Round 5)"
 # Common in Polymarket fight/UFC markets.
 _TRAILING_PAREN_RE = re.compile(r'\s*\([^)]+\)\s*$')
@@ -151,6 +154,14 @@ _CHAMPIONSHIP_SUFFIX_RE = re.compile(
     r'|trophy|crown|belt).*)$',
     re.IGNORECASE,
 )
+
+
+def _strip_more_markets(name: str) -> str:
+    """Strip Polymarket ' - More Markets' suffix.
+
+    Example: "CF Estrela da Amadora vs. FC Porto - More Markets" → "CF Estrela da Amadora vs. FC Porto"
+    """
+    return _MORE_MARKETS_RE.sub("", name).strip()
 
 
 def _strip_trailing_paren(name: str) -> str:
@@ -379,20 +390,21 @@ def _normalize_variants(market_name: str) -> list:
       → strip championship: "USA vs Canada"
       → matches _BARE_MATCHUP_RE!
     """
-    variants = [market_name]
-    stripped_prefix = _strip_category_prefix(market_name)
-    stripped_sport = _strip_sport_name_prefix(market_name)
-    stripped_paren = _strip_trailing_paren(market_name)
-    stripped_champ = _strip_championship_suffix(market_name)
-    # Combined strippings (order matters — sport prefix first, then suffix/paren)
+    # Strip " - More Markets" first — it's a suffix that pollutes team names
+    base = _strip_more_markets(market_name)
+    # Start with the cleaner base if different, then fall back to raw
+    variants = [base] if base != market_name else [market_name]
+    stripped_prefix = _strip_category_prefix(base)
+    stripped_sport = _strip_sport_name_prefix(base)
+    stripped_paren = _strip_trailing_paren(base)
+    stripped_champ = _strip_championship_suffix(base)
     stripped_sport_champ = _strip_championship_suffix(stripped_sport)
     stripped_sport_paren = _strip_trailing_paren(stripped_sport)
     stripped_sport_both = _strip_championship_suffix(_strip_trailing_paren(stripped_sport))
     stripped_prefix_champ = _strip_championship_suffix(stripped_prefix)
     stripped_all = _strip_championship_suffix(_strip_trailing_paren(stripped_prefix))
-    # Order: most-stripped variants first so clean team names are found before
-    # partially-stripped ones (e.g., "USA vs Canada" before "Ice Hockey USA vs Canada")
     for v in (
+        base,  # " - More Markets" stripped
         stripped_sport_both, stripped_sport_champ, stripped_sport_paren,
         stripped_sport, stripped_all, stripped_prefix_champ,
         stripped_prefix, stripped_paren, stripped_champ,
@@ -919,12 +931,13 @@ def extract_matchup_with_ticker_fallback(
 def _expand_team_search_terms(team: str) -> list[str]:
     """Generate multiple ILIKE-friendly search terms from a team name.
 
-    For abbreviated or partial names like "New York Y" or "WSH Capitals",
-    extracts the last word (mascot) as an additional search term. This allows
-    ILIKE '%Capitals%' to match "Washington Capitals" even when the full
-    extracted name doesn't substring-match.
+    For abbreviated names like "WSH Capitals", extracts the last word (mascot)
+    as an additional search term. For city-only names like "Pittsburgh",
+    the original already works as an ILIKE pattern since it's a substring of
+    "Pittsburgh Pirates". Multi-word cities like "New York" also match
+    "New York Yankees" via ILIKE '%New York%'.
 
-    Returns [original, mascot] if mascot is >= 5 chars, else [original].
+    Returns [original] plus the mascot word if it's >= 5 chars.
     """
     terms = [team]
     words = team.split()

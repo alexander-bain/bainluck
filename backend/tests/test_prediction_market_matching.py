@@ -2068,6 +2068,25 @@ class TestGamePropTickerFallback:
 
 
 # =============================================================================
+# " - More Markets" suffix stripping
+# =============================================================================
+
+class TestMoreMarketsSuffix:
+    def test_polymarket_more_markets_stripped(self):
+        matchup = extract_matchup("CF Estrela da Amadora vs. FC Porto - More Markets")
+        assert matchup is not None
+        assert "More Markets" not in matchup.team_b
+
+    def test_polymarket_more_markets_is_game_level(self):
+        assert is_game_level_market("Team A vs. Team B - More Markets")
+
+    def test_no_suffix_unchanged(self):
+        matchup = extract_matchup("Warriors vs Celtics")
+        assert matchup is not None
+        assert matchup.team_b == "Celtics"
+
+
+# =============================================================================
 # _SPORT_ABBREV_SUFFIX coverage
 # =============================================================================
 

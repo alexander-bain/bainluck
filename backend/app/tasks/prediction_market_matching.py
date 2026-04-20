@@ -41,6 +41,31 @@ from app.utils.prediction_market_matching import (
 logger = logging.getLogger(__name__)
 
 
+def _derive_sport_category(external_id: str | None) -> str | None:
+    """Derive llm_sport_category from a Kalshi ticker's sport key.
+
+    Maps ticker → sport_key → LLM category prefix. Returns None for
+    non-Kalshi or unparseable tickers.
+    """
+    if not external_id:
+        return None
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+    sport_key = get_sport_prefix_from_ticker(external_id)
+    if not sport_key:
+        return None
+    prefix = sport_key.split("_")[0]
+    return SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix)
+
+
+def _set_market_sport_fields(market, matched_event: dict) -> None:
+    """Propagate sport_id and fix llm_sport_category on a newly linked market."""
+    if matched_event.get("sport_id"):
+        market.sport_id = matched_event["sport_id"]
+    ticker_category = _derive_sport_category(market.external_id)
+    if ticker_category and market.llm_sport_category != ticker_category:
+        market.llm_sport_category = ticker_category
+
+
 async def _register_market_team_identities(session, event_id, matchup, market):
     """Register team identities after a successful market→event link.
 
@@ -265,8 +290,7 @@ async def _match_prediction_markets(limit: int = 500):
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
-                if matched_event.get("sport_id"):
-                    market.sport_id = matched_event["sport_id"]
+                _set_market_sport_fields(market, matched_event)
                 stats["newly_linked"] += 1
                 stats["funnel"]["linked"] += 1
                 logger.info(
@@ -287,8 +311,7 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                     if auto_event:
                         market.event_id = auto_event["event_id"]
-                        if auto_event.get("sport_id"):
-                            market.sport_id = auto_event["sport_id"]
+                        _set_market_sport_fields(market, auto_event)
                         stats["newly_linked"] += 1
                         stats["funnel"]["linked"] += 1
                         stats["funnel"].setdefault("auto_created_events", 0)
@@ -429,8 +452,7 @@ async def _match_prediction_markets(limit: int = 500):
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
-                if matched_event.get("sport_id"):
-                    market.sport_id = matched_event["sport_id"]
+                _set_market_sport_fields(market, matched_event)
                 stats["newly_linked"] += 1
                 stats["funnel"]["linked"] += 1
                 logger.info(
@@ -455,8 +477,7 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                     if auto_event:
                         market.event_id = auto_event["event_id"]
-                        if auto_event.get("sport_id"):
-                            market.sport_id = auto_event["sport_id"]
+                        _set_market_sport_fields(market, auto_event)
                         stats["newly_linked"] += 1
                         stats["funnel"]["linked"] += 1
                         stats["funnel"].setdefault("auto_created_events", 0)
@@ -537,6 +558,13 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["funnel"].setdefault("sport_id_backfilled", 0)
                     stats["funnel"]["sport_id_backfilled"] += 1
 
+                # Fix wrong llm_sport_category from ticker
+                ticker_cat = _derive_sport_category(market.external_id)
+                if ticker_cat and market.llm_sport_category != ticker_cat:
+                    market.llm_sport_category = ticker_cat
+                    stats["funnel"].setdefault("sport_category_fixed", 0)
+                    stats["funnel"]["sport_category_fixed"] += 1
+
                 if not is_game_level_market(
                     market.name, market.category,
                     external_id=market.external_id,
@@ -604,8 +632,7 @@ async def _match_prediction_markets(limit: int = 500):
                         )
                         stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = better_match["event_id"]
-                    if better_match.get("sport_id"):
-                        market.sport_id = better_match["sport_id"]
+                    _set_market_sport_fields(market, better_match)
                     if is_auto_created:
                         stats["funnel"].setdefault("auto_created_relinked", 0)
                         stats["funnel"]["auto_created_relinked"] += 1
