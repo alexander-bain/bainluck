@@ -6977,8 +6977,10 @@ async def operations_dashboard(
     day_of_month = today.day
     days_remaining = days_in_month - day_of_month
 
-    # 48h pace: average daily burn over last 48 hours of data
-    recent_daily = [d for d in daily_usage if d["daily_requests"] > 0][-2:]
+    # 48h pace: average daily burn over last 2 COMPLETE days (exclude today's partial)
+    today_str = today.isoformat()
+    complete_days = [d for d in daily_usage if d["daily_requests"] > 0 and d["date"] != today_str]
+    recent_daily = complete_days[-2:] if len(complete_days) >= 2 else complete_days[-1:] if complete_days else []
     pace_48h = sum(d["daily_requests"] for d in recent_daily) / max(len(recent_daily), 1)
     projected_eom = (quota.get("used", 0) or 0) + int(pace_48h * days_remaining)
 
