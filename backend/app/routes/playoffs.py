@@ -2860,37 +2860,8 @@ async def get_playoff_grid(
     # log a warning. For championship column specifically, reject teams
     # with > 50% single-source probability as likely misclassified.
 
-    _EXPECTED_SUMS = {
-        "championship": 1.0,
-        "conference": 2.0,  # 2 conference champions
-        "pennant": 2.0,     # 2 pennant winners
-    }
-    for col in config.columns:
-        col_sum = sum(
-            t["cells"].get(col.key, {}).get("merged_probability", 0)
-            for t in teams
-        )
-        expected = _EXPECTED_SUMS.get(col.key)
-        if not expected:
-            continue
-        if col_sum > expected * 2.5:
-            logger.warning(
-                "Column %s sum=%.1f%% exceeds 2.5× expected %.0f%% for %s — "
-                "possible misclassified markets",
-                col.key, col_sum * 100, expected * 100, config.slug,
-            )
-        elif 0 < col_sum < expected * 0.85:
-            scale = expected / col_sum
-            logger.info(
-                "Normalizing %s column from %.1f%% to %.0f%% (×%.2f) for %s",
-                col.key, col_sum * 100, expected * 100, scale, config.slug,
-            )
-            for t in teams:
-                cell = t["cells"].get(col.key)
-                if cell and cell.get("merged_probability") is not None:
-                    cell["merged_probability"] = round(cell["merged_probability"] * scale, 4)
-                    for src in cell.get("sources", []):
-                        src["probability"] = round(src["probability"] * scale, 4)
+    from app.utils.playoff_grid import normalize_column_sums
+    normalize_column_sums(teams, config.columns, config.slug)
 
     # -----------------------------------------------------------------------
     # 4c. Apply admin exclude overrides
@@ -2967,40 +2938,15 @@ async def get_playoff_grid(
     # 5. Sort teams
     # -----------------------------------------------------------------------
 
-    def _sort_key(team_row):
-        champ_prob = (
-            team_row["cells"]
-            .get(championship_col, {})
-            .get("merged_probability", 0)
-        )
-        return -champ_prob  # descending
-
-    teams.sort(key=_sort_key)
-
-    # Cap at max_teams
-    teams = teams[: config.max_teams]
+    from app.utils.playoff_grid import sort_teams_by_championship
+    teams = sort_teams_by_championship(teams, championship_col, config.max_teams)
 
     # -----------------------------------------------------------------------
     # 6. Compute biggest movers (top 5 up, top 5 down)
     # -----------------------------------------------------------------------
 
-    movers = []
-    for team_row in teams:
-        champ_cell = team_row["cells"].get(championship_col)
-        if champ_cell and champ_cell.get("trend_24h") is not None:
-            movers.append({
-                "name": team_row["name"],
-                "short_name": team_row["short_name"],
-                "team_id": team_row["team_id"],
-                "column": championship_col,
-                "change_24h": champ_cell["trend_24h"],
-                "direction": "up" if champ_cell["trend_24h"] > 0 else "down",
-                "logo_url": team_row.get("logo_url"),
-                "primary_color": team_row.get("primary_color"),
-            })
-
-    movers.sort(key=lambda m: abs(m["change_24h"]), reverse=True)
-    movers = movers[:10]
+    from app.utils.playoff_grid import compute_movers
+    movers = compute_movers(teams, championship_col)
 
     # -----------------------------------------------------------------------
     # 7. Build trend chart for top N teams
