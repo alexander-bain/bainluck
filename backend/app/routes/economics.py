@@ -143,6 +143,48 @@ def _modal_bracket(brackets: list[list]) -> tuple[int, float, str]:
     return best_idx, best_prob, best_label
 
 
+def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
+    """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
+
+    Kalshi economics markets use cumulative outcomes (P(above 3%), P(above 3.5%)).
+    We need P(exactly 3-3.5%) = P(above 3%) - P(above 3.5%).
+    Returns [[prob, label], ...] with at most max_buckets entries.
+    """
+    raw = []
+    for o in outcomes:
+        p = float(o.current_probability or 0) * 100
+        label = (o.name or "").strip()
+        # Extract numeric threshold for sorting
+        import re
+        nums = re.findall(r'[\d.]+', label)
+        sort_val = float(nums[0]) if nums else 0
+        raw.append((p, label, sort_val))
+
+    # Sort by threshold ascending
+    raw.sort(key=lambda x: x[2])
+
+    # Convert cumulative to discrete
+    discrete = []
+    for i in range(len(raw)):
+        cum_p = raw[i][0]
+        next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
+        bracket_p = round(cum_p - next_p, 1)
+        if bracket_p > 0.5:
+            # Create readable label: "3.0-3.5%" instead of "Above 3.0%"
+            label = raw[i][1].replace("Above ", "").strip()
+            if i + 1 < len(raw):
+                next_label = raw[i + 1][1].replace("Above ", "").strip()
+                label = f"{label}–{next_label}"
+            discrete.append([bracket_p, label])
+
+    # Keep only the top buckets by probability for readability
+    discrete.sort(key=lambda x: x[0], reverse=True)
+    top = discrete[:max_buckets]
+    # Re-sort by label for display
+    top.sort(key=lambda x: x[1])
+    return top
+
+
 # ---------------------------------------------------------------------------
 # Main endpoint
 # ---------------------------------------------------------------------------
@@ -188,6 +230,11 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
     gov_markets = themed.get("government", [])
 
     # --- Fed rates section ---
+    _MONTH_ORDER = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+
     fomc_meetings = []
     rate_cuts = []
     rate_side = []
@@ -196,19 +243,50 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
         ext_lower = (m.external_id or "").lower()
         outcomes = _outcomes_sorted(m)
         if "fed funds rate after" in name_lower and len(outcomes) >= 3:
-            brackets = _brackets_from_outcomes(m)
-            modal_idx, _, _ = _modal_bracket(brackets)
+            # Convert cumulative "Above X%" outcomes to discrete brackets
+            raw = []
+            for o in outcomes:
+                p = float(o.current_probability or 0) * 100
+                label = (o.name or "").strip()
+                raw.append((p, label))
+            # Sort by threshold value descending (highest rate first)
+            raw.sort(key=lambda x: x[1], reverse=True)
+            # Convert cumulative to discrete: P(exactly X) = P(above X) - P(above X+1)
+            discrete = []
+            for i, (cum_p, label) in enumerate(raw):
+                next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
+                bracket_p = round(cum_p - next_p, 1)
+                if bracket_p > 0:
+                    rate_label = label.replace("Above ", "").strip()
+                    discrete.append([bracket_p, rate_label])
+            # Sort discrete brackets by rate descending
+            discrete.sort(key=lambda x: x[1], reverse=True)
+
+            date_str = m.name.split("after ")[-1].split("?")[0].strip() if "after" in (m.name or "") else ""
+            mo = date_str.split(" ")[0] if date_str else ""
+            # Extract year for sorting (e.g., "Jun 2026" → 202606)
+            parts = date_str.split()
+            sort_key = 0
+            if len(parts) >= 2:
+                year = int(parts[1]) if parts[1].isdigit() else 2026
+                month_num = _MONTH_ORDER.get(mo[:3].lower(), 0)
+                sort_key = year * 100 + month_num
+
             fomc_meetings.append({
-                "date": m.name.split("after ")[-1].split("?")[0].strip() if "after" in (m.name or "") else "",
-                "mo": m.name.split("after ")[-1].split(" ")[0] if "after" in (m.name or "") else "",
-                "dist": brackets,
+                "date": date_str,
+                "mo": mo,
+                "dist": discrete,
                 "resolved": m.status in ("resolved", "closed"),
                 "market_id": m.id,
+                "sort_key": sort_key,
             })
         elif "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
             rate_cuts = _brackets_from_outcomes(m)
         else:
             rate_side.append(_market_row(m))
+
+    # Sort FOMC meetings chronologically
+    fomc_meetings.sort(key=lambda x: x.get("sort_key", 0))
 
     # --- Inflation section ---
     cpi_releases = []
@@ -216,8 +294,15 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
     for m in inflation_markets:
         name_lower = (m.name or "").lower()
         outcomes = _outcomes_sorted(m)
+        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
         if ("cpi" in name_lower or "inflation" in name_lower) and len(outcomes) >= 3:
-            brackets = _brackets_from_outcomes(m)
+            if has_cumulative:
+                brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
+            else:
+                brackets = _brackets_from_outcomes(m)
+            if not brackets:
+                inflation_side.append(_market_row(m))
+                continue
             modal_idx, _, _ = _modal_bracket(brackets)
             cpi_releases.append({
                 "mo": m.name,
@@ -248,12 +333,17 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                 rec_main_prob = round(float(outcomes[0].current_probability or 0) * 100, 1)
             rec_side.append(_market_row(m))
         elif "gdp" in name_lower and len(outcomes) >= 3:
-            brackets = _brackets_from_outcomes(m)
-            gdp_quarters.append({
-                "q": m.name,
-                "dist": brackets,
-                "market_id": m.id,
-            })
+            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+            if has_cumulative:
+                brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
+            else:
+                brackets = _brackets_from_outcomes(m)
+            if brackets:
+                gdp_quarters.append({
+                    "q": m.name,
+                    "dist": brackets,
+                    "market_id": m.id,
+                })
         else:
             rec_side.append(_market_row(m))
 
@@ -293,28 +383,41 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
     oil_rows = []
     for m in energy_markets:
         name_lower = (m.name or "").lower()
-        if "gas" in name_lower and len(_outcomes_sorted(m)) >= 3:
-            brackets = _brackets_from_outcomes(m)
-            _, modal_prob, modal_label = _modal_bracket(brackets)
-            gas_markets_list.append({
-                "label": m.name,
-                "val": modal_label,
-                "prob": modal_prob,
-                "brackets": brackets,
-                "src": _source(m),
-            })
-        elif "oil" in name_lower or "wti" in name_lower or "brent" in name_lower:
-            if len(_outcomes_sorted(m)) >= 3:
+        outcomes = _outcomes_sorted(m)
+        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+        if ("gas" in name_lower or "oil" in name_lower or "wti" in name_lower or "brent" in name_lower or "natural gas" in name_lower) and len(outcomes) >= 3:
+            if has_cumulative:
+                brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
+            else:
                 brackets = _brackets_from_outcomes(m)
-                _, modal_prob, modal_label = _modal_bracket(brackets)
+            if not brackets:
+                oil_rows.append(_market_row(m))
+                continue
+            _, modal_prob, modal_label = _modal_bracket(brackets)
+            # Shorten the label
+            short_label = m.name
+            if len(short_label) > 40:
+                for trim in [" on ", " at ", " for ", " in "]:
+                    if trim in short_label.lower():
+                        short_label = short_label[:short_label.lower().index(trim)]
+                        break
+            if "gas" in name_lower:
+                gas_markets_list.append({
+                    "label": short_label,
+                    "val": modal_label,
+                    "prob": modal_prob,
+                    "brackets": brackets,
+                    "src": _source(m),
+                })
+            else:
                 oil_rows.append({
                     "sym": "WTI" if "wti" in name_lower else "Brent" if "brent" in name_lower else "Oil",
                     "prob": modal_prob,
                     "range": modal_label,
                     "src": _source(m),
+                    "q": short_label,
                 })
-            else:
-                oil_rows.append(_market_row(m))
+            continue
         else:
             oil_rows.append(_market_row(m))
 

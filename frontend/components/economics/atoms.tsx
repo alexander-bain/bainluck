@@ -132,8 +132,8 @@ export function MarketRow({ q, prob, src, delta }: {
   const col = probColor(prob);
   return (
     <div className="grid items-center gap-3 py-2.5 border-t border-[#F3F4F6]"
-      style={{ gridTemplateColumns: "1fr 100px 50px 36px" }}>
-      <div className="text-[13px] text-[#374151] leading-snug truncate">{q}</div>
+      style={{ gridTemplateColumns: "1fr 80px 44px 36px" }}>
+      <div className="text-[13px] text-[#374151] leading-snug">{q}</div>
       <ProbBar value={prob} color={col} height={5} />
       <span className="font-mono text-[13px] font-semibold text-right" style={{ color: col }}>
         {Math.round(prob)}%
