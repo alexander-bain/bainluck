@@ -21,7 +21,7 @@ router = APIRouter()
 
 def _check_admin_secret(secret: str) -> bool:
     """Verify admin secret for protected endpoints."""
-    expected = os.getenv("ADMIN_SECRET")
+    expected = os.getenv("ADMIN_SECRET") or os.getenv("ADMIN_TOKEN")
     if not expected:
         return False
     return secret == expected
