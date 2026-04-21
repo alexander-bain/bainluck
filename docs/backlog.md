@@ -126,9 +126,15 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ## Tier 2 — Important But Bigger Scope
 
-### 5. Break Up God Functions + Large Route Files
+### 6. Break Up God Functions + Large Route Files (continued)
 
-**Problem:** 15 functions over 300 lines (3 over 800). 5 route files over 2,000 lines (`admin.py` alone is 8,684). These mix querying, business logic, data transformation, and response formatting in one scope. Debugging is archaeology; refactoring is risky without route-level tests (see Item 9).
+**Shipped April 21 — first pass on 4 god functions:**
+- `_score_events` (466→~300 lines) → `utils/feed_scoring.py` + 15 tests
+- `_sync_espn_live_events` (897 lines) → 5 module-level helpers + 16 tests
+- `get_playoff_grid` (862→~780 lines) → `utils/playoff_grid.py` + 25 tests
+- `get_related_futures` (783→~750 lines) → `utils/related_futures.py` + 11 tests
+
+**Remaining (deeper extraction or new targets):**
 
 **Prerequisite:** Do Item 9 (API Route Contract Tests) first for the endpoint you're about to refactor. Otherwise you're refactoring blind.
 

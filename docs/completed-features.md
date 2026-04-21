@@ -24,6 +24,13 @@
 - ✅ NHL grid health: 97 → 100/100
 - ✅ Overall grid health: 62 → ~95/100
 
+**God Function Refactoring — First Pass (Item 6):**
+- ✅ `_score_events` (feed.py, 466 lines) → `utils/feed_scoring.py` — scoring + formatting extracted, 15 tests
+- ✅ `_sync_espn_live_events` (espn_sync.py, 897 lines) → 5 module-level matching helpers, 16 tests
+- ✅ `get_playoff_grid` (playoffs.py, 862 lines) → `utils/playoff_grid.py` — normalization, movers, sorting, filtering, 25 tests
+- ✅ `get_related_futures` (events.py, 783 lines) → `utils/related_futures.py` — cross-source dedup, 11 tests
+- Total: 67 new tests, 3 new utility modules, all 4 highest-priority god functions addressed
+
 **API Client Base Class (Item 4):**
 - ✅ `BaseAPIClient` in `services/base_api.py` — shared httpx.AsyncClient setup + close()
 - ✅ Applied to 5 services: OddsAPI, Kalshi, DataGolf, MLB, StatPal
