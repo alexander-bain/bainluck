@@ -24,6 +24,12 @@
 - ✅ NHL grid health: 97 → 100/100
 - ✅ Overall grid health: 62 → ~95/100
 
+**Player Prop Headshots (R1):**
+- ✅ MLB roster sync now stores rich dicts with headshot URLs (was plain name strings — only ESPN-synced sports had headshots)
+- ✅ `mlb_api.get_team_roster()` returns player dicts with MLB Stats API headshot CDN URLs
+- ✅ NBA/NHL/NFL headshots already worked (ESPN sync path). All 4 major sports now covered.
+- Root cause: MLB used a separate sync path (MLB Stats API) that stored `["Mike Trout"]` instead of `[{"name": "Mike Trout", "headshot": "https://..."}]`. The `player_metadata` builder in `events.py` only matched dict entries.
+
 **Grid Matching Fixes:**
 - ✅ Play-in tournament markets excluded from grid (was contaminating conference column with "Eastern Conference Play-In" at 3.5% vs real conference champion at 42%)
 - ✅ Audit disagreement threshold: 15pp→25pp critical, 15pp warning (genuine Kalshi vs Polymarket pricing differences no longer tank health score)

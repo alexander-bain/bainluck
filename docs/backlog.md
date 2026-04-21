@@ -72,11 +72,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ---
 
-### 2. Player Prop Headshots (R1)
-**Status:** Name matching shipped April 19 (stat suffix stripping). Headshots still not appearing — the API response doesn't include `espn_player_id` or `headshot_url` from the `player_metadata` dict built in `routes/events.py`.
-**Fix:** 2 lines in backend (add fields to response dict) + 2 lines in frontend (pass props through to PlayerStatCard).
-**Files:** `routes/events.py` (~L3050), `frontend/components/RelatedFutures.tsx` (StatPropsSection)
-**Parallel Safety:** Yellow
+### 2. Player Prop Headshots (R1) — **SHIPPED April 20**
 
 ---
 
