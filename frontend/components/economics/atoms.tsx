@@ -128,15 +128,21 @@ export function MarketRow({ q, prob, src, delta }: {
 }) {
   const col = probColor(prob);
   return (
-    <div className="flex items-center gap-2.5 py-2 border-t border-[#F3F4F6]">
-      <div className="flex-1 text-[13px] text-[#374151] leading-snug min-w-0">{q}</div>
-      <div className="w-[72px] h-[14px] bg-[#F3F4F6] rounded-full overflow-hidden shrink-0">
-        <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 3)}%`, background: col }} />
+    <div className="py-2.5 border-t border-[#F3F4F6]">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex-1 text-[13px] text-[#374151] leading-snug min-w-0">{q}</div>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-[80px] h-[4px] bg-[#F3F4F6] rounded-full overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 3)}%`, background: col }} />
+          </div>
+          <span className="font-mono text-[18px] font-semibold w-[48px] text-right" style={{ color: col }}>
+            {Math.round(prob)}%
+          </span>
+        </div>
       </div>
-      <span className="font-mono text-[13px] font-semibold w-[38px] text-right shrink-0" style={{ color: col }}>
-        {Math.round(prob)}%
-      </span>
-      <div className="shrink-0"><SourceChip src={src} /></div>
+      <div className="flex items-center gap-1.5 mt-1">
+        <SourceChip src={src} />
+      </div>
     </div>
   );
 }
