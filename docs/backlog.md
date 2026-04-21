@@ -82,6 +82,47 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ### 4. API Client Base Class — **SHIPPED April 21**
 
+### 5. Observability Tool Access — **DO TODAY**
+
+**Problem:** Claude Code has zero programmatic access to Sentry, Heroku, GitHub CI, or Vercel. Every triage requires Alex to manually paste info.
+
+**Setup (requires Alex to run interactive login):**
+
+| Priority | Tool | What it enables | Setup |
+|----------|------|----------------|-------|
+| 1 | **Heroku CLI** | Prod logs, DB queries, dyno status | `brew install heroku/brew/heroku && heroku login` |
+| 2 | **Sentry API** | Query issues, stack traces programmatically | Generate token at sentry.io → Settings → API Keys → `SENTRY_AUTH_TOKEN` env var |
+| 3 | **GitHub CLI** | CI status, workflow runs | `brew install gh && gh auth login` |
+| 4 | **Vercel CLI** | Deploy status, build logs | `npm i -g vercel && vercel login` |
+
+**Parallel Safety:** Green
+
+---
+
+## Active Sentry Issues (April 21, 2026)
+
+| ID | Severity | Root Cause | Disposition |
+|----|----------|-----------|-------------|
+| **BAINLUCK-JM** (stat_model error) | Low | Handled exception in `espn_sync.py:628`. Edge-case game states. Caught and logged. | **Archive** |
+| **BAINLUCK-JK** (DBAPIError) | **High** | Task engines in `base.py:24` have no pool limits. 6 workers × default 15 = 90 connections + 25 web = 115 vs 120 limit. | **Fix now** — add `pool_size=3, max_overflow=5, pool_recycle=1800` to task engine |
+| **BAINLUCK-JH** (digest) | N/A | Sentry digest notification, not a distinct error. | **Archive** |
+| **BAINLUCK-JG** (AttributeError) | Medium | `scalar_one_or_none()` returning None without null guard. Need stack trace to pinpoint exact line. | **Backlog** — blanket null guards in task files |
+| **TooManyConnections** (WM polling) | Medium | Session held during API call (`wrestlemania.py:22→67`) + no pool limits. Event is over. | **Fix now** — remove WM polling + archive code |
+
+**Session-leak audit:** 3 files hold sessions during API calls (`wrestlemania.py`, `odds_polling.py:462→613`, `espn_sync.py:~254→325`). 8 files use the correct pattern. Fix order: pool limits first, then refactor hold-during-API as part of god function work (Item 6).
+
+---
+
+## Triage Process
+
+**Cadence:** Weekly Sentry scan. Production-down alerts get immediate attention.
+
+**3 buckets:** (1) **Fix now** — user-visible or >10 events/day → Tier 1. (2) **Backlog** — recurring but low-frequency → Tier 2/3. (3) **Archive** — handled exceptions, digests, transient → resolve in Sentry.
+
+**Preventing silent CI breakage:** Enable GitHub branch protection on `master` requiring CI status check. Repo → Settings → Branches → Require status checks.
+
+**Integration:** Active issues live in the section above. Fixed → Shipped Architecture. Archived → remove.
+
 ---
 
 ## Tier 2 — Important But Bigger Scope
@@ -437,7 +478,10 @@ Full writeup: `.claude/plans/mutable-cooking-ember.md`
 
 ## Housekeeping
 
-- **April 21**: Remove WrestleMania code (throwaway prediction game, event is over)
-- **May 1**: Delete `frontend/_to-delete/` and `docs/archive/` if nothing broke
+### WrestleMania Archive + Code Removal
+**Archive patterns** to `docs/archive/wrestlemania-reference.md` (Polymarket polling, pick/bankroll math, win probability enumeration, LLM commentary, odds snapshot history). **Delete runtime code**: `tasks/wrestlemania.py`, `routes/wrestlemania.py`, `models/wrestlemania.py`, `utils/wrestlemania_scoring.py`, `services/wrestlemania_polymarket.py`, `frontend/components/wrestlemania/`, `frontend/app/wrestlemania/`. Remove from route imports + beat schedule + nav. Keep DB tables + Alembic migration. This is NOT about stopping WWE futures polling — regular Kalshi/PM/Odds API sweeps cover WWE markets. The WM code was a custom prediction game.
+
+### Other
+- **May 1**: Delete `frontend/_to-delete/` if nothing broke
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
-- Clean up ~90 remote git branches (old feature/claude branches from Jan-Mar 2026)
+- Clean up ~90 remote git branches
