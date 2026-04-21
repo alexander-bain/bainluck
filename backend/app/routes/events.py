@@ -3257,39 +3257,9 @@ async def get_related_futures(
     # list there's at most one entry per merge group per source.
     # Division winners use dynamic keys like "atlantic_division" —
     # match with suffix check.
-    _PER_TEAM_MERGE_GROUPS = {
-        "win_total", "make_playoffs", "make_nfl_playoffs",
-        "make_nhl_playoffs", "make_mlb_playoffs",
-    }
-    _PER_TEAM_MERGE_SUFFIXES = ("_division", "_conf_champion", "_conf_1_seed", "_conf_playin")
-
-    def _dedup_by_merge_group(futures: list[dict]) -> list[dict]:
-        groups: dict[tuple, list[dict]] = {}
-        ungrouped: list[dict] = []
-        for f in futures:
-            mg = f.get("merge_group")
-            if mg:
-                if mg in _PER_TEAM_MERGE_GROUPS or mg.endswith(_PER_TEAM_MERGE_SUFFIXES):
-                    key = (mg,)
-                else:
-                    key = (mg, f["outcome_name"].lower())
-                groups.setdefault(key, []).append(f)
-            else:
-                ungrouped.append(f)
-        result = list(ungrouped)
-        for entries in groups.values():
-            if len(entries) == 1:
-                result.append(entries[0])
-            else:
-                # Keep the one with highest bookmaker count (most reliable)
-                entries.sort(key=lambda x: x.get("bookmaker_count", 0), reverse=True)
-                winner = entries[0]
-                winner["all_sources"] = list({e["source"] for e in entries if e.get("source")})
-                result.append(winner)
-        return result
-
-    home_futures = _dedup_by_merge_group(home_futures)
-    away_futures = _dedup_by_merge_group(away_futures)
+    from app.utils.related_futures import dedup_by_merge_group
+    home_futures = dedup_by_merge_group(home_futures)
+    away_futures = dedup_by_merge_group(away_futures)
 
     # ── Enrich matchup outcomes with team logos ───────────────────
     # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
