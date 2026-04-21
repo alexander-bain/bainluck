@@ -250,7 +250,7 @@ export default function EconomicsPage() {
                       )}
                     </div>
                     {cpi.brackets && (
-                      <Histogram buckets={cpi.brackets} color="#10B981" height={60} />
+                      <Histogram buckets={cpi.brackets.slice(0, 8)} color="#10B981" />
                     )}
                   </div>
                 ))}
@@ -312,11 +312,11 @@ export default function EconomicsPage() {
                   <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
                     Quarterly GDP growth expectations
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     {t.recession.gdp_quarters.map((gdp: any, i: number) => (
                       <div key={i} className="border border-[#E5E7EB] rounded-xl p-3">
                         <div className="text-xs font-semibold text-[#374151] mb-2">{gdp.q}</div>
-                        <Histogram buckets={gdp.dist || []} color="#10B981" height={60} />
+                        <Histogram buckets={(gdp.dist || []).slice(0, 6)} color="#10B981" />
                       </div>
                     ))}
                   </div>
