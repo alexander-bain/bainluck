@@ -41,3 +41,5 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 43. **Admin daily burn chart uses two counting systems** — The official count (`x-requests-used` header) and the per-task incremental tracking can diverge. The chart scales task proportions to match the official total to prevent retroactive shrinking.
 
 44. **EOM quota forecast must exclude today's partial day** — Using today's incomplete data in the trailing average makes the forecast artificially optimistic as the day progresses. Always use the two most recent *complete* days.
+
+45. **Admin auth env var is `ADMIN_TOKEN`, not `ADMIN_SECRET`** — Heroku has `ADMIN_TOKEN` set. The code checks `ADMIN_TOKEN` first, with `ADMIN_SECRET` as fallback. When referencing the admin secret in code, documentation, or curl commands, use `ADMIN_TOKEN`. This mismatch caused a production lockout on April 21, 2026 when a security fix defaulted to False on missing `ADMIN_SECRET` (which was never set — only `ADMIN_TOKEN` existed).

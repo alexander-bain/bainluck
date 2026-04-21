@@ -73,7 +73,7 @@ There are 3 layers of matching, each with its own measurement:
 ```
 https://bainluck.com/admin              — Operations dashboard
 https://api.bainluck.com/docs           — API docs (Swagger)
-https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_SECRET  — Link rate health
+https://api.bainluck.com/api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN  — Link rate health
 ```
 
 ---
@@ -251,7 +251,7 @@ When fixing ANY data quality, matching, or display issue:
 | Admin dashboard | https://bainluck.com/admin |
 | Weather page | https://bainluck.com/weather |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
-| Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_SECRET` |
+| Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_TOKEN` |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` |
 | API docs | https://api.bainluck.com/docs |
 | Backlog | `docs/backlog.md` |
