@@ -285,25 +285,38 @@ async def _sync_mlb_rosters_impl(session, Team, sport_id: int, service) -> dict:
             unmatched_mlb.append(mlb_name)
             continue
 
-        # Fetch roster
-        player_names = await service.get_team_roster(mlb_id)
+        # Fetch roster (returns dicts with name, position, headshot)
+        roster = await service.get_team_roster(mlb_id)
 
-        # Add ASCII variants
-        all_names = []
-        for name in player_names:
-            all_names.extend(_player_names_with_ascii(name))
+        all_entries: list = []
+        seen_names = set()
+        for player in roster:
+            name = player.get("name") if isinstance(player, dict) else player
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
 
-        unique_names = sorted(set(all_names))
+            if isinstance(player, dict):
+                all_entries.append(player)
+            else:
+                all_entries.append({"name": name})
 
-        if unique_names:
+            ascii_name = _strip_diacritics(name)
+            if ascii_name != name and ascii_name not in seen_names:
+                seen_names.add(ascii_name)
+                all_entries.append(ascii_name)
+
+        all_entries.sort(key=lambda x: x["name"] if isinstance(x, dict) else x)
+
+        if all_entries:
             await session.execute(
                 update(Team)
                 .where(Team.id == db_team.id)
-                .values(roster_players=unique_names)
+                .values(roster_players=all_entries)
             )
             updated += 1
-            total_player_names += len(unique_names)
-            logger.info(f"  MLB: {mlb_name} → team_id={db_team.id}, {len(unique_names)} players")
+            total_player_names += len(all_entries)
+            logger.info(f"  MLB: {mlb_name} → team_id={db_team.id}, {len(all_entries)} players")
         else:
             logger.warning(f"  MLB: {mlb_name} → empty roster from API")
 

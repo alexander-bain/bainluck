@@ -265,15 +265,15 @@ class MLBAPIService:
 
         return data.get("teams", [])
 
-    async def get_team_roster(self, team_id: int) -> list[str]:
+    async def get_team_roster(self, team_id: int) -> list[dict]:
         """
-        Get active roster player names for an MLB team.
+        Get active roster players for an MLB team.
 
         Args:
             team_id: MLB team ID.
 
         Returns:
-            List of player full names.
+            List of player dicts with name, position, and headshot URL.
         """
         try:
             resp = await self.client.get(
@@ -286,13 +286,21 @@ class MLBAPIService:
             logger.error(f"MLB roster fetch failed for team {team_id}: {e}")
             return []
 
-        names = []
+        players = []
         for entry in data.get("roster", []):
             person = entry.get("person", {})
             name = person.get("fullName")
-            if name:
-                names.append(name)
-        return names
+            mlb_id = person.get("id")
+            if not name:
+                continue
+            player: dict = {"name": name}
+            position = entry.get("position", {}).get("abbreviation")
+            if position:
+                player["position"] = position
+            if mlb_id:
+                player["headshot"] = f"https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/{mlb_id}/headshot/67/current"
+            players.append(player)
+        return players
 
     async def find_game_pk_for_teams(
         self,
