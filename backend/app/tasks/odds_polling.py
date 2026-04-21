@@ -788,8 +788,9 @@ async def _poll_all_odds():
                 if sport_key in ESPN_SPORT_MAPPING:
                     unmatched = await session.execute(
                         select(func.count(Event.id))
+                        .join(Sport)
                         .where(
-                            Event.sport_key == sport_key,
+                            Sport.key == sport_key,
                             Event.commence_time <= now,
                             Event.commence_time >= now - timedelta(days=3),
                             Event.status.in_(["scheduled", "live"]),
