@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
+
+from app.services.base_api import BaseAPIClient
 from pydantic import BaseModel
 
 
@@ -52,28 +54,22 @@ class FuturesMarketData(BaseModel):
     outcomes: list[FuturesOutcomeData]
 
 
-class OddsAPIService:
+class OddsAPIService(BaseAPIClient):
     """Service for interacting with The Odds API."""
 
     BASE_URL = "https://api.the-odds-api.com/v4"
 
-    # No sports are excluded - all sports from the API are included
     EXCLUDED_PREFIXES: list[str] = []
     EXCLUDED_KEYWORDS: list[str] = []
-    
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize with API key from env or parameter."""
         self.api_key = api_key or os.getenv("ODDS_API_KEY")
         if not self.api_key:
             raise ValueError("ODDS_API_KEY not set")
-
-        self.client = httpx.AsyncClient(timeout=30.0)
+        super().__init__(timeout=30.0)
         self.last_requests_remaining: Optional[int] = None
         self.last_requests_used: Optional[int] = None
-    
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
 
     def _capture_quota(self, response: httpx.Response):
         """Extract quota headers from any API response."""

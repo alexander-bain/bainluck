@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+
+from app.services.base_api import BaseAPIClient
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -99,24 +101,19 @@ from app.utils.name_normalization import strip_diacritics
 # API service
 # ---------------------------------------------------------------------------
 
-class DataGolfAPIService:
+class DataGolfAPIService(BaseAPIClient):
     """Service for interacting with DataGolf's API."""
 
     BASE_URL = "https://feeds.datagolf.com"
 
-    # Supported tours
     TOURS = ["pga", "euro", "kft", "liv", "opp", "alt"]
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("DATAGOLF_API_KEY")
-        self.client = httpx.AsyncClient(
+        super().__init__(
             timeout=30.0,
             headers={"Accept": "application/json"},
         )
-
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
 
     # -- Core HTTP helper --------------------------------------------------
 

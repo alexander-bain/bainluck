@@ -27,6 +27,8 @@ from typing import Optional
 
 import httpx
 
+from app.services.base_api import BaseAPIClient
+
 logger = logging.getLogger(__name__)
 
 # Base URLs (v1 for American sports, v2 for soccer)
@@ -129,38 +131,25 @@ def is_available() -> bool:
     return bool(os.getenv("STATPAL_API_KEY"))
 
 
-class StatPalAPIService:
+class StatPalAPIService(BaseAPIClient):
     """
     Client for the StatPal sports data API.
 
     Provides access to schedules, rosters, injuries, play-by-play, and
     live scores across NFL, NBA, MLB, NHL, soccer, and more.
-
-    Usage:
-        service = StatPalAPIService()
-        try:
-            fixtures = await service.get_fixtures("nfl")
-            rosters = await service.get_roster("nfl", team_id="123")
-            injuries = await service.get_injuries("nba")
-        finally:
-            await service.close()
     """
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("STATPAL_API_KEY", "")
         if not self.api_key:
             logger.warning("STATPAL_API_KEY not set — StatPal API calls will fail")
-        self.client = httpx.AsyncClient(
+        super().__init__(
             timeout=20.0,
             headers={
                 "Accept": "application/json",
                 "User-Agent": "BainLuck/1.0 (sports odds visualization)",
             },
         )
-
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
 
     def _base_url(self, sport: str) -> str:
         """Return the correct base URL for the sport (v2 for soccer, v1 for all else)."""

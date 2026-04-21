@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
+
+from app.services.base_api import BaseAPIClient
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -59,44 +61,23 @@ class KalshiEvent(BaseModel):
     markets: list[KalshiMarket] = []
 
 
-class KalshiAPIService:
+class KalshiAPIService(BaseAPIClient):
     """Service for interacting with Kalshi's Trading API."""
 
-    # Production API (despite "elections" in URL, serves all markets)
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-    # Top-level Kalshi category for sports
     SPORTS_CATEGORIES = ["Sports"]
-
-    # Tags (subcategories) to additionally search within Sports.
-    # Kalshi's series endpoint supports tags filtering for subcategories
-    # (e.g., Olympics is a tag under Sports, not a top-level category).
     SPORTS_TAGS = ["Olympics", "Winter Olympics", "Football", "Basketball", "Baseball", "Hockey", "Golf", "Tennis", "Soccer"]
 
     def __init__(self, api_key: Optional[str] = None):
-        """
-        Initialize with API key from env or parameter.
-
-        Kalshi API key should be set as KALSHI_API_KEY environment variable.
-        """
         self.api_key = api_key or os.getenv("KALSHI_API_KEY")
-
-        # Build headers
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-
-        self.client = httpx.AsyncClient(
-            timeout=30.0,
-            headers=headers,
-        )
-
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
+        super().__init__(timeout=30.0, headers=headers)
 
     async def get_events(
         self,

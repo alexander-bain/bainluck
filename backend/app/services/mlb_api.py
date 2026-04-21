@@ -21,6 +21,7 @@ from typing import Optional
 
 import httpx
 
+from app.services.base_api import BaseAPIClient
 from app.utils.name_normalization import names_match
 
 logger = logging.getLogger(__name__)
@@ -58,22 +59,11 @@ class MLBWinProbEntry:
     description: Optional[str] = None
 
 
-class MLBAPIService:
-    """
-    Client for MLB's Stats API.
-
-    Usage:
-        service = MLBAPIService()
-        try:
-            games = await service.get_live_games()
-            for game in games:
-                wp = await service.get_win_probability(game.game_pk)
-        finally:
-            await service.close()
-    """
+class MLBAPIService(BaseAPIClient):
+    """Client for MLB's Stats API."""
 
     def __init__(self):
-        self.client = httpx.AsyncClient(
+        super().__init__(
             base_url=BASE_URL,
             timeout=15.0,
             headers={
@@ -81,10 +71,6 @@ class MLBAPIService:
                 "User-Agent": "BainLuck/1.0 (sports odds visualization)",
             },
         )
-
-    async def close(self):
-        """Close HTTP client."""
-        await self.client.aclose()
 
     async def get_todays_games(self, date: Optional[str] = None) -> list[dict]:
         """
