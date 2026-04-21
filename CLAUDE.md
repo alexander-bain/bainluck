@@ -200,6 +200,31 @@ team_identity_mapping — Cross-source team identity index
 
 ---
 
+## Session Startup: Health Check
+
+At the start of every session, run a quick production health scan (~10 seconds):
+
+```bash
+# 1. Sentry — new/high-frequency errors since last session
+export SENTRY_AUTH_TOKEN="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"
+curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+  "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=5&sort=date" \
+  | python3 -c "import json,sys; [print(f'  {i[\"shortId\"]:12s} {i[\"count\"]:>5s} evts  {i[\"title\"][:60]}') for i in json.load(sys.stdin)]"
+
+# 2. Heroku — dyno status + DB connections
+heroku apps:info -a bainluck 2>&1 | grep "Dynos:"
+heroku pg:info -a bainluck 2>&1 | grep "Connections:"
+
+# 3. CI — last 3 runs
+gh run list --repo alexander-bain/bainluck --limit 3
+```
+
+If any Sentry issue has >100 events in 24h and wasn't in the last triage, flag it immediately. Otherwise, proceed with session work.
+
+**Available tools:** Heroku CLI (`heroku`), Sentry API (`$SENTRY_AUTH_TOKEN`), GitHub CLI (`gh`). All authenticated and working as of April 21, 2026.
+
+---
+
 ## Quality Audit (mandatory practice)
 
 When fixing ANY data quality, matching, or display issue:
