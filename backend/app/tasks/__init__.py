@@ -662,15 +662,6 @@ def track_statpal_usage():
     return run_async(_impl())
 
 
-# --- WrestleMania ---
-
-@celery_app.task(bind=True, name="app.tasks.poll_wrestlemania_odds")
-def poll_wrestlemania_odds(self):
-    """Poll WrestleMania odds from Polymarket (every 60s)."""
-    from app.tasks.wrestlemania import _poll_wrestlemania_odds
-    return _tracked_run("wrestlemania_odds", _poll_wrestlemania_odds())
-
-
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -889,10 +880,6 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.audit_canonical_keys",
         "schedule": crontab(minute=0, hour=9),  # Daily at 9:00 AM UTC
         "kwargs": {"limit": 50},
-    },
-    "poll-wrestlemania-odds": {
-        "task": "app.tasks.poll_wrestlemania_odds",
-        "schedule": 60.0,
     },
     "snapshot-golf-leaderboard-daily": {
         "task": "app.tasks.snapshot_golf_leaderboard",
