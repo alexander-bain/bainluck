@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, distinct, and_, or_
+from sqlalchemy import select, distinct, and_, or_, update as _sql_update
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -512,7 +512,6 @@ async def _sync_espn_live_events():
                         if ee.home_win_probability is not None:
                             # Write both espn_win_prob_home AND win_probability_sources
                             # in one atomic update to keep them in sync
-                            from sqlalchemy import update as _sql_update
                             _wps_r = await session.execute(
                                 select(Event.win_probability_sources).where(Event.id == event.id)
                             )
