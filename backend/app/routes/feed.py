@@ -470,9 +470,10 @@ async def _score_events(
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
-    # Batch-load championship probabilities for stakes weighting.
-    # Games between contenders are more consequential and interesting.
     champ_probs = await _get_championship_probabilities(db)
+
+    from app.utils.feed_scoring import compute_base_score, format_event_data
+    from app.tasks.odds_polling import get_statpal_end_time
 
     for event in events:
         # my_teams_only: skip events that don't involve the user's teams
@@ -552,81 +553,23 @@ async def _score_events(
             period=event.period,
         )
 
-        base_score = highlight_result.score
-
-        # Stakes weighting: games involving championship contenders are more
-        # consequential. A Celtics vs Nuggets regular season game should rank
-        # higher than Kings vs Wizards, even if both are 50/50.
-        home_champ = champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0
-        away_champ = champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0
-        max_champ_prob = max(home_champ, away_champ)
-        if max_champ_prob >= 0.15:      # Legit contender (top ~3-4 teams)
-            base_score += 15
-            highlight_result.reasons.append("high_stakes")
-        elif max_champ_prob >= 0.05:    # Fringe contender (top ~8-10)
-            base_score += 8
-            highlight_result.reasons.append("contender")
-        elif max_champ_prob >= 0.01:    # Long shot but not nothing
-            base_score += 3
-
-        # Season context: late-season games in major leagues get a boost.
-        # Early-season NBA is less interesting than March playoff-race NBA.
         sport_key = event.sport.key if event.sport else None
-        if sport_key:
-            season_mult = get_season_multiplier(sport_key, now)
-            if season_mult != 1.0:
-                tier = get_league_tier(sport_key)
-                if tier in (1, 2):
-                    # Scale the bonus off the tier weight (20 for T1, 10 for T2)
-                    tier_weight = 20 if tier == 1 else 10
-                    season_bonus = int(tier_weight * (season_mult - 1.0))
-                    base_score += season_bonus
-
-        # LLM taxonomy tag boost: events with contextual tags from LLM
-        # enrichment (stakes, narrative, audience) get a scoring bonus.
-        # These capture things highlight scoring can't — rivalry games,
-        # elimination scenarios, national interest.
         _event_tags = event.event_tags or []
-        _tag_set = set(_event_tags)
-        _TAG_BOOSTS = {
-            # Stakes — most impactful
-            "stakes:elimination": 12,
-            "stakes:clinch": 10,
-            "stakes:title_defense": 10,
-            "stakes:must_win": 8,
-            "stakes:record_chase": 8,
-            "stakes:seeding": 5,
-            "stakes:playoff_race": 3,  # Most common — small boost
-            # Narrative — story-driven interest
-            "narrative:rivalry": 8,
-            "narrative:historic_rivalry": 10,
-            "narrative:cinderella": 8,
-            "narrative:comeback": 8,
-            "narrative:revenge_game": 6,
-            "narrative:upset_alert": 6,
-            "narrative:rematch": 5,
-            "narrative:farewell_tour": 5,
-            "narrative:david_vs_goliath": 3,
-            # Audience — reach signal
-            "audience:national_interest": 5,
-            "audience:crossover_appeal": 3,
-            "audience:viral_potential": 3,
-        }
-        tag_bonus = sum(pts for tag, pts in _TAG_BOOSTS.items() if tag in _tag_set)
-        if tag_bonus > 0:
-            base_score += tag_bonus
-            highlight_result.reasons.append("llm_tags")
 
-        # Boost completed events that had high EI scores — these are the
-        # "fascinating outcomes" worth surfacing even hours later.
-        if event.status in ("completed", "closed") and event.raw_ei:
-            ei_score = max(1, min(100, round(float(event.raw_ei) * 100)))
-            if ei_score >= 80:
-                base_score += 25  # Must-Watch / Incredible — always surface
-                highlight_result.reasons.append("high_ei")
-            elif ei_score >= 60:
-                base_score += 15  # Engaging / Exciting — good boost
-                highlight_result.reasons.append("good_ei")
+        base_score, extra_reasons = compute_base_score(
+            highlight_score=highlight_result.score,
+            highlight_reasons=highlight_result.reasons,
+            home_champ_prob=champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0,
+            away_champ_prob=champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0,
+            sport_key=sport_key,
+            now=now,
+            event_tags=_event_tags,
+            event_status=event.status,
+            raw_ei=float(event.raw_ei) if event.raw_ei else None,
+            get_season_multiplier_fn=get_season_multiplier,
+            get_league_tier_fn=get_league_tier,
+        )
+        highlight_result.reasons = extra_reasons
 
         # Apply personalization multiplier
         p_result = compute_event_multiplier(
@@ -685,74 +628,6 @@ async def _score_events(
             event_tags=_event_tags,
         )
 
-        # Build compact event data for the feed
-        event_data = {
-            "id": event.id,
-            "external_id": event.external_id,
-            "sport": event.sport.key if event.sport else None,
-            "sport_name": event.sport.name if event.sport else None,
-            "home_team": event.home_team_name,
-            "away_team": event.away_team_name,
-            "commence_time": event.commence_time.isoformat(),
-            "status": event.status,
-            "home_score": event.home_score,
-            "away_score": event.away_score,
-        }
-
-        # Include win probability sources for multi-source display
-        if event.win_probability_sources:
-            event_data["win_probability_sources"] = event.win_probability_sources
-
-        # Include ESPN live data for live events (game clock, period, broadcast)
-        if event.status == "live":
-            espn_data = {}
-            if hasattr(event, "game_clock") and event.game_clock:
-                espn_data["game_clock"] = event.game_clock
-            if hasattr(event, "period") and event.period:
-                espn_data["period"] = event.period
-            if hasattr(event, "broadcast_info") and event.broadcast_info:
-                espn_data["broadcast"] = event.broadcast_info
-            if espn_data:
-                event_data["espn"] = espn_data
-
-        if current_home_prob is not None:
-            odds_data = {
-                "home_probability": current_home_prob,
-                "away_probability": current_away_prob,
-            }
-            if prob_source:
-                odds_data["source"] = prob_source
-            event_data["current_odds"] = odds_data
-
-        if opening_home_prob is not None:
-            event_data["opening_odds"] = {
-                "home_probability": opening_home_prob,
-                "away_probability": opening_away_prob,
-                "favorite": event.opening_favorite,
-            }
-
-        # Include ended_at for completed/closed events (from StatPal)
-        if event.status in ("completed", "closed"):
-            from app.tasks.odds_polling import get_statpal_end_time
-            ended_at = get_statpal_end_time(event)
-            if ended_at:
-                event_data["ended_at"] = ended_at.isoformat()
-
-        # Include highlight metadata (label, flags) for frontend display
-        label = get_highlight_label(highlight_result)
-        if label:
-            event_data["highlight"] = {"label": label}
-
-        # Include EI score for completed/closed events
-        if event.status in ("completed", "closed") and event.raw_ei:
-            raw_score = max(1, min(100, round(float(event.raw_ei) * 100)))
-            ei_data = {
-                "score": raw_score,
-                "label": _ei_label(raw_score),
-            }
-            event_data["ei"] = ei_data
-            event_data["pulse"] = ei_data  # Backward compat
-
         # Compute event_tags on-the-fly (fresh, not stale persisted)
         inline_tags = compute_event_tags(
             sport_key=event.sport.key if event.sport else "",
@@ -766,17 +641,42 @@ async def _score_events(
             broadcast_info=getattr(event, "broadcast_info", None),
             highlight_result=highlight_result,
         )
-        event_data["event_tags"] = inline_tags
 
-        # Tag filter: skip events that don't match requested tags
         if tag_filter:
             if not all(t in inline_tags for t in tag_filter):
                 continue
 
-        # Compute sort time: live games first (far future), then by commence_time
+        ended_at = get_statpal_end_time(event) if event.status in ("completed", "closed") else None
+        event_data = format_event_data(
+            event_id=event.id,
+            external_id=event.external_id,
+            sport_key=sport_key,
+            sport_name=event.sport.name if event.sport else None,
+            home_team=event.home_team_name,
+            away_team=event.away_team_name,
+            commence_time=event.commence_time,
+            status=event.status,
+            home_score=event.home_score,
+            away_score=event.away_score,
+            current_home_prob=current_home_prob,
+            current_away_prob=current_away_prob,
+            opening_home_prob=opening_home_prob,
+            opening_away_prob=opening_away_prob,
+            opening_favorite=event.opening_favorite,
+            win_probability_sources=event.win_probability_sources,
+            prob_source=prob_source,
+            game_clock=getattr(event, "game_clock", None),
+            period=event.period,
+            broadcast_info=getattr(event, "broadcast_info", None),
+            highlight_label=get_highlight_label(highlight_result),
+            raw_ei=float(event.raw_ei) if event.raw_ei else None,
+            inline_tags=inline_tags,
+            ended_at=ended_at,
+        )
+
         sort_time = event.commence_time.timestamp()
         if event.status == "live":
-            sort_time = now.timestamp() + 86400  # Push live to top
+            sort_time = now.timestamp() + 86400
 
         item = {
             "type": "event",
