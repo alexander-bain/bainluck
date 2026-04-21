@@ -24,12 +24,47 @@
 - ✅ NHL grid health: 97 → 100/100
 - ✅ Overall grid health: 62 → ~95/100
 
-**God Function Refactoring — First Pass (Item 6):**
-- ✅ `_score_events` (feed.py, 466 lines) → `utils/feed_scoring.py` — scoring + formatting extracted, 15 tests
-- ✅ `_sync_espn_live_events` (espn_sync.py, 897 lines) → 5 module-level matching helpers, 16 tests
-- ✅ `get_playoff_grid` (playoffs.py, 862 lines) → `utils/playoff_grid.py` — normalization, movers, sorting, filtering, 25 tests
-- ✅ `get_related_futures` (events.py, 783 lines) → `utils/related_futures.py` — cross-source dedup, 11 tests
-- Total: 67 new tests, 3 new utility modules, all 4 highest-priority god functions addressed
+**God Function Refactoring — 5 functions (Item 6):**
+- ✅ `_score_events` (feed.py, 466→~300 lines) → `utils/feed_scoring.py` — `compute_base_score()`, `format_event_data()`, `TAG_BOOSTS`, 15 tests
+- ✅ `_sync_espn_live_events` (espn_sync.py, 897 lines) → 5 module-level helpers: `_espn_names_match_any()`, `get_event_name_variations()`, `get_espn_name_variants()`, `espn_team_matches()`, 16 tests
+- ✅ `get_playoff_grid` (playoffs.py, 862→~780 lines) → `utils/playoff_grid.py` — `normalize_column_sums()`, `compute_movers()`, `sort_teams_by_championship()`, `is_valid_grid_outcome()`, 25 tests
+- ✅ `get_related_futures` (events.py, 783→~750 lines) → `utils/related_futures.py` — `dedup_by_merge_group()`, `build_futures_entry()`, 11 tests
+- ✅ `_poll_all_odds` (odds_polling.py, 638 lines) → `utils/polling_config.py` — `determine_api_params()`, `compute_effective_interval()`, 15 tests
+- Total: 82 new tests, 4 new utility modules, all 5 highest-priority god functions addressed
+
+**Sentry Error Fixes (5 issues, ~3,386 events eliminated):**
+- ✅ BAINLUCK-JK: Task pool exhaustion — added pool_size=3, max_overflow=5, pool_recycle=1800 to `base.py`
+- ✅ BAINLUCK-JG: `Event.sport_key` → `Sport.key` join (2,038 events)
+- ✅ BAINLUCK-JH: `_sql_update` UnboundLocalError — moved to top-level import (1,298 events)
+- ✅ BAINLUCK-JT: `Event.espn_event_id` → `Event.espn_id` (27 events)
+- ✅ TooManyConnections: WrestleMania code removed entirely
+
+**WrestleMania Removal (-3,686 lines):**
+- ✅ Deleted: task, routes, models, scoring util, Polymarket service, frontend page + 11 components
+- ✅ Removed from beat schedule, route imports, main.py router mount
+- ✅ Patterns archived to `docs/archive/wrestlemania-reference.md`
+- ✅ DB tables + Alembic migration preserved
+
+**Observability Tool Access:**
+- ✅ Heroku CLI installed and authenticated — prod logs, DB queries, dyno status
+- ✅ Sentry API token configured — programmatic issue triage via curl
+- ✅ GitHub CLI installed and authenticated — CI status, workflow runs
+- ✅ Session startup health check added to CLAUDE.md (Sentry + Heroku + CI scan)
+
+**Admin Auth Security Fix:**
+- ✅ `_check_admin_secret()` returned True when `ADMIN_SECRET` unset — now returns False
+
+**WrestleMania Win Probability Fix:**
+- ✅ Leaderboard was using stale seed probabilities instead of latest odds snapshots
+- ✅ Added 99.9% cap (never show false 100%). Frontend: "0%" for truly-zero players
+
+**Grid Health Fixes (6 matching improvements):**
+- ✅ Championship probability normalization (NHL 53.2% → 100%)
+- ✅ "Postseason" patterns added to all sport stage classifiers + league configs
+- ✅ Kalshi ticker prefixes (KXNBA/KXNHL/KXMLB) for market discovery
+- ✅ Stanley Cup qualifier pre-check (prevents championship misclassification)
+- ✅ MLB division rule ordering (moved above pennant, removed overly broad catch-all)
+- ✅ Playoff series matchup markets added to backlog (Item 5)
 
 **API Client Base Class (Item 4):**
 - ✅ `BaseAPIClient` in `services/base_api.py` — shared httpx.AsyncClient setup + close()
