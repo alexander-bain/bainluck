@@ -82,34 +82,33 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ### 4. API Client Base Class — **SHIPPED April 21**
 
-### 5. Observability Tool Access — **DO TODAY**
-
-**Problem:** Claude Code has zero programmatic access to Sentry, Heroku, GitHub CI, or Vercel. Every triage requires Alex to manually paste info.
-
-**Setup (requires Alex to run interactive login):**
-
-| Priority | Tool | What it enables | Setup |
-|----------|------|----------------|-------|
-| 1 | **Heroku CLI** | Prod logs, DB queries, dyno status | `brew install heroku/brew/heroku && heroku login` |
-| 2 | **Sentry API** | Query issues, stack traces programmatically | Generate token at sentry.io → Settings → API Keys → `SENTRY_AUTH_TOKEN` env var |
-| 3 | **GitHub CLI** | CI status, workflow runs | `brew install gh && gh auth login` |
-| 4 | **Vercel CLI** | Deploy status, build logs | `npm i -g vercel && vercel login` |
-
-**Parallel Safety:** Green
+### 5. Observability Tool Access — **SHIPPED April 21**
 
 ---
 
 ## Active Sentry Issues (April 21, 2026)
 
-| ID | Severity | Root Cause | Disposition |
-|----|----------|-----------|-------------|
-| **BAINLUCK-JM** (stat_model error) | Low | Handled exception in `espn_sync.py:628`. Edge-case game states. Caught and logged. | **Archive** |
-| **BAINLUCK-JK** (DBAPIError) | **High** | Task engines in `base.py:24` have no pool limits. 6 workers × default 15 = 90 connections + 25 web = 115 vs 120 limit. | **Fix now** — add `pool_size=3, max_overflow=5, pool_recycle=1800` to task engine |
-| **BAINLUCK-JH** (digest) | N/A | Sentry digest notification, not a distinct error. | **Archive** |
-| **BAINLUCK-JG** (AttributeError) | Medium | `scalar_one_or_none()` returning None without null guard. Need stack trace to pinpoint exact line. | **Backlog** — blanket null guards in task files |
-| **TooManyConnections** (WM polling) | Medium | Session held during API call (`wrestlemania.py:22→67`) + no pool limits. Event is over. | **Fix now** — remove WM polling + archive code |
+**Fixed this session:**
+| ID | Events | Fix |
+|----|--------|-----|
+| BAINLUCK-JK (DBAPIError) | 23 | Pool limits added to task engine (`base.py`) |
+| BAINLUCK-JG (AttributeError: sport_key) | 2,038 | `Event.sport_key` → `Sport.key` join |
+| BAINLUCK-JH (UnboundLocalError) | 1,298 | `_sql_update` moved to top-level import |
+| BAINLUCK-JT (AttributeError: espn_event_id) | 27 | `Event.espn_event_id` → `Event.espn_id` |
+| TooManyConnections (WM polling) | — | WrestleMania code removed entirely |
 
-**Session-leak audit:** 3 files hold sessions during API calls (`wrestlemania.py`, `odds_polling.py:462→613`, `espn_sync.py:~254→325`). 8 files use the correct pattern. Fix order: pool limits first, then refactor hold-during-API as part of god function work (Item 6).
+**Remaining (monitor / low priority):**
+| ID | Events | Status |
+|----|--------|--------|
+| BAINLUCK-GA, HN, FY, 5, 3, J1, JD, G7 (N+1 Query) | various | Sentry performance warnings, not errors. Address during god function refactoring (Item 6). |
+| BAINLUCK-E, JJ, M, EQ (ConnectionError: Redis) | various | Transient Redis connection drops. Heroku Redis recovers automatically. Monitor. |
+| BAINLUCK-1, 2 (WorkerLost, SIGTERM) | 1,868 | Normal Celery worker recycling (max-memory-per-child). Not a bug. |
+| BAINLUCK-J, K (TimeLimitExceeded) | 917 | Polymarket poll exceeds 300s occasionally. Increase time limit or optimize. Backlog. |
+| BAINLUCK-JP (aussierules_other) | 4 | Unknown sport key. Add to `sport_keys.py` mapping. Low priority. |
+| BAINLUCK-JN (PendingRollbackError) | 3 | Session in bad state after prior error. Related to session-during-API pattern (Item 6). |
+| BAINLUCK-HV, HW, HY (DataGolf errors) | various | DataGolf API 400s for `opp` (non-PGA) tours. Known limitation. |
+
+**Session-leak audit:** 2 files still hold sessions during API calls (`odds_polling.py:462→613`, `espn_sync.py:~254→325`). Fix during god function refactoring (Item 6).
 
 ---
 
