@@ -93,35 +93,38 @@ export function ProbBar({ value, height = 6, color }: { value: number; height?: 
   );
 }
 
-export function Histogram({ buckets, color, height = 90 }: {
+export function Histogram({ buckets, color }: {
   buckets: [number, string][]; color: string; height?: number;
 }) {
   const max = Math.max(...buckets.map(b => b[0]));
   const peak = buckets.reduce((best, b, i) => (b[0] > buckets[best][0] ? i : best), 0);
   return (
-    <div>
-      <div className="flex items-end gap-0.5" style={{ height }}>
-        {buckets.map((b, i) => {
-          const h = max > 0 ? (b[0] / max) * 100 : 0;
-          const isPeak = i === peak;
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center justify-end h-full relative">
-              {isPeak && (
-                <span className="font-mono text-[10px] font-semibold text-[#374151] mb-0.5">{b[0]}%</span>
-              )}
-              <div className="w-full rounded-t" style={{
-                height: `${h}%`, minHeight: b[0] > 0 ? 3 : 0,
-                background: color, opacity: isPeak ? 1 : 0.3 + (b[0] / max) * 0.5,
-              }} />
+    <div className="flex flex-col gap-1">
+      {buckets.map((b, i) => {
+        const w = max > 0 ? (b[0] / max) * 100 : 0;
+        const isPeak = i === peak;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-[#6B7280] w-[72px] text-right shrink-0">{b[1]}</span>
+            <div className="flex-1 h-5 bg-[#F3F4F6] rounded overflow-hidden">
+              <div className="h-full rounded flex items-center pl-1.5" style={{
+                width: `${Math.max(w, 2)}%`,
+                background: color,
+                opacity: isPeak ? 1 : 0.35 + (b[0] / max) * 0.45,
+              }}>
+                {b[0] >= 3 && (
+                  <span className="font-mono text-[9px] font-semibold text-white whitespace-nowrap">
+                    {b[0]}%
+                  </span>
+                )}
+              </div>
             </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-0.5 mt-1">
-        {buckets.map((b, i) => (
-          <div key={i} className="flex-1 text-center font-mono text-[9px] text-[#9CA3AF]">{b[1]}</div>
-        ))}
-      </div>
+            {b[0] < 3 && b[0] > 0 && (
+              <span className="font-mono text-[9px] text-[#9CA3AF]">{b[0]}%</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -131,14 +134,12 @@ export function MarketRow({ q, prob, src, delta }: {
 }) {
   const col = probColor(prob);
   return (
-    <div className="grid items-center gap-3 py-2.5 border-t border-[#F3F4F6]"
-      style={{ gridTemplateColumns: "1fr 80px 44px 36px" }}>
-      <div className="text-[13px] text-[#374151] leading-snug">{q}</div>
-      <ProbBar value={prob} color={col} height={5} />
-      <span className="font-mono text-[13px] font-semibold text-right" style={{ color: col }}>
+    <div className="flex items-center gap-3 py-2.5 border-t border-[#F3F4F6]">
+      <div className="flex-1 text-[13px] text-[#374151] leading-snug min-w-0">{q}</div>
+      <span className="font-mono text-[14px] font-bold shrink-0" style={{ color: col }}>
         {Math.round(prob)}%
       </span>
-      <div className="flex justify-end"><SourceChip src={src} /></div>
+      <div className="shrink-0"><SourceChip src={src} /></div>
     </div>
   );
 }
