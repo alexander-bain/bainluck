@@ -76,10 +76,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ---
 
-### 3. Name Normalization Consolidation
-6 independent team/name normalization implementations → 1 canonical module. Mechanical refactor, no behavior changes. Today's grid health session proved this matters — "postseason" vs "playoffs" broke matching for an entire column because normalization wasn't centralized.
-**Files:** `utils/name_normalization.py`, `routes/playoffs.py`, `routes/golf.py`, `routes/oscars.py`, `services/datagolf_api.py`, `tasks/mlb_sync.py`
-**Parallel Safety:** Yellow
+### 3. Name Normalization Consolidation — **SHIPPED April 20**
 
 ---
 

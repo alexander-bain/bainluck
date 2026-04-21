@@ -24,6 +24,12 @@
 - ✅ NHL grid health: 97 → 100/100
 - ✅ Overall grid health: 62 → ~95/100
 
+**Name Normalization Consolidation (Item 3):**
+- ✅ 11 scattered normalization functions → 1 canonical module (`utils/name_normalization.py`)
+- ✅ Added: `strip_diacritics()`, `normalize_team_name()`, `match_key()`, `clean_slug()`
+- ✅ Replaced duplicates in 10 files: playoffs, golf, oscars, oscars_pool, march_madness, roster_sync, team_linking, datagolf_api, mlb_sync
+- ✅ Net -20 lines (114 added, 134 removed). All 3,225 tests pass.
+
 **Player Prop Headshots (R1):**
 - ✅ MLB roster sync now stores rich dicts with headshot URLs (was plain name strings — only ESPN-synced sports had headshots)
 - ✅ `mlb_api.get_team_roster()` returns player dicts with MLB Stats API headshot CDN URLs
