@@ -1,6 +1,7 @@
 """Contract tests for GET /api/feed.
 
-Tests response shape, not exact data values.
+Tests response shape and query parameter validation, not exact data values.
+The feed is the home page — the most important endpoint for user experience.
 """
 
 import pytest
@@ -45,6 +46,12 @@ class TestFeedEmptyShape:
         body = resp.json()
         assert body["offset"] == 0
 
+    async def test_total_is_int(self, client):
+        resp = await client.get("/api/feed")
+        body = resp.json()
+        assert isinstance(body["total"], int)
+        assert body["total"] >= 0
+
 
 class TestFeedQueryParams:
 
@@ -62,12 +69,26 @@ class TestFeedQueryParams:
         resp = await client.get("/api/feed?sport=basketball")
         assert resp.status_code == 200
 
+    async def test_multiple_sport_filter(self, client):
+        resp = await client.get("/api/feed?sport=basketball&sport=baseball")
+        assert resp.status_code == 200
+
     async def test_include_events_false(self, client):
         resp = await client.get("/api/feed?include_events=false")
         assert resp.status_code == 200
 
     async def test_include_futures_false(self, client):
         resp = await client.get("/api/feed?include_futures=false")
+        assert resp.status_code == 200
+
+    async def test_include_both_false_returns_empty(self, client):
+        resp = await client.get("/api/feed?include_events=false&include_futures=false")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"] == []
+
+    async def test_status_filter_accepted(self, client):
+        resp = await client.get("/api/feed?status=live")
         assert resp.status_code == 200
 
     async def test_limit_validation_too_high(self, client):
@@ -101,3 +122,19 @@ class TestFeedMyTeamsAnonymous:
         body = resp.json()
         assert body["items"] == []
         assert body["total"] == 0
+
+
+class TestFeedResponseTypes:
+    """Verify field types in the response match the frontend's expectations."""
+
+    async def test_total_limit_offset_are_ints(self, client):
+        resp = await client.get("/api/feed")
+        body = resp.json()
+        assert isinstance(body["total"], int)
+        assert isinstance(body["limit"], int)
+        assert isinstance(body["offset"], int)
+
+    async def test_has_more_is_bool(self, client):
+        resp = await client.get("/api/feed")
+        body = resp.json()
+        assert isinstance(body["has_more"], bool)

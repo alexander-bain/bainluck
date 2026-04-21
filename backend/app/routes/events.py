@@ -816,6 +816,7 @@ async def search_events(
         sports_found[sport_key]["count"] += 1
 
     # Calculate pagination metadata
+    total_count = total_count or 0
     total_pages = (total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome (label) name
