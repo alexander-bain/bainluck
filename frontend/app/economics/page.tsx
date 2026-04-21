@@ -250,35 +250,10 @@ export default function EconomicsPage() {
                       )}
                     </div>
                     {cpi.brackets && (
-                      <div className="flex gap-0.5 h-7 rounded-md overflow-hidden">
-                        {cpi.brackets.map(([prob, label]: [number, string], j: number) => {
-                          const colors = ["#10B981", "#6EE7B7", "#FDE68A", "#FCA5A5", "#F87171"];
-                          return (
-                            <div key={j} className="flex items-center justify-center text-[9px] font-mono font-semibold"
-                              style={{
-                                width: `${prob}%`, minWidth: prob > 8 ? 30 : 0,
-                                background: colors[j] || "#94A3B8",
-                                color: j < 2 ? "#064E3B" : "#7F1D1D",
-                              }}>
-                              {prob >= 12 ? `${prob}%` : ""}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <Histogram buckets={cpi.brackets} color="#10B981" height={60} />
                     )}
                   </div>
                 ))}
-                <div className="flex gap-2 mt-3">
-                  {["<2.5%", "2.5-3%", "3-3.5%", "3.5-4%", "4%+"].map((label, i) => {
-                    const colors = ["#10B981", "#6EE7B7", "#FDE68A", "#FCA5A5", "#F87171"];
-                    return (
-                      <div key={i} className="flex items-center gap-1 text-[9px] text-[#9CA3AF]">
-                        <span className="w-2.5 h-2.5 rounded-sm" style={{ background: colors[i] }} />
-                        {label}
-                      </div>
-                    );
-                  })}
-                </div>
               </Card>
               {t.inflation.side_markets && t.inflation.side_markets.length > 0 && (
                 <Card>
@@ -321,13 +296,15 @@ export default function EconomicsPage() {
               count={t.recession.count}
             />
             <div className="grid md:grid-cols-[1fr_1.4fr] gap-3.5">
-              <Card className="flex flex-col items-center justify-center text-center py-8">
+              <Card>
                 <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
                   Recession by end of 2026
                 </div>
-                <ProbNum value={t.recession.main_prob || 0} size={84} />
+                <div className="mb-4">
+                  <ProbNum value={t.recession.main_prob || 0} size={64} />
+                </div>
                 {t.recession.side_markets?.map((m: any, i: number) => (
-                  <div key={i} className="mt-4 w-full"><MarketRow q={m.q} prob={m.prob} src={m.src} /></div>
+                  <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
                 ))}
               </Card>
               {t.recession.gdp_quarters && t.recession.gdp_quarters.length > 0 && (

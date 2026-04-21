@@ -109,10 +109,13 @@ def _outcomes_sorted(market: FuturesMarket) -> list:
     return sorted(market.outcomes, key=lambda o: o.rank or 0)
 
 
-def _market_row(market: FuturesMarket) -> dict:
-    """Convert a simple binary market to a Market row."""
+def _market_row(market: FuturesMarket) -> dict | None:
+    """Convert a binary market to a Market row. Returns None for multi-outcome markets."""
+    outcomes = list(market.outcomes)
+    if len(outcomes) > 5:
+        return None
     prob = 0.0
-    for o in market.outcomes:
+    for o in outcomes:
         p = float(o.current_probability or 0)
         if p > prob:
             prob = p
@@ -147,42 +150,45 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
     Kalshi economics markets use cumulative outcomes (P(above 3%), P(above 3.5%)).
-    We need P(exactly 3-3.5%) = P(above 3%) - P(above 3.5%).
-    Returns [[prob, label], ...] with at most max_buckets entries.
+    We need P(exactly in bracket) = P(above lower) - P(above upper).
+    Returns [[prob, label], ...] sorted by threshold, at most max_buckets entries.
     """
+    import re as _re
+
     raw = []
     for o in outcomes:
         p = float(o.current_probability or 0) * 100
         label = (o.name or "").strip()
-        # Extract numeric threshold for sorting
-        import re
-        nums = re.findall(r'[\d.]+', label)
+        nums = _re.findall(r'[\d.]+', label)
         sort_val = float(nums[0]) if nums else 0
-        raw.append((p, label, sort_val))
+        # Clean label: remove "Above " prefix
+        clean = label.replace("Above ", "").strip()
+        raw.append((p, clean, sort_val))
 
-    # Sort by threshold ascending
+    if not raw:
+        return []
+
+    # Sort by threshold ascending (lowest first)
     raw.sort(key=lambda x: x[2])
 
-    # Convert cumulative to discrete
+    # Convert cumulative to discrete:
+    # P(in bracket i) = P(above threshold_i) - P(above threshold_{i+1})
+    # P(above highest) stays as-is (the top bracket)
     discrete = []
     for i in range(len(raw)):
         cum_p = raw[i][0]
         next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
         bracket_p = round(cum_p - next_p, 1)
-        if bracket_p > 0.5:
-            # Create readable label: "3.0-3.5%" instead of "Above 3.0%"
-            label = raw[i][1].replace("Above ", "").strip()
-            if i + 1 < len(raw):
-                next_label = raw[i + 1][1].replace("Above ", "").strip()
-                label = f"{label}–{next_label}"
-            discrete.append([bracket_p, label])
+        if bracket_p >= 0.1:
+            discrete.append([bracket_p, raw[i][1]])
 
-    # Keep only the top buckets by probability for readability
-    discrete.sort(key=lambda x: x[0], reverse=True)
-    top = discrete[:max_buckets]
-    # Re-sort by label for display
-    top.sort(key=lambda x: x[1])
-    return top
+    # If too many, keep top by probability
+    if len(discrete) > max_buckets:
+        discrete.sort(key=lambda x: x[0], reverse=True)
+        discrete = discrete[:max_buckets]
+        discrete.sort(key=lambda x: x[1])
+
+    return discrete
 
 
 # ---------------------------------------------------------------------------
@@ -243,24 +249,13 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
         ext_lower = (m.external_id or "").lower()
         outcomes = _outcomes_sorted(m)
         if "fed funds rate after" in name_lower and len(outcomes) >= 3:
-            # Convert cumulative "Above X%" outcomes to discrete brackets
-            raw = []
-            for o in outcomes:
-                p = float(o.current_probability or 0) * 100
-                label = (o.name or "").strip()
-                raw.append((p, label))
-            # Sort by threshold value descending (highest rate first)
-            raw.sort(key=lambda x: x[1], reverse=True)
-            # Convert cumulative to discrete: P(exactly X) = P(above X) - P(above X+1)
-            discrete = []
-            for i, (cum_p, label) in enumerate(raw):
-                next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
-                bracket_p = round(cum_p - next_p, 1)
-                if bracket_p > 0:
-                    rate_label = label.replace("Above ", "").strip()
-                    discrete.append([bracket_p, rate_label])
-            # Sort discrete brackets by rate descending
-            discrete.sort(key=lambda x: x[1], reverse=True)
+            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+            if has_cumulative:
+                discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
+                # Reverse so highest rate is first (top of heatmap)
+                discrete.reverse()
+            else:
+                discrete = _brackets_from_outcomes(m)
 
             date_str = m.name.split("after ")[-1].split("?")[0].strip() if "after" in (m.name or "") else ""
             mo = date_str.split(" ")[0] if date_str else ""
@@ -283,7 +278,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
         elif "how many" in name_lower and ("cut" in name_lower or "hike" in name_lower):
             rate_cuts = _brackets_from_outcomes(m)
         else:
-            rate_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                rate_side.append(_row)
 
     # Sort FOMC meetings chronologically
     fomc_meetings.sort(key=lambda x: x.get("sort_key", 0))
@@ -301,7 +298,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
             else:
                 brackets = _brackets_from_outcomes(m)
             if not brackets:
-                inflation_side.append(_market_row(m))
+                _row = _market_row(m)
+                if _row:
+                    inflation_side.append(_row)
                 continue
             modal_idx, _, _ = _modal_bracket(brackets)
             cpi_releases.append({
@@ -312,10 +311,12 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                 "market_id": m.id,
             })
         else:
-            inflation_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                inflation_side.append(_row)
 
     # --- Jobs section ---
-    jobs_side = [_market_row(m) for m in jobs_markets]
+    jobs_side = [r for m in jobs_markets if (r := _market_row(m))]
 
     # --- Recession/GDP section ---
     rec_main_prob = None
@@ -331,7 +332,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                     break
             if rec_main_prob is None:
                 rec_main_prob = round(float(outcomes[0].current_probability or 0) * 100, 1)
-            rec_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                rec_side.append(_row)
         elif "gdp" in name_lower and len(outcomes) >= 3:
             has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
             if has_cumulative:
@@ -345,7 +348,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                     "market_id": m.id,
                 })
         else:
-            rec_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                rec_side.append(_row)
 
     # --- Markets/indices section ---
     today_indices = []
@@ -376,7 +381,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                     })
                     break
         else:
-            markets_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                markets_side.append(_row)
 
     # --- Energy section ---
     gas_markets_list = []
@@ -391,7 +398,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
             else:
                 brackets = _brackets_from_outcomes(m)
             if not brackets:
-                oil_rows.append(_market_row(m))
+                _row = _market_row(m)
+                if _row:
+                    oil_rows.append(_row)
                 continue
             _, modal_prob, modal_label = _modal_bracket(brackets)
             # Shorten the label
@@ -419,7 +428,9 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                 })
             continue
         else:
-            oil_rows.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                oil_rows.append(_row)
 
     # --- Housing section ---
     mortgage_brackets = []
@@ -429,11 +440,13 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
         if "mortgage" in name_lower and len(_outcomes_sorted(m)) >= 3:
             mortgage_brackets = _brackets_from_outcomes(m)
         else:
-            housing_side.append(_market_row(m))
+            _row = _market_row(m)
+            if _row:
+                housing_side.append(_row)
 
     # --- Trade & Government ---
-    trade_rows = [_market_row(m) for m in trade_markets]
-    gov_rows = [_market_row(m) for m in gov_markets]
+    trade_rows = [r for m in trade_markets if (r := _market_row(m))]
+    gov_rows = [r for m in gov_markets if (r := _market_row(m))]
 
     # Count total active markets
     total = len(all_markets)
