@@ -161,8 +161,3 @@ export function ProbNum({ value, size = 36, color, suffix = "%" }: {
     </span>
   );
 }
-  {typeof value === "number" ? Math.round(value) : value}
-      {suffix && <span style={{ fontSize: size * 0.42, opacity: 0.7 }}>{suffix}</span>}
-    </span>
-  );
-}
