@@ -24,6 +24,11 @@
 - ✅ NHL grid health: 97 → 100/100
 - ✅ Overall grid health: 62 → ~95/100
 
+**API Client Base Class (Item 4):**
+- ✅ `BaseAPIClient` in `services/base_api.py` — shared httpx.AsyncClient setup + close()
+- ✅ Applied to 5 services: OddsAPI, Kalshi, DataGolf, MLB, StatPal
+- ✅ ESPN (lazy init) and Polymarket (dual clients) left as-is — non-standard patterns
+
 **Name Normalization Consolidation (Item 3):**
 - ✅ 11 scattered normalization functions → 1 canonical module (`utils/name_normalization.py`)
 - ✅ Added: `strip_diacritics()`, `normalize_team_name()`, `match_key()`, `clean_slug()`

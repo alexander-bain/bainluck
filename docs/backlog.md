@@ -80,10 +80,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ---
 
-### 4. API Client Base Class
-7 API services duplicate identical `__init__`, `close()`, HTTP client management. Extract `BaseAPIClient`.
-**Files:** `services/base_api.py` (new), all 7 service files
-**Parallel Safety:** Yellow
+### 4. API Client Base Class — **SHIPPED April 21**
 
 ---
 
