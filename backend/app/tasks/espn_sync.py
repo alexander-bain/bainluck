@@ -134,6 +134,45 @@ async def _enrich_events_metadata(limit: int = 50):
     return stats
 
 
+def _espn_names_match_any(our_names: list, espn_name: str) -> bool:
+    """Check if any of our name variations match an ESPN name."""
+    if not espn_name:
+        return False
+    return any(_canonical_names_match(name, espn_name) for name in our_names if name)
+
+
+def get_event_name_variations(event) -> tuple[list[str], list[str]]:
+    """Get all name variations for an event's home and away teams."""
+    home_names = [event.home_team_name]
+    away_names = [event.away_team_name]
+    if event.home_team_normalized:
+        home_names.append(event.home_team_normalized)
+    if event.away_team_normalized:
+        away_names.append(event.away_team_normalized)
+    if event.home_team_alt_names:
+        home_names.extend(event.home_team_alt_names)
+    if event.away_team_alt_names:
+        away_names.extend(event.away_team_alt_names)
+    return home_names, away_names
+
+
+def get_espn_name_variants(espn_team) -> list[str]:
+    """Get all name variants from an ESPN team object for matching."""
+    variants = []
+    for name in [espn_team.display_name, espn_team.short_name, espn_team.name, espn_team.location]:
+        if name and name not in variants:
+            variants.append(name)
+    return variants
+
+
+def espn_team_matches(our_names: list, espn_team) -> bool:
+    """Check if any of our name variations match any ESPN name variant."""
+    for espn_name in get_espn_name_variants(espn_team):
+        if _espn_names_match_any(our_names, espn_name):
+            return True
+    return False
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events."""
     from app.services.espn_api import ESPNAPIService
@@ -148,13 +187,7 @@ async def _sync_espn_live_events():
     }
 
     def names_match(our_names: list, espn_name: str) -> bool:
-        """Check if any of our name variations match an ESPN name.
-
-        Delegates to canonical names_match() from name_normalization.py.
-        """
-        if not espn_name:
-            return False
-        return any(_canonical_names_match(name, espn_name) for name in our_names if name)
+        return _espn_names_match_any(our_names, espn_name)
 
     async def upsert_team(session, team_name, espn_team, sport_id):
         """Create or update a Team record with ESPN enrichment data.
@@ -221,34 +254,8 @@ async def _sync_espn_live_events():
         stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
         return team
 
-    def get_event_name_variations(event):
-        """Get all name variations for an event's teams."""
-        home_names = [event.home_team_name]
-        away_names = [event.away_team_name]
-        if event.home_team_normalized:
-            home_names.append(event.home_team_normalized)
-        if event.away_team_normalized:
-            away_names.append(event.away_team_normalized)
-        if event.home_team_alt_names:
-            home_names.extend(event.home_team_alt_names)
-        if event.away_team_alt_names:
-            away_names.extend(event.away_team_alt_names)
-        return home_names, away_names
-
-    def get_espn_name_variants(espn_team):
-        """Get all name variants from an ESPN team object for matching."""
-        variants = []
-        for name in [espn_team.display_name, espn_team.short_name, espn_team.name, espn_team.location]:
-            if name and name not in variants:
-                variants.append(name)
-        return variants
-
-    def espn_names_match(our_names, espn_team):
-        """Check if any of our name variations match any ESPN name variant."""
-        for espn_name in get_espn_name_variants(espn_team):
-            if names_match(our_names, espn_name):
-                return True
-        return False
+    # Delegate to module-level functions (kept as nested for backward compat)
+    espn_names_match = espn_team_matches
 
     try:
         async with get_task_session() as session:
