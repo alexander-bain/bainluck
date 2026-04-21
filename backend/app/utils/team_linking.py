@@ -83,16 +83,7 @@ def match_outcome_to_team(
     return None
 
 
-def _strip_diacritics(s: str) -> str:
-    """Remove diacritics/accents for fuzzy name matching.
-
-    'Luka Dončić' → 'Luka Doncic', 'José Ramírez' → 'Jose Ramirez'
-    """
-    import unicodedata
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s)
-        if unicodedata.category(c) != "Mn"
-    )
+from app.utils.name_normalization import strip_diacritics as _strip_diacritics
 
 
 def match_outcome_to_roster(

@@ -629,23 +629,10 @@ _TEAM_NAME_ALIASES: dict[str, str] = {
 }
 
 
-def _strip_diacritics(s: str) -> str:
-    """Remove diacritics for cross-source name dedup."""
-    nfkd = unicodedata.normalize("NFD", s)
-    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
-
-
-def _normalize_team_name(name: str) -> str:
-    """Normalize a team/outcome name for dedup across sources."""
-    n = _strip_diacritics(name).lower().strip()
-    # Strip common suffixes
-    n = re.sub(r"\s*\(.*\)$", "", n)
-    # Strip trailing periods (e.g. "Michigan St." → "Michigan St")
-    n = n.rstrip(".")
-    # Normalize internal periods in abbreviations (e.g. "St." → "St")
-    # This prevents "St. Louis Blues" vs "St Louis Blues" split
-    n = re.sub(r"\.(?=\s)", "", n)
-    return n
+from app.utils.name_normalization import (
+    strip_diacritics as _strip_diacritics,
+    normalize_team_name as _normalize_team_name,
+)
 
 
 def _should_prefix_merge(short_name: str, long_name: str) -> bool:

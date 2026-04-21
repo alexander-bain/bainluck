@@ -86,21 +86,7 @@ ROUND_ORDER = [
 # Helpers
 # ============================================================================
 
-_EXTRA_TRANSLITERATIONS = str.maketrans({
-    "ø": "o", "Ø": "O",
-    "đ": "d", "Đ": "D",
-    "ł": "l", "Ł": "L",
-    "æ": "ae", "Æ": "AE",
-})
-
-
-def _strip_diacritics(s: str) -> str:
-    """Remove accent marks and transliterate special letters."""
-    s = s.translate(_EXTRA_TRANSLITERATIONS)
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s)
-        if unicodedata.category(c) != "Mn"
-    )
+from app.utils.name_normalization import strip_diacritics as _strip_diacritics
 
 
 def _team_match_key(name: str) -> str:

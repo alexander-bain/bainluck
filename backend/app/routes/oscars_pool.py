@@ -156,10 +156,7 @@ def _generate_pool_code() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
-def _strip_diacritics(s: str) -> str:
-    """Remove diacritics for name matching (Skarsgård → Skarsgard)."""
-    nfkd = unicodedata.normalize("NFD", s)
-    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+from app.utils.name_normalization import strip_diacritics as _strip_diacritics
 
 
 def _match_name(a: str, b: str) -> bool:

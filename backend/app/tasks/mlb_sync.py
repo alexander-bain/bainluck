@@ -190,9 +190,7 @@ async def _sync_mlb_win_probability():
     return stats
 
 
-def _normalize_team(name: str) -> str:
-    """Normalize team name for matching."""
-    return name.lower().strip()
+from app.utils.name_normalization import normalize_team_name as _normalize_team
 
 
 def _match_mlb_game_to_event(mlb_game, our_events, event_lookup):

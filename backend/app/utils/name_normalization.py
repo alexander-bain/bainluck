@@ -1,7 +1,16 @@
-"""Single source of truth for team name normalization and matching.
+"""Single source of truth for team/player name normalization and matching.
 
-Every module that needs to compare team names should import from here.
-Do NOT create new matching functions elsewhere.
+Every module that needs to compare, normalize, or deduplicate names
+should import from here. Do NOT create new matching functions elsewhere.
+
+Public API:
+    strip_diacritics(s)       — Remove accents/diacritics, handle ø→o etc.
+    normalize_name(name)      — Canonical: lowercase, strip diacritics, strip suffixes
+    normalize_team_name(name) — For team matching keys: strip diacritics, periods, parens
+    match_key(name)           — Alphanumeric-only dedup key (for golfer/nominee matching)
+    clean_slug(name)          — URL-safe slug from a name
+    token_overlap_score(a, b) — Jaccard-like fuzzy score (0.0-1.0)
+    names_match(a, b)         — Boolean: do these names refer to the same entity?
 """
 
 import re
@@ -83,6 +92,93 @@ _CITY_ABBREVIATIONS: dict[str, str] = {
 }
 
 
+# Special letter transliterations not handled by NFD decomposition
+_EXTRA_TRANSLITERATIONS = str.maketrans({
+    "ø": "o", "Ø": "O",
+    "đ": "d", "Đ": "D",
+    "ł": "l", "Ł": "L",
+    "ß": "ss",
+})
+
+# Sponsor suffixes stripped during slug generation
+_SPONSOR_SUFFIX_RE = re.compile(
+    r"\s+(?:presented|sponsored|hosted|powered)\s+by\s+.*$",
+    re.IGNORECASE,
+)
+
+
+def strip_diacritics(s: str) -> str:
+    """Remove diacritical marks and transliterate special characters.
+
+    Handles both standard combining marks (é→e, ñ→n) and special letters
+    that NFD doesn't decompose (ø→o, đ→d, ł→l, ß→ss).
+
+    Examples:
+        "Höjgaard" -> "Hojgaard"
+        "Hovland"  -> "Hovland"
+        "Strauß"   -> "Strauss"
+    """
+    s = s.translate(_EXTRA_TRANSLITERATIONS)
+    nfd = unicodedata.normalize("NFD", s)
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+
+def normalize_team_name(name: str) -> str:
+    """Normalize a team name for matching/deduplication.
+
+    Strips diacritics, lowercases, removes trailing periods, removes
+    periods before spaces ("St. Louis" → "St Louis"), and strips
+    parenthetical suffixes like "(W)" or "(Res)".
+
+    This is the canonical version — used by playoffs, march madness,
+    admin endpoints, and anywhere team names need to be compared.
+
+    Examples:
+        "St. Louis Cardinals" -> "st louis cardinals"
+        "Borussia Dortmund (Res)" -> "borussia dortmund"
+        "A's" -> "a's"
+    """
+    n = strip_diacritics(name).lower().strip()
+    n = n.rstrip(".")
+    n = re.sub(r"\.(?=\s)", "", n)
+    n = re.sub(r"\s*\(.*\)$", "", n)
+    return n.strip()
+
+
+def match_key(name: str) -> str:
+    """Create an alphanumeric-only dedup key from a name.
+
+    Strips diacritics, lowercases, removes "the " prefix, truncates
+    at colon, removes all non-alphanumeric characters except spaces,
+    and collapses whitespace. Used for golfer/nominee deduplication
+    where different sources format names differently.
+
+    Examples:
+        "The Masters" -> "masters"
+        "Scottie Scheffler: Top 5" -> "scottie scheffler"
+        "Rory McIlroy" -> "rory mcilroy"
+    """
+    key = strip_diacritics(name).lower()
+    key = re.sub(r"^the\s+", "", key)
+    key = key.split(":")[0]
+    key = re.sub(r"[^a-z0-9\s]", "", key)
+    return re.sub(r"\s+", " ", key).strip()
+
+
+def clean_slug(name: str) -> str:
+    """Create a URL-safe slug from a name.
+
+    Strips sponsor suffixes ("presented by ..."), lowercases, and
+    replaces non-alphanumeric characters with hyphens.
+
+    Examples:
+        "The Masters Tournament" -> "the-masters-tournament"
+        "Valero Texas Open presented by Mastercard" -> "valero-texas-open"
+    """
+    name = _SPONSOR_SUFFIX_RE.sub("", name)
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 def normalize_name(name: str) -> str:
     """Canonical name normalization: lowercase, strip diacritics, unify apostrophes,
     strip reserve/youth suffixes.
@@ -94,16 +190,12 @@ def normalize_name(name: str) -> str:
     """
     if not name:
         return ""
-    # NFD decomposition to strip accents
-    nfkd = unicodedata.normalize("NFD", name)
-    stripped = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+    stripped = strip_diacritics(name)
     # Unify apostrophe-like characters
     for ch in _APOSTROPHE_CHARS:
         stripped = stripped.replace(ch, "'")
     # Normalize period-without-space: "St.Louis" → "St. Louis"
-    # Important for matching "St.Louis Cardinals" to "St. Louis Cardinals"
-    import re as _re
-    stripped = _re.sub(r'\.([A-Za-z])', r'. \1', stripped)
+    stripped = re.sub(r'\.([A-Za-z])', r'. \1', stripped)
     # Lowercase, strip whitespace
     result = stripped.lower().strip()
     # Strip reserve/youth suffixes

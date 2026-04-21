@@ -197,17 +197,7 @@ _SIGNATURE_EVENTS = {
     "fedex_st_jude_championship",
 }
 
-# Sponsor suffix pattern — strip "Presented By X", "Sponsored By X", etc. before slugifying
-_SPONSOR_SUFFIX_RE = re.compile(
-    r"\s+(?:presented|sponsored|hosted|powered)\s+by\s+.*$",
-    re.I,
-)
-
-
-def _clean_slug(name: str) -> str:
-    """Generate a clean URL slug from a tournament name, stripping sponsor suffixes."""
-    cleaned = _SPONSOR_SUFFIX_RE.sub("", name)
-    return re.sub(r"[^a-z0-9]+", "-", cleaned.lower()).strip("-")
+from app.utils.name_normalization import clean_slug as _clean_slug, strip_diacritics as _strip_diacritics_canonical
 
 TOURNAMENT_ORDER = [
     "masters", "pga_championship", "us_open", "the_open",
@@ -470,27 +460,7 @@ async def _get_golf_schedule() -> list[dict]:
         await service.close()
 
 
-# Characters that NFD decomposition doesn't handle (e.g., ø, đ, ł)
-_EXTRA_TRANSLITERATIONS = str.maketrans({
-    "ø": "o", "Ø": "O",
-    "đ": "d", "Đ": "D",
-    "ł": "l", "Ł": "L",
-    "æ": "ae", "Æ": "AE",
-})
-
-
-def _strip_diacritics(s: str) -> str:
-    """Remove accent marks and transliterate special letters.
-
-    Handles both NFD-decomposable marks (ü→u, é→e, å→a) and
-    non-decomposable letters (ø→o, đ→d, ł→l) that appear in
-    Nordic and Eastern European golfer names.
-    """
-    s = s.translate(_EXTRA_TRANSLITERATIONS)
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s)
-        if unicodedata.category(c) != "Mn"
-    )
+_strip_diacritics = _strip_diacritics_canonical
 
 
 # Stopwords to strip when matching tournament names

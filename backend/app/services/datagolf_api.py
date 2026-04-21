@@ -92,20 +92,7 @@ def normalize_player_name(name: str) -> str:
     return strip_diacritics(name).strip()
 
 
-# Characters that NFD decomposition doesn't handle (e.g., ø, đ, ł)
-_EXTRA_TRANSLITERATIONS = str.maketrans({
-    "ø": "o", "Ø": "O",
-    "đ": "d", "Đ": "D",
-    "ł": "l", "Ł": "L",
-    "æ": "ae", "Æ": "AE",
-})
-
-
-def strip_diacritics(s: str) -> str:
-    """Remove diacritical marks and transliterate special letters for cross-source matching."""
-    s = s.translate(_EXTRA_TRANSLITERATIONS)
-    nfkd = unicodedata.normalize("NFD", s)
-    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+from app.utils.name_normalization import strip_diacritics
 
 
 # ---------------------------------------------------------------------------
