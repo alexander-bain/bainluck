@@ -794,7 +794,7 @@ async def _poll_all_odds():
                             Event.commence_time <= now,
                             Event.commence_time >= now - timedelta(days=3),
                             Event.status.in_(["scheduled", "live"]),
-                            Event.espn_event_id.is_(None),
+                            Event.espn_id.is_(None),
                         )
                     )
                     if (unmatched.scalar() or 0) == 0:
