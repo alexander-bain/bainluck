@@ -423,6 +423,7 @@ class KalshiAPIService(BaseAPIClient):
                 await asyncio.sleep(0.5)
 
             events, cursor = await self.get_events(
+                status=None,
                 with_nested_markets=True,
                 cursor=cursor,
             )
