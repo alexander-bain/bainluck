@@ -128,12 +128,21 @@ def _market_row(market: FuturesMarket) -> dict | None:
     }
 
 
-def _brackets_from_outcomes(market: FuturesMarket) -> list[list]:
-    """Convert multi-outcome market to [[prob, label], ...] brackets."""
+def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:
+    """Convert multi-outcome market to [[prob, label], ...] brackets.
+
+    When normalize=True, scale so probabilities sum to 100% (removes
+    overround from independent binary markets displayed as distributions).
+    """
     result = []
     for o in _outcomes_sorted(market):
         p = float(o.current_probability or 0)
         result.append([round(p * 100, 1), o.name or ""])
+    if normalize and result:
+        total = sum(b[0] for b in result)
+        if total > 105:
+            for b in result:
+                b[0] = round(b[0] * 100 / total, 1)
     return result
 
 

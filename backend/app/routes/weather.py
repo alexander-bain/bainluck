@@ -278,12 +278,12 @@ async def get_featured(db: AsyncSession = Depends(get_db)):
     for m in markets:
         if not m.outcomes:
             continue
-        # Days until resolution (lower = better)
         if m.resolution_date:
-            days = max((m.resolution_date - now).total_seconds() / 86400, 0.1)
+            days = (m.resolution_date - now).total_seconds() / 86400
+            if days < 0.5:
+                continue
         else:
-            days = 365  # far out, low priority
-        # Score: outcome_count / days_until_resolution
+            days = 365
         score = len(m.outcomes) / days
         scored.append((score, m))
 
