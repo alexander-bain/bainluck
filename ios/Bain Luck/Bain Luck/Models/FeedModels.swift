@@ -8,7 +8,33 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     let limit: Int
     let offset: Int
     let hasMore: Bool
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
+        limit = try c.decodeIfPresent(Int.self, forKey: .limit) ?? 50
+        offset = try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0
+        hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+
+        // Decode items individually — skip any that fail rather than crashing the whole feed
+        var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
+        var decoded: [FeedItem] = []
+        while !itemsContainer.isAtEnd {
+            if let item = try? itemsContainer.decode(FeedItem.self) {
+                decoded.append(item)
+            } else {
+                _ = try? itemsContainer.decode(AnyCodable.self)
+            }
+        }
+        items = decoded
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case items, total, limit, offset, hasMore
+    }
 }
+
+private nonisolated struct AnyCodable: Decodable {}
 
 // MARK: - Feed Item (Polymorphic)
 
