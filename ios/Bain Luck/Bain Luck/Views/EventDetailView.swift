@@ -25,8 +25,14 @@ final class EventDetailViewModel: ObservableObject {
         loading = event == nil
 
         // Start secondary fetches immediately (they only need eventId)
-        let historyTask = Task { try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168) }
-        let relatedFuturesTask = Task { try? await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
+        let historyTask = Task { () -> EventHistoryResponse? in
+            do { return try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168) }
+            catch { logger.error("History fetch failed for \(self.eventId): \(error)"); return nil }
+        }
+        let relatedFuturesTask = Task { () -> RelatedFuturesResponse? in
+            do { return try await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
+            catch { logger.error("Related futures failed for \(self.eventId): \(error)"); return nil }
+        }
 
         // Await primary fetch (controls loading state)
         do {
