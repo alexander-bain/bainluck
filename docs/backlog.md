@@ -48,6 +48,17 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 **Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
 **Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
+### 0f-2. Sport Hierarchy Page Data Quality (Manus audit April 22)
+
+Two issues reported by Manus league page audit. May be transient data issues — verify before investing time:
+1. **EPL page shows Egyptian Premier League teams** — cross-league contamination in grid or event data. Grid API currently shows correct 20 English teams. May have been stale data at audit time.
+2. **Tennis category page shows Golf content** — `/categories/tennis` or `/sport/tennis/atp` displaying golf tournaments. Tennis feed API returns correct data. May be a rendering path issue where golf-specific code runs for non-golf sports.
+
+**Verify:** Visit `/sport/soccer/epl` and `/sport/tennis/atp` in browser. If issues persist, trace the data loading path.
+**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`, `frontend/app/categories/[slug]/page.tsx`
+
+---
+
 ### 0f. Event Detail Below-the-Fold Redesign (from Claude Design prototype)
 
 Design prototype: `handoffs/Event Detail Below-the-Fold.html`
