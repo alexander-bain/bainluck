@@ -53,15 +53,9 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 Design prototype: `handoffs/Event Detail Below-the-Fold.html`
 Brief: `docs/design-brief-event-detail-v2.md`
 
-6 steps, independently shippable:
-1. **TotalPointsSpectrum rewrite** — projection bars + threshold ladder (replace broken spectrum)
-2. **PlayerPropsDashboard** — per-player stat cards with opening/live/actual comparison
-3. **GameSegments** — 1st/2nd half cards with total + leader bars
-4. **BiggerPicture redesign** — series card + two-column team comparison with path bars
-5. **SpecialEventMarkets** — auto-categorized props for marquee events
-6. **TradeWatch rethink** — one-sided, highest-prob destination only
+Steps 1-5 shipped April 22. Remaining:
+6. **TradeWatch rethink** — one-sided, highest-prob destination only (partially done — disclaimer added, layout fix needed)
 
-**Files:** TotalPointsSpectrum.tsx (rewrite), PlayerPropsGrid.tsx (replace), GameSegments.tsx (new), BiggerPicture.tsx (new), SpecialEventMarkets.tsx (new), events/[id]/page.tsx (integration)
 **Parallel Safety:** Yellow (frontend only, no backend changes)
 
 ---

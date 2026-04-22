@@ -2,6 +2,29 @@
 
 ## April 22, 2026
 
+**Event Detail Below-the-Fold Redesign (Steps 1-5 of 6):**
+- ✅ TotalPointsSpectrum rewrite — projection bars (pre-game/current/pace/actual) + threshold probability ladder. Replaces broken 172-threshold color bar with overlapping labels.
+- ✅ PlayerPropsDashboard — per-player stat cards with "ladder" (multi-threshold) and "line" (single O/U) shapes. Three game states (pre/live/done). Box score integration for live actuals. Team filter toggle. Cross-source badges. Replaces broken PlayerPropsGrid.
+- ✅ GameSegments — 1st/2nd half cards with total points O/U bar + team-colored leader split bar. Renders period_markets data that was previously unused.
+- ✅ Bigger Picture redesign — two-column team cards with championship path probability bars, player awards grid. Eliminates duplicate team records. Trade Watch moved below with "speculative" disclaimer.
+- ✅ SpecialEventMarkets — auto-categorized "other" markets (Game Props, Novelty, MVP, Player Performance). Sport-agnostic rendering for Super Bowl / Masters / World Cup without hardcoding.
+- Design source: `handoffs/Event Detail Below-the-Fold.html` (Claude Design prototype)
+
+**Mystery Shopper Critical Fixes (M1-M4):**
+- ✅ M1+M3: DataGolf markets now close when tournaments complete (3 layers: schedule scan, completion detection, stale market cleanup). Golf landing page filters completed tournaments by schedule_status. Leaderboard reports "completed" instead of "live" when done.
+- ✅ M2: ErrorBoundary + 12s loading timeout on event detail page (prevents infinite mobile spinner)
+- ✅ M4: Player props with over_probability >95% or <5% filtered (boring thresholds hidden)
+
+**Cross-Sport Contamination Fix:**
+- ✅ Game markets endpoint now filters by `llm_sport_category` — MLB games no longer show NBA three-pointers, double-doubles, or MLS markets when city names overlap (Cleveland, Houston).
+- ✅ Fixed `period_totals` → `period_markets` typo (was causing 500 on all game-markets requests)
+
+**Doc Cleanup:**
+- ✅ Backlog: removed ~50 lines shipped/duplicate content, promoted M1-M4 to Tier 1, added 0f design redesign item
+- ✅ CLAUDE.md: test counts updated (3,315), project structure corrected
+- ✅ PRD: test count updated, MoneyPuck references removed (stub deleted), DataGolf + StatPal added to services table, "fangraphs" → "mlb" source key fix
+- ✅ 7 new tests for tournament completion detection (3,315 total)
+
 **Chart Timing Quality (0t-1)** — charts were extending 3-11 hours past game end:
 - ✅ Root cause: Kalshi/Polymarket `win_prob_snapshots` kept being written hours after game end by hourly PM matching task. `smartEndTime` picked them up and stretched charts.
 - ✅ Frontend: `smartEndTime` now excludes kalshi, polymarket, and aggregate_line — only uses ESPN + stat_model as game-end signals

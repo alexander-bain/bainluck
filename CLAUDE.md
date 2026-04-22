@@ -92,7 +92,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (23 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,308 pytest items
+│   └── tests/                   # 3,315 pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /weather)
 │   ├── components/              # React components (RelatedFutures, OddsChart, etc.)
