@@ -97,6 +97,38 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ---
 
+## Mystery Shopper Findings (April 22, 2026 — Manus AI Audit)
+
+Manus visited every major page on bainluck.com as a first-time user. Full report: `Manus/mystery_shopper.md`.
+
+### Critical (user-facing, broken)
+
+| # | Finding | Page | Severity | Root cause hypothesis |
+|---|---------|------|----------|----------------------|
+| M1 | **Golf tournaments: 100%/0% probability** — single golfer at 100%, all others at 0% across Zurich Classic, Volvo China Open, and future majors | Golf, Feed | **CRITICAL** | DataGolf prob=1.0 for completed event winners leaking into upcoming events, OR stale tournament data not rotating after event completion |
+| M2 | **Event detail doesn't load on mobile** — 375px viewport shows endless "Loading event..." spinner | Event Detail | **CRITICAL** | JavaScript execution issue on mobile — likely chart rendering timeout or memory issue with large datasets |
+| M3 | **Future golf majors marked as "LIVE"** — PGA Championship, U.S. Open, The Open all showing LIVE status | Feed, Golf | **HIGH** | DataGolf schedule matching incorrectly marking future events as current |
+| M4 | **Player props showing 97-98% uninteresting thresholds** — "2 home runs: 98% chance" for every player | Event Detail | **HIGH** | No filter for props where the interesting side is <5%. Shows the "No" probability instead of hiding boring props |
+
+### Warning (data quality, confusing but not broken)
+
+| # | Finding | Page | Severity | Root cause hypothesis |
+|---|---------|------|----------|----------------------|
+| M5 | **Tiger Woods -57.5% daily change** on a future event | Feed | Medium | Stale trend data from a resolved market being shown on an upcoming market |
+| M6 | **Weather: LA showing 33°F** in April | Weather | Medium | Possible C/F conversion error or wrong city data |
+| M7 | **Economics: recession showing "30" without %** | Economics | Medium | Missing percentage suffix in display component |
+| M8 | **Economics: CPI distribution sums >100%** | Economics | Medium | Independent binary markets visualized as a single distribution |
+| M9 | **Weather: "NYC temperature Apr 15" still featured** — 7 days stale | Weather | Medium | Featured markets not auto-rotating after resolution |
+| M10 | **Event detail: "Projected final: 3 – -1"** — confusing spread notation | Event Detail | Low | Spread displayed as score instead of "+ / -" format |
+| M11 | **Half/quarter/period markets not displayed** even when Kalshi has them | Event Detail | **HIGH** | Market types not classified into displayable category — `KXNBAHALF` etc. recently added to ticker map but not routed to UI |
+| M12 | **Halftime/spread markets missing from event detail** — only moneyline + total + player props shown | Event Detail | **HIGH** | Related futures endpoint may filter these out or classify them as non-displayable |
+
+### Manus Data Coverage Audit (in progress)
+
+Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what Kalshi/Polymarket have vs. what bainluck.com actually displays. Results pending at: https://manus.im/app/M2sAukWQRoYsUMLsu5QfaE
+
+---
+
 ## Tier 2 — Important But Bigger Scope
 
 ### 2. God Functions — Deeper Extraction (continuation of Item 6)
