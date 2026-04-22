@@ -17,11 +17,6 @@ export default function DesktopNav() {
       isActive: pathname === "/" || pathname === "",
     },
     {
-      label: "Leagues",
-      href: "/sport",
-      isActive: pathname.startsWith("/sport") || pathname.startsWith("/playoffs"),
-    },
-    {
       label: "Search",
       href: "/search",
       isActive: pathname === "/search",

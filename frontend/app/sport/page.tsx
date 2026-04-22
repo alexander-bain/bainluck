@@ -61,7 +61,7 @@ export default function SportsIndexPage() {
             <span>/</span>
             <span className="text-text-primary">Sports</span>
           </div>
-          <h1 className="text-3xl font-bold text-text-primary">Leagues</h1>
+          <h1 className="text-3xl font-bold text-text-primary">All Sports</h1>
           <p className="text-text-secondary mt-2">
             Win probabilities and odds across {sports.length} sports
           </p>
@@ -108,51 +108,6 @@ export default function SportsIndexPage() {
               </Link>
             );
           })}
-        </div>
-
-        {/* Beyond Sports */}
-        <h2 className="text-xl font-semibold text-text-primary mt-10 mb-4">Beyond Sports</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[
-            { href: "/categories/golf", icon: "\u26f3", label: "Golf", desc: "Tournament odds, leaderboards, progression charts", color: "bg-emerald-50 hover:bg-emerald-100" },
-            { href: "/weather", icon: "\u{1F326}", label: "Weather", desc: "Temperature, rainfall, and climate prediction markets", color: "bg-sky-50 hover:bg-sky-100" },
-            { href: "/economics", icon: "\ud83d\udcca", label: "Economics", desc: "Fed rates, inflation, GDP, recession probabilities", color: "bg-amber-50 hover:bg-amber-100" },
-          ].map((cat) => (
-            <Link
-              key={cat.href}
-              href={cat.href}
-              className={`${cat.color} rounded-xl p-6 border border-surface-border hover:shadow-md hover:-translate-y-0.5 transition-all group`}
-            >
-              <div className="flex items-start gap-4">
-                <span className="text-3xl">{cat.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-text-primary font-semibold text-lg group-hover:underline">{cat.label}</h3>
-                  <p className="text-text-muted text-sm mt-1">{cat.desc}</p>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-
-        {/* Championship Grids link */}
-        <div className="mt-10 pt-6 border-t border-surface-border">
-          <h2 className="text-xl font-semibold text-text-primary mb-4">Championship Grids</h2>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { slug: "nba", label: "NBA" },
-              { slug: "nhl", label: "NHL" },
-              { slug: "mlb", label: "MLB" },
-              { slug: "ncaa-basketball", label: "NCAAB" },
-            ].map((grid) => (
-              <Link
-                key={grid.slug}
-                href={`/playoffs/${grid.slug}`}
-                className="px-4 py-2 rounded-lg border border-surface-border bg-surface-card hover:bg-surface-elevated text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
-              >
-                {grid.label} Grid
-              </Link>
-            ))}
-          </div>
         </div>
       </div>
     </div>
