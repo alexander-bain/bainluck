@@ -627,6 +627,7 @@ class TestProbabilityConsistency:
         """The grid doesn't silently fix — inconsistencies are visible."""
         cells = {
             "make_playoffs": {"merged_probability": 0.50},
+            "division": {"merged_probability": 0.55},
             "conference": {"merged_probability": 0.60},  # HIGHER than make_playoffs!
             "championship": {"merged_probability": 0.22},
         }

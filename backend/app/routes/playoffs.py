@@ -2370,7 +2370,7 @@ async def get_playoff_grid(
         select(FuturesMarket)
         .where(
             market_filter,
-            FuturesMarket.status != "resolved",
+            FuturesMarket.status.in_(("open", "closed", "resolved")),
         )
         .options(selectinload(FuturesMarket.outcomes))
     )

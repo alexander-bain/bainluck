@@ -82,8 +82,9 @@ NBA_CONFIG = LeagueConfig(
     external_id_prefixes=["KXNBA"],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
-        GridColumn(key="conference", label="Conference", order=2),
-        GridColumn(key="championship", label="Champion", order=3),
+        GridColumn(key="division", label="Division", order=2),
+        GridColumn(key="conference", label="Conference", order=3),
+        GridColumn(key="championship", label="Champion", order=4),
     ],
     matching_rules=[
         MarketMatchingRule(
@@ -103,6 +104,15 @@ NBA_CONFIG = LeagueConfig(
                 r"Eastern\s+Conference",
                 r"Western\s+Conference",
                 r"NBA.*Conference",
+            ],
+        ),
+        MarketMatchingRule(
+            column="division",
+            tier=4,
+            name_patterns=[
+                r"Division\s+Winner",
+                r"Win\s+(?:the\s+)?Division",
+                r"Division\s+Champion",
             ],
         ),
         MarketMatchingRule(

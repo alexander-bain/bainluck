@@ -174,9 +174,16 @@ async def get_feed(
                         d["away_team_data"] = _format_team_data(away_team)
 
     # === SCORE GOLF TOURNAMENTS ===
-    tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
-    if tournament_items:
-        feed_items.extend(tournament_items)
+    # Skip golf tournaments if a non-golf sport tag is active
+    _skip_golf = False
+    if static_tag_filter:
+        sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
+        if sport_tags and "sport:golf" not in sport_tags:
+            _skip_golf = True
+    if not _skip_golf:
+        tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
+        if tournament_items:
+            feed_items.extend(tournament_items)
 
     # === SCORE FUTURES ===
     if include_futures:
