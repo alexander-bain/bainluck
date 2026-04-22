@@ -151,10 +151,18 @@ NHL_CONFIG = LeagueConfig(
     ],
     matching_rules=[
         MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
+                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
+                r"Playoff\s+Qualif",
+            ],
+        ),
+        MarketMatchingRule(
             column="championship",
             tier=1,
             name_patterns=[
-                r"Stanley\s+Cup",
+                r"Stanley\s+Cup(?!\s*®?\s*Playoff\s*Qualif)",
                 r"NHL\s+Championship",
                 r"NHL\s+Champion",
             ],
@@ -174,13 +182,6 @@ NHL_CONFIG = LeagueConfig(
             name_patterns=[
                 r"\bDivision\b",
                 r"(?:Atlantic|Metropolitan|Central|Pacific)\b",
-            ],
-        ),
-        MarketMatchingRule(
-            column="make_playoffs",
-            name_patterns=[
-                r"Make\s+(?:the\s+)?(?:Playoffs|Postseason)",
-                r"(?:Playoff|Postseason)\s+(?:Berth|Qualif)",
             ],
         ),
     ],
