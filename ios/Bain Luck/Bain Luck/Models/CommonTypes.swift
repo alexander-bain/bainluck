@@ -93,7 +93,7 @@ nonisolated struct ESPNData: Decodable, Sendable {
     let period: String?
     let broadcast: String?
     let winProbability: Double?
-    let probabilitySources: [String: String]?
+    let probabilitySources: [String: WinProbValue]?
 }
 
 // MARK: - Win Probability Sources
