@@ -103,6 +103,27 @@ nonisolated struct WinProbSource: Decodable, Sendable {
     let displayName: String?
     let type: String?
     let color: String?
+
+    init(from decoder: Decoder) throws {
+        // The API sends either a bare number (0.65) or a structured object.
+        if let container = try? decoder.singleValueContainer(),
+           let d = try? container.decode(Double.self) {
+            self.value = .number(d)
+            self.displayName = nil
+            self.type = nil
+            self.color = nil
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.value = try container.decodeIfPresent(WinProbValue.self, forKey: .value)
+        self.displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        self.type = try container.decodeIfPresent(String.self, forKey: .type)
+        self.color = try container.decodeIfPresent(String.self, forKey: .color)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value, displayName, type, color
+    }
 }
 
 /// Flexible value that handles both numeric (0.65) and string ("987726") from API.
