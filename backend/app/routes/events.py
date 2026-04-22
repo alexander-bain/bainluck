@@ -2435,13 +2435,15 @@ async def get_game_markets(
     markets = list(market_result.scalars().all())
 
     # 3. Also find unlinked game-prop markets matching team names + time window
+    # Require BOTH teams to appear in the market name to prevent cross-event
+    # contamination (e.g., "Minnesota vs New York M" leaking onto a NYY vs BOS game).
     if sport_key and event.commence_time:
         home_patterns = _team_name_patterns(event.home_team_name)
         away_patterns = _team_name_patterns(event.away_team_name)
-        all_patterns = home_patterns + away_patterns
-        name_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in all_patterns if len(p) >= 4]
+        home_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in home_patterns if len(p) >= 4]
+        away_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in away_patterns if len(p) >= 4]
 
-        if name_conditions:
+        if home_conditions and away_conditions:
             window = timedelta(hours=6)
             sport_conditions = []
             if event.sport_id:
@@ -2458,7 +2460,8 @@ async def get_game_markets(
                     status_filter,
                     FuturesMarket.category == "game_prop",
                     sport_filter,
-                    or_(*name_conditions),
+                    or_(*home_conditions),
+                    or_(*away_conditions),
                 )
             )
             linked_ids = {m.id for m in markets}
