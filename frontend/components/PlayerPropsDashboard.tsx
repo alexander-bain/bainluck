@@ -334,8 +334,25 @@ export default function PlayerPropsDashboard({
       stats: Map<string, { rungs: StatRung[]; sources: Set<string>; movement: number | null }>;
     }>();
 
-    const homeShort = homeTeam?.split(" ").pop()?.toLowerCase() ?? "";
-    const awayShort = awayTeam?.split(" ").pop()?.toLowerCase() ?? "";
+    const homeLower = homeTeam?.toLowerCase() ?? "";
+    const awayLower = awayTeam?.toLowerCase() ?? "";
+    const homeWords = homeLower.split(/\s+/).filter((w) => w.length >= 3);
+    const awayWords = awayLower.split(/\s+/).filter((w) => w.length >= 3);
+
+    function detectTeam(marketContext: string): "home" | "away" | "unknown" {
+      const ctx = marketContext.toLowerCase();
+      const homeMatch = homeWords.some((w) => ctx.includes(w)) || ctx.includes(homeLower);
+      const awayMatch = awayWords.some((w) => ctx.includes(w)) || ctx.includes(awayLower);
+      if (homeMatch && !awayMatch) return "home";
+      if (awayMatch && !homeMatch) return "away";
+      // Both match (e.g., "NYY vs BOS") — check ordering: first team mentioned is typically away (visitor)
+      if (homeMatch && awayMatch) {
+        const homeIdx = homeWords.reduce((min, w) => { const i = ctx.indexOf(w); return i >= 0 && i < min ? i : min; }, 999);
+        const awayIdx = awayWords.reduce((min, w) => { const i = ctx.indexOf(w); return i >= 0 && i < min ? i : min; }, 999);
+        return homeIdx < awayIdx ? "home" : "away";
+      }
+      return "unknown";
+    }
 
     for (const p of data.player_props) {
       const parsed = parsePlayerName(p.market_name || "", p.outcome_name || "");
@@ -344,10 +361,7 @@ export default function PlayerPropsDashboard({
 
       const playerKey = parsed.player.toLowerCase();
       if (!playerMap.has(playerKey)) {
-        const beforeColon = parsed.team.toLowerCase();
-        let team: "home" | "away" | "unknown" = "unknown";
-        if (homeShort && beforeColon.includes(homeShort)) team = "home";
-        else if (awayShort && beforeColon.includes(awayShort)) team = "away";
+        const team = detectTeam(parsed.team || p.market_name || "");
 
         playerMap.set(playerKey, {
           name: parsed.player,
@@ -455,7 +469,7 @@ export default function PlayerPropsDashboard({
 
   if (players.length === 0) return null;
 
-  const filtered = teamFilter === "all" ? players : players.filter((p) => p.team === teamFilter);
+  const filtered = teamFilter === "all" ? players : players.filter((p) => p.team === teamFilter || p.team === "unknown");
   const totalProps = players.reduce((a, p) => a + p.stats.length, 0);
   const allSources = new Set<string>();
   data.player_props?.forEach((p) => allSources.add(p.source));

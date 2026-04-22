@@ -13,7 +13,7 @@ interface MarketCategory {
   subtitle: string;
   items: Array<{
     name: string;
-    outcomes: Array<{ label: string; prob: number; source: string }>;
+    outcomes: Array<{ label: string; prob: number; source: string; sourceCount?: number }>;
   }>;
 }
 
@@ -36,7 +36,8 @@ function categorizeMarketName(name: string): { category: string; subtitle: strin
 
 function PropMiniCard({ item }: { item: MarketCategory["items"][0] }) {
   const sorted = [...item.outcomes].sort((a, b) => b.prob - a.prob);
-  const sourceCount = new Set(sorted.map((o) => o.source)).size;
+  const maxSourceCount = Math.max(...sorted.map((o) => o.sourceCount ?? 1));
+  const sourceCount = maxSourceCount > 1 ? maxSourceCount : new Set(sorted.map((o) => o.source)).size;
 
   return (
     <div className="border border-surface-border rounded-lg p-3">
@@ -89,11 +90,21 @@ export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventM
         cat.items.push(existing);
       }
 
-      existing.outcomes.push({
-        label: m.outcome_name || "Unknown",
-        prob: m.probability ?? 0,
-        source: m.source || "unknown",
-      });
+      const label = m.outcome_name || "Unknown";
+      const existingOutcome = existing.outcomes.find((o) => o.label === label);
+      if (existingOutcome) {
+        existingOutcome.sourceCount = (existingOutcome.sourceCount ?? 1) + 1;
+        if (Math.abs(m.probability ?? 0 - 0.5) > Math.abs(existingOutcome.prob - 0.5)) {
+          existingOutcome.prob = m.probability ?? 0;
+        }
+      } else {
+        existing.outcomes.push({
+          label,
+          prob: m.probability ?? 0,
+          source: m.source || "unknown",
+          sourceCount: 1,
+        });
+      }
     }
 
     return [...catMap.values()]
