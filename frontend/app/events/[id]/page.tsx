@@ -16,7 +16,7 @@ const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExp
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
-const PlayerPropsGrid = dynamic(() => import("@/components/PlayerPropsGrid"), { ssr: false });
+const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1544,10 +1544,14 @@ export default function EventPage({ params }: EventPageProps) {
           })()}
 
           {gameMarkets.player_props.length > 0 && (
-            <PlayerPropsGrid
+            <PlayerPropsDashboard
               data={gameMarkets}
+              eventStatus={event.status}
+              homeTeam={event.home_team}
+              awayTeam={event.away_team}
               homeColor={event.home_team_data?.primary_color || undefined}
               awayColor={event.away_team_data?.primary_color || undefined}
+              boxScore={event.box_score_data}
             />
           )}
         </div>
