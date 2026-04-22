@@ -404,7 +404,12 @@ class KalshiAPIService(BaseAPIClient):
         return list(all_events.values())
 
     async def _fetch_all_events_unfiltered(self) -> list[KalshiEvent]:
-        """Fetch all open events from Kalshi without category filtering (paginated)."""
+        """Fetch all events from Kalshi without category filtering (paginated).
+
+        Kalshi neg-risk events (championships, conferences) can have
+        status=None even when they have open markets. Omitting the status
+        filter ensures we discover them.
+        """
         import asyncio
 
         all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
@@ -418,16 +423,17 @@ class KalshiAPIService(BaseAPIClient):
                 await asyncio.sleep(0.5)
 
             events, cursor = await self.get_events(
-                status="open",
                 with_nested_markets=True,
                 cursor=cursor,
             )
 
             for event_data in events:
+                nested = event_data.get("markets", [])
+                if nested and all(m.get("status") == "finalized" for m in nested):
+                    continue
                 parsed_event = self._parse_event(event_data)
                 if parsed_event:
                     all_events[parsed_event.event_ticker] = parsed_event
-                    # Track categories for logging
                     cat = parsed_event.category or "unknown"
                     categories_seen[cat] = categories_seen.get(cat, 0) + 1
 
