@@ -1,5 +1,22 @@
 # Completed Features (Shipped)
 
+## April 22, 2026
+
+**Chart Timing Quality (0t-1)** — charts were extending 3-11 hours past game end:
+- ✅ Root cause: Kalshi/Polymarket `win_prob_snapshots` kept being written hours after game end by hourly PM matching task. `smartEndTime` picked them up and stretched charts.
+- ✅ Frontend: `smartEndTime` now excludes kalshi, polymarket, and aggregate_line — only uses ESPN + stat_model as game-end signals
+- ✅ Frontend: When `completed_at` is available from the API, uses it as the authoritative end boundary (no inference needed)
+- ✅ Backend: PM matching Phase 2 no longer writes snapshots for completed/closed events
+- ✅ Backend: New `completed_at` column on Event model — set from ESPN (post/final), Odds API (completed flag), StatPal (end_time), staleness detection
+- ✅ Backend: History API returns `completed_at` and `commence_time` for frontend chart boundary
+- ✅ Backend: Backfill endpoint populated 592 historical events (116 from ESPN, 476 from stat_model)
+- ✅ Results: NBA duration 4.32x→1.07x, MLB 3.31x→1.00x, MaxGap 181m→2.3m, findings 113→63
+
+**Event Timing Audit Tooling:**
+- ✅ New script: `backend/scripts/audit_event_timing.py` — sweeps completed events, measures start/end offset, gaps, chart alignment, source coverage. Aggregates by sport and source coverage. Supports `--save`/`--compare`/`--json`.
+- ✅ New Manus prompt: `Manus/prompts/chart_timing_audit.md` — visual spot-check of 8 completed events across sports
+- ✅ Registered `chart_timing` module in `manus_health_suite.py`
+
 ## April 19-20, 2026
 
 **Weather Page** (`/weather`) — new top-level page with 6 sections, all live data:
