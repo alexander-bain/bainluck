@@ -59,6 +59,15 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
+    let gameState: WinProbGameState?
+}
+
+nonisolated struct WinProbGameState: Decodable, Sendable {
+    let period: String?
+    let clock: String?
+    let inning: Int?
+    let homeScore: Int?
+    let awayScore: Int?
 }
 
 // MARK: - Win Prob Source Info

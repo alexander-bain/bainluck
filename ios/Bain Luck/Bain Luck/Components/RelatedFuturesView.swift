@@ -1234,7 +1234,7 @@ private struct StatPropsSection: View {
     let teamColor: Color
     var boxScore: [String: [String: Double]]? = nil
     var eventStatus: String? = nil
-    var gamePeriod: Int? = nil
+    var gamePeriod: String? = nil
     var gameClock: String? = nil
     var sportKey: String? = nil
 
@@ -1701,8 +1701,8 @@ private struct PlayerHeadshotView: View {
 
 // MARK: - Game Progress & Box Score Helpers
 
-private func computeGameProgress(sport: String?, period: Int?, clock: String?) -> Double? {
-    guard let period = period, period > 0 else { return nil }
+private func computeGameProgress(sport: String?, period: String?, clock: String?) -> Double? {
+    guard let periodStr = period, let period = Int(periodStr), period > 0 else { return nil }
 
     let totalPeriods: Double
     let periodMinutes: Double

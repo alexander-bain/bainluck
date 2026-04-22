@@ -50,7 +50,7 @@ nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let summary: String?
     let eventStatus: String?
     let boxScore: [String: [String: Double]]?
-    let gamePeriod: Int?
+    let gamePeriod: String?
     let gameClock: String?
 }
 

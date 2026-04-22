@@ -442,7 +442,33 @@ struct OddsChartView: View {
             }
         }
 
-        // If ESPN data doesn't include the first period, add one at game commence time.
+        // Supplement with win_prob_history game_state (stat_model, espn sources have period/inning)
+        if let wpHistory = history.winProbHistory {
+            for (_, points) in wpHistory {
+                let sorted = points
+                    .compactMap { point -> (period: String, date: Date)? in
+                        guard let gs = point.gameState,
+                              let date = point.timestamp.asDate else { return nil }
+                        if let period = gs.period, !period.isEmpty {
+                            return (period, date)
+                        }
+                        if let inning = gs.inning, inning > 0 {
+                            return ("Top \(inning)", date)
+                        }
+                        return nil
+                    }
+                    .sorted { $0.date < $1.date }
+
+                for point in sorted {
+                    let label = normalizePeriodLabel(point.period)
+                    guard !label.isEmpty, !seenLabels.contains(label) else { continue }
+                    seenLabels.insert(label)
+                    firstSeen.append((label, point.date))
+                }
+            }
+        }
+
+        // If data doesn't include the first period, add one at game commence time.
         // This ensures e.g. Q1 always appears even if ESPN sync started in Q2.
         if isGameStarted, let startDate = gameStartDate, !firstSeen.isEmpty {
             let firstPeriodLabel = inferFirstPeriodLabel(from: firstSeen.map(\.label))
