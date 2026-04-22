@@ -447,6 +447,41 @@ class KalshiAPIService(BaseAPIClient):
             len(all_events), page_count, dict(sorted(categories_seen.items())),
         )
 
+        # Supplementary fetch: Kalshi neg-risk sports events can have
+        # status=None and may not appear in the first N pages of the
+        # unfiltered listing. Explicitly query key sports series tickers
+        # to guarantee we don't miss championship/conference markets.
+        _SPORTS_SERIES_TICKERS = [
+            "KXNBA", "KXNBAEAST", "KXNBAWEST",
+            "KXNHL", "KXNHLEAST", "KXNHLWEST",
+            "KXMLB", "KXMLBAL", "KXMLBNL",
+            "KXNFL", "KXNFLNFC", "KXNFLAFC",
+        ]
+        supplemented = 0
+        for st in _SPORTS_SERIES_TICKERS:
+            if any(e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()):
+                continue
+            try:
+                await asyncio.sleep(0.3)
+                events_page, _ = await self.get_events(
+                    status=None,
+                    series_ticker=st,
+                    with_nested_markets=True,
+                    limit=10,
+                )
+                for event_data in events_page:
+                    nested = event_data.get("markets", [])
+                    if nested and all(m.get("status") == "finalized" for m in nested):
+                        continue
+                    parsed_event = self._parse_event(event_data)
+                    if parsed_event and parsed_event.event_ticker not in all_events:
+                        all_events[parsed_event.event_ticker] = parsed_event
+                        supplemented += 1
+            except Exception as e:
+                logger.debug("Supplementary fetch for %s failed: %s", st, e)
+        if supplemented:
+            logger.info("Supplementary series fetch added %d events", supplemented)
+
         # Backfill: for events with 0 nested markets (Kalshi sometimes omits
         # them from the listing for large multivariate events), fetch markets
         # separately via the /markets endpoint.
