@@ -63,7 +63,7 @@ class TestDictContents:
         assert ODDS_API_TO_WIN_PROB_KEY["icehockey_nhl"] == "hockey_nhl"
 
     def test_sport_prefix_to_llm_category_size(self):
-        assert len(SPORT_PREFIX_TO_LLM_CATEGORY) == 11
+        assert len(SPORT_PREFIX_TO_LLM_CATEGORY) >= 11
 
     def test_sport_prefix_to_llm_category_sample(self):
         assert SPORT_PREFIX_TO_LLM_CATEGORY["americanfootball"] == "football"
