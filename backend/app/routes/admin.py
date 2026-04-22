@@ -8685,3 +8685,81 @@ async def debug_golf_markets(
         },
         "markets": market_list,
     }
+
+
+@router.post("/events/backfill-completed-at")
+async def backfill_completed_at(
+    secret: str = Query(...),
+    limit: int = Query(5000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill completed_at for historical events using authoritative sources.
+
+    Priority: statpal_end_time > last ESPN snapshot > last stat_model snapshot.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import Event, ESPNSnapshot, WinProbSnapshot
+
+    result = await db.execute(
+        select(Event)
+        .where(
+            Event.status.in_(["completed", "closed"]),
+            Event.completed_at.is_(None),
+        )
+        .order_by(Event.commence_time.desc())
+        .limit(limit)
+    )
+    events = result.scalars().all()
+
+    stats = {"total": len(events), "from_statpal": 0, "from_espn": 0, "from_stat_model": 0, "unfilled": 0}
+
+    for event in events:
+        completed_at = None
+
+        # Priority 1: statpal_end_time (definitive)
+        if event.statpal_end_time:
+            completed_at = event.statpal_end_time
+            stats["from_statpal"] += 1
+
+        # Priority 2: last ESPN snapshot
+        if not completed_at:
+            espn_result = await db.execute(
+                select(ESPNSnapshot.captured_at)
+                .where(ESPNSnapshot.event_id == event.id)
+                .order_by(ESPNSnapshot.captured_at.desc())
+                .limit(1)
+            )
+            last_espn = espn_result.scalar_one_or_none()
+            if last_espn:
+                completed_at = last_espn
+                stats["from_espn"] += 1
+
+        # Priority 3: last stat_model win_prob_snapshot
+        if not completed_at:
+            wp_result = await db.execute(
+                select(WinProbSnapshot.captured_at)
+                .where(
+                    WinProbSnapshot.event_id == event.id,
+                    WinProbSnapshot.source == "stat_model",
+                )
+                .order_by(WinProbSnapshot.captured_at.desc())
+                .limit(1)
+            )
+            last_sm = wp_result.scalar_one_or_none()
+            if last_sm:
+                completed_at = last_sm
+                stats["from_stat_model"] += 1
+
+        if completed_at:
+            await db.execute(
+                Event.__table__.update()
+                .where(Event.id == event.id)
+                .values(completed_at=completed_at)
+            )
+        else:
+            stats["unfilled"] += 1
+
+    await db.commit()
+    return stats
