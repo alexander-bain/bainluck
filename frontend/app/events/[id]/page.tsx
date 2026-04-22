@@ -17,6 +17,7 @@ const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: f
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
+const GameSegments = dynamic(() => import("@/components/GameSegments"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1473,6 +1474,18 @@ export default function EventPage({ params }: EventPageProps) {
                 <span>{Math.round(gameMarkets.pace.fraction_elapsed * 100)}% elapsed</span>
               </div>
             </div>
+          )}
+
+          {/* Game Segments (1st half, 2nd half) */}
+          {(gameMarkets.period_markets?.length ?? 0) > 0 && (
+            <GameSegments
+              data={gameMarkets}
+              eventStatus={event.status}
+              homeTeam={event.home_team}
+              awayTeam={event.away_team}
+              homeColor={event.home_team_data?.primary_color || undefined}
+              awayColor={event.away_team_data?.primary_color || undefined}
+            />
           )}
 
           {/* Spreads section */}
