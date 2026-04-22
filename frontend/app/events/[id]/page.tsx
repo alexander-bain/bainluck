@@ -1337,6 +1337,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               aggregateLine={historyData?.aggregate_line ?? undefined}
+              completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
               eventStatus={event.status}
               periodBoundaries={periodBoundaries}
@@ -1698,6 +1699,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               aggregateLine={historyData?.aggregate_line ?? undefined}
+              completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
               eventStatus={event.status}
               fillContainer

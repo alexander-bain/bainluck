@@ -123,10 +123,13 @@ async def detect_and_close_stale_events(session) -> int:
             # Check StatPal end time first — definitive close signal
             statpal_end = get_statpal_end_time(event)
             if statpal_end and statpal_end <= now:
+                close_vals = {"status": "closed"}
+                if not event.completed_at:
+                    close_vals["completed_at"] = statpal_end
                 await session.execute(
                     Event.__table__.update()
                     .where(Event.id == event.id)
-                    .values(status="closed")
+                    .values(**close_vals)
                 )
                 closed_count += 1
                 logger.info(
@@ -178,10 +181,13 @@ async def detect_and_close_stale_events(session) -> int:
                     close_reason = "all_bookmakers_stale"
 
             if should_close:
+                close_values = {"status": "closed"}
+                if not event.completed_at:
+                    close_values["completed_at"] = now
                 await session.execute(
                     Event.__table__.update()
                     .where(Event.id == event.id)
-                    .values(status="closed")
+                    .values(**close_values)
                 )
                 closed_count += 1
                 logger.info(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
@@ -888,6 +894,8 @@ async def _poll_all_odds():
 
                             if is_completed:
                                 event_status = "completed"
+                                if event_obj and not event_obj.completed_at:
+                                    update_values["completed_at"] = now
                             elif score_commence and score_commence <= now:
                                 event_status = "live"
                             elif home_score is not None and away_score is not None:

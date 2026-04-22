@@ -211,19 +211,12 @@ def compute_smart_end_time(history: dict, commence_time: str = None) -> Optional
     # so it extends to stale prediction market data.
 
     candidates = [c for c in candidates if c]
+    if not candidates:
+        return None
 
-    if candidates:
-        latest = max(candidates, key=lambda t: parse_ts(t))
-        buffered = parse_ts(latest) + timedelta(minutes=2)
-        return buffered.isoformat()
-
-    # Fallback for Odds-API-only events: cap at commence_time + 4 hours.
-    # Must stay in sync with frontend/components/OddsChart.tsx smartEndTime.
-    if commence_time:
-        fallback = parse_ts(commence_time) + timedelta(hours=4)
-        return fallback.isoformat()
-
-    return None
+    latest = max(candidates, key=lambda t: parse_ts(t))
+    buffered = parse_ts(latest) + timedelta(minutes=2)
+    return buffered.isoformat()
 
 
 def analyze_gaps(timestamps: list[str]) -> tuple[float, int, int, list]:
@@ -375,8 +368,14 @@ def analyze_event(event_data: dict) -> tuple[TimingMetrics, list[AuditFinding]]:
     if espn_history:
         m.last_espn_point = espn_history[-1].get("timestamp")
 
-    # Smart end time (replicating frontend logic)
-    m.smart_end_time = compute_smart_end_time(history, m.commence_time)
+    # Smart end time: use completed_at (authoritative) when available,
+    # otherwise fall back to inferring from ESPN/stat_model data.
+    completed_at_str = history.get("completed_at")
+    if completed_at_str:
+        m.has_statpal_end = True
+        m.smart_end_time = (parse_ts(completed_at_str) + timedelta(minutes=2)).isoformat()
+    else:
+        m.smart_end_time = compute_smart_end_time(history, m.commence_time)
 
     # Last game signal = max of ESPN, win_prob, aggregate
     game_signal_ts = []

@@ -707,6 +707,13 @@ async def _sync_espn_live_events():
                                 )
                                 session.add(snapshot)
 
+                            if ee.status in ("post", "final") and not event.completed_at:
+                                await session.execute(
+                                    _sql_update(Event)
+                                    .where(Event.id == event.id)
+                                    .values(completed_at=datetime.now(timezone.utc))
+                                )
+
                             if created:
                                 stats["espn_events_created"] = stats.get("espn_events_created", 0) + 1
                                 logger.info(
@@ -1545,8 +1552,9 @@ async def _transition_event_statuses_impl() -> dict:
 
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
             if hours_since_start > max_hours + 1.0:
-                # Well past expected duration — close it
                 event.status = "closed"
+                if not event.completed_at:
+                    event.completed_at = now
                 stats["live_to_closed"] += 1
 
         if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0:

@@ -85,6 +85,8 @@ interface OddsChartProps {
   /** Callback reporting the chart's actual rendered time domain (first & last timestamps).
    *  Used by ScoreDifferentialChart to match its x-axis exactly. */
   onRenderedDomain?: (startISO: string, endISO: string) => void;
+  /** Authoritative game end time from the backend (set when any source confirms game over) */
+  completedAt?: string;
 }
 
 type TimeRange = "all" | "live";
@@ -160,6 +162,7 @@ export default function OddsChart({
   awayTeamAbbrev,
   onActivePointChange,
   onRenderedDomain,
+  completedAt,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
@@ -202,24 +205,23 @@ export default function OddsChart({
   // commenceTime is the actual game start from ESPN/StatPal/Odds API —
   // use it directly.
 
-  // Compute smart end time for completed/closed games:
-  // Bookmakers keep reporting stale data 15-20 min after a game ends,
-  // stretching the chart far beyond the actual game duration.
-  // Use the latest game-state signal (ESPN, win prob models, score snapshots)
-  // as the true end, plus a small buffer.
+  // Determine chart end boundary for completed games.
+  // Priority: completedAt (authoritative, from backend) > last ESPN/stat_model signal > null.
   const smartEndTime = useMemo(() => {
-    if (!isClosed) return null; // Only clip completed games
+    if (!isClosed) return null;
 
+    // Use authoritative completed_at when available — no guessing.
+    if (completedAt) {
+      return new Date(parseISO(completedAt).getTime() + 2 * 60 * 1000);
+    }
+
+    // Fallback: infer from game-end data sources (ESPN, stat_model only).
     const candidates: Date[] = [];
 
-    // Signal 1: last ESPN history point (most reliable game-end signal)
     if (espnHistory && espnHistory.length > 0) {
       candidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
     }
 
-    // Signal 2: last win probability model point (stat_model, ESPN source, etc.)
-    // Exclude prediction market sources (kalshi, polymarket) — they keep getting
-    // re-snapshotted hours after game end by the hourly matching task.
     const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb", "betting"]);
     if (winProbHistory) {
       for (const [source, points] of Object.entries(winProbHistory)) {
@@ -229,27 +231,11 @@ export default function OddsChart({
       }
     }
 
-    // Signal 3: last aggregate line point — EXCLUDED from smartEndTime.
-    // The aggregate line blends all sources including kalshi/polymarket,
-    // so it extends to stale prediction market data. ESPN and stat_model
-    // are sufficient game-end signals.
+    if (candidates.length === 0) return null;
 
-    const latestGameSignal = candidates.length > 0
-      ? candidates.reduce((a, b) => (a > b ? a : b))
-      : null;
-
-    if (latestGameSignal) {
-      return new Date(latestGameSignal.getTime() + 2 * 60 * 1000);
-    }
-
-    // Fallback for Odds-API-only events (no ESPN/stat_model signals):
-    // cap at commenceTime + 4 hours to avoid showing next-day bookmaker data.
-    if (commenceTime) {
-      return new Date(parseISO(commenceTime).getTime() + 4 * 60 * 60 * 1000);
-    }
-
-    return null;
-  }, [isClosed, espnHistory, winProbHistory, commenceTime]);
+    const latest = candidates.reduce((a, b) => (a > b ? a : b));
+    return new Date(latest.getTime() + 2 * 60 * 1000);
+  }, [isClosed, completedAt, espnHistory, winProbHistory]);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {

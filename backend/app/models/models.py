@@ -143,6 +143,10 @@ class Event(Base):
     statpal_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     commence_time_source: Mapped[Optional[str]] = mapped_column(String(20))  # 'odds_api', 'espn', 'statpal'
 
+    # Authoritative game end time — set when any source confirms the game is over.
+    # Sources (in priority): statpal_end_time > ESPN "post"/"final" > Odds API completed > staleness.
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     # ESPN box score data (populated after game completion)
     box_score_data: Mapped[Optional[dict]] = mapped_column(JSONB)
 

@@ -63,7 +63,11 @@ Full audit baseline: `scripts/audit_results/timing_latest.json`. Manus visual pr
 
 #### ~~0t-1. Prediction Market Snapshots Bleed Past Game End~~ — SHIPPED (April 22)
 
-Fixed: `smartEndTime` now excludes kalshi/polymarket/aggregate_line — only ESPN + stat_model used as game-end signals. Backend: PM matching Phase 2 no longer writes snapshots for completed events. Fallback: Odds-only events capped at commence_time + 4hrs. Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
+Fixed in two passes:
+1. `smartEndTime` excludes kalshi/polymarket/aggregate_line — only ESPN + stat_model used as game-end signals. Backend PM matching Phase 2 no longer writes snapshots for completed events.
+2. Added `completed_at` column to Event model. Set from ESPN ("post"/"final"), Odds API (`completed` flag), StatPal (`statpal_end_time`), and staleness detection. History API returns `completed_at`; frontend uses it as authoritative chart end boundary. No guessing — if we don't know when the game ended, we don't clip.
+
+Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 
 #### 0t-2. 47% of Events Have Zero Period Markers
 
@@ -71,7 +75,11 @@ Fixed: `smartEndTime` now excludes kalshi/polymarket/aggregate_line — only ESP
 
 **Current coverage:** ESPN-matched events have markers via `espn_history.period` + `game_state_backfill.py`. Non-ESPN events have nothing.
 
-**Fix:** For non-ESPN events, derive period boundaries from score change patterns or from odds movement discontinuities. For soccer specifically: generate synthetic "1st Half" / "2nd Half" markers at `commence_time` and `commence_time + 47min` (standard halftime).
+**Fix options (needs investigation):**
+- Can StatPal provide period/half data for these events?
+- Can we match more events to ESPN? (the coverage gap might be addressable)
+- For sports like soccer, official APIs (e.g., API-Football) provide halftime timestamps we could consume.
+- Do NOT generate synthetic/guessed markers — only use authoritative sources.
 
 **Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py` (history endpoint period_markers derivation)
 **Parallel Safety:** Green (new logic, no existing code modified)
