@@ -1450,7 +1450,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Total Points Spectrum + Player Props (v5 Level 3) */}
-      {gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0) && (
+      {gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.spreads?.length ?? 0) > 0 || (gameMarkets.period_markets?.length ?? 0) > 0) && (
         <div className="space-y-3">
           {gameMarkets.totals.length >= 2 && (
             <TotalPointsSpectrum data={gameMarkets} />
@@ -1473,6 +1473,75 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
             </div>
           )}
+
+          {/* Spreads section */}
+          {(gameMarkets.spreads?.length ?? 0) > 0 && (
+            <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-text-primary">Spread</span>
+                <span className="text-micro text-text-muted">
+                  {[...new Set(gameMarkets.spreads.map(s => s.source))].map(s => s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : s).join(' · ')}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {gameMarkets.spreads.map((s, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="text-text-secondary">{s.outcome_name}</span>
+                    <span className="font-semibold text-text-primary tabular-nums">
+                      {s.probability != null ? `${Math.round(s.probability * 100)}%` : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Period Markets (half/quarter totals, spreads, winners) */}
+          {(gameMarkets.period_markets?.length ?? 0) > 0 && (() => {
+            const grouped: Record<string, typeof gameMarkets.period_markets> = {};
+            for (const m of gameMarkets.period_markets) {
+              const key = m.market_name;
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push(m);
+            }
+            return (
+              <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-text-primary">Period Markets</span>
+                  <span className="text-micro text-text-muted">
+                    {Object.keys(grouped).length} markets
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {Object.entries(grouped).map(([marketName, outcomes]) => {
+                    const shortName = marketName.includes(':')
+                      ? marketName.split(':').pop()!.trim()
+                      : marketName;
+                    return (
+                      <div key={marketName}>
+                        <div className="text-micro font-medium text-text-muted mb-1">{shortName}</div>
+                        <div className="space-y-1">
+                          {outcomes.map((o, i) => (
+                            <div key={i} className="flex items-center justify-between text-sm">
+                              <span className="text-text-secondary">{o.outcome_name}</span>
+                              <span className="font-semibold text-text-primary tabular-nums">
+                                {o.over_probability != null
+                                  ? `${Math.round(o.over_probability * 100)}%`
+                                  : o.probability != null
+                                    ? `${Math.round(o.probability * 100)}%`
+                                    : '—'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {gameMarkets.player_props.length > 0 && (
             <PlayerPropsGrid
               data={gameMarkets}

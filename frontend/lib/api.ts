@@ -589,6 +589,16 @@ export interface GameMarketsResponse {
     probability: number | null;
     source: string;
   }[];
+  period_markets: {
+    market_name: string;
+    outcome_name: string;
+    threshold: number | null;
+    probability: number | null;
+    source: string;
+    market_type: string;
+    over_probability?: number;
+    movement?: number | null;
+  }[];
   other: {
     market_name: string;
     outcome_name: string;

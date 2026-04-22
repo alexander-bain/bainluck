@@ -2256,6 +2256,10 @@ def _classify_game_market(name: str) -> str:
             return "player_prop"
         return "game_total"
     if "spread" in lower or "margin" in lower or "handicap" in lower:
+        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+            return "half_spread"
+        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+            return "quarter_spread"
         return "spread"
     # Team-level stat markets: "Team at Team: Points" (no player name)
     if _is_team_stat_market(name):
@@ -2264,6 +2268,10 @@ def _classify_game_market(name: str) -> str:
     if _PLAYER_PROP_RE.search(name):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
+        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+            return "half_winner"
+        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+            return "quarter_winner"
         return "moneyline"
     return "other"
 
@@ -2424,12 +2432,18 @@ async def get_game_markets(
 
         if name_conditions:
             window = timedelta(hours=6)
+            sport_filter = (
+                FuturesMarket.sport_id == event.sport_id
+                if event.sport_id
+                else True
+            )
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
                     FuturesMarket.event_id.is_(None),
                     status_filter,
                     FuturesMarket.category == "game_prop",
+                    sport_filter,
                     or_(*name_conditions),
                 )
             )
@@ -2457,6 +2471,7 @@ async def get_game_markets(
     totals_thresholds: list[dict] = []
     player_props: list[dict] = []
     spreads: list[dict] = []
+    period_markets: list[dict] = []
     other_markets: list[dict] = []
 
     # Group outcomes by market
@@ -2544,6 +2559,19 @@ async def get_game_markets(
                     "source": market.source,
                 })
 
+        elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
+            for o in market_outcomes:
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                threshold = _extract_threshold(o.name)
+                period_markets.append({
+                    "market_name": market.name,
+                    "outcome_name": o.name,
+                    "threshold": threshold,
+                    "probability": round(prob, 4) if prob else None,
+                    "source": market.source,
+                    "market_type": market_type,
+                })
+
         else:
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
@@ -2557,8 +2585,7 @@ async def get_game_markets(
     # 6. Sort totals by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
 
-    # 7. Deduplicate totals — split game_total vs team_total
-    # Game totals go into TotalPointsSpectrum, team totals get their own section
+    # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
     for t in totals_thresholds:
@@ -2568,6 +2595,8 @@ async def get_game_markets(
                 seen_thresholds[key] = t
         elif t["market_type"] == "team_total":
             team_total_items.append(t)
+        elif t["market_type"] in ("half_total", "quarter_total"):
+            period_markets.append(t)
     game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
 
     # 8. Calculate pace
@@ -2643,6 +2672,7 @@ async def get_game_markets(
         "player_props": player_props,
         "team_totals": team_total_items,
         "spreads": spreads,
+        "period_markets": period_totals,
         "other": other_markets,
         "pace": pace,
     }
