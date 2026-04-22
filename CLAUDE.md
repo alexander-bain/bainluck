@@ -43,7 +43,7 @@ There are 3 layers of matching, each with its own measurement:
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,149 tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,315 tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -66,7 +66,7 @@ There are 3 layers of matching, each with its own measurement:
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,149 tests as of April 20)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,315 tests as of April 22)
 - **Frontend tests**: `cd frontend && npx jest`
 
 ### Key Admin URLs
@@ -92,7 +92,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (23 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,340+ pytest items
+│   └── tests/                   # 3,308 pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /weather)
 │   ├── components/              # React components (RelatedFutures, OddsChart, etc.)

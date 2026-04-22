@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 
 from app.tasks.base import get_task_session
 
@@ -248,6 +248,35 @@ async def _poll_datagolf_markets() -> dict:
                                 stale_nulled, market.id,
                             )
 
+                    # Close markets for completed tournaments on this tour.
+                    # Without this, DataGolf markets stay "open" forever, and the
+                    # golf landing page displays stale 100%/0% probabilities from
+                    # completed event winners.
+                    completed_event_ids = [
+                        t.event_id for t in schedule
+                        if t.status == "completed" and t.event_id
+                    ]
+                    if completed_event_ids:
+                        closed_count = 0
+                        for eid in completed_event_ids:
+                            prefix = f"datagolf:{tour}:{eid}:"
+                            close_result = await session.execute(
+                                update(FuturesMarket)
+                                .where(
+                                    FuturesMarket.source == "datagolf",
+                                    FuturesMarket.external_id.like(f"{prefix}%"),
+                                    FuturesMarket.status == "open",
+                                )
+                                .values(status="closed")
+                            )
+                            closed_count += close_result.rowcount
+                        if closed_count:
+                            logger.info(
+                                "DataGolf: closed %d markets for %d completed events on tour=%s",
+                                closed_count, len(completed_event_ids), tour,
+                            )
+                            stats["markets_closed"] = stats.get("markets_closed", 0) + closed_count
+
                     stats["tours_polled"] += 1
 
                 except Exception as e:
@@ -283,6 +312,37 @@ async def _poll_datagolf_live() -> dict:
                         r.delete(f"{LIVE_KEY_PREFIX}:{tour}")
                         stats["skipped"] += 1
                         logger.debug("DataGolf live %s: no in-play data returned", tour)
+
+                        # Check for markets that should be closed: if the
+                        # schedule shows no active event for this tour but we
+                        # still have open DataGolf markets, close them.
+                        try:
+                            schedule = await service.get_schedule(tour=tour)
+                            completed_ids = [
+                                t.event_id for t in (schedule or [])
+                                if t.status == "completed" and t.event_id
+                            ]
+                            if completed_ids:
+                                for eid in completed_ids:
+                                    prefix = f"datagolf:{tour}:{eid}:"
+                                    close_result = await session.execute(
+                                        update(FuturesMarket)
+                                        .where(
+                                            FuturesMarket.source == "datagolf",
+                                            FuturesMarket.external_id.like(f"{prefix}%"),
+                                            FuturesMarket.status == "open",
+                                        )
+                                        .values(status="closed")
+                                    )
+                                    if close_result.rowcount:
+                                        logger.info(
+                                            "DataGolf live: closed %d stale markets for completed event %s on tour=%s",
+                                            close_result.rowcount, eid, tour,
+                                        )
+                                        stats["markets_closed"] = stats.get("markets_closed", 0) + close_result.rowcount
+                        except Exception as sched_exc:
+                            logger.warning("DataGolf live: schedule check failed for tour=%s: %s", tour, sched_exc)
+
                         continue
 
                     # Set live flag with 30-min TTL
@@ -290,14 +350,14 @@ async def _poll_datagolf_live() -> dict:
                     stats["live_events"] += 1
                     stats[f"{tour}_players"] = len(players)
 
-                    # Find existing DataGolf markets for this tour.
-                    # Don't filter by status — if DataGolf API returns in-play data,
-                    # we should update regardless of whether another source (Kalshi)
-                    # has already resolved/closed its version of the market.
+                    # Find existing OPEN DataGolf markets for this tour.
+                    # Only update open markets — closed/completed markets should
+                    # not be overwritten with stale data from the next tournament.
                     market_result = await session.execute(
                         select(FuturesMarket).where(
                             FuturesMarket.source == "datagolf",
                             FuturesMarket.external_id.like(f"datagolf:{tour}:%"),
+                            FuturesMarket.status == "open",
                         )
                     )
                     markets = market_result.scalars().all()
@@ -494,6 +554,27 @@ async def _poll_datagolf_live() -> dict:
                                 "DataGolf live: nulled %d stale outcomes on market %s",
                                 stale_nulled, market.id,
                             )
+
+                    # Detect tournament completion: if ALL players in the "win"
+                    # market have prob exactly 0.0 or 1.0, the event is finished.
+                    # Close the markets to prevent stale 100%/0% from appearing
+                    # on the golf landing page.
+                    win_probs = [
+                        _get_prob(p, "win") for p in players
+                        if _get_prob(p, "win") is not None
+                    ]
+                    if win_probs and all(p in (0.0, 1.0) for p in win_probs):
+                        closed = 0
+                        for market in markets:
+                            if market.status == "open":
+                                market.status = "closed"
+                                closed += 1
+                        if closed:
+                            logger.info(
+                                "DataGolf live: tournament completed on tour=%s, closed %d markets",
+                                tour, closed,
+                            )
+                            stats["markets_closed"] = stats.get("markets_closed", 0) + closed
 
                     stats["tours_polled"] += 1
 

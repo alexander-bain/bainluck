@@ -2579,7 +2579,14 @@ async def get_game_markets(
         sport_key,
     )
 
-    # 9. Enrich player props with headshot URLs from team rosters
+    # 9. Filter out boring player props where neither side is interesting
+    # (e.g., "2+ home runs: 98%" — the "over" is a near-certainty)
+    player_props = [
+        p for p in player_props
+        if 0.05 <= p["over_probability"] <= 0.95
+    ]
+
+    # 10. Enrich player props with headshot URLs from team rosters
     if player_props and event.sport_id:
         # Build player name → headshot lookup from both teams' rosters
         player_headshots: dict[str, str] = {}

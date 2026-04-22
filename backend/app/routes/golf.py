@@ -1355,6 +1355,11 @@ async def get_golf(
     now_date = now.date()
     filtered_tournaments = []
     for t in tournaments:
+        # Explicit schedule status check — most reliable signal
+        if t.get("schedule_status") == "completed":
+            logger.debug("Golf: filtering completed tournament '%s' (schedule_status=completed)", t["name"])
+            continue
+
         # Filter by end_date (>1 day past end = completed)
         end_date_str = t.get("end_date")
         if end_date_str:
@@ -2247,8 +2252,16 @@ async def get_golf_leaderboard(
             "current_round": p.current_round,
         })
 
+    # Detect completed tournaments: if ALL players have win prob exactly 0 or 100,
+    # the event is over — report "completed" instead of "live".
+    win_probs = [entry["win_prob"] for entry in leaderboard if entry["win_prob"] is not None]
+    is_completed = (
+        win_probs
+        and all(wp in (0.0, 100.0) for wp in win_probs)
+    )
+
     result = {
-        "status": "live",
+        "status": "completed" if is_completed else "live",
         "event_name": info.get("event_name", "Unknown Event"),
         "current_round": info.get("current_round"),
         "last_updated": info.get("last_updated") or datetime.now(timezone.utc).isoformat(),

@@ -18,6 +18,7 @@ const SeriesProbability = dynamic(() => import("@/components/SeriesProbability")
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsGrid = dynamic(() => import("@/components/PlayerPropsGrid"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
@@ -589,7 +590,30 @@ export default function EventPage({ params }: EventPageProps) {
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
   const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
 
+  // Loading timeout — if the event hasn't loaded after 12s, show error with retry
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+  useEffect(() => {
+    if (!eventLoading) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadingTimedOut(true), 12000);
+    return () => clearTimeout(timer);
+  }, [eventLoading]);
+
   if (eventLoading) {
+    if (loadingTimedOut) {
+      return (
+        <ErrorMessage
+          title="Loading timed out"
+          message="The event is taking too long to load. Try refreshing."
+          onRetry={() => {
+            setLoadingTimedOut(false);
+            refreshEvent();
+          }}
+        />
+      );
+    }
     return (
       <div className="py-12">
         <LoadingSpinner text="Loading event..." />
@@ -713,6 +737,13 @@ export default function EventPage({ params }: EventPageProps) {
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
   return (
+    <ErrorBoundary fallback={
+      <ErrorMessage
+        title="Something went wrong"
+        message="This page encountered an error. Try refreshing."
+        onRetry={() => window.location.reload()}
+      />
+    }>
     <div className="space-y-3">
       {/* Navigation */}
       <div className="flex items-center justify-between">
@@ -1613,6 +1644,7 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }
 

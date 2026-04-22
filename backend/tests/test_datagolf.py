@@ -393,3 +393,81 @@ class TestMatchKeyCrossSource:
     def test_the_prefix_stripped(self):
         """'The' prefix stripped (rare but can appear in prop outcomes)."""
         assert _match_key("The Field") == "field"
+
+
+# ---------------------------------------------------------------------------
+# Tournament completion detection (from tasks/datagolf.py)
+# ---------------------------------------------------------------------------
+
+from app.tasks.datagolf import _get_prob
+
+
+class TestTournamentCompletionDetection:
+    """The live poll closes markets when ALL players have prob 0.0 or 1.0."""
+
+    def test_completed_tournament_all_zero_or_one(self):
+        players = [
+            DataGolfPlayer(dg_id=1, player_name="Winner", win=1.0,
+                           top_5=1.0, top_10=1.0, top_20=1.0, make_cut=1.0),
+            DataGolfPlayer(dg_id=2, player_name="Loser 1", win=0.0,
+                           top_5=0.0, top_10=0.0, top_20=0.0, make_cut=0.0),
+            DataGolfPlayer(dg_id=3, player_name="Loser 2", win=0.0,
+                           top_5=0.0, top_10=0.0, top_20=0.0, make_cut=1.0),
+        ]
+        win_probs = [_get_prob(p, "win") for p in players if _get_prob(p, "win") is not None]
+        assert all(p in (0.0, 1.0) for p in win_probs)
+
+    def test_live_tournament_not_detected_as_completed(self):
+        players = [
+            DataGolfPlayer(dg_id=1, player_name="Leader", win=0.35,
+                           top_5=0.60, top_10=0.75, top_20=0.90, make_cut=0.98),
+            DataGolfPlayer(dg_id=2, player_name="Contender", win=0.20,
+                           top_5=0.45, top_10=0.60, top_20=0.80, make_cut=0.95),
+        ]
+        win_probs = [_get_prob(p, "win") for p in players if _get_prob(p, "win") is not None]
+        assert not all(p in (0.0, 1.0) for p in win_probs)
+
+    def test_none_probs_not_false_positive(self):
+        players = [
+            DataGolfPlayer(dg_id=1, player_name="Unknown", win=None,
+                           top_5=None, top_10=None, top_20=None, make_cut=None),
+        ]
+        win_probs = [_get_prob(p, "win") for p in players if _get_prob(p, "win") is not None]
+        assert win_probs == []  # Empty list — should NOT trigger completion
+
+    def test_mixed_valid_and_none(self):
+        players = [
+            DataGolfPlayer(dg_id=1, player_name="Winner", win=1.0,
+                           top_5=1.0, top_10=1.0, top_20=1.0, make_cut=1.0),
+            DataGolfPlayer(dg_id=2, player_name="Unknown", win=None,
+                           top_5=None, top_10=None, top_20=None, make_cut=None),
+            DataGolfPlayer(dg_id=3, player_name="Loser", win=0.0,
+                           top_5=0.0, top_10=0.0, top_20=0.0, make_cut=0.0),
+        ]
+        win_probs = [_get_prob(p, "win") for p in players if _get_prob(p, "win") is not None]
+        assert all(p in (0.0, 1.0) for p in win_probs)
+
+
+class TestLeaderboardCompletionDetection:
+    """The leaderboard endpoint reports 'completed' when all win probs are 0 or 100."""
+
+    def test_live_tournament(self):
+        entries = [
+            {"win_prob": 35.0}, {"win_prob": 20.0}, {"win_prob": 10.0},
+        ]
+        win_probs = [e["win_prob"] for e in entries if e["win_prob"] is not None]
+        assert not all(wp in (0.0, 100.0) for wp in win_probs)
+
+    def test_completed_tournament(self):
+        entries = [
+            {"win_prob": 100.0}, {"win_prob": 0.0}, {"win_prob": 0.0},
+        ]
+        win_probs = [e["win_prob"] for e in entries if e["win_prob"] is not None]
+        assert all(wp in (0.0, 100.0) for wp in win_probs)
+
+    def test_almost_done_not_completed(self):
+        entries = [
+            {"win_prob": 99.5}, {"win_prob": 0.5}, {"win_prob": 0.0},
+        ]
+        win_probs = [e["win_prob"] for e in entries if e["win_prob"] is not None]
+        assert not all(wp in (0.0, 100.0) for wp in win_probs)

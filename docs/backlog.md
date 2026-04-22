@@ -30,6 +30,36 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ## Tier 1 — High Leverage, Do Next
 
+### 0. Mystery Shopper Critical Fixes (M1-M4)
+
+From Manus AI audit (April 22). Full report: `Manus/mystery_shopper.md`.
+
+#### 0a. Golf 100%/0% probability (M1 — CRITICAL)
+Every upcoming tournament shows one golfer at 100%, all others at 0%. DataGolf prob=1.0 for completed event winners leaking into upcoming events, or stale tournament data not rotating.
+**Files:** `routes/golf.py`, DataGolf polling task
+**Verify:** `/categories/golf` + tournament detail pages
+
+#### 0b. Event detail mobile loading spinner (M2 — CRITICAL)
+375px viewport shows endless "Loading event..." spinner. Chart rendering or memory issue on mobile.
+**Files:** `frontend/app/events/[id]/page.tsx`, `frontend/components/OddsChart.tsx`
+**Verify:** Mobile viewport in browser devtools
+
+#### 0c. Future golf majors marked LIVE (M3 — HIGH)
+PGA Championship, U.S. Open, The Open incorrectly showing LIVE status. Likely same DataGolf pipeline as M1.
+**Files:** Same as 0a
+
+#### 0d. Player props 97-98% threshold filter (M4 — HIGH)
+"2 home runs: 98% chance" for every player — showing the boring "No" side. Need threshold filter to hide props where interesting side <5%.
+**Files:** `routes/events.py` (game markets / related futures section)
+
+---
+
+### 0e. Wire Manus audit results into /health skill
+Manus health audit suite built (`Manus/prompts/`, `scripts/manus_health_suite.py`). Next: update the `/health` skill to read `Manus/audit_results/latest/` and surface last audit date + score alongside Sentry/Heroku/CI checks. Flag if last audit is >7 days old.
+**Files:** `/health` skill definition, `scripts/manus_health_suite.py`
+
+---
+
 ### 1. Improve Game Prop Link Rate (1C continuation)
 
 **Goal:** Push basketball, baseball, hockey to >85% open link rate.
@@ -58,19 +88,9 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ---
 
-## Active Sentry Issues (April 21, 2026)
+## Active Sentry Issues (April 22, 2026)
 
-**Fixed this session (April 19-21):**
-| ID | Events | Fix | Commit |
-|----|--------|-----|--------|
-| BAINLUCK-JK (DBAPIError) | 23 | Pool limits added to task engine (`base.py`): pool_size=3, max_overflow=5, pool_recycle=1800 | `283fec8` |
-| BAINLUCK-JG (AttributeError: sport_key) | 2,038 | `Event.sport_key` → `Sport.key` join in odds_polling.py score-fetch optimization | `8191ad5` |
-| BAINLUCK-JH (UnboundLocalError: _sql_update) | 1,298 | Moved `from sqlalchemy import update as _sql_update` from function-level to top-level import in espn_sync.py (Python 3.12 scoping issue) | `453ce7f` |
-| BAINLUCK-JT (AttributeError: espn_event_id) | 27 | `Event.espn_event_id` → `Event.espn_id` in odds_polling.py (same score-fetch block as JG) | `7b73d01` |
-| TooManyConnections (WM polling) | — | WrestleMania code removed entirely (-3,686 lines) | `283fec8` |
-| Admin auth bypass | — | `_check_admin_secret()` now returns False when `ADMIN_SECRET` unset (was True) | `90a8f8b` |
-
-**Remaining (monitor / low priority):**
+**Monitor / low priority:**
 | ID | Events | Status |
 |----|--------|--------|
 | N+1 Query warnings (GA, HN, FY, 5, 3, J1, JD, G7) | various | Sentry performance warnings, not errors. Address during deeper god function refactoring. |
@@ -259,71 +279,6 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 ---
 
-## Shipped (April 19-21, 2026) — This Session
-
-### Infrastructure & Code Health
-| What | Details |
-|------|---------|
-| **WrestleMania removal** | -3,686 lines. Task, routes, models, scoring, Polymarket service, frontend page + 11 components all deleted. Patterns archived to `docs/archive/wrestlemania-reference.md`. DB tables + Alembic migration preserved. |
-| **WrestleMania win probability fix** | Was using stale seed probabilities instead of latest odds snapshots. Daphne showed 100% when she was ~77.5%. Fixed + capped rounding at 99.9%. |
-| **Task pool exhaustion fix** | `base.py` task engines had no pool limits (default 15 per worker × 6 workers = 90 connections vs 120 limit). Added pool_size=3, max_overflow=5, pool_recycle=1800. |
-| **Admin auth security fix** | `_check_admin_secret()` returned True when ADMIN_SECRET unset. Now returns False. |
-| **5 Sentry error fixes** | JK (DBAPIError/pool), JG (Event.sport_key), JH (_sql_update scoping), JT (Event.espn_event_id), TooManyConnections (WM removed). Total: 3,386+ error events eliminated. |
-| **Observability tool access** | Heroku CLI, Sentry API, GitHub CLI installed and authenticated. Session health check added to CLAUDE.md. |
-| **API route contract tests** | 110 tests across 6 route files (feed, events, playoffs, futures, golf, health). Found and fixed search endpoint count bug. |
-| **Name normalization consolidation** | 11 functions → 1 canonical module. strip_diacritics(), normalize_team_name(), match_key(), clean_slug(). 10 files updated. Net -20 lines. |
-| **API client base class** | BaseAPIClient in services/base_api.py. Applied to 5 services. |
-| **Player prop headshots** | MLB roster sync stores rich dicts with headshot URLs (was plain strings). All 4 major sports now have headshots. |
-| **God function refactoring (5 functions)** | _score_events → utils/feed_scoring.py (15 tests), _sync_espn_live_events → 5 module-level helpers (16 tests), get_playoff_grid → utils/playoff_grid.py (25 tests), get_related_futures → utils/related_futures.py (11 tests), _poll_all_odds → utils/polling_config.py (15 tests). Total: 82 new tests, 4 new utility modules. |
-| **Bare except / console.log cleanup** | pulse.py: `except:` → `except Exception:`. onboarding/page.tsx: removed console.log. |
-
-### Grid Health
-| What | Details |
-|------|---------|
-| **Championship normalization** | NHL Stanley Cup probabilities normalized from 53.2% → 100% (long-tail teams all floor at 0.1%). |
-| **Postseason patterns** | Added "postseason" to all sport stage classifiers + league config matching rules. MLB make_playoffs: Kalshi-only → Kalshi + Polymarket. |
-| **Kalshi ticker prefixes** | Added KXNBA/KXNHL/KXMLB external_id_prefixes to league configs. NBA conference: Polymarket-only → Polymarket + Kalshi. |
-| **Stanley Cup qualifier pre-check** | "Stanley Cup® Playoff Qualifiers" was matching championship before make_playoffs. Added qualifier/berth keyword pre-check. |
-| **MLB division rule ordering** | "NL East Champion" was matching pennant (overly broad `MLB.*(AL|NL)` pattern). Moved division rule above pennant + removed catch-all. |
-
-### Backlog & Process
-| What | Details |
-|------|---------|
-| **Comprehensive code review** | Full writeup at `.claude/plans/mutable-cooking-ember.md`. 7 strengths, 1 critical fix (admin auth), 5 serious issues, 5 moderate issues, 6 priority-specific recommendations. |
-| **Backlog integration** | Code review findings folded into backlog (not separate docs). Items numbered, tiered, with prompts and parallel safety tags. |
-| **Sentry triage** | All unresolved issues categorized with root cause, severity, disposition. |
-| **Triage process** | Added to backlog: weekly cadence, 3-bucket heuristic, CI branch protection recommendation. |
-| **Playoff series markets** | Added to Tier 2 backlog with implementation sketch. |
-
-### Stats
-| Metric | Start of session | End of session | Delta |
-|--------|-----------------|----------------|-------|
-| Backend tests | 3,121 | 3,308 | **+187** |
-| Integration tests | 33 | 110 | **+77** |
-| Utility modules | 24 | 28 | **+4** (feed_scoring, playoff_grid, related_futures, polling_config) |
-| Route files with tests | 1/17 | 6/17 | **+5** |
-| God functions with extracted logic | 0/15 | 5/15 | **+5** |
-| Lines deleted (WM) | — | — | **-3,686** |
-| Sentry errors eliminated | — | — | **~3,386 events** |
-
----
-
-## Code Review Findings (April 20, 2026)
-
-Full writeup: `.claude/plans/mutable-cooking-ember.md`
-
-**What's strong:** Aggregation math, Event Registry architecture, database indexing, quota management, iOS concurrency patterns, frontend data fetching.
-
-**Priority-specific technical guidance:**
-1. **Best aggregated probabilities:** Test the aggregation *contract* (route responses), not just the math. Add aggregation quality monitoring (Tier 3).
-2. **Odds vs algorithms:** `win_probability_sources` JSONB has no schema validation. ESPN sync (897-line function) is the most brittle integration — helpers now extracted.
-3. **Cross-source comparison:** Grid health audit should run on a schedule. Source ingestion tasks should report coverage metrics (Tier 3).
-4. **Related futures:** `get_related_futures` dedup logic now extracted + tested. Tier-aware loading still undocumented.
-5. **Team/league odds:** League config matching rules proven fragile by postseason/playoffs mismatch. Name normalization now centralized (Item 3 shipped).
-6. **Discovery & engagement:** `_score_events` scoring now extracted + tested (15 tests on feed ranking). `TAG_BOOSTS` externalized as testable constant.
-
----
-
 ## Housekeeping
 
 ### WrestleMania — **DONE (April 21)**
@@ -333,3 +288,4 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 - **May 1**: Delete `frontend/_to-delete/` if nothing broke
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 - Clean up ~90 remote git branches
+- Code review reference: `.claude/plans/mutable-cooking-ember.md`

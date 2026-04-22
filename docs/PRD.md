@@ -36,7 +36,7 @@ This applies equally to a touchdown, a red card, a key injury announcement, or a
 
 1. **Best aggregated event probabilities** — Best way to see event probabilities aggregated across sportsbooks
 2. **Odds vs algorithms** — Best way to compare event probabilities to algorithm probabilities (win probability models)
-3. **Cross-source comparison** — Best way to compare across ALL probability sources (DataGolf, MoneyPuck, FanGraphs, etc.)
+3. **Cross-source comparison** — Best way to compare across ALL probability sources (DataGolf, ESPN, MLB Stats API, etc.)
 4. **Related futures** — Best way to see related futures, both out of curiosity and to understand 2nd-order impact
 5. **Team/league-level odds** — Best way to compare odds for entire teams or leagues
 6. **Discovery & engagement** — Best way to discover and interact with events with interesting odds (possibly beyond sports; possibly as a game)
@@ -213,6 +213,8 @@ Different game statuses show different probability data to users:
 | **Polymarket** | Prediction market data (sports + politics/entertainment/crypto) | Free (no API key) |
 | **ESPN** | Team colors, logos, live game data, win probability, rosters | Free (undocumented) |
 | **MLB Stats API** | Live baseball win probability, schedules | Free (no API key) |
+| **StatPal** | Schedules, rosters, injuries, play-by-play | ~$99/mo |
+| **DataGolf** | Golf predictions, live in-play probabilities, leaderboards | ~$30/mo |
 | **TMDB** | Movie posters, headshots, trailers for Oscars page | Free tier |
 | **OpenAI** | GPT-4o-mini for LLM classification | ~$5/mo |
 | **Firebase Auth** | Google Sign-In, user accounts | Free tier |
@@ -1115,7 +1117,7 @@ CREATE INDEX ix_events_commence_status ON events (commence_time, status);
 - [x] Stale data detection and auto-closing of stuck events
 - [x] Per-sport polling intervals based on game proximity
 - [x] **Sentry error tracking** — FastAPI backend + Celery worker. Controlled by `SENTRY_DSN` env var.
-- [x] **Test coverage for core algorithms** — 1667+ total tests (1550+ backend pytest items across 20 files + 117+ frontend tests across 4 files). Covers: Pulse (85), Highlights (126 incl. Level 2 + event importance), odds math (70), futures categorization (116), win probability (67), team linking (97), LLM classification (60), prediction market matching (291), ESPN API parsing (50), stale bookmaker filter (23), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), task wiring (21), odds polling helpers (27), win prob sources (24), line movement (26), futures highlights + feed reasons (36).
+- [x] **Test coverage for core algorithms** — 3,315+ backend pytest items covering all core modules. See `docs/completed-features.md` for per-module breakdown.
 - [x] **Data retention Phase 1** — Lossless snapshot collapsing across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots`. Write-time dedup prevents identical consecutive rows. Retroactive collapse runs daily via Celery beat schedule. Phase 2: Rewritten to pure SQL using PostgreSQL window functions (LAG, SUM, CTEs) for constant memory — zero rows loaded into Python. Fixes Heroku worker OOM (R14).
 - [x] **Super Bowl one-off cleanup** — Removed ~7,000+ lines of dead code across ~15 files (contest.py, superbowl.py, youtube_api.py, CommercialLeaderboard.tsx, TV mode, etc.)
 - [x] **Tasks package refactor** — Monolithic `tasks.py` (2,970 lines) refactored into `tasks/` package with 15 modules. All task names pinned for backward compatibility. Celery heartbeat + health endpoint added.
@@ -1302,7 +1304,7 @@ Completed: February 2026
 | MLB Stats API | Model (Official MLB API) | MLB | Free, live baseball only, no API key, teal line |
 | Kalshi | Market (Prediction market) | All sports | Game-level outcomes, green line |
 | Polymarket | Market (Prediction market) | All sports | Game-level outcomes, blue line |
-| MoneyPuck | Model (stub) | NHL | Stub configured, awaiting full integration |
+| DataGolf | Model (DataGolf API) | Golf | In-play and pre-tournament win probabilities |
 
 **Bain Luck Model Details:**
 - Normal distribution model: score diff + time remaining + pregame spread
@@ -1315,9 +1317,7 @@ Completed: February 2026
 3. Chart and API pick it up automatically — no frontend changes needed
 
 **Planned sources (stubs configured, awaiting implementation):**
-| Source | Sport | Status | Notes |
-|--------|-------|--------|-------|
-| MoneyPuck | NHL | Stub configured | Free JSON API with live game WP |
+No additional sources currently planned. MoneyPuck stub was removed (no public API exists).
 
 ### Phase 12: Related Futures ✅ Complete (Phases 1-3)
 **Show championship odds, MVP odds, and award futures relevant to teams playing in a specific game.**
@@ -1489,7 +1489,7 @@ NegRisk events (multi-outcome, e.g., "NBA Championship Winner") have one binary 
 #### Phase 15b: Additional Win Probability Sources
 
 - [ ] MoneyPuck for NHL (free JSON API with live game win probability)
-- [x] MLB Stats API for MLB ✅ Shipped — Live baseball win probability via `statsapi.mlb.com`, source key "fangraphs" (legacy name), display name "MLB Model", teal `#0d9488`
+- [x] MLB Stats API for MLB ✅ Shipped — Live baseball win probability via `statsapi.mlb.com`, source key "mlb", display name "MLB Model", teal `#0d9488`
 
 #### Phase 15c: Additional Data Sources
 
