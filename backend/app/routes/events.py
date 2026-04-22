@@ -2686,7 +2686,7 @@ async def get_game_markets(
         "player_props": player_props,
         "team_totals": team_total_items,
         "spreads": spreads,
-        "period_markets": period_totals,
+        "period_markets": period_markets,
         "other": other_markets,
         "pace": pace,
     }
