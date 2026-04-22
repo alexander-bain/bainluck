@@ -2405,6 +2405,15 @@ async def get_game_markets(
 
     sport_key = event.sport.key if event.sport else None
 
+    # Derive expected llm_sport_category from event's sport key prefix.
+    # Used to filter out cross-sport contamination (e.g., NBA props on MLB games
+    # when city names like "Cleveland" or "Houston" overlap).
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+    expected_category = None
+    if sport_key:
+        prefix = sport_key.split("_")[0]
+        expected_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix)
+
     # 2. Find game-level markets linked to this event
     # For completed events, include resolved/closed markets so we can show
     # the final prediction market state (Kalshi/Polymarket settle post-game).
@@ -2414,13 +2423,18 @@ async def get_game_markets(
         if event_is_finished
         else FuturesMarket.status == "open"
     )
-    market_result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.event_id == event_id,
-            status_filter,
-        )
+    linked_query = select(FuturesMarket).where(
+        FuturesMarket.event_id == event_id,
+        status_filter,
     )
+    if expected_category:
+        linked_query = linked_query.where(
+            or_(
+                FuturesMarket.llm_sport_category == expected_category,
+                FuturesMarket.llm_sport_category.is_(None),
+            )
+        )
+    market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
 
     # 3. Also find unlinked game-prop markets matching team names + time window
@@ -2432,11 +2446,14 @@ async def get_game_markets(
 
         if name_conditions:
             window = timedelta(hours=6)
-            sport_filter = (
-                FuturesMarket.sport_id == event.sport_id
-                if event.sport_id
-                else True
-            )
+            sport_conditions = []
+            if event.sport_id:
+                sport_conditions.append(FuturesMarket.sport_id == event.sport_id)
+            if expected_category:
+                sport_conditions.append(FuturesMarket.llm_sport_category == expected_category)
+
+            sport_filter = or_(*sport_conditions) if sport_conditions else True
+
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
