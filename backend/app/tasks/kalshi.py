@@ -135,30 +135,43 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
-def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) -> str:
+def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str], event_ticker: Optional[str] = None) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
 
-    Uses the same rules engine as the admin categorization endpoint,
-    plus Kalshi's own category as a fallback hint.
+    Classification cascade (first match wins):
+    1. Rules engine on market name
+    2. League detection → sport inference
+    3. Ticker prefix → sport key → LLM category (auto-classifies unknown tickers)
+    4. Kalshi's own category as fallback
 
     Always returns a category (never None) — defaults to "other".
     """
     from app.utils.futures_categorization import categorize_by_rules, detect_league, infer_sport_from_league
 
-    # First try pattern matching on market name (handles "Winter Olympics", "NBA MVP", etc.)
+    # 1. Pattern matching on market name
     result = categorize_by_rules(market_name)
     if result:
         return result
 
-    # Try league detection → sport inference (e.g., "Stanley Cup" → NHL → hockey)
+    # 2. League detection → sport inference
     league = detect_league(market_name)
     if league:
         sport = infer_sport_from_league(league)
         if sport:
             return sport
 
-    # Fall back to Kalshi's own category as a hint
+    # 3. Ticker prefix → sport category (self-healing: works for any ticker
+    # in sport_keys.py without needing explicit rules for the market name)
+    if event_ticker:
+        from app.utils.sport_keys import get_sport_key_from_ticker, SPORT_PREFIX_TO_LLM_CATEGORY
+        sport_key = get_sport_key_from_ticker(event_ticker)
+        if sport_key:
+            prefix = sport_key.split("_")[0] if sport_key else None
+            if prefix and prefix in SPORT_PREFIX_TO_LLM_CATEGORY:
+                return SPORT_PREFIX_TO_LLM_CATEGORY[prefix]
+
+    # 4. Fall back to Kalshi's own category as a hint
     if kalshi_category:
         cat_lower = kalshi_category.lower()
         # Map Kalshi categories directly to sport categories where unambiguous
@@ -271,7 +284,7 @@ async def _poll_kalshi_markets():
 
                     # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
-                    sport_category = _categorize_kalshi_market(event.title, event.category)
+                    sport_category = _categorize_kalshi_market(event.title, event.category, event.event_ticker)
 
                     # Skip crypto markets entirely — they consume DB space
                     # without providing value to users
