@@ -15,6 +15,16 @@
 - ✅ M2: ErrorBoundary + 12s loading timeout on event detail page (prevents infinite mobile spinner)
 - ✅ M4: Player props with over_probability >95% or <5% filtered (boring thresholds hidden)
 
+**URL Architecture: /sport/[sport]/[league] as canonical pattern:**
+- ✅ All user-facing links migrated from `/playoffs/*` to `/sport/[sport]/[league]` paths
+- ✅ Footer, LeagueChips, TeamPlayoffCard, event detail Championship Grid link — all updated
+- ✅ `/playoffs` pages preserved in codebase (not deleted, not linked to)
+
+**Player Props + Special Events Polish:**
+- ✅ Team filter fix: detection now checks all team name words (was only checking last word — "Sox" never matched "Boston")
+- ✅ Unknown-team players show in Home/Away filter views (were disappearing)
+- ✅ Special event outcome dedup: same-name outcomes from multiple Kalshi markets merged (6 rows → 3)
+
 **Cross-Sport Contamination Fix:**
 - ✅ Game markets endpoint now filters by `llm_sport_category` — MLB games no longer show NBA three-pointers, double-doubles, or MLS markets when city names overlap (Cleveland, Houston).
 - ✅ Fixed `period_totals` → `period_markets` typo (was causing 500 on all game-markets requests)
