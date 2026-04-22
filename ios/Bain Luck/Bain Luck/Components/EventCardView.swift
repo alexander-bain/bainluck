@@ -166,73 +166,60 @@ struct EventCardView: View {
 
     private var teamsAndOdds: some View {
         VStack(spacing: 6) {
-            // Away team row
-            HStack(spacing: 8) {
-                TeamLogoView(
-                    url: event.awayTeamData?.logoSmall,
-                    teamName: event.awayTeam,
-                    color: awayColor,
-                    size: 24,
-                    sportKey: event.sport
-                )
-                Text(event.awayTeam)
-                    .font(.subheadline)
-                    .fontWeight(awayWon ? .bold : .medium)
-                    .foregroundStyle(awayWon ? .primary : (isFinished ? .secondary : .primary))
-                    .lineLimit(1)
-                if let record = event.awayTeamData?.record, !isFinished {
-                    Text(record)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isLive || isFinished, let score = event.awayScore {
-                    Text("\(score)")
-                        .font(.subheadline.monospacedDigit())
-                        .fontWeight(awayWon ? .bold : .regular)
-                        .foregroundStyle(awayWon ? .primary : .secondary)
-                }
-                if isFinished {
-                    preGameOddsLabel(for: .away)
-                } else {
-                    probabilityText(for: .away)
-                }
-            }
+            teamRow(
+                name: event.awayTeam,
+                logo: event.awayTeamData?.logoSmall,
+                color: awayColor,
+                record: event.awayTeamData?.record,
+                score: (isLive || isFinished) ? event.awayScore : nil,
+                won: awayWon,
+                side: .away
+            )
 
-            // Probability bar
             probabilityBar
 
-            // Home team row
-            HStack(spacing: 8) {
-                TeamLogoView(
-                    url: event.homeTeamData?.logoSmall,
-                    teamName: event.homeTeam,
-                    color: homeColor,
-                    size: 24,
-                    sportKey: event.sport
-                )
-                Text(event.homeTeam)
-                    .font(.subheadline)
-                    .fontWeight(homeWon ? .bold : .medium)
-                    .foregroundStyle(homeWon ? .primary : (isFinished ? .secondary : .primary))
-                    .lineLimit(1)
-                if let record = event.homeTeamData?.record, !isFinished {
-                    Text(record)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isLive || isFinished, let score = event.homeScore {
-                    Text("\(score)")
-                        .font(.subheadline.monospacedDigit())
-                        .fontWeight(homeWon ? .bold : .regular)
-                        .foregroundStyle(homeWon ? .primary : .secondary)
-                }
-                if isFinished {
-                    preGameOddsLabel(for: .home)
-                } else {
-                    probabilityText(for: .home)
-                }
+            teamRow(
+                name: event.homeTeam,
+                logo: event.homeTeamData?.logoSmall,
+                color: homeColor,
+                record: event.homeTeamData?.record,
+                score: (isLive || isFinished) ? event.homeScore : nil,
+                won: homeWon,
+                side: .home
+            )
+        }
+    }
+
+    private func teamRow(name: String, logo: String?, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
+        HStack(spacing: 8) {
+            TeamLogoView(
+                url: logo,
+                teamName: name,
+                color: color,
+                size: isLive ? 28 : 24,
+                sportKey: event.sport
+            )
+            Text(name)
+                .font(.subheadline)
+                .fontWeight(won ? .bold : .medium)
+                .foregroundStyle(won ? .primary : (isFinished ? .secondary : .primary))
+                .lineLimit(1)
+            if let record, !isFinished {
+                Text(record)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let score {
+                Text("\(score)")
+                    .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
+                    .fontWeight(isLive ? .bold : (won ? .bold : .regular))
+                    .foregroundStyle(isLive ? .primary : (won ? .primary : .secondary))
+            }
+            if isFinished {
+                preGameOddsLabel(for: side)
+            } else {
+                probabilityWithMovement(for: side)
             }
         }
     }
@@ -295,14 +282,26 @@ struct EventCardView: View {
     private enum TeamSide { case home, away }
 
     @ViewBuilder
-    private func probabilityText(for side: TeamSide) -> some View {
-        let odds = event.currentOdds
-        let prob: Double? = side == .home ? odds?.homeProbability : odds?.awayProbability
+    private func probabilityWithMovement(for side: TeamSide) -> some View {
+        let prob: Double? = side == .home ? event.currentOdds?.homeProbability : event.currentOdds?.awayProbability
+        let openProb: Double? = side == .home ? event.openingOdds?.homeProbability : event.openingOdds?.awayProbability
+        let color = side == .home ? homeColor : awayColor
+
         if let prob {
-            Text(formatProbability(prob))
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(side == .home ? homeColor : awayColor)
+            HStack(spacing: 3) {
+                if isLive, let openProb {
+                    let shift = prob - openProb
+                    if abs(shift) > 0.02 {
+                        Image(systemName: shift > 0 ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(shift > 0 ? Color.green : Color.red)
+                    }
+                }
+                Text(formatProbability(prob))
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(color)
+            }
         }
     }
 
@@ -334,29 +333,28 @@ struct EventCardView: View {
     @ViewBuilder
     private var probabilityBar: some View {
         if isFinished {
-            // Finished: show opening odds bar with full team colors
             if let opening = event.openingOdds,
                let awayProb = opening.awayProbability,
                let homeProb = opening.homeProbability {
                 ProbabilityBar(
                     awayProb: awayProb,
                     homeProb: homeProb,
-                    awayColor: awayColor.opacity(0.6),
-                    homeColor: homeColor.opacity(0.6),
-                    height: 6
+                    awayColor: awayColor.opacity(0.5),
+                    homeColor: homeColor.opacity(0.5),
+                    height: 5
                 )
             }
-        } else {
-            // Live / Scheduled: show current odds bar
-            if let away = event.currentOdds?.awayProbability,
-               let home = event.currentOdds?.homeProbability {
-                ProbabilityBar(
-                    awayProb: away,
-                    homeProb: home,
-                    awayColor: awayColor,
-                    homeColor: homeColor
-                )
-            }
+        } else if let away = event.currentOdds?.awayProbability,
+                  let home = event.currentOdds?.homeProbability {
+            ProbabilityBar(
+                awayProb: away,
+                homeProb: home,
+                awayColor: awayColor,
+                homeColor: homeColor,
+                height: isLive ? 10 : 8,
+                animated: isLive,
+                glowing: isLive
+            )
         }
     }
 }

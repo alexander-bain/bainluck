@@ -48,7 +48,7 @@ final class FeedViewModel: ObservableObject {
         if isInitial { loading = true }
         do {
             // Fetch both feeds in parallel
-            async let feedTask = APIClient.shared.fetchFeed(limit: 200)
+            async let feedTask = APIClient.shared.fetchFeed()
             async let groupedTask = APIClient.shared.fetchGroupedFeed(limit: 20)
             
             let feed = try await feedTask

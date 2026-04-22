@@ -323,6 +323,72 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 ---
 
+## iOS App — Web Parity & Polish (April 22, 2026)
+
+The iOS app has solid bones (57 Swift files, hero section, multi-source chart, score diff chart, related futures, feed sections, iPad sidebar) but has fallen behind the web on visual polish and some features. LineMovement removed April 22. Feed decoding hardened.
+
+### iOS-1. Period/Inning Markers on Charts — HIGH PRIORITY
+
+**Problem:** The win probability chart has no vertical lines at period/quarter/inning boundaries. The data comes from the API (`period_markers` in history response) and the iOS chart model already parses `PeriodMarker` structs — but `OddsChartView` doesn't render them as vertical reference lines.
+
+**Fix:** In `OddsChartView.chartView()`, add `RuleMark` annotations at each period marker's date position with a label. Filter to markers within the visible data range (already done for the markers array).
+
+**Files:** `ios/Bain Luck/Bain Luck/Components/OddsChartView.swift`
+**Parallel Safety:** Green
+
+### iOS-2. Feed Card Visual Polish
+
+**Problem:** Web feed cards show team-colored probability bars, prominent live scores, sport emoji, and visual hierarchy that makes scanning easy. iOS feed cards are functional but visually flat — they lack the color and weight that makes the web feed feel alive.
+
+**What to improve:**
+- Team-colored probability bar below each card (like web's gradient bar)
+- Larger, bolder score display for live games
+- Sport/league chip or emoji for context
+- Movement indicator (probability shift since open) — web shows this with colored arrows
+- Better visual distinction between live/completed/upcoming cards
+
+**Files:** `ios/Bain Luck/Bain Luck/Components/EventCardView.swift`
+**Parallel Safety:** Green
+
+### iOS-3. `completed_at` Chart Clipping
+
+**Problem:** The chart timing fix (0t-1) added `completed_at` to the history API and the web frontend uses it to clip charts at game end. The iOS chart doesn't read or use `completed_at` yet, so charts may still extend past game end on iOS.
+
+**Fix:** Read `completed_at` from `EventHistoryResponse`, pass to `OddsChartView`, use it to set the chart's x-axis upper bound for completed games.
+
+**Files:** `ios/Bain Luck/Bain Luck/Models/HistoryModels.swift`, `ios/Bain Luck/Bain Luck/Components/OddsChartView.swift`
+**Parallel Safety:** Green
+
+### iOS-4. Dead/Stale Views Cleanup
+
+**Problem:** Several views reference features that are seasonal, deprecated, or no longer maintained:
+- `MastersLiveView.swift` — built for Masters tournament (April 9-12), now stale
+- `EIRankingsView.swift` — may show outdated data
+- `TournamentChartView.swift` / `TournamentCardView.swift` — golf-specific, may be stale
+
+**Fix:** Audit each for staleness. Remove or hide views that show incorrect data. MastersLiveView should be generalized to "current tournament" or removed.
+
+**Files:** `ios/Bain Luck/Bain Luck/Views/MastersLiveView.swift`, `ios/Bain Luck/Bain Luck/Views/EIRankingsView.swift`
+**Parallel Safety:** Green
+
+### iOS-5. Missing Pages (Weather, Economics, Categories Browser)
+
+**Problem:** Web has Weather (`/weather`), Economics (`/economics`), and a category browser on the search page. iOS has none of these.
+
+**Fix:** Add native views for each. Weather and Economics could start as simple list views showing market cards grouped by sub-theme, matching the web's structure. Categories browser could be integrated into the Search tab.
+
+**Files:** New views + updates to `MainTabView.swift`, `Route.swift`
+**Parallel Safety:** Green
+
+### iOS-6. Feed `limit=200` Override
+
+**Problem:** `FeedView.swift` was passing `limit: 200` explicitly, overriding the default `50` we set in `APIClient`. Fixed April 22 but not yet deployed in a build-verified commit.
+
+**Files:** `ios/Bain Luck/Bain Luck/Views/FeedView.swift` — already fixed, needs build verification.
+**Parallel Safety:** Green
+
+---
+
 ## Tier 4 — Someday / Maybe
 
 - Entity pages (`/[sport]/[league]/[team]`) — SEO upside, depends on B1
