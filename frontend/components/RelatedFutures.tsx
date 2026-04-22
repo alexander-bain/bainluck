@@ -2426,16 +2426,31 @@ export default function RelatedFutures({
 
   if (gameMarketCount === 0 && seasonCount === 0 && !hasGridProgression) return null;
 
-  return (
-    <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-      <h3 className="text-sm font-semibold text-text-secondary mb-3">
-        Bigger Picture
-      </h3>
-      <div className="max-w-2xl mx-auto">
+  // Build per-team championship path data for the new layout
+  const buildPathEntries = (futures: RelatedFuture[]) => {
+    return futures.map((f) => {
+      const resolved = f.probability != null && f.probability >= 0.995;
+      return {
+        label: f.clean_label || f.market_name,
+        prob: f.probability || 0,
+        change: f.probability_change_24h ?? null,
+        resolved,
+        sources: f.bookmaker_count ?? (f.all_sources?.length ?? 1),
+      };
+    });
+  };
+  const homePathEntries = buildPathEntries(homePlayoff);
+  const awayPathEntries = buildPathEntries(awayPlayoff);
 
-      {/* Title Odds comparison removed — Playoff Path card shows the same info
-          in a better format. The Title Odds card was showing wrong data (game-level
-          moneyline probabilities misclassified as championship odds). */}
+  return (
+    <div>
+      <div className="flex items-end justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold tracking-tight">Bigger Picture</h3>
+          <p className="text-sm text-text-secondary mt-0.5">Season context</p>
+        </div>
+        <span className="text-[10px] text-text-muted">cross-source aggregated</span>
+      </div>
 
       {/* === Level 3: Game Markets === */}
       {gameMarketCount > 0 && (
@@ -2480,169 +2495,193 @@ export default function RelatedFutures({
         </>
       )}
 
-      {/* === Level 4: Season Context === */}
+      {/* === Two-Column Team Cards === */}
       {(seasonCount > 0 || hasGridProgression) && (
-        <>
-          <SectionDivider level={4} label="Season Context" count={seasonCount + (hasGridProgression && homePlayoff.length === 0 && awayPlayoff.length === 0 ? 1 : 0)} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Home Team Card */}
+          {(() => {
+            const standings = homeStandings;
+            const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
+            const seed = standings?.conf_rank ? `#${standings.conf_rank} ${standings.conference || ""}` : null;
+            const homeAwards = mergedAwards.filter((a) => a.teamColor === hColor);
+            return (
+              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  {homeTeamLogo ? (
+                    <img src={homeTeamLogo} alt={homeTeam} className="w-11 h-11 object-contain shrink-0" />
+                  ) : (
+                    <div className="w-11 h-11 rounded-lg grid place-items-center font-mono font-bold text-white shrink-0" style={{ background: hColor }}>
+                      {homeShort.slice(0, 3).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-semibold text-lg leading-tight">{homeShort}</div>
+                    <div className="text-xs text-text-muted font-mono tabular-nums">
+                      {record}{seed ? ` · ${seed}` : ""}
+                    </div>
+                  </div>
+                </div>
 
-          {/* Playoff Path — use grid data (guaranteed both teams) with futures fallback */}
-          {hasGridProgression ? (
-            <div className="mb-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                  Playoff Path
-                </span>
-              </div>
-              <GridPlayoffPathPair
-                teamProgression={teamProgression!}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                homeColor={hColor}
-                awayColor={aColor}
-                homeLogo={homeTeamLogo}
-                awayLogo={awayTeamLogo}
-              />
-            </div>
-          ) : (homePlayoff.length > 0 || awayPlayoff.length > 0) ? (
-            <div className="mb-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                  Playoff Path
-                </span>
-              </div>
-              <PlayoffPathPair
-                homeFutures={homePlayoff}
-                awayFutures={awayPlayoff}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                homeColor={hColor}
-                awayColor={aColor}
-                homeLogo={homeTeamLogo}
-                awayLogo={awayTeamLogo}
-              />
-            </div>
-          ) : null}
+                {homePathEntries.length > 0 && (
+                  <>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">CHAMPIONSHIP PATH</div>
+                    <div className="space-y-0.5 mb-5">
+                      {homePathEntries.map((p) => (
+                        <div key={p.label} className="flex items-center gap-3 py-1.5">
+                          <div className="text-sm w-36 shrink-0 text-text-secondary">{p.label}</div>
+                          <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-500 ${p.resolved ? "bg-accent-live" : "bg-violet-400"}`} style={{ width: `${p.resolved ? 100 : p.prob * 100}%` }} />
+                          </div>
+                          <div className="w-28 text-right flex items-center justify-end gap-2">
+                            {p.change != null && Math.abs(p.change) >= 0.005 && (
+                              <span className={`text-xs font-mono tabular-nums ${p.change > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                                {p.change > 0 ? "\u2191" : "\u2193"} {(Math.abs(p.change) * 100).toFixed(1)}%
+                              </span>
+                            )}
+                            <span className={`font-mono tabular-nums text-sm font-bold ${p.resolved ? "text-accent-live" : ""}`}>
+                              {p.resolved ? "\u2713 clinched" : `${Math.round(p.prob * 100)}%`}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
 
-          {/* Matchup Grids — Finals, Conference Finals */}
-          {(homeCats.matchups.length > 0 || awayCats.matchups.length > 0) && (
-            <div className="mb-3">
-              {homeCats.matchups.length > 0 && (
-                <MatchupGrid
-                  futures={homeCats.matchups}
-                  teamName={homeTeam}
-                  teamColor={hColor}
-                  logo={homeTeamLogo}
-                />
-              )}
-              {awayCats.matchups.length > 0 && (
-                <MatchupGrid
-                  futures={awayCats.matchups}
-                  teamName={awayTeam}
-                  teamColor={aColor}
-                  logo={awayTeamLogo}
-                />
-              )}
-            </div>
-          )}
-
-          {/* Season Stats — win totals, division, seeding */}
-          {(homeCats.seasonStats.length > 0 || awayCats.seasonStats.length > 0 || homeStandings || awayStandings) && (
-            <div className="mb-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                  Season Stats
-                </span>
-              </div>
-              <WinTotalsPair
-                homeFutures={homeCats.seasonStats}
-                awayFutures={awayCats.seasonStats}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                homeColor={hColor}
-                awayColor={aColor}
-                homeLogo={homeTeamLogo}
-                awayLogo={awayTeamLogo}
-                homeStandings={homeStandings}
-                awayStandings={awayStandings}
-                sportKey={sportKey}
-              />
-            </div>
-          )}
-
-          {/* Awards — merged compact rows from both teams */}
-          {mergedAwards.length > 0 && (
-            <div className="rounded-xl border border-surface-border overflow-hidden mb-3">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-surface-border/30">
-                <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-muted">
-                  Season Awards
-                </span>
-                <span className="text-[10px] text-text-muted/50">
-                  {homeShort}/{awayShort} players
-                </span>
-              </div>
-              <div className="px-3 py-1">
-                {mergedAwards.slice(0, 10).map(({ future, teamColor, teamLabel }) => (
-                  <AwardCompactRow
-                    key={`${future.outcome_id}-${future.market_id}`}
-                    future={future}
-                    teamColor={teamColor}
-                    teamLabel={teamLabel}
-                    sportKey={sportKey}
-                  />
-                ))}
-                {mergedAwards.length > 10 && (
-                  <div className="text-center py-1">
-                    <span className="text-[10px] text-text-muted/50">
-                      +{mergedAwards.length - 10} more
-                    </span>
+                {homeAwards.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
+                      {homeAwards.slice(0, 4).map(({ future }) => {
+                        const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
+                        return (
+                          <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">{shortAwardLabel(future.market_name, future.clean_label)}</div>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <div className="w-7 h-7 rounded-full grid place-items-center font-mono font-bold text-white text-[10px] shrink-0" style={{ background: hColor }}>{initials}</div>
+                              <div className="text-sm font-medium truncate">{future.outcome_name}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
+                                <div className="h-full rounded-full" style={{ width: `${(future.probability || 0) * 100}%`, background: hColor }} />
+                              </div>
+                              <span className="font-mono tabular-nums text-xs font-bold w-10 text-right">{Math.round((future.probability || 0) * 100)}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
-          {/* Trade Watch — 2-col per team */}
-          {(homeCats.trades.length > 0 || awayCats.trades.length > 0) && (
-            <div className="mb-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                  Trade Watch
-                </span>
-              </div>
-              <TradeWatchPair
-                homeTrades={homeCats.trades}
-                awayTrades={awayCats.trades}
-                homeTeam={homeTeam}
-                awayTeam={awayTeam}
-                homeColor={hColor}
-                awayColor={aColor}
-                homeLogo={homeTeamLogo}
-                awayLogo={awayTeamLogo}
-              />
-            </div>
-          )}
+          {/* Away Team Card */}
+          {(() => {
+            const standings = awayStandings;
+            const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
+            const seed = standings?.conf_rank ? `#${standings.conf_rank} ${standings.conference || ""}` : null;
+            const awayAwards = mergedAwards.filter((a) => a.teamColor === aColor);
+            return (
+              <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  {awayTeamLogo ? (
+                    <img src={awayTeamLogo} alt={awayTeam} className="w-11 h-11 object-contain shrink-0" />
+                  ) : (
+                    <div className="w-11 h-11 rounded-lg grid place-items-center font-mono font-bold text-white shrink-0" style={{ background: aColor }}>
+                      {awayShort.slice(0, 3).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-semibold text-lg leading-tight">{awayShort}</div>
+                    <div className="text-xs text-text-muted font-mono tabular-nums">
+                      {record}{seed ? ` · ${seed}` : ""}
+                    </div>
+                  </div>
+                </div>
 
-          {/* Novelty & Fun — horizontal scroll gradient cards */}
-          {mergedNovelty.length > 0 && (
-            <div className="mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                  Novelty & Fun
-                </span>
-                <span className="text-[10px] text-text-muted/50">
-                  {mergedNovelty.length} items
-                </span>
+                {awayPathEntries.length > 0 && (
+                  <>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">CHAMPIONSHIP PATH</div>
+                    <div className="space-y-0.5 mb-5">
+                      {awayPathEntries.map((p) => (
+                        <div key={p.label} className="flex items-center gap-3 py-1.5">
+                          <div className="text-sm w-36 shrink-0 text-text-secondary">{p.label}</div>
+                          <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-500 ${p.resolved ? "bg-accent-live" : "bg-violet-400"}`} style={{ width: `${p.resolved ? 100 : p.prob * 100}%` }} />
+                          </div>
+                          <div className="w-28 text-right flex items-center justify-end gap-2">
+                            {p.change != null && Math.abs(p.change) >= 0.005 && (
+                              <span className={`text-xs font-mono tabular-nums ${p.change > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                                {p.change > 0 ? "\u2191" : "\u2193"} {(Math.abs(p.change) * 100).toFixed(1)}%
+                              </span>
+                            )}
+                            <span className={`font-mono tabular-nums text-sm font-bold ${p.resolved ? "text-accent-live" : ""}`}>
+                              {p.resolved ? "\u2713 clinched" : `${Math.round(p.prob * 100)}%`}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {awayAwards.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
+                      {awayAwards.slice(0, 4).map(({ future }) => {
+                        const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
+                        return (
+                          <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">{shortAwardLabel(future.market_name, future.clean_label)}</div>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <div className="w-7 h-7 rounded-full grid place-items-center font-mono font-bold text-white text-[10px] shrink-0" style={{ background: aColor }}>{initials}</div>
+                              <div className="text-sm font-medium truncate">{future.outcome_name}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
+                                <div className="h-full rounded-full" style={{ width: `${(future.probability || 0) * 100}%`, background: aColor }} />
+                              </div>
+                              <span className="font-mono tabular-nums text-xs font-bold w-10 text-right">{Math.round((future.probability || 0) * 100)}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-              <NoveltyScroll futures={mergedNovelty} />
-            </div>
-          )}
-        </>
+            );
+          })()}
+        </div>
       )}
 
-      </div>
+      {/* Trade Watch — below team cards, only for rich-data events */}
+      {(homeCats.trades.length > 0 || awayCats.trades.length > 0) && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+              Trade Rumors
+            </span>
+            <span className="text-[10px] text-text-muted">speculative · not news</span>
+          </div>
+          <TradeWatchPair
+            homeTrades={homeCats.trades}
+            awayTrades={awayCats.trades}
+            homeTeam={homeTeam}
+            awayTeam={awayTeam}
+            homeColor={hColor}
+            awayColor={aColor}
+            homeLogo={homeTeamLogo}
+            awayLogo={awayTeamLogo}
+          />
+        </div>
+      )}
 
       {/* Footer count */}
-      <div className="text-center pt-2 border-t border-surface-border/30 mt-3">
+      <div className="text-center pt-2 mt-3">
         <span className="text-[9px] text-text-muted">
           {safeData.total_count} related futures from multiple sources
         </span>
