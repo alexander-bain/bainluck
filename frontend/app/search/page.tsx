@@ -8,7 +8,6 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
-import SearchBar from "@/components/SearchBar";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import type { SearchResponse, SearchSuggestion } from "@/lib/types";
 
@@ -150,9 +149,6 @@ function SearchContent() {
   if (!query || query.length < 2) {
     return (
       <div className="max-w-xl mx-auto">
-        <div className="mb-6">
-          <SearchBar initialQuery={query} />
-        </div>
         {suggestionsLoading ? (
           <div className="text-center py-8">
             <p className="text-sm text-text-secondary">Loading suggestions...</p>
@@ -161,7 +157,7 @@ function SearchContent() {
           <SuggestionChips suggestions={suggestions} />
         )}
 
-        {/* Category browsing grid — the "comprehensive" discovery experience */}
+        {/* Category browsing grid */}
         <div className="mt-8">
           <CategoryBrowser />
         </div>
@@ -171,29 +167,19 @@ function SearchContent() {
 
   if (isLoading) {
     return (
-      <div>
-        <div className="max-w-xl mx-auto mb-6">
-          <SearchBar initialQuery={query} />
-        </div>
-        <div className="text-center py-12">
-          <div className="text-4xl mb-4 animate-pulse">🔍</div>
-          <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
-        </div>
+      <div className="text-center py-12">
+        <div className="text-4xl mb-4 animate-pulse">🔍</div>
+        <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div>
-        <div className="max-w-xl mx-auto mb-6">
-          <SearchBar initialQuery={query} />
-        </div>
-        <div className="text-center py-12">
-          <div className="text-4xl mb-4">⚠️</div>
-          <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
-          <p className="text-text-secondary">{error}</p>
-        </div>
+      <div className="text-center py-12">
+        <div className="text-4xl mb-4">⚠️</div>
+        <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
+        <p className="text-text-secondary">{error}</p>
       </div>
     );
   }
@@ -204,9 +190,6 @@ function SearchContent() {
   if (!results || (!hasEvents && !hasFutures)) {
     return (
       <div>
-        <div className="max-w-xl mx-auto mb-6">
-          <SearchBar initialQuery={query} />
-        </div>
         <div className="text-center py-12">
           <div className="text-4xl mb-4">🤷</div>
           <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
@@ -229,11 +212,6 @@ function SearchContent() {
 
   return (
     <div>
-      {/* Search bar */}
-      <div className="max-w-xl mx-auto mb-6">
-        <SearchBar initialQuery={query} />
-      </div>
-
       {/* Header */}
       <div className="mb-6">
         <Link

@@ -14,31 +14,57 @@ const CATEGORY_EMOJI: Record<string, string> = {
   soccer: "⚽",
   golf: "⛳",
   tennis: "🎾",
-  mma: "🥊",
+  mma: "🥋",
   boxing: "🥊",
   motorsports: "🏎️",
   cricket: "🏏",
   rugby: "🏉",
   aussierules: "🏉",
-  horse_racing: "🐎",
-  olympics: "🏅",
+  horse_racing: "🏇",
+  olympics: "🥇",
   esports: "🎮",
   entertainment: "🎬",
   politics: "🏛️",
-  economics: "📈",
+  economics: "📊",
   tech: "💻",
-  weather: "🌤️",
+  weather: "🌦️",
   geopolitics: "🌍",
   culture: "🎭",
   lacrosse: "🥍",
   chess: "♟️",
   poker: "🃏",
   darts: "🎯",
-  other: "🏆",
+  crypto: "🪙",
+  health: "💊",
+  legal: "⚖️",
+  space: "🚀",
+  commodities: "🛢️",
+  watchmaking: "⌚",
+  auto_industry: "🚗",
+  pickleball: "🏓",
+  sailing: "⛵",
+  surfing: "🏄",
+  adventure: "🧗",
+  business: "💼",
+  squash: "🎾",
+  other: "📋",
 };
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+const CATEGORY_LABELS: Record<string, string> = {
+  mma: "MMA",
+  epl: "EPL",
+  mlb: "MLB",
+  nba: "NBA",
+  nfl: "NFL",
+  nhl: "NHL",
+  horse_racing: "Horse Racing",
+  auto_industry: "Auto Industry",
+  aussierules: "Aussie Rules",
+};
+
+function formatCategoryName(s: string): string {
+  if (CATEGORY_LABELS[s]) return CATEGORY_LABELS[s];
+  return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export default function CategoryBrowser() {
@@ -87,10 +113,10 @@ export default function CategoryBrowser() {
                 : "bg-surface-card border-surface-border hover:bg-surface-elevated hover:border-text-muted"
             }`}
           >
-            <span className="text-lg">{CATEGORY_EMOJI[cat.key] ?? "🏆"}</span>
+            <span className="text-lg">{CATEGORY_EMOJI[cat.key] ?? "📋"}</span>
             <div className="min-w-0">
               <div className="text-sm font-medium text-text-primary truncate">
-                {capitalize(cat.key)}
+                {formatCategoryName(cat.key)}
               </div>
               <div className="text-micro text-text-muted">{cat.count}</div>
             </div>
@@ -148,8 +174,8 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
     <div className="bg-surface-card rounded-card border border-surface-border p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-          <span>{CATEGORY_EMOJI[category] ?? "🏆"}</span>
-          {capitalize(category)}
+          <span>{CATEGORY_EMOJI[category] ?? "📋"}</span>
+          {formatCategoryName(category)}
           {data && (
             <span className="text-micro text-text-muted font-normal">
               ({data.total})
