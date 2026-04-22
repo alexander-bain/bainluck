@@ -23,50 +23,50 @@ export function ConsentBanner() {
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[100] p-4 animate-slide-up">
+    <div className="fixed bottom-0 left-0 right-0 z-[100] p-2 sm:p-4 animate-slide-up">
       <div className="max-w-4xl mx-auto bg-surface-card rounded-xl shadow-2xl border border-surface-border overflow-hidden">
         {/* Main Banner */}
-        <div className="p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+        <div className="p-3 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
             {/* Icon and Text */}
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">🍪</span>
-                <h3 className="text-base font-semibold text-text-primary">
+              <div className="flex items-center gap-2 mb-1 sm:mb-2">
+                <span className="text-base sm:text-xl">🍪</span>
+                <h3 className="text-sm sm:text-base font-semibold text-text-primary">
                   We value your privacy
                 </h3>
               </div>
-              <p className="text-sm text-text-secondary leading-relaxed">
+              <p className="text-xs sm:text-sm text-text-secondary leading-relaxed hidden sm:block">
                 We use cookies and similar technologies to understand how you use Bain Luck
                 and improve your experience. You can choose which types of tracking to allow.
               </p>
               <button
                 onClick={() => setShowDetails(!showDetails)}
-                className="mt-2 text-sm text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                className="mt-1 sm:mt-2 text-xs sm:text-sm text-blue-600 hover:text-blue-700 underline underline-offset-2"
               >
                 {showDetails ? 'Hide details' : 'Learn more'}
               </button>
             </div>
 
             {/* Buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 flex-shrink-0">
+            <div className="flex flex-row gap-2 sm:gap-3 flex-shrink-0">
               <button
                 onClick={() => setConsent('none')}
-                className="px-4 py-2 text-sm font-medium text-text-secondary bg-slate/10 hover:bg-slate/20 rounded-lg transition-colors"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-secondary bg-slate/10 hover:bg-slate/20 rounded-lg transition-colors"
               >
-                Decline all
+                Decline
               </button>
               <button
                 onClick={() => setConsent('analytics')}
-                className="px-4 py-2 text-sm font-medium text-text-primary bg-surface-border hover:bg-slate/20 rounded-lg transition-colors"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-primary bg-surface-border hover:bg-slate/20 rounded-lg transition-colors hidden sm:block"
               >
                 Analytics only
               </button>
               <button
                 onClick={() => setConsent('all')}
-                className="px-4 py-2 text-sm font-medium text-white bg-graphite hover:bg-ink rounded-lg transition-colors"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-white bg-graphite hover:bg-ink rounded-lg transition-colors"
               >
-                Accept all
+                Accept
               </button>
             </div>
           </div>

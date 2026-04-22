@@ -367,7 +367,29 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
 
         # Extract numeric mode value from label (e.g., "50-55°F" -> 52.5)
         mode_val = _extract_mode_value(mode_label)
-        unit = "F" if city_id in _FAHRENHEIT_CITIES else "C"
+        expected_unit = "F" if city_id in _FAHRENHEIT_CITIES else "C"
+
+        # Detect actual unit from outcome labels — Polymarket markets may use
+        # Celsius for cities where we expect Fahrenheit
+        all_labels = " ".join(o.name for o in chosen.outcomes)
+        data_is_celsius = bool(re.search(r"°C\b|degrees?\s*C\b|celsius", all_labels, re.I))
+        data_is_fahrenheit = bool(re.search(r"°F\b|degrees?\s*F\b|fahrenheit", all_labels, re.I))
+
+        if expected_unit == "F" and data_is_celsius and not data_is_fahrenheit:
+            if mode_val is not None:
+                mode_val = round(mode_val * 9 / 5 + 32, 1)
+        elif expected_unit == "C" and data_is_fahrenheit and not data_is_celsius:
+            if mode_val is not None:
+                mode_val = round((mode_val - 32) * 5 / 9, 1)
+
+        # Heuristic fallback: if no unit marker in labels and value is
+        # implausibly low for Fahrenheit (< 40 in a warm US city in spring/summer),
+        # likely Celsius data
+        if expected_unit == "F" and not data_is_celsius and not data_is_fahrenheit:
+            if mode_val is not None and mode_val < 40 and city_id in ("la", "miami", "phoenix", "houston", "dallas", "austin", "san_antonio"):
+                mode_val = round(mode_val * 9 / 5 + 32, 1)
+
+        unit = expected_unit
 
         # Collect sources from all markets for this city
         for m in mkts:

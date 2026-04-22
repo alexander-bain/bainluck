@@ -637,6 +637,14 @@ EPL_CONFIG = LeagueConfig(
         r"\bEPL\b",
         r"\bEnglish\s+Premier\b",
     ],
+    league_exclude_patterns=[
+        r"\bEgyptian\b",
+        r"\bEgypt\b",
+        r"\bSaudi\b",
+        r"\bScottish\b",
+        r"\bRussian\b",
+        r"\bUkrainian\b",
+    ],
     columns=[
         GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
         GridColumn(key="top_4", label="Top 4", order=2, sequential=False),
@@ -905,9 +913,19 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
 }
 
 
+_SLUG_ALIASES: dict[str, str] = {
+    "ucl": "champions-league",
+    "ncaab": "ncaa-basketball",
+    "ncaaf": "ncaa-football",
+    "wncaab": "ncaa-women-basketball",
+    "ncaa": "ncaa-basketball",
+}
+
+
 def get_league_config(slug: str) -> LeagueConfig | None:
     """Look up a league config by URL slug."""
-    return LEAGUE_CONFIGS.get(slug)
+    canonical = _SLUG_ALIASES.get(slug, slug)
+    return LEAGUE_CONFIGS.get(canonical)
 
 
 def get_all_league_slugs() -> list[str]:

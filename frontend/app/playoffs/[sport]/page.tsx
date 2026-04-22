@@ -51,7 +51,12 @@ const LEAGUES: LeagueInfo[] = [
   { slug: "golf", label: "Golf", emoji: "\u26F3", group: "other" },
 ];
 
-const LEAGUE_MAP = Object.fromEntries(LEAGUES.map((l) => [l.slug, l]));
+const LEAGUE_MAP: Record<string, LeagueInfo> = Object.fromEntries(LEAGUES.map((l) => [l.slug, l]));
+LEAGUE_MAP["ucl"] = LEAGUE_MAP["champions-league"];
+LEAGUE_MAP["ncaab"] = LEAGUE_MAP["ncaa-basketball"];
+LEAGUE_MAP["ncaaf"] = LEAGUE_MAP["ncaa-football"];
+LEAGUE_MAP["wncaab"] = LEAGUE_MAP["ncaa-women-basketball"];
+LEAGUE_MAP["ncaa"] = LEAGUE_MAP["ncaa-basketball"];
 
 const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
