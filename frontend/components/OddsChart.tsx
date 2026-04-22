@@ -218,28 +218,38 @@ export default function OddsChart({
     }
 
     // Signal 2: last win probability model point (stat_model, ESPN source, etc.)
+    // Exclude prediction market sources (kalshi, polymarket) — they keep getting
+    // re-snapshotted hours after game end by the hourly matching task.
+    const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb", "betting"]);
     if (winProbHistory) {
-      for (const points of Object.values(winProbHistory)) {
-        if (points.length > 0) {
+      for (const [source, points] of Object.entries(winProbHistory)) {
+        if (points.length > 0 && GAME_END_SOURCES.has(source)) {
           candidates.push(parseISO(points[points.length - 1].timestamp));
         }
       }
     }
 
-    // Signal 3: last aggregate line point
-    if (aggregateLine && aggregateLine.length > 0) {
-      candidates.push(parseISO(aggregateLine[aggregateLine.length - 1].timestamp));
-    }
+    // Signal 3: last aggregate line point — EXCLUDED from smartEndTime.
+    // The aggregate line blends all sources including kalshi/polymarket,
+    // so it extends to stale prediction market data. ESPN and stat_model
+    // are sufficient game-end signals.
 
     const latestGameSignal = candidates.length > 0
       ? candidates.reduce((a, b) => (a > b ? a : b))
       : null;
 
-    if (!latestGameSignal) return null;
+    if (latestGameSignal) {
+      return new Date(latestGameSignal.getTime() + 2 * 60 * 1000);
+    }
 
-    // Add 2-minute buffer to avoid clipping the last data point
-    return new Date(latestGameSignal.getTime() + 2 * 60 * 1000);
-  }, [isClosed, espnHistory, winProbHistory, aggregateLine]);
+    // Fallback for Odds-API-only events (no ESPN/stat_model signals):
+    // cap at commenceTime + 4 hours to avoid showing next-day bookmaker data.
+    if (commenceTime) {
+      return new Date(parseISO(commenceTime).getTime() + 4 * 60 * 60 * 1000);
+    }
+
+    return null;
+  }, [isClosed, espnHistory, winProbHistory, commenceTime]);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {

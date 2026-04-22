@@ -668,35 +668,25 @@ async def _match_prediction_markets(limit: int = 500):
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
-        # Only process markets linked to events that are still relevant:
-        # - Scheduled/live events (upcoming or in progress)
-        # - Recently completed events (<12h, to capture final prices)
+        # Only process markets linked to scheduled/live events.
+        # Completed/closed events are excluded — prediction market prices
+        # after game end are stale and stretch the OddsChart past the real
+        # game boundary (the "prediction market bleed" bug, 0t-1).
         #
         # Time-budgeted: skip if running low on time
         stats["funnel"].setdefault("phase2_skipped_budget", False)
-        # This filters at the SQL level to avoid loading all 5,000+ linked
-        # markets when most are for events that finished days/weeks ago.
-        # Live events are also handled by poll_live_prediction_markets (every
-        # 2 min), so this is a supplementary pass.
         linked_rows = []
         if _time_remaining() < 60:
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
             stats["funnel"]["phase2_skipped_budget"] = True
         else:
-            recent_cutoff = now - timedelta(hours=12)
             linked_result = await session.execute(
                 select(FuturesMarket, Event)
                 .join(Event, FuturesMarket.event_id == Event.id)
                 .where(
                     FuturesMarket.source.in_(["kalshi", "polymarket"]),
                     FuturesMarket.event_id.isnot(None),
-                    or_(
-                        Event.status.in_(["scheduled", "live"]),
-                        and_(
-                            Event.status.in_(["completed", "closed"]),
-                            Event.commence_time >= recent_cutoff,
-                        ),
-                    ),
+                    Event.status.in_(["scheduled", "live"]),
                 )
             )
             linked_rows = linked_result.all()

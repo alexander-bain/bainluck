@@ -56,6 +56,50 @@ We don't use `live-strokes-gained`. We use `preds/in-play`. Verified April 22.
 
 ---
 
+### 0t. Chart Timing Quality — 3 Issues (April 22, 2026)
+
+Discovered via `scripts/audit_event_timing.py` — 45 completed events audited across 17 sport/league combos.
+Full audit baseline: `scripts/audit_results/timing_latest.json`. Manus visual prompt: `Manus/prompts/chart_timing_audit.md`.
+
+#### ~~0t-1. Prediction Market Snapshots Bleed Past Game End~~ — SHIPPED (April 22)
+
+Fixed: `smartEndTime` now excludes kalshi/polymarket/aggregate_line — only ESPN + stat_model used as game-end signals. Backend: PM matching Phase 2 no longer writes snapshots for completed events. Fallback: Odds-only events capped at commence_time + 4hrs. Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
+
+#### 0t-2. 47% of Events Have Zero Period Markers
+
+**Problem:** 21/45 completed events have no game state indicators (period/quarter/inning vertical lines on charts). All are non-ESPN events: soccer, tennis, KBO/NPB baseball. No markers = no context.
+
+**Current coverage:** ESPN-matched events have markers via `espn_history.period` + `game_state_backfill.py`. Non-ESPN events have nothing.
+
+**Fix:** For non-ESPN events, derive period boundaries from score change patterns or from odds movement discontinuities. For soccer specifically: generate synthetic "1st Half" / "2nd Half" markers at `commence_time` and `commence_time + 47min` (standard halftime).
+
+**Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py` (history endpoint period_markers derivation)
+**Parallel Safety:** Green (new logic, no existing code modified)
+
+#### 0t-3. 96% Chart Domain Mismatch (Odds vs Score Charts)
+
+**Problem:** Odds chart and score differential chart have different x-axis domains on almost every event. Two flavors:
+- **No score data at all** (17 events) — non-ESPN events without ScoreSnapshots, so score chart is empty
+- **Massive end divergence** (17 events) — odds chart extends to next-day Kalshi/Polymarket data, score chart stops at game end
+
+**Root cause:** Fix 0t-1 (prediction market bleed) will resolve the massive-end-divergence flavor. The no-score-data flavor is structural — those events only have Odds API data (no ESPN), and Odds API score polling is disabled for ESPN-covered sports (but these are non-ESPN events that never get scores at all).
+
+**Fix:** After 0t-1 ships, re-run audit to measure remaining mismatch. If still >20%, investigate whether `onRenderedDomain` callback timing is an issue.
+
+**Files:** `frontend/components/OddsChart.tsx` (onRenderedDomain), `frontend/components/ScoreDifferentialChart.tsx:339-366`
+**Parallel Safety:** Green
+
+#### 0t-bonus. Soccer EFL/League 2: 53-Minute Late Start
+
+**Problem:** 4 EFL Championship and League 2 events show data starting 53 minutes after `commence_time`. Likely a timezone or commence_time source issue specific to English lower-league soccer.
+
+**Fix:** Investigate `commence_time_source` for these events. If it's Odds API, check whether their times are off by ~1 hour (BST/UTC confusion).
+
+**Files:** `backend/app/services/event_registry.py`, `backend/app/tasks/sports.py`
+**Parallel Safety:** Green
+
+---
+
 ### 1. Improve Game Prop Link Rate (1C continuation)
 
 **Goal:** Push basketball, baseball, hockey to >85% open link rate.

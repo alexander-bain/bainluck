@@ -58,6 +58,11 @@ MODULES = {
         "name": "Visual Design Review",
         "priority": 3,
     },
+    "chart_timing": {
+        "file": "chart_timing_audit.md",
+        "name": "Chart Timing & Boundary Audit",
+        "priority": 2,
+    },
     "grid": {
         "file": "grid_audit.md",
         "name": "Championship Grid Deep Audit",
