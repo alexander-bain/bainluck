@@ -1454,7 +1454,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.spreads?.length ?? 0) > 0 || (gameMarkets.period_markets?.length ?? 0) > 0) && (
         <div className="space-y-3">
           {gameMarkets.totals.length >= 2 && (
-            <TotalPointsSpectrum data={gameMarkets} />
+            <TotalPointsSpectrum data={gameMarkets} eventStatus={event.status} />
           )}
           {/* Standalone pace pill when spectrum has too few thresholds */}
           {gameMarkets.totals.length < 2 && gameMarkets.pace && gameMarkets.pace.projected_total && (

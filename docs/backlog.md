@@ -48,6 +48,24 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 **Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
 **Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
+### 0f. Event Detail Below-the-Fold Redesign (from Claude Design prototype)
+
+Design prototype: `handoffs/Event Detail Below-the-Fold.html`
+Brief: `docs/design-brief-event-detail-v2.md`
+
+6 steps, independently shippable:
+1. **TotalPointsSpectrum rewrite** — projection bars + threshold ladder (replace broken spectrum)
+2. **PlayerPropsDashboard** — per-player stat cards with opening/live/actual comparison
+3. **GameSegments** — 1st/2nd half cards with total + leader bars
+4. **BiggerPicture redesign** — series card + two-column team comparison with path bars
+5. **SpecialEventMarkets** — auto-categorized props for marquee events
+6. **TradeWatch rethink** — one-sided, highest-prob destination only
+
+**Files:** TotalPointsSpectrum.tsx (rewrite), PlayerPropsGrid.tsx (replace), GameSegments.tsx (new), BiggerPicture.tsx (new), SpecialEventMarkets.tsx (new), events/[id]/page.tsx (integration)
+**Parallel Safety:** Yellow (frontend only, no backend changes)
+
+---
+
 ### ~~0g. Kalshi API base URL migration~~ — FALSE ALARM
 Already using `api.elections.kalshi.com`. Verified April 22.
 
