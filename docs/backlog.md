@@ -43,21 +43,16 @@ Full report: `Manus/mystery_shopper.md`.
 Manus health audit suite built (`Manus/prompts/`, `scripts/manus_health_suite.py`). Next: update the `/health` skill to read `Manus/audit_results/latest/` and surface last audit date + score alongside Sentry/Heroku/CI checks. Flag if last audit is >7 days old.
 **Files:** `/health` skill definition, `scripts/manus_health_suite.py`
 
-### 0f. URGENT: Polymarket CLOB V2 migration (April 28, 2026)
-Manus API audit found Polymarket is migrating to CLOB V2 on April 28. No backward compatibility. Must migrate to V2 SDK before then.
-**Source:** Manus task `FfaM55yYAYqDbm4ip55Pqt` — view at https://manus.im/app/FfaM55yYAYqDbm4ip55Pqt
-**Files:** `tasks/polymarket.py`, Polymarket API client
-**Deadline:** April 28, 2026
+### 0f. Polymarket CLOB V2 migration — MONITOR (April 28, 2026)
+Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs still working with current field names. We use NO SDK — all raw httpx. CLOB is only used for price history backfill (not critical path). Real risk is if **Gamma API** (`gamma-api.polymarket.com`) changes field names or pagination. Monitor around April 28.
+**Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
+**Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
-### 0g. Kalshi API base URL migration
-Kalshi base URL migrated to `api.elections.kalshi.com`. Old endpoint may be defunct. Verify our client still works.
-**Source:** Same Manus task as 0f
-**Files:** `services/kalshi_api.py` or similar
+### ~~0g. Kalshi API base URL migration~~ — FALSE ALARM
+Already using `api.elections.kalshi.com`. Verified April 22.
 
-### 0h. DataGolf deprecated endpoint
-`live-strokes-gained` endpoint deprecated → use `live-tournament-stats`. Not urgent but should migrate.
-**Source:** Same Manus task as 0f
-**Files:** `services/datagolf_api.py`
+### ~~0h. DataGolf deprecated endpoint~~ — FALSE ALARM
+We don't use `live-strokes-gained`. We use `preds/in-play`. Verified April 22.
 
 ---
 
