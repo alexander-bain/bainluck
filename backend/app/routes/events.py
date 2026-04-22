@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team
 from app.services import get_db, OddsAPIService, fetch_current_odds
+from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -2405,10 +2406,6 @@ async def get_game_markets(
 
     sport_key = event.sport.key if event.sport else None
 
-    # Derive expected llm_sport_category from event's sport key prefix.
-    # Used to filter out cross-sport contamination (e.g., NBA props on MLB games
-    # when city names like "Cleveland" or "Houston" overlap).
-    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
     expected_category = None
     if sport_key:
         prefix = sport_key.split("_")[0]
