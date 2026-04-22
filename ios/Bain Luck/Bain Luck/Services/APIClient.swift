@@ -279,7 +279,7 @@ actor APIClient {
 
     func fetchFeed(
         sport: String? = nil,
-        limit: Int = 200,
+        limit: Int = 50,
         offset: Int = 0,
         myTeamsOnly: Bool = false
     ) async throws -> FeedResponse {

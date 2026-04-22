@@ -1409,6 +1409,186 @@ async def get_playoff_grid(
     }
 
 
+@router.get("/grouped-feed")
+async def grouped_feed(
+    category: Optional[str] = Query(None, description="Filter by category (sports, crypto, politics, weather)"),
+    sport: Optional[str] = Query(None, description="Filter by sport"),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get a feed of grouped futures markets optimized for display.
+
+    Returns markets intelligently grouped into:
+    - stat_prop: Player stat props (e.g., "Tatum 25+ Points")
+    - playoff_progression: Tournament stage progressions
+    - threshold: Numeric threshold variants (e.g., Bitcoin price targets)
+    - ungrouped: Markets without detected groupings
+
+    Each group includes metadata for rendering the appropriate card type
+    (ThresholdSparkline, PlayerStatCard, ProgressionLadder, etc.)
+    """
+    from ..utils.market_grouping import (
+        detect_stat_prop_groups,
+        detect_playoff_progression_groups,
+        detect_threshold_groups,
+    )
+
+    filters = [
+        FuturesMarket.status.in_(["active", "open"]),
+    ]
+    if category:
+        filters.append(FuturesMarket.llm_category == category)
+    if sport:
+        filters.append(FuturesMarket.llm_sport_category == sport)
+
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(and_(*filters))
+        .order_by(FuturesMarket.updated_at.desc())
+        .limit(limit * 5)
+    )
+    result = await db.execute(stmt)
+    markets = result.scalars().unique().all()
+
+    market_dicts = []
+    outcome_dicts = []
+    for m in markets:
+        m_dict = {
+            "id": m.id,
+            "name": m.name,
+            "source": m.source,
+            "category": m.llm_category,
+            "sport": m.llm_sport_category,
+            "status": m.status,
+            "group_id": m.group_id,
+            "group_type": m.group_type,
+            "outcomes": [],
+        }
+        for o in m.outcomes:
+            o_dict = {
+                "id": o.id,
+                "name": o.name,
+                "probability": o.probability,
+                "american_odds": o.american_odds,
+                "market_id": m.id,
+                "source": m.source,
+            }
+            m_dict["outcomes"].append(o_dict)
+            outcome_dicts.append(o_dict)
+        market_dicts.append(m_dict)
+
+    stat_prop_groups = detect_stat_prop_groups(market_dicts)
+    playoff_groups = detect_playoff_progression_groups(market_dicts)
+    threshold_groups = detect_threshold_groups(outcome_dicts)
+
+    grouped_market_ids = set()
+    grouped_outcome_ids = set()
+    feed_items = []
+
+    for group_key, group_markets in stat_prop_groups.items():
+        if len(group_markets) < 2:
+            continue
+        for gm in group_markets:
+            grouped_market_ids.add(gm["id"])
+        first = group_markets[0]
+        feed_items.append({
+            "type": "stat_prop",
+            "group_key": group_key,
+            "player_name": first.get("player_name", ""),
+            "stat_category": first.get("stat_category", ""),
+            "lines": [
+                {
+                    "id": gm["id"],
+                    "name": gm["name"],
+                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    "threshold_value": gm.get("threshold_value", 0),
+                    "threshold_direction": gm.get("threshold_direction", "above"),
+                    "source": gm.get("source", ""),
+                }
+                for gm in group_markets
+            ],
+            "market_count": len(group_markets),
+        })
+
+    for group_key, group_markets in playoff_groups.items():
+        if len(group_markets) < 2:
+            continue
+        for gm in group_markets:
+            grouped_market_ids.add(gm["id"])
+        first = group_markets[0]
+        feed_items.append({
+            "type": "playoff_progression",
+            "group_key": group_key,
+            "entity_name": first.get("team_name", ""),
+            "stages": [
+                {
+                    "id": gm["id"],
+                    "name": gm["name"],
+                    "stage_name": gm.get("stage_name", ""),
+                    "stage_order": gm.get("stage_order", 0),
+                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    "source": gm.get("source", ""),
+                }
+                for gm in group_markets
+            ],
+            "market_count": len(group_markets),
+        })
+
+    for stem, outcomes in threshold_groups.items():
+        if len(outcomes) < 2:
+            continue
+        for o in outcomes:
+            grouped_outcome_ids.add(o["id"])
+        feed_items.append({
+            "type": "threshold",
+            "group_key": f"threshold:{stem}",
+            "title": stem.replace("#", "").strip(),
+            "points": [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "probability": o.get("probability"),
+                    "threshold_value": o.get("threshold_value", 0),
+                    "threshold_unit": o.get("threshold_unit", ""),
+                    "threshold_direction": o.get("threshold_direction", "above"),
+                }
+                for o in outcomes
+            ],
+            "outcome_count": len(outcomes),
+        })
+
+    ungrouped = [
+        m for m in market_dicts
+        if m["id"] not in grouped_market_ids
+    ][:limit]
+
+    for m in ungrouped:
+        feed_items.append({
+            "type": "market",
+            "market": {
+                "id": m["id"],
+                "name": m["name"],
+                "source": m["source"],
+                "category": m.get("category"),
+                "sport": m.get("sport"),
+                "outcomes": m["outcomes"][:5],
+            },
+        })
+
+    return {
+        "feed": feed_items[:limit],
+        "total_grouped": len([f for f in feed_items if f["type"] != "market"]),
+        "total_ungrouped": len(ungrouped),
+        "group_counts": {
+            "stat_prop": len(stat_prop_groups),
+            "playoff_progression": len(playoff_groups),
+            "threshold": len(threshold_groups),
+        },
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
@@ -2595,205 +2775,6 @@ async def get_group(
             for stem, outcomes_list in threshold_groups.items()
         },
         "sources": list({m.source for m in markets}),
-    }
-
-
-@router.get("/grouped-feed")
-async def grouped_feed(
-    category: Optional[str] = Query(None, description="Filter by category (sports, crypto, politics, weather)"),
-    sport: Optional[str] = Query(None, description="Filter by sport"),
-    limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get a feed of grouped futures markets optimized for display.
-
-    Returns markets intelligently grouped into:
-    - stat_prop: Player stat props (e.g., "Tatum 25+ Points")
-    - playoff_progression: Tournament stage progressions
-    - threshold: Numeric threshold variants (e.g., Bitcoin price targets)
-    - ungrouped: Markets without detected groupings
-
-    Each group includes metadata for rendering the appropriate card type
-    (ThresholdSparkline, PlayerStatCard, ProgressionLadder, etc.)
-    """
-    from ..utils.market_grouping import (
-        detect_stat_prop_groups,
-        detect_playoff_progression_groups,
-        detect_threshold_groups,
-    )
-
-    # Build base query for active markets with outcomes
-    filters = [
-        FuturesMarket.status.in_(["active", "open"]),
-    ]
-    if category:
-        filters.append(FuturesMarket.llm_category == category)
-    if sport:
-        filters.append(FuturesMarket.llm_sport_category == sport)
-
-    stmt = (
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(and_(*filters))
-        .order_by(FuturesMarket.updated_at.desc())
-        .limit(limit * 5)  # Fetch more to have material for grouping
-    )
-    result = await db.execute(stmt)
-    markets = result.scalars().unique().all()
-
-    # Convert to dicts for grouping functions
-    market_dicts = []
-    outcome_dicts = []
-    for m in markets:
-        m_dict = {
-            "id": m.id,
-            "name": m.name,
-            "source": m.source,
-            "category": m.llm_category,
-            "sport": m.llm_sport_category,
-            "status": m.status,
-            "group_id": m.group_id,
-            "group_type": m.group_type,
-            "outcomes": [],
-        }
-        for o in m.outcomes:
-            o_dict = {
-                "id": o.id,
-                "name": o.name,
-                "probability": o.probability,
-                "american_odds": o.american_odds,
-                "market_id": m.id,
-                "source": m.source,
-            }
-            m_dict["outcomes"].append(o_dict)
-            outcome_dicts.append(o_dict)
-        market_dicts.append(m_dict)
-
-    # Detect groups
-    stat_prop_groups = detect_stat_prop_groups(market_dicts)
-    playoff_groups = detect_playoff_progression_groups(market_dicts)
-    threshold_groups = detect_threshold_groups(outcome_dicts)
-
-    # Track which markets/outcomes have been grouped
-    grouped_market_ids = set()
-    grouped_outcome_ids = set()
-
-    # Build response
-    feed_items = []
-
-    # 1. Stat prop groups
-    for group_key, group_markets in stat_prop_groups.items():
-        if len(group_markets) < 2:
-            continue
-
-        # Mark as grouped
-        for gm in group_markets:
-            grouped_market_ids.add(gm["id"])
-
-        first = group_markets[0]
-        feed_items.append({
-            "type": "stat_prop",
-            "group_key": group_key,
-            "player_name": first.get("player_name", ""),
-            "stat_category": first.get("stat_category", ""),
-            "lines": [
-                {
-                    "id": gm["id"],
-                    "name": gm["name"],
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
-                    "threshold_value": gm.get("threshold_value", 0),
-                    "threshold_direction": gm.get("threshold_direction", "above"),
-                    "source": gm.get("source", ""),
-                }
-                for gm in group_markets
-            ],
-            "market_count": len(group_markets),
-        })
-
-    # 2. Playoff progression groups
-    for group_key, group_markets in playoff_groups.items():
-        if len(group_markets) < 2:
-            continue
-
-        # Mark as grouped
-        for gm in group_markets:
-            grouped_market_ids.add(gm["id"])
-
-        first = group_markets[0]
-        feed_items.append({
-            "type": "playoff_progression",
-            "group_key": group_key,
-            "entity_name": first.get("team_name", ""),
-            "stages": [
-                {
-                    "id": gm["id"],
-                    "name": gm["name"],
-                    "stage_name": gm.get("stage_name", ""),
-                    "stage_order": gm.get("stage_order", 0),
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
-                    "source": gm.get("source", ""),
-                }
-                for gm in group_markets
-            ],
-            "market_count": len(group_markets),
-        })
-
-    # 3. Threshold groups (from outcomes)
-    for stem, outcomes in threshold_groups.items():
-        if len(outcomes) < 2:
-            continue
-
-        # Mark outcomes as grouped
-        for o in outcomes:
-            grouped_outcome_ids.add(o["id"])
-
-        feed_items.append({
-            "type": "threshold",
-            "group_key": f"threshold:{stem}",
-            "title": stem.replace("#", "").strip(),
-            "points": [
-                {
-                    "id": o["id"],
-                    "name": o["name"],
-                    "probability": o.get("probability"),
-                    "threshold_value": o.get("threshold_value", 0),
-                    "threshold_unit": o.get("threshold_unit", ""),
-                    "threshold_direction": o.get("threshold_direction", "above"),
-                }
-                for o in outcomes
-            ],
-            "outcome_count": len(outcomes),
-        })
-
-    # 4. Ungrouped markets (limit to avoid flooding)
-    ungrouped = [
-        m for m in market_dicts
-        if m["id"] not in grouped_market_ids
-    ][:limit]
-
-    for m in ungrouped:
-        feed_items.append({
-            "type": "market",
-            "market": {
-                "id": m["id"],
-                "name": m["name"],
-                "source": m["source"],
-                "category": m.get("category"),
-                "sport": m.get("sport"),
-                "outcomes": m["outcomes"][:5],  # Top 5 outcomes
-            },
-        })
-
-    return {
-        "feed": feed_items[:limit],
-        "total_grouped": len([f for f in feed_items if f["type"] != "market"]),
-        "total_ungrouped": len(ungrouped),
-        "group_counts": {
-            "stat_prop": len(stat_prop_groups),
-            "playoff_progression": len(playoff_groups),
-            "threshold": len(threshold_groups),
-        },
     }
 
 
