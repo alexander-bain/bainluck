@@ -2,12 +2,40 @@
   "date": "2026-04-22",
   "tasks": {
     "event_detail": {
-      "task_id": "5wzVBKRvVKKMwWnapeEuSY",
-      "status": "timeout"
+      "task_id": "YimhhabpYPfXvsqsJDUx7Y",
+      "status": "timeout",
+      "task_url": "https://manus.im/app/YimhhabpYPfXvsqsJDUx7Y",
+      "credits": 0
     },
     "feed": {
-      "task_id": "ct5Bq9msNeEo5Xfy2e6sQa",
-      "status": "complete"
+      "task_id": "cHYggpDzcYHbb3cirQW58n",
+      "status": "complete",
+      "task_url": "https://manus.im/app/cHYggpDzcYHbb3cirQW58n",
+      "credits": 1269
+    },
+    "league_page": {
+      "task_id": "LocbDEhxU49qzaWCgLKSFS",
+      "status": "complete",
+      "task_url": "https://manus.im/app/LocbDEhxU49qzaWCgLKSFS",
+      "credits": 1179
+    },
+    "market_completeness": {
+      "task_id": "eAjn3Qgwk7fKrKuLdcyHw2",
+      "status": "complete",
+      "task_url": "https://manus.im/app/eAjn3Qgwk7fKrKuLdcyHw2",
+      "credits": 2639
+    },
+    "visual_review": {
+      "task_id": "7abH6Ti4BBcxFtKM8PVcfE",
+      "status": "complete",
+      "task_url": "https://manus.im/app/7abH6Ti4BBcxFtKM8PVcfE",
+      "credits": 2195
+    },
+    "grid": {
+      "task_id": "LYK5hpdmnieihdvMDn7ceu",
+      "status": "complete",
+      "task_url": "https://manus.im/app/LYK5hpdmnieihdvMDn7ceu",
+      "credits": 1391
     }
   }
 }
