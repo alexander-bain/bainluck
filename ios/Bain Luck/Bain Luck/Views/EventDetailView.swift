@@ -11,7 +11,6 @@ final class EventDetailViewModel: ObservableObject {
     @Published var loading = true
     @Published var error: String?
     @Published var history: EventHistoryResponse?
-    @Published var lineMovement: LineMovementResponse?
     @Published var relatedFutures: RelatedFuturesResponse?
 
     private var refreshTimer: Timer?
@@ -27,7 +26,6 @@ final class EventDetailViewModel: ObservableObject {
 
         // Start secondary fetches immediately (they only need eventId)
         let historyTask = Task { try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168) }
-        let lineMovementTask = Task { try? await APIClient.shared.fetchLineMovement(eventId: eventId) }
         let relatedFuturesTask = Task { try? await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
 
         // Await primary fetch (controls loading state)
@@ -46,7 +44,6 @@ final class EventDetailViewModel: ObservableObject {
         // Await secondary fetches (already running in parallel, may already be done)
         // These update @Published properties so child views re-render as data arrives
         history = await historyTask.value
-        lineMovement = await lineMovementTask.value
         relatedFutures = await relatedFuturesTask.value
     }
 
@@ -182,11 +179,6 @@ struct EventDetailView: View {
                             awayTeamAbbrev: event.awayTeamData?.abbreviation
                         )
                     }
-                    LineMovementView(eventId: event.id,
-                                     homeTeam: event.homeTeam,
-                                     awayTeam: event.awayTeam,
-                                     eventStatus: event.status,
-                                     preloadedData: vm.lineMovement)
                     if let context = event.standingsContext { standingsSection(context) }
                     eventTagsSection(event)
                     RelatedFuturesView(

@@ -320,12 +320,6 @@ actor APIClient {
         return try await fetch("/api/events/\(eventId)/related-futures", cacheTTL: 60)
     }
 
-    // MARK: - Line Movement
-
-    func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse {
-        return try await fetch("/api/events/\(eventId)/line-movement", cacheTTL: 120)
-    }
-
     // MARK: - Search
 
     func fetchSearch(query: String, sport: String? = nil, page: Int = 1) async throws -> SearchResponse {
