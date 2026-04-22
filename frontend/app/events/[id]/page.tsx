@@ -36,36 +36,21 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import type { ActiveChartPoint } from "@/lib/types";
 
-// Maps Odds API sport keys to championship grid URL slugs
-const SPORT_KEY_TO_GRID_SLUG: Record<string, string> = {
-  basketball_nba: "nba",
-  americanfootball_nfl: "nfl",
-  baseball_mlb: "mlb",
-  icehockey_nhl: "nhl",
-  basketball_ncaab: "ncaa-basketball",
-  americanfootball_ncaaf: "ncaa-football",
-  basketball_wnba: "wnba",
-  soccer_usa_mls: "mls",
-  soccer_epl: "epl",
-  soccer_spain_la_liga: "la-liga",
-  soccer_uefa_champs_league: "champions-league",
-  soccer_germany_bundesliga: "bundesliga",
-  basketball_wncaab: "ncaa-basketball",
-};
-
-const GRID_SLUG_LABELS: Record<string, string> = {
-  nba: "NBA",
-  nfl: "NFL",
-  mlb: "MLB",
-  nhl: "NHL",
-  "ncaa-basketball": "NCAA Basketball",
-  "ncaa-football": "NCAA Football",
-  wnba: "WNBA",
-  mls: "MLS",
-  epl: "EPL",
-  "la-liga": "La Liga",
-  "champions-league": "Champions League",
-  bundesliga: "Bundesliga",
+// Maps Odds API sport keys to sport hierarchy paths
+const SPORT_KEY_TO_LEAGUE_PATH: Record<string, { path: string; label: string }> = {
+  basketball_nba: { path: "/sport/basketball/nba", label: "NBA" },
+  americanfootball_nfl: { path: "/sport/football/nfl", label: "NFL" },
+  baseball_mlb: { path: "/sport/baseball/mlb", label: "MLB" },
+  icehockey_nhl: { path: "/sport/hockey/nhl", label: "NHL" },
+  basketball_ncaab: { path: "/sport/basketball/ncaab", label: "NCAA Basketball" },
+  americanfootball_ncaaf: { path: "/sport/football/ncaaf", label: "NCAA Football" },
+  basketball_wnba: { path: "/sport/basketball/wnba", label: "WNBA" },
+  soccer_usa_mls: { path: "/sport/soccer/mls", label: "MLS" },
+  soccer_epl: { path: "/sport/soccer/epl", label: "EPL" },
+  soccer_spain_la_liga: { path: "/sport/soccer/laliga", label: "La Liga" },
+  soccer_uefa_champs_league: { path: "/sport/soccer/ucl", label: "Champions League" },
+  soccer_germany_bundesliga: { path: "/sport/soccer/bundesliga", label: "Bundesliga" },
+  basketball_wncaab: { path: "/sport/basketball/wncaab", label: "NCAA Basketball" },
 };
 
 interface EventPageProps {
@@ -1638,20 +1623,19 @@ export default function EventPage({ params }: EventPageProps) {
         teamProgression={teamProgression || undefined}
       />
 
-      {/* Championship Grid link */}
+      {/* League page link */}
       {event.sport && (() => {
-        const gridSlug = SPORT_KEY_TO_GRID_SLUG[event.sport!];
-        if (!gridSlug) return null;
-        const gridLabel = GRID_SLUG_LABELS[gridSlug] || gridSlug.toUpperCase();
+        const league = SPORT_KEY_TO_LEAGUE_PATH[event.sport!];
+        if (!league) return null;
         return (
           <Link
-            href={`/playoffs/${gridSlug}`}
+            href={league.path}
             className="flex items-center justify-between px-4 py-3 rounded-xl bg-surface-card border border-surface-border hover:border-text-muted/30 transition-colors group"
           >
             <div className="flex items-center gap-2">
               <span className="text-sm">🏆</span>
               <span className="text-sm font-medium text-text-secondary group-hover:text-text-primary transition-colors">
-                {gridLabel} Championship Grid
+                {league.label} Championship Grid
               </span>
             </div>
             <span className="text-text-muted group-hover:text-text-secondary transition-colors text-sm">→</span>

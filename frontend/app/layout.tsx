@@ -88,7 +88,7 @@ export default function RootLayout({
                 <div className="max-w-content mx-auto px-6 py-4">
                   <nav className="flex items-center justify-center gap-6">
                     <Link
-                      href="/playoffs"
+                      href="/sport"
                       className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
                     >
                       <span>🏆</span>

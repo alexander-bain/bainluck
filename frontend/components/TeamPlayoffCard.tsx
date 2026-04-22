@@ -141,13 +141,13 @@ function StageCol({
 
 interface TeamPlayoffCardProps {
   team: PlayoffTeam;
-  /** href to the full championship grid, e.g. "/playoffs/nba" */
+  /** href to the full league page, e.g. "/sport/basketball/nba" */
   gridHref?: string;
 }
 
 export default function TeamPlayoffCard({
   team,
-  gridHref = "/playoffs/nba",
+  gridHref = "/sport/basketball/nba",
 }: TeamPlayoffCardProps) {
   const rgb = hexToRgb(team.color);
 

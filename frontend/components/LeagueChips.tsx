@@ -9,20 +9,20 @@ interface LeagueChip {
   emoji: string;
 }
 
-const LEAGUE_CHIPS: LeagueChip[] = [
-  { slug: "nba", label: "NBA", emoji: "\u{1F3C0}" },
-  { slug: "nfl", label: "NFL", emoji: "\u{1F3C8}" },
-  { slug: "mlb", label: "MLB", emoji: "\u26BE" },
-  { slug: "nhl", label: "NHL", emoji: "\u{1F3D2}" },
-  { slug: "ncaa-basketball", label: "NCAAB", emoji: "\u{1F3C0}" },
-  { slug: "ncaa-football", label: "NCAAF", emoji: "\u{1F3C8}" },
-  { slug: "epl", label: "EPL", emoji: "\u26BD" },
-  { slug: "champions-league", label: "UCL", emoji: "\u26BD" },
-  { slug: "la-liga", label: "La Liga", emoji: "\u26BD" },
-  { slug: "bundesliga", label: "Bundesliga", emoji: "\u26BD" },
-  { slug: "mls", label: "MLS", emoji: "\u26BD" },
-  { slug: "wnba", label: "WNBA", emoji: "\u{1F3C0}" },
-  { slug: "golf", label: "Golf", emoji: "\u26F3" },
+const LEAGUE_CHIPS: (LeagueChip & { path: string })[] = [
+  { slug: "nba", label: "NBA", emoji: "\u{1F3C0}", path: "/sport/basketball/nba" },
+  { slug: "nfl", label: "NFL", emoji: "\u{1F3C8}", path: "/sport/football/nfl" },
+  { slug: "mlb", label: "MLB", emoji: "\u26BE", path: "/sport/baseball/mlb" },
+  { slug: "nhl", label: "NHL", emoji: "\u{1F3D2}", path: "/sport/hockey/nhl" },
+  { slug: "ncaa-basketball", label: "NCAAB", emoji: "\u{1F3C0}", path: "/sport/basketball/ncaab" },
+  { slug: "ncaa-football", label: "NCAAF", emoji: "\u{1F3C8}", path: "/sport/football/ncaaf" },
+  { slug: "epl", label: "EPL", emoji: "\u26BD", path: "/sport/soccer/epl" },
+  { slug: "champions-league", label: "UCL", emoji: "\u26BD", path: "/sport/soccer/ucl" },
+  { slug: "la-liga", label: "La Liga", emoji: "\u26BD", path: "/sport/soccer/laliga" },
+  { slug: "bundesliga", label: "Bundesliga", emoji: "\u26BD", path: "/sport/soccer/bundesliga" },
+  { slug: "mls", label: "MLS", emoji: "\u26BD", path: "/sport/soccer/mls" },
+  { slug: "wnba", label: "WNBA", emoji: "\u{1F3C0}", path: "/sport/basketball/wnba" },
+  { slug: "golf", label: "Golf", emoji: "\u26F3", path: "/categories/golf" },
 ];
 
 interface LeagueChipsProps {
@@ -44,7 +44,7 @@ export default function LeagueChips({ activeSlug }: LeagueChipsProps) {
         return (
           <Link
             key={chip.slug}
-            href={`/playoffs/${chip.slug}`}
+            href={chip.path}
             className={`
               flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
               whitespace-nowrap transition-colors shrink-0
