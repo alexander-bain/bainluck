@@ -18,6 +18,7 @@ const SeriesProbability = dynamic(() => import("@/components/SeriesProbability")
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
 const GameSegments = dynamic(() => import("@/components/GameSegments"), { ssr: false });
+const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1566,6 +1567,11 @@ export default function EventPage({ params }: EventPageProps) {
               awayColor={event.away_team_data?.primary_color || undefined}
               boxScore={event.box_score_data}
             />
+          )}
+
+          {/* Special Event Markets (auto-categorized other markets) */}
+          {(gameMarkets.other?.length ?? 0) >= 3 && (
+            <SpecialEventMarkets data={gameMarkets} eventStatus={event.status} />
           )}
         </div>
       )}
