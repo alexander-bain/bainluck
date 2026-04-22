@@ -30,33 +30,34 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 ## Tier 1 — High Leverage, Do Next
 
-### 0. Mystery Shopper Critical Fixes (M1-M4)
+### 0. Mystery Shopper Critical Fixes — ALL SHIPPED (April 22)
 
-From Manus AI audit (April 22). Full report: `Manus/mystery_shopper.md`.
-
-#### 0a. Golf 100%/0% probability (M1 — CRITICAL)
-Every upcoming tournament shows one golfer at 100%, all others at 0%. DataGolf prob=1.0 for completed event winners leaking into upcoming events, or stale tournament data not rotating.
-**Files:** `routes/golf.py`, DataGolf polling task
-**Verify:** `/categories/golf` + tournament detail pages
-
-#### 0b. Event detail mobile loading spinner (M2 — CRITICAL)
-375px viewport shows endless "Loading event..." spinner. Chart rendering or memory issue on mobile.
-**Files:** `frontend/app/events/[id]/page.tsx`, `frontend/components/OddsChart.tsx`
-**Verify:** Mobile viewport in browser devtools
-
-#### 0c. Future golf majors marked LIVE (M3 — HIGH)
-PGA Championship, U.S. Open, The Open incorrectly showing LIVE status. Likely same DataGolf pipeline as M1.
-**Files:** Same as 0a
-
-#### 0d. Player props 97-98% threshold filter (M4 — HIGH)
-"2 home runs: 98% chance" for every player — showing the boring "No" side. Need threshold filter to hide props where interesting side <5%.
-**Files:** `routes/events.py` (game markets / related futures section)
+M1+M3: Golf 100%/0% + LIVE badges, M2: Mobile spinner, M4: Boring props filter,
+M11/M12: Period markets + spreads on event detail, Cross-sport prop contamination,
+Economics >100% distributions, Weather stale featured market.
+Full report: `Manus/mystery_shopper.md`.
 
 ---
 
-### 0e. Wire Manus audit results into /health skill
+### 0e. Wire Manus audit results into /health skill — IN PROGRESS
 Manus health audit suite built (`Manus/prompts/`, `scripts/manus_health_suite.py`). Next: update the `/health` skill to read `Manus/audit_results/latest/` and surface last audit date + score alongside Sentry/Heroku/CI checks. Flag if last audit is >7 days old.
 **Files:** `/health` skill definition, `scripts/manus_health_suite.py`
+
+### 0f. URGENT: Polymarket CLOB V2 migration (April 28, 2026)
+Manus API audit found Polymarket is migrating to CLOB V2 on April 28. No backward compatibility. Must migrate to V2 SDK before then.
+**Source:** Manus task `FfaM55yYAYqDbm4ip55Pqt` — view at https://manus.im/app/FfaM55yYAYqDbm4ip55Pqt
+**Files:** `tasks/polymarket.py`, Polymarket API client
+**Deadline:** April 28, 2026
+
+### 0g. Kalshi API base URL migration
+Kalshi base URL migrated to `api.elections.kalshi.com`. Old endpoint may be defunct. Verify our client still works.
+**Source:** Same Manus task as 0f
+**Files:** `services/kalshi_api.py` or similar
+
+### 0h. DataGolf deprecated endpoint
+`live-strokes-gained` endpoint deprecated → use `live-tournament-stats`. Not urgent but should migrate.
+**Source:** Same Manus task as 0f
+**Files:** `services/datagolf_api.py`
 
 ---
 
