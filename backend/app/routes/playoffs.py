@@ -2366,11 +2366,18 @@ async def get_playoff_grid(
 
     market_filter = or_(*sport_conditions, category_condition)
 
+    from datetime import timedelta
+    season_cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+
     stmt = (
         select(FuturesMarket)
         .where(
             market_filter,
             FuturesMarket.status.in_(("open", "closed", "resolved")),
+            or_(
+                FuturesMarket.created_at.is_(None),
+                FuturesMarket.created_at >= season_cutoff,
+            ),
         )
         .options(selectinload(FuturesMarket.outcomes))
     )
