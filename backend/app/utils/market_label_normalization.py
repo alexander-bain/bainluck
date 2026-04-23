@@ -759,14 +759,9 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     name_lower = (market_name or "").lower()
     cat_lower = (category or "").lower()
 
-    # Game props are always tier 5
-    if cat_lower == "game_prop":
-        return 5
-
-    # Check category field first for quick classification
-    if cat_lower == "mvp":
-        return 3
-
+    # Check tier 1-4 name patterns BEFORE the game_prop shortcut.
+    # Kalshi sometimes labels season markets (division winners, playoff qualifiers)
+    # with category="game_prop" — the name is more reliable than the category.
     # Division check before championship — "Division Winner" contains "winner"
     # but should be tier 4, not tier 1
     for pattern in _TIER_4_PATTERNS:
@@ -783,12 +778,20 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
         if pattern.search(name_lower):
             return 3
 
+    # Check category field for quick classification
+    if cat_lower == "mvp":
+        return 3
+
     # Championship / title
     if cat_lower == "championship":
         return 1
     for pattern in _TIER_1_PATTERNS:
         if pattern.search(name_lower):
             return 1
+
+    # Game props that didn't match any tier 1-4 pattern are tier 5
+    if cat_lower == "game_prop":
+        return 5
 
     # Non-sports markets default to tier 2 (no hierarchy — all top-level)
     effective_category = (sport_category or category or "").lower()

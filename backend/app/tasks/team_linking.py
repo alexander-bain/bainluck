@@ -146,21 +146,16 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
     try:
         async with get_task_session() as session:
             # --- Phase 1: Assign market_tier where missing or wrong ---
-            # Re-tier: NULL tiers, game_prop ordering bugs, AND non-game-prop
-            # markets stuck at tier 5 (catches regex improvements).
+            # Re-tier: NULL tiers AND all tier-5 markets. compute_market_tier
+            # now checks name patterns before category, so "game_prop" markets
+            # whose names match division/conference/championship patterns get
+            # promoted to their correct tier.
             tier_result = await session.execute(
                 select(FuturesMarket)
                 .where(
                     or_(
                         FuturesMarket.market_tier.is_(None),
-                        and_(
-                            FuturesMarket.category == "game_prop",
-                            FuturesMarket.market_tier != 5,
-                        ),
-                        and_(
-                            FuturesMarket.category != "game_prop",
-                            FuturesMarket.market_tier == 5,
-                        ),
+                        FuturesMarket.market_tier == 5,
                     )
                 )
                 .limit(limit * 5)
