@@ -358,7 +358,10 @@ _CATEGORY_RULES: list[tuple[re.Pattern, str]] = [
         r"Best Record|Worst Record|Win Total|Win Streak|Division Winner|"
         r"Presidents['\u2019]?\s+Trophy|"
         r"Longest .+ Streak|"
-        r"(AL|NL)\s+(East|West|Central)\s+Winner",
+        r"(AL|NL)\s+(East|West|Central)\s+Winner|"
+        r"\b(Doubles|Triples|Stolen Bases|Home Run|Hits|RBI|Batting Average|ERA|Saves|Strikeouts?)\s+Leader\b|"
+        r"\b\d+\+\s+Home Run\b|"
+        r"Player of the (Week|Month)|Pitcher of the Month|Platinum Glove|Reliever of the Year",
         re.I,
     ), "season_stat"),
 ]
