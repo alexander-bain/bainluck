@@ -47,29 +47,32 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 - **Gap**: Markets that are season-long but lack team names in outcomes (e.g., "Which European finishes highest?") fall through tier 1-4 matching. Markets that are game-adjacent but missing `event_id` linkage fall through tier 5.
 
 **Layer 1: Event Existence** — Does every game exist with all sources?
-- Status: Self-check mode working. MLB baseline: 4/8 events fully covered (4 sources), 2 with only 1 source.
-- Next: Diagnose single-source events (event registry cross-match failure vs source gap).
+- Status: Self-check working. Scheduled events have 1 source (betting only) — this is EXPECTED (ESPN/MLB/stat_model activate when games start). Live events have 4 sources. Not a real gap.
+- NHL: all 3 events have only 1 source (betting) for scheduled games — expected.
+- Next: Confirm no real L1 gaps exist by running during live games.
 
 **Layer 2: Market → Event Linking** — Are all game markets linked correctly?
-- Status: Self-check mode working. MLB: 5-12 Kalshi markets/event. 1 event (White Sox @ Diamondbacks) has ZERO.
-- Next: Diagnose zero-market events — is it a ticker parsing bug, team name mismatch, or genuine gap?
+- Status: ✅ **ALL events have Kalshi markets.** MLB 8/8, NBA 3/3, NHL 3/3.
+- Previous zero-market event (White Sox @ Diamondbacks) resolved — now has 12 Kalshi markets, 228 props.
 
 **Layer 3: Futures Surfacing** — Do season futures show on event pages?
-- Status: **MEASUREMENT BUG FOUND.** Audit's `EXPECTED_CATEGORIES` uses wrong vocabulary — checks for `"championship"`, `"pennant"` etc. but `classify_market_category()` returns `"playoff_path"`, `"season_stat"`. So audit always reports gaps even when markets ARE present.
-- Root cause confirmed April 23: tiers are correct (pennant=2, division=4, make_playoffs=4), and API returned `{'game_prop': 202, 'championship': 10, 'playoff_path': 3, 'season_stat': 2}` for test event 14523747 — markets likely present but miscounted by audit.
-- **Active fix**: (1) Fix audit vocabulary to match actual `display_category` values, (2) add granular sub-checks within `playoff_path` to distinguish championship vs pennant vs make_playoffs, (3) hill-climb any real gaps revealed.
-- Additional fixes in progress: `_team_name_patterns` individual-word matching (uncommitted), tier 4 regex `\bmake.(?:the.)?(?:playoffs|postseason)` may need widening for Kalshi verbose names.
-- Files: `routes/events.py` (related futures endpoint), `utils/market_label_normalization.py` (category classification), `scripts/audit_event_matching.py` (L3 audit)
+- Status: ✅ **100% across all 3 sports.** MLB 5/5, NBA 3/3, NHL 3/3.
+- Hill-climbed April 23 from "all missing" to 100% via 7 commits:
+  1. Audit vocabulary: label-level regex matching instead of wrong display_category names
+  2. Make_playoffs regex: `\bmake.+(?:playoffs|postseason)` handles intervening league names
+  3. Team name patterns: individual city words ≥4 chars (e.g., "Boston" from "Boston Red Sox")
+  4. Stat leader classification: "Doubles Leader" etc. now `season_stat` not `championship`
+  5. Tier assignment: name patterns checked BEFORE game_prop category shortcut (Kalshi mislabels season markets as game_prop)
+  6. Per-tier market loading: 100 markets per tier prevents tier crowding (was flat 500 cap)
+  7. Audit regex: "Playoff Qualifiers" pattern for Kalshi's alternate naming
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
-- Status: Skeletal comparison logic in `run_full_audit()` (lines 517-543). Uses fuzzy name matching to compare Manus ground truth vs what we show.
-- Next: (1) Run Manus ground truth sweep, (2) enhance L4 to use ticker matching (more reliable than fuzzy names), (3) hill-climb every gap — including novel/creative markets that don't fit standard categories.
-- This is the layer that catches the long tail: announcer props, broadcast markets, format props, any market Kalshi/Polymarket creates that we haven't seen before.
-- Context: Tier 1 MLB games have 100+ markets (moneyline, player props per batter, 1st half, series winner, novelty). We need to show ALL of them.
+- Status: **ACTIVE** — skeletal comparison logic in `run_full_audit()`. Needs Manus ground truth.
+- Next: (1) Run Manus ground truth sweep, (2) enhance L4 to use ticker matching, (3) hill-climb every gap — including novel/creative markets.
+- This catches the long tail: announcer props, broadcast markets, format props, etc.
 
 **Manus Ground Truth Prompt** — BUILT ✓
-- `Manus/prompts/event_matching_ground_truth.md` — single prompt covering Layers 1, 3, 4.
-- Sweeps today's games on Kalshi/Polymarket, deep-audits 3 games for market completeness, checks event detail pages for related futures.
+- `Manus/prompts/event_matching_ground_truth.md` — covers Layers 1, 3, 4.
 - Not yet RUN — needs Manus execution to produce ground truth JSON.
 
 **Hill-climb protocol (per iteration):**
