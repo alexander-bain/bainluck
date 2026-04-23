@@ -12,12 +12,14 @@ enum APIError: LocalizedError {
         switch self {
         case .invalidURL:
             return "Invalid URL"
-        case .httpError(let code, let body):
-            return "HTTP \(code): \(body ?? "No body")"
-        case .decodingError(let err):
-            return "Decoding failed: \(err.localizedDescription)"
-        case .networkError(let err):
-            return "Network error: \(err.localizedDescription)"
+        case .httpError(let code, _):
+            if code == 503 { return "Server is temporarily unavailable. Pull to refresh." }
+            if code >= 500 { return "Server error (\(code)). Try again in a moment." }
+            return "Request failed (\(code))."
+        case .decodingError:
+            return "Couldn't read the response. Try again."
+        case .networkError:
+            return "No connection. Check your network and try again."
         }
     }
 }
