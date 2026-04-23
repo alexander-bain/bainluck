@@ -500,7 +500,7 @@ class KalshiAPIService(BaseAPIClient):
                 try:
                     await asyncio.sleep(0.3)
                     raw_markets, _ = await self.get_markets(
-                        status="open",
+                        status=None,
                         event_ticker=event.event_ticker,
                         limit=200,
                     )
