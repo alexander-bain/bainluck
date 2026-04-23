@@ -2634,9 +2634,9 @@ async def get_game_markets(
 
     # 10. Enrich player props with headshot URLs from team rosters
     if player_props and event.sport_id:
-        # Build player name → headshot lookup from both teams' rosters
         player_headshots: dict[str, str] = {}
         try:
+            # Primary: exact team name match
             team_result = await db.execute(
                 select(Team.roster_players).where(
                     Team.name.in_([event.home_team_name, event.away_team_name]),
@@ -2648,6 +2648,25 @@ async def get_game_markets(
                     for item in roster:
                         if isinstance(item, dict) and item.get("name") and item.get("headshot"):
                             player_headshots[item["name"].lower()] = item["headshot"]
+
+            # Fallback: if no headshots found, try ILIKE match on team names
+            if not player_headshots:
+                home_short = event.home_team_name.split()[-1] if event.home_team_name else ""
+                away_short = event.away_team_name.split()[-1] if event.away_team_name else ""
+                fallback_result = await db.execute(
+                    select(Team.roster_players).where(
+                        Team.sport_id == event.sport_id,
+                        or_(
+                            Team.name.ilike(f"%{home_short}%") if len(home_short) >= 4 else False,
+                            Team.name.ilike(f"%{away_short}%") if len(away_short) >= 4 else False,
+                        ),
+                    )
+                )
+                for (roster,) in fallback_result.all():
+                    if roster and isinstance(roster, list):
+                        for item in roster:
+                            if isinstance(item, dict) and item.get("name") and item.get("headshot"):
+                                player_headshots[item["name"].lower()] = item["headshot"]
         except Exception:
             pass
 

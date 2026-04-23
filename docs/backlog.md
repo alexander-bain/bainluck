@@ -48,7 +48,15 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 **Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
 **Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
-### 0f-2. Sport Hierarchy Page Data Quality (Manus audit April 22)
+### 0f-2. Futures Detail Page Data Quality
+Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player AH" etc. at 100% with 3400% y-axis. Outcome names are abbreviations instead of real names, probabilities are broken. Likely a Polymarket data parsing issue.
+**Files:** `tasks/polymarket.py` (outcome name parsing), `routes/futures.py` (display)
+
+### 0f-3. Live Box Score Integration for Player Props
+Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
+**Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
+
+### 0f-4. Sport Hierarchy Page Data Quality (Manus audit April 22)
 
 Two issues reported by Manus league page audit. May be transient data issues — verify before investing time:
 1. **EPL page shows Egyptian Premier League teams** — cross-league contamination in grid or event data. Grid API currently shows correct 20 English teams. May have been stale data at audit time.

@@ -398,7 +398,7 @@ export default function ScoreDifferentialChart({
     const chartStart = parseISO(chartData[0].timestamp).getTime();
     const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
     const chartDuration = chartEnd - chartStart;
-    const minSpacing = Math.max(chartDuration * 0.03, 120_000);
+    const minSpacing = Math.max(chartDuration * 0.05, 180_000);
 
     const filtered = periodBoundaries
       .filter((b) => {
@@ -420,7 +420,12 @@ export default function ScoreDifferentialChart({
       deduped.push(b);
     }
 
-    return deduped.map((b, i) => ({
+    // Cap at 12 labels max to prevent overlap on dense games (baseball)
+    const capped = deduped.length > 12
+      ? deduped.filter((_, i) => i % Math.ceil(deduped.length / 12) === 0)
+      : deduped;
+
+    return capped.map((b, i) => ({
       ...b,
       time: format(parseISO(b.timestamp), "h:mm a"),
       labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
@@ -636,7 +641,7 @@ export default function ScoreDifferentialChart({
                 label={{
                   value: b.label,
                   position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
+                  style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
                 }}
               />
             ))}
