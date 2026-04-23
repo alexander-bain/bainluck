@@ -23,7 +23,6 @@ struct GamePropsView: View {
     }
 
     private var playerGroups: [PlayerProps] {
-        // Group by player name, keeping only interesting thresholds
         var byPlayer: [String: (lines: [PropLine], market: String)] = [:]
 
         for f in futures {
@@ -32,8 +31,6 @@ struct GamePropsView: View {
             let player = parts[0].trimmingCharacters(in: .whitespaces)
             let threshold = parts[1].trimmingCharacters(in: .whitespaces)
             let prob = f.probability ?? 0
-
-            // Only interesting thresholds
             guard prob > 0.10 && prob < 0.90 else { continue }
 
             let market = f.cleanLabel ?? f.marketName
@@ -55,51 +52,40 @@ struct GamePropsView: View {
         let groups = playerGroups
         if groups.isEmpty { EmptyView() }
         else {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(groups.prefix(12)) { group in
-                    playerRow(group)
-                }
-                if groups.count > 12 {
-                    Text("+\(groups.count - 12) more players")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
+            // Compact grid: 2 columns, each player is one compact row
+            let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(groups.prefix(16)) { group in
+                    compactPlayerCell(group)
                 }
             }
-            .padding(12)
+            .padding(10)
             .background(Color.secondary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 
-    private func playerRow(_ group: PlayerProps) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(group.player)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.primary)
-                Spacer()
-                Text(group.marketType)
+    private func compactPlayerCell(_ group: PlayerProps) -> some View {
+        HStack(spacing: 4) {
+            Text(group.player.split(separator: " ").last.map(String.init) ?? group.player)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 2)
+            // Show best threshold inline
+            if let best = group.lines.first {
+                Text(best.threshold)
                     .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-            }
-
-            HStack(spacing: 8) {
-                ForEach(Array(group.lines.prefix(4).enumerated()), id: \.offset) { _, line in
-                    VStack(spacing: 2) {
-                        Text(line.threshold)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        Text("\(Int((line.probability * 100).rounded()))%")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(line.probability > 0.5 ? .primary : .secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
+                    .foregroundStyle(.secondary)
+                Text("\(Int((best.probability * 100).rounded()))%")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(best.probability > 0.5 ? .primary : .secondary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

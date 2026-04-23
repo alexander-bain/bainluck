@@ -199,6 +199,7 @@ struct ScoreDifferentialChartView: View {
         let yRange = -(absMax + 2)...(absMax + 2)
 
         let periodMarkers = extractScoreDiffPeriodMarkers(dataPoints: dataPoints)
+        let _ = print("ScoreDiff: \(dataPoints.count) data pts, \(periodMarkers.count) period markers, gameStart=\(gameStartDate?.description ?? "nil"), gameEnd=\(gameEndDate?.description ?? "nil")")
 
         return Chart {
             // Zero line
@@ -209,8 +210,13 @@ struct ScoreDifferentialChartView: View {
             // Period markers
             ForEach(periodMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
-                    .foregroundStyle(.secondary.opacity(0.4))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [4, 4]))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                    .annotation(position: .top, alignment: .leading) {
+                        Text(marker.label)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                    }
             }
 
             // Projected spread (orange dashed — contrasts with teal actual)
@@ -238,6 +244,7 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartYScale(domain: yRange)
+        .chartXScale(domain: chartXDomain(dataPoints: dataPoints))
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
@@ -259,6 +266,14 @@ struct ScoreDifferentialChartView: View {
                     .font(.caption2)
             }
         }
+    }
+
+    /// Match the OddsChart's x-axis domain: commenceTime to completedAt.
+    private func chartXDomain(dataPoints: [DiffPoint]) -> ClosedRange<Date> {
+        let start = gameStartDate ?? dataPoints.first?.date ?? Date()
+        let end = gameEndDate ?? dataPoints.last?.date ?? Date()
+        guard start < end else { return start...start.addingTimeInterval(3600) }
+        return start...end
     }
 
     // MARK: - Period Markers
