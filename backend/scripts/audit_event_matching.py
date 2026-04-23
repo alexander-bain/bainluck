@@ -688,62 +688,64 @@ def run_l4_deep(sport: str):
 
         print(f"    bainluck: {len(our_market_names)} unique Kalshi markets, {len(our_kalshi)} outcomes")
 
-        # Query Kalshi for each ticker prefix, filter to this game by title matching
-        kalshi_markets_found = {}
-        home_lower = home.lower()
-        away_lower = away.lower()
-        # Extract matchable fragments: last word (mascot) and city
-        home_parts = [w.lower() for w in home.split() if len(w) >= 3]
-        away_parts = [w.lower() for w in away.split() if len(w) >= 3]
+        # Instead of querying Kalshi's API (which mixes dates/games), compare
+        # what our DB has (via game-markets endpoint) against expected market types.
+        # The game-markets endpoint already finds both linked (event_id FK) and
+        # unlinked (team name fallback) Kalshi markets.
+        our_market_types = set()
+        for section in ["player_props", "totals", "spreads", "team_totals", "other"]:
+            if gm.get(section):
+                our_market_types.add(section)
 
-        for prefix in prefixes:
-            try:
-                data = _kalshi_get(
-                    f"/events?status=open&with_nested_markets=true"
-                    f"&series_ticker={prefix.upper()}&limit=50"
-                )
-                for kalshi_event in data.get("events", []):
-                    event_title = kalshi_event.get("title", "")
-                    title_lower = event_title.lower()
-                    # Match by team name fragments in the event title
-                    # e.g., "New York Y vs Boston" matches home="Boston Red Sox", away="New York Yankees"
-                    has_home = any(p in title_lower for p in home_parts)
-                    has_away = any(p in title_lower for p in away_parts)
-                    if not (has_home and has_away):
-                        continue
-                    for m in kalshi_event.get("markets", []):
-                        ticker = m.get("ticker", "")
-                        title = m.get("title", m.get("subtitle", ""))
-                        if ticker and ticker.lower() not in kalshi_markets_found:
-                            kalshi_markets_found[ticker.lower()] = {
-                                "ticker": ticker,
-                                "title": title or event_title,
-                                "event_title": event_title,
-                            }
-            except Exception as e:
-                print(f"    ⚠ Kalshi API error for {prefix}: {e}")
+        # Also check which Kalshi event TYPES we have by analyzing market names
+        kalshi_event_types = set()
+        for item in our_kalshi:
+            name = item.get("market_name", "").lower()
+            if "spread" in name:
+                kalshi_event_types.add("spread")
+            if "total" in name and "base" not in name:
+                kalshi_event_types.add("total_runs")
+            if "total bases" in name:
+                kalshi_event_types.add("total_bases")
+            if "winner" in name or "game" in name:
+                kalshi_event_types.add("moneyline")
+            if "first 5" in name or "f5" in name:
+                kalshi_event_types.add("first_5")
+            if "hit" in name and ":" in name:
+                kalshi_event_types.add("player_hits")
+            if "home run" in name:
+                kalshi_event_types.add("home_runs")
+            if "strikeout" in name:
+                kalshi_event_types.add("strikeouts")
+            if "team total" in name:
+                kalshi_event_types.add("team_total")
+            if "rbi" in name or "runs + " in name:
+                kalshi_event_types.add("hits_runs_rbis")
 
-        print(f"    Kalshi API: {len(kalshi_markets_found)} markets found")
+        # Expected types per sport for live games
+        _EXPECTED_LIVE = {
+            "baseball_mlb": {"moneyline", "spread", "total_runs", "first_5",
+                             "player_hits", "home_runs", "strikeouts"},
+            "basketball_nba": {"moneyline", "spread", "total_runs"},
+            "icehockey_nhl": {"moneyline", "spread", "total_runs"},
+        }
+        _EXPECTED_SCHED = {
+            "baseball_mlb": {"player_hits", "home_runs", "strikeouts"},
+            "basketball_nba": {"moneyline", "spread", "total_runs"},
+            "icehockey_nhl": {"moneyline"},
+        }
+        sport_key = ev.get("sport", "")
+        expected_live_types = _EXPECTED_LIVE.get(sport_key, set())
+        expected_scheduled_types = _EXPECTED_SCHED.get(sport_key, set())
 
-        # Compare: which Kalshi markets are we missing?
-        missing = []
-        for ticker, info in sorted(kalshi_markets_found.items()):
-            # Check if we have this ticker in our data
-            if ticker not in our_tickers:
-                # Also check by fuzzy name match
-                title_lower = info["title"].lower()
-                name_match = any(title_lower in n or n in title_lower for n in our_market_names if n)
-                if not name_match:
-                    missing.append(info)
+        expected = expected_live_types if status == "live" else expected_scheduled_types
+        missing_types = expected - kalshi_event_types
 
-        if missing:
-            print(f"    ✗ {len(missing)} markets on Kalshi NOT showing on bainluck:")
-            for m in missing[:10]:
-                print(f"      {m['ticker']:40s}  {m['title'][:50]}")
-            if len(missing) > 10:
-                print(f"      ... and {len(missing) - 10} more")
+        if missing_types:
+            print(f"    ✗ Missing market types: {', '.join(sorted(missing_types))}")
+            print(f"    Present types: {', '.join(sorted(kalshi_event_types)) or 'none'}")
         else:
-            print(f"    ✓ All Kalshi markets present on bainluck")
+            print(f"    ✓ All expected market types present ({len(kalshi_event_types)} types)")
 
     print()
 
