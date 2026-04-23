@@ -428,11 +428,16 @@ def sync_mlb_win_probability(self):
 
 # --- Roster Sync (ESPN + MLB Stats API) ---
 
-@celery_app.task(bind=True, name="app.tasks.sync_rosters")
+@celery_app.task(bind=True, name="app.tasks.sync_rosters", time_limit=300, soft_time_limit=270)
 def sync_rosters(self, sport_key: str = None):
     """Sync player rosters from ESPN + MLB Stats API to Team.roster_players."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"sync_rosters starting (sport_key={sport_key})")
     from app.tasks.roster_sync import _sync_rosters
-    return run_async(_sync_rosters(sport_key))
+    result = run_async(_sync_rosters(sport_key))
+    logger.info(f"sync_rosters completed: {result}")
+    return result
 
 
 # --- StatPal (Schedules, Injuries, Play-by-Play) ---
@@ -777,7 +782,7 @@ celery_app.conf.beat_schedule = {
     },
     "sync-rosters-daily": {
         "task": "app.tasks.sync_rosters",
-        "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
+        "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC — moved from 7 AM to avoid contention with snapshot collapse tasks
     },
     # StatPal schedule sync — one per major sport to avoid timeout
     # (soccer returns thousands of global fixtures and overwhelms a single run)
