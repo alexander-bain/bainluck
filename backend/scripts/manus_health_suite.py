@@ -37,6 +37,7 @@ MODULES = {
         "file": "event_detail_audit.md",
         "name": "Event Detail Deep Audit",
         "priority": 1,
+        "timeout": 1800,
     },
     "feed": {
         "file": "feed_audit.md",
@@ -233,7 +234,8 @@ def run_suite(module_names: list[str]):
     results = {}
     for name, task_id in tasks.items():
         print(f"\n  Waiting for {name} ({task_id})...")
-        result = poll_task(task_id)
+        module_timeout = MODULES.get(name, {}).get("timeout", 900)
+        result = poll_task(task_id, timeout_seconds=module_timeout)
         credits = result.get("_credit_usage", 0) if result else 0
         if result is None:
             print(f"  TIMEOUT: {name}")

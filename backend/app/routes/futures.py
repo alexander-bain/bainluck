@@ -1438,7 +1438,7 @@ async def grouped_feed(
         FuturesMarket.status.in_(["active", "open"]),
     ]
     if category:
-        filters.append(FuturesMarket.llm_category == category)
+        filters.append(FuturesMarket.category == category)
     if sport:
         filters.append(FuturesMarket.llm_sport_category == sport)
 
@@ -1459,7 +1459,7 @@ async def grouped_feed(
             "id": m.id,
             "name": m.name,
             "source": m.source,
-            "category": m.llm_category,
+            "category": m.category,
             "sport": m.llm_sport_category,
             "status": m.status,
             "group_id": m.group_id,
