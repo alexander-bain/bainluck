@@ -731,7 +731,7 @@ celery_app.conf.beat_schedule = {
     },
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
-        "schedule": crontab(minute=45, hour="*/4"),  # Every 4 hours — futures markets update daily, not hourly
+        "schedule": crontab(minute=45),  # Every hour — game props need timely ingestion for live events
     },
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",
