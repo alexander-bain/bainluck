@@ -458,11 +458,10 @@ struct RelatedFuturesView: View {
                         )
                     }
 
-                    // Upcoming Games (side-by-side)
+                    // Game props: player threshold ladders
                     if !mergedGames.isEmpty {
-                        GameMarketsPairView(
-                            homeGames: homeCats.games,
-                            awayGames: awayCats.games,
+                        GamePropsView(
+                            futures: mergedGames,
                             homeTeam: homeTeam,
                             awayTeam: awayTeam,
                             homeColor: hColor,
@@ -488,6 +487,33 @@ struct RelatedFuturesView: View {
                                 AwardCompactRowView(
                                     future: future,
                                     teamColor: future.outcomeName.localizedCaseInsensitiveContains(homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam) ? hColor : aColor
+                                )
+                            }
+                        }
+                    }
+
+                    // Season Stats — full labels, side-by-side
+                    if !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                                    .font(.system(size: 10))
+                                Text("SEASON STATS")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .tracking(0.8)
+                            }
+                            .foregroundStyle(.secondary)
+
+                            HStack(alignment: .top, spacing: 8) {
+                                seasonStatsColumn(
+                                    futures: awayCats.seasonStats,
+                                    teamName: awayTeam,
+                                    color: aColor
+                                )
+                                seasonStatsColumn(
+                                    futures: homeCats.seasonStats,
+                                    teamName: homeTeam,
+                                    color: hColor
                                 )
                             }
                         }
@@ -533,6 +559,54 @@ struct RelatedFuturesView: View {
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
+    }
+
+    private func seasonStatsColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
+        let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
+        // Dedup by label, strip league prefix, full text
+        var seen: Set<String> = []
+        let deduped = futures
+            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+            .filter {
+                let key = $0.cleanLabel ?? $0.marketName
+                guard !seen.contains(key) else { return false }
+                seen.insert(key)
+                return true
+            }
+
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(shortName)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundStyle(color)
+                .padding(.bottom, 2)
+
+            ForEach(deduped.prefix(10)) { future in
+                let label = (future.cleanLabel ?? future.marketName)
+                    .replacingOccurrences(of: #"^(NBA|NFL|NHL|MLB|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
+
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                    if let prob = future.probability {
+                        Text(formatProbability(prob))
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                            .foregroundStyle(prob >= 0.10 ? color : .secondary)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.04))
+        )
     }
 }
 
