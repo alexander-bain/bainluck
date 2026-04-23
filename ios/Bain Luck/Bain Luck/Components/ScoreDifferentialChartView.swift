@@ -270,8 +270,9 @@ struct ScoreDifferentialChartView: View {
     }
 
     private func extractScoreDiffPeriodMarkers(dataPoints: [DiffPoint]) -> [ScoreDiffPeriodMarker] {
-        guard let minDate = dataPoints.first?.date,
-              let maxDate = dataPoints.last?.date else { return [] }
+        // Use game start as floor (period markers may precede first score data)
+        let minDate = gameStartDate ?? dataPoints.first?.date ?? Date.distantPast
+        let maxDate = gameEndDate ?? dataPoints.last?.date ?? Date.distantFuture
 
         var seenLabels: Set<String> = []
         var markers: [ScoreDiffPeriodMarker] = []

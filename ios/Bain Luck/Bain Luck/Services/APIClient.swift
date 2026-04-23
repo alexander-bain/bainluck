@@ -320,6 +320,12 @@ actor APIClient {
         return try await fetch("/api/events/\(eventId)/related-futures", cacheTTL: 60)
     }
 
+    // MARK: - Team Progression (Championship Path)
+
+    func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse {
+        return try await fetch("/api/events/\(eventId)/team-progression", cacheTTL: 120)
+    }
+
     // MARK: - Search
 
     func fetchSearch(query: String, sport: String? = nil, page: Int = 1) async throws -> SearchResponse {

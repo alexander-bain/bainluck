@@ -550,11 +550,15 @@ struct RelatedFuturesView: View {
     }
 }
 
-/// Pick the best championship future: tier 1 over tier 2, highest probability wins ties.
+/// Pick the best championship future: must be a playoff_path or conference category.
 private func bestChampionship(_ futures: [RelatedFuture]) -> RelatedFuture? {
-    let tier1 = futures.filter { ($0.marketTier ?? 99) <= 1 }
-    let pool = tier1.isEmpty ? futures : tier1
-    return pool.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+    let validCategories: Set<String> = ["playoff_path", "conference"]
+    let champOnly = futures.filter {
+        if let cat = $0.displayCategory, validCategories.contains(cat) { return true }
+        let name = ($0.cleanLabel ?? $0.marketName).lowercased()
+        return name.contains("champion") || name.contains("world series") || name.contains("super bowl") || name.contains("stanley cup")
+    }
+    return champOnly.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
 }
 
 // MARK: - V5 Section Divider
@@ -923,23 +927,23 @@ private struct GameMarketsPairView: View {
         // Filter out resolved/boring markets (>95% or <5%)
         let meaningful = (awayGames + homeGames)
             .filter { ($0.probability ?? 0) > 0.05 && ($0.probability ?? 0) < 0.95 }
-        // Dedup by cleanLabel
+        // Dedup by outcome name (each outcome is a distinct line)
         var seen: Set<String> = []
         let deduped = meaningful.filter {
-            let key = $0.cleanLabel ?? $0.outcomeName
+            let key = $0.outcomeName
             guard !seen.contains(key) else { return false }
             seen.insert(key)
             return true
         }
         let merged = deduped
             .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
-            .prefix(8)
+            .prefix(10)
 
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(merged)) { future in
                 NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                     HStack(spacing: 6) {
-                        Text(future.cleanLabel ?? future.outcomeName)
+                        Text(future.outcomeName)
                             .font(.caption)
                             .foregroundStyle(.primary)
                             .lineLimit(2)

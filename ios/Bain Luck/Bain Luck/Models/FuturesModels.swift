@@ -1,5 +1,31 @@
 import Foundation
 
+// MARK: - Team Progression (Championship Path)
+
+nonisolated struct TeamProgressionResponse: Decodable, Sendable {
+    let eventId: Int
+    let league: String?
+    let leagueName: String?
+    let homeTeam: TeamProgressionData?
+    let awayTeam: TeamProgressionData?
+}
+
+nonisolated struct TeamProgressionData: Decodable, Sendable {
+    let name: String
+    let shortName: String?
+    let logoUrl: String?
+    let record: String?
+    let conference: String?
+    let stages: [ProgressionStageData]
+}
+
+nonisolated struct ProgressionStageData: Decodable, Sendable {
+    let key: String
+    let label: String
+    let probability: Double?
+    let trend24h: Double?
+}
+
 // MARK: - Futures Market Detail
 
 nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {

@@ -12,6 +12,7 @@ final class EventDetailViewModel: ObservableObject {
     @Published var error: String?
     @Published var history: EventHistoryResponse?
     @Published var relatedFutures: RelatedFuturesResponse?
+    @Published var teamProgression: TeamProgressionResponse?
 
     private var refreshTimer: Timer?
     let eventId: Int
@@ -33,6 +34,10 @@ final class EventDetailViewModel: ObservableObject {
             do { return try await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
             catch { logger.error("Related futures failed for \(self.eventId): \(error)"); return nil }
         }
+        let progressionTask = Task { () -> TeamProgressionResponse? in
+            do { return try await APIClient.shared.fetchTeamProgression(eventId: eventId) }
+            catch { logger.error("Team progression failed for \(self.eventId): \(error)"); return nil }
+        }
 
         // Await primary fetch (controls loading state)
         do {
@@ -51,6 +56,7 @@ final class EventDetailViewModel: ObservableObject {
         // These update @Published properties so child views re-render as data arrives
         history = await historyTask.value
         relatedFutures = await relatedFuturesTask.value
+        teamProgression = await progressionTask.value
     }
 
     private func configureAutoRefresh() {
@@ -186,6 +192,13 @@ struct EventDetailView: View {
                         )
                     }
                     if let context = event.standingsContext { standingsSection(context) }
+                    if let prog = vm.teamProgression {
+                        ChampionshipPathView(
+                            progression: prog,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away
+                        )
+                    }
                     RelatedFuturesView(
                         eventId: event.id,
                         awayTeamColor: teamColors(event).away,
