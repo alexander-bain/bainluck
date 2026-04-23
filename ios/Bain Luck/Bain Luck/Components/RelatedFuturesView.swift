@@ -469,24 +469,8 @@ struct RelatedFuturesView: View {
                     }
                 }
 
-                // ── Level 4: Season Context ──
-                let hasSeasonContext = !homeCats.championships.isEmpty || !awayCats.championships.isEmpty ||
-                    !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty ||
-                    !mergedAwards.isEmpty || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty ||
-                    !mergedNovelty.isEmpty
-
-                if hasSeasonContext {
-                    // Playoff Path
-                    PlayoffPathPairView(
-                        homeFutures: homeCats.championships,
-                        awayFutures: awayCats.championships,
-                        homeTeam: homeTeam,
-                        awayTeam: awayTeam,
-                        homeColor: hColor,
-                        awayColor: aColor
-                    )
-
-                    // Awards — compact rows
+                // Awards + Trades
+                if !mergedAwards.isEmpty || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty || !mergedNovelty.isEmpty {
                     if !mergedAwards.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 5) {
@@ -924,9 +908,9 @@ private struct GameMarketsPairView: View {
     let awayColor: Color
 
     var body: some View {
-        // Filter out resolved/boring markets (>95% or <5%)
+        // Filter out resolved/boring markets (>90% or <10%)
         let meaningful = (awayGames + homeGames)
-            .filter { ($0.probability ?? 0) > 0.05 && ($0.probability ?? 0) < 0.95 }
+            .filter { ($0.probability ?? 0) > 0.10 && ($0.probability ?? 0) < 0.90 }
         // Dedup by outcome name (each outcome is a distinct line)
         var seen: Set<String> = []
         let deduped = meaningful.filter {
