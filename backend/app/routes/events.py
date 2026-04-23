@@ -2738,6 +2738,7 @@ async def get_game_markets(
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,
+    debug: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2885,6 +2886,23 @@ async def get_related_futures(
         select(FuturesMarket.id).where(*season_filters).limit(500)
     )
     season_market_ids = [row.id for row in season_result.all()]
+
+    # Debug: tier breakdown of season markets
+    if debug and season_market_ids:
+        tier_result = await db.execute(
+            select(FuturesMarket.market_tier, func.count())
+            .where(FuturesMarket.id.in_(season_market_ids))
+            .group_by(FuturesMarket.market_tier)
+        )
+        tier_breakdown = {tier: count for tier, count in tier_result.all()}
+        # Also check if known division IDs are in the set
+        known_div_ids = [446, 447, 449, 444, 445, 450, 432]
+        div_in_set = [mid for mid in known_div_ids if mid in season_market_ids]
+        import logging
+        logging.getLogger(__name__).info(
+            f"Related futures debug: season_market_ids={len(season_market_ids)}, "
+            f"tier_breakdown={tier_breakdown}, div_ids_in_set={div_in_set}"
+        )
 
     # Game props (tier 5): only load markets linked to THIS specific event
     # Strict sport check — don't allow NULL sport_id through (catches cross-sport
@@ -3475,7 +3493,7 @@ async def get_related_futures(
     except Exception:
         pass
 
-    return {
+    resp = {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
@@ -3489,6 +3507,16 @@ async def get_related_futures(
         "game_clock": event.game_clock,
         "league_context": league_ctx,
     }
+    if debug:
+        resp["_debug"] = {
+            "season_market_count": len(season_market_ids),
+            "game_prop_count": len(game_prop_ids),
+            "sport_prefix": sport_prefix,
+            "llm_category": llm_category,
+            "home_patterns": home_team_patterns,
+            "away_patterns": away_team_patterns,
+        }
+    return resp
 
 
 @router.get("/{event_id}/team-progression")
