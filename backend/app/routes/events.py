@@ -2427,7 +2427,7 @@ async def get_game_markets(
     status_filter = (
         FuturesMarket.status.in_(("open", "resolved", "closed"))
         if event_is_finished
-        else FuturesMarket.status == "open"
+        else or_(FuturesMarket.status == "open", FuturesMarket.status.is_(None))
     )
     linked_query = select(FuturesMarket).where(
         FuturesMarket.event_id == event_id,
