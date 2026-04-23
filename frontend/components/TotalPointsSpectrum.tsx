@@ -225,7 +225,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
   const renderLadder = () => {
     return (
       <div className="mt-5">
-        <div className="text-sm font-semibold text-text-primary mb-1">Threshold probabilities</div>
+        <div className="text-sm font-semibold text-text-primary mb-1">Projected combined scoring</div>
         {ladderThresholds.map((t) => {
           const preProb = t.over_probability;
           const finalHit = isDone && actualTotal != null ? actualTotal >= t.threshold : null;

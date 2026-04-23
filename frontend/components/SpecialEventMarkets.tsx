@@ -94,7 +94,7 @@ export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventM
       const existingOutcome = existing.outcomes.find((o) => o.label === label);
       if (existingOutcome) {
         existingOutcome.sourceCount = (existingOutcome.sourceCount ?? 1) + 1;
-        if (Math.abs(m.probability ?? 0 - 0.5) > Math.abs(existingOutcome.prob - 0.5)) {
+        if (Math.abs((m.probability ?? 0) - 0.5) > Math.abs(existingOutcome.prob - 0.5)) {
           existingOutcome.prob = m.probability ?? 0;
         }
       } else {

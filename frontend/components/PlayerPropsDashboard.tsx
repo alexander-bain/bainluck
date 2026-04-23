@@ -449,8 +449,9 @@ export default function PlayerPropsDashboard({
         .slice(0, 2)
         .toUpperCase();
 
-      const color = entry.team === "home" ? (homeColor || "#6B7280") :
-                    entry.team === "away" ? (awayColor || "#6B7280") : "#6B7280";
+      const color = entry.team === "home" ? (homeColor || "#3B82F6") :
+                    entry.team === "away" ? (awayColor || "#EF4444") :
+                    (homeColor || awayColor || "#3B82F6");
 
       result.push({
         name: entry.name,
@@ -483,9 +484,6 @@ export default function PlayerPropsDashboard({
       <div className="flex items-end justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
-          <p className="text-sm text-text-secondary mt-0.5">
-            {totalProps} props across {players.length} players
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded bg-blue-500/10 text-blue-600">
@@ -507,19 +505,6 @@ export default function PlayerPropsDashboard({
         </div>
       </div>
 
-      {/* Summary strip for live */}
-      {gameState === "live" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          <div className="bg-surface-elevated rounded-lg p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">PLAYERS</div>
-            <div className="font-mono tabular-nums text-2xl font-bold">{filtered.length}</div>
-          </div>
-          <div className="bg-surface-elevated rounded-lg p-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">TOTAL PROPS</div>
-            <div className="font-mono tabular-nums text-2xl font-bold">{totalProps}</div>
-          </div>
-        </div>
-      )}
 
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
         {filtered.map((p) => (

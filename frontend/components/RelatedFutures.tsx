@@ -2452,13 +2452,12 @@ export default function RelatedFutures({
         <span className="text-[10px] text-text-muted">cross-source aggregated</span>
       </div>
 
-      {/* === Level 3: Game Markets === */}
-      {gameMarketCount > 0 && (
+      {/* Game Markets section — only show when PlayerPropsDashboard + SpecialEventMarkets
+          are NOT already handling this above. Those components render from the game-markets
+          API; this section renders from related-futures. Showing both is redundant. */}
+      {!hasGameMarkets && gameMarketCount > 0 && (
         <>
-          <SectionDivider level={3} label="Game Markets" count={gameMarketCount} />
-
-          {/* Stat props (player props) — per team; hidden when game-markets section shows them above */}
-          {!hasGameMarkets && (homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
+          {(homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
             <div className="space-y-4 mb-3">
               {homeCats.statProps.length > 0 && (
                 <StatPropsSection
@@ -2483,7 +2482,6 @@ export default function RelatedFutures({
             </div>
           )}
 
-          {/* Upcoming game markets */}
           <GameMarketsPair
             homeFutures={homeCats.games}
             awayFutures={awayCats.games}
