@@ -1,5 +1,41 @@
 # Completed Features (Shipped)
 
+## April 22, 2026 (Evening — iOS Parity Session)
+
+**iOS Event Detail Overhaul (~30 commits):**
+- ✅ Feed crash fixes: WinProbSource/ESPNData decode bare numbers, feed skips malformed items, grouped-feed route order fix
+- ✅ Feed card polish: bigger live scores, movement arrows, glowing probability bar
+- ✅ Chart timing: `completed_at` clipping on both OddsChart and ScoreDiffChart
+- ✅ Period markers on win prob chart (from win_prob_history game_state data)
+- ✅ Period markers on score diff chart
+- ✅ ChampionshipPathView: new component calling /team-progression endpoint (Make Playoffs → Division → Conf → Championship with progress bars)
+- ✅ PlayerPropsCardView: new component calling /game-markets endpoint (per-player cards with initials, stat categories, threshold ladders with probability bars)
+- ✅ Hero cleanup: removed divergence badge, tags section, baseball "0:00" clock, refresh countdown
+- ✅ LineMovement removed (dead code, -391 lines)
+- ✅ Related futures crash fix (gamePeriod Int→String)
+- ✅ Championship card filter (display_category, not just tier)
+- ✅ Trade watch dedup by player name per team
+- ✅ Game market labels include market context
+- ✅ Awards limit increased to 12
+- ✅ Clean error messages (no more raw HTML dumps)
+- ✅ Auto-refresh preserves data on fetch failure (sections no longer vanish)
+- ✅ Removed duplicate game props from Bigger Picture (PlayerPropsCardView is primary)
+- ✅ Score diff x-axis alignment via shared forcedDomain from EventDetailView
+- ✅ Feed limit 200→50 to prevent timeouts
+- ✅ ESPN score=0 bug fix (score parsing used `if score:` which skips int(0))
+
+**Chart Timing Quality (Backend + Web):**
+- ✅ Prediction market snapshot bleed fix (smartEndTime excludes kalshi/polymarket/aggregate_line)
+- ✅ `completed_at` column on Event model, populated from 4 authoritative sources
+- ✅ Backfill: 592 historical events got completed_at
+- ✅ Backend PM matching Phase 2 skips completed events
+- ✅ Timing audit script + Manus prompt
+- ✅ Results: NBA 4.32x→1.07x, MLB 3.31x→1.00x
+
+**Web Fixes:**
+- ✅ Search page: removed duplicate search bar, better category emoji and labels
+- ✅ Category browser: formatCategoryName replaces underscores, handles acronyms
+
 ## April 22, 2026
 
 **Event Detail Below-the-Fold Redesign (Steps 1-5 of 6):**

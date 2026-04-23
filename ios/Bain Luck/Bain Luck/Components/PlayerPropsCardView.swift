@@ -51,7 +51,6 @@ struct PlayerPropsCardView: View {
                 .prefix(2)
                 .joined()
 
-            let awayShort = awayTeam.split(separator: " ").last.map(String.init) ?? awayTeam
             let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
             let isHome = props.first?.prop.outcomeName.localizedCaseInsensitiveContains(homeShort) ?? false
             let team = isHome ? "home" : "away"

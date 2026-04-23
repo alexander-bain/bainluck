@@ -397,7 +397,7 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 ## iOS App — Web Parity & Polish (April 22, 2026)
 
-The iOS app has solid bones (57 Swift files, hero section, multi-source chart, score diff chart, related futures, feed sections, iPad sidebar) but has fallen behind the web on visual polish and some features. LineMovement removed April 22. Feed decoding hardened.
+Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: hero with team logos/scores, multi-source win prob chart with period markers, score diff chart with period markers, ChampionshipPathView (from team-progression), PlayerPropsCardView (from game-markets), awards, season stats, trade watch, clean error messages.
 
 ### ~~iOS-1. Period Markers~~ — SHIPPED
 ### ~~iOS-2. Feed Card Polish~~ — SHIPPED
