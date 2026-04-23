@@ -709,6 +709,8 @@ def run_l4_deep(sport: str):
                 kalshi_event_types.add("total_bases")
             if "winner" in name or "game" in name:
                 kalshi_event_types.add("moneyline")
+            elif ":" not in name and ("vs" in name or " at " in name):
+                kalshi_event_types.add("moneyline")
             if "first 5" in name or "f5" in name:
                 kalshi_event_types.add("first_5")
             if "hit" in name and ":" in name:
