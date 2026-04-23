@@ -430,17 +430,17 @@ struct RelatedFuturesView: View {
                         )
                 }
 
-                // Title Odds — side-by-side championship cards
-                let homeChamps = homeCats.championships
-                let awayChamps = awayCats.championships
-                if !homeChamps.isEmpty || !awayChamps.isEmpty {
+                // Title Odds — side-by-side championship cards (dedup by label, keep best rank)
+                let awayChamp = bestChampionship(awayCats.championships)
+                let homeChamp = bestChampionship(homeCats.championships)
+                if awayChamp != nil || homeChamp != nil {
                     HStack(alignment: .top, spacing: 8) {
-                        if let f = awayChamps.first {
+                        if let f = awayChamp {
                             ChampionshipCard(future: f, teamColor: aColor)
                         } else {
                             Spacer()
                         }
-                        if let f = homeChamps.first {
+                        if let f = homeChamp {
                             ChampionshipCard(future: f, teamColor: hColor)
                         } else {
                             Spacer()
@@ -578,6 +578,13 @@ struct RelatedFuturesView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
+}
+
+/// Pick the best championship future: tier 1 over tier 2, highest probability wins ties.
+private func bestChampionship(_ futures: [RelatedFuture]) -> RelatedFuture? {
+    let tier1 = futures.filter { ($0.marketTier ?? 99) <= 1 }
+    let pool = tier1.isEmpty ? futures : tier1
+    return pool.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
 }
 
 // MARK: - V5 Section Divider
@@ -851,18 +858,36 @@ private struct TradeWatchPairView: View {
     }
 
     private func tradeColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Dedup by player name — multiple outcomes exist per player (e.g. "Lakers" and
+        // "Clippers" for the same trade market). Keep only the outcome matching this team,
+        // or if none match, keep the highest probability.
+        let deduped: [RelatedFuture] = {
+            var byPlayer: [String: [RelatedFuture]] = [:]
+            for f in futures {
+                let player = extractTradePlayer(f.marketName)
+                byPlayer[player, default: []].append(f)
+            }
+            var result: [RelatedFuture] = []
+            let shortTeam = teamName.split(separator: " ").last.map(String.init) ?? teamName
+            for (_, entries) in byPlayer {
+                let matching = entries.first { $0.outcomeName.localizedCaseInsensitiveContains(shortTeam) }
+                result.append(matching ?? entries.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })!)
+            }
+            return result.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+        }()
+
+        return VStack(alignment: .leading, spacing: 4) {
             Text(teamName.split(separator: " ").last.map(String.init) ?? teamName)
                 .font(.caption2)
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
 
-            if futures.isEmpty {
+            if deduped.isEmpty {
                 Text("None")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             } else {
-                ForEach(futures.prefix(4)) { future in
+                ForEach(deduped.prefix(4)) { future in
                     NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                         HStack(spacing: 6) {
                             let playerName = extractTradePlayer(future.marketName)
