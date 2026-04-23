@@ -756,6 +756,10 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     name_lower = (market_name or "").lower()
     cat_lower = (category or "").lower()
 
+    # Game props are always tier 5
+    if cat_lower == "game_prop":
+        return 5
+
     # Check category field first for quick classification
     if cat_lower == "mvp":
         return 3

@@ -8,7 +8,7 @@ Runs as a backfill task and is also called inline during futures polling.
 import logging
 from typing import Optional
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -148,8 +148,17 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # --- Phase 1: Assign market_tier where missing ---
             tier_result = await session.execute(
                 select(FuturesMarket)
-                .where(FuturesMarket.market_tier.is_(None))
-                .limit(limit * 5)  # Tiers are cheap to compute
+                .where(
+                    or_(
+                        FuturesMarket.market_tier.is_(None),
+                        # Fix game props stuck at wrong tier (code ordering bug)
+                        and_(
+                            FuturesMarket.category == "game_prop",
+                            FuturesMarket.market_tier != 5,
+                        ),
+                    )
+                )
+                .limit(limit * 5)
             )
             markets_to_tier = tier_result.scalars().all()
 

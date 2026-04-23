@@ -24,7 +24,48 @@ The product's magic depends on **perfectly understanding every event, market, an
 | Golf | 1.4% | — | N/A | Not a bug — futures use grid, not event_id |
 | Football | 0.0% | — | N/A | Offseason |
 
-**Key principle:** Distinguish "should match but doesn't" (bug) from "can't match because no event exists" (acceptable). Any sport with >100 open markets and <80% link rate on markets that SHOULD match is a problem.
+**Target: 100%** for all sports where matching is possible. Any miss on a market that SHOULD match is a bug.
+
+**Audit tooling (April 23, 2026):**
+- `scripts/audit_grid_accuracy.py` — Grid structural correctness. **51/51 (100%)** after hill-climb.
+- `scripts/audit_event_matching.py` — Four-layer event matching audit (self-check + Manus ground truth modes).
+- Plan: `.claude/plans/wild-swinging-falcon.md`
+
+---
+
+## Tier 0 — Semantic Matching Accuracy (ACTIVE HILL-CLIMB)
+
+### Four-Layer Matching Audit System — IN PROGRESS (April 23)
+
+Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid audit: measure → fix biggest bucket → re-measure → repeat.
+
+**Layer 1: Event Existence** — Does every game exist with all sources?
+- Status: Self-check mode working. MLB baseline: 4/8 events fully covered (4 sources), 2 with only 1 source.
+- Next: Build Manus ground truth prompt to independently verify event existence.
+
+**Layer 2: Market → Event Linking** — Are all game markets linked correctly?
+- Status: Self-check mode working. MLB: 5-12 Kalshi markets/event. 1 event (White Sox @ Diamondbacks) has ZERO.
+- Next: Diagnose zero-market events, fix ticker parsing/matching.
+
+**Layer 3: Futures Surfacing** — Do season futures show on event pages?
+- Status: **MAJOR GAP FOUND.** MLB event pages missing pennant, division, make_playoffs futures (only championship showing). NBA missing division futures.
+- Next: **HILL-CLIMB NOW** — investigate `get_related_futures()` in `routes/events.py:2730`. The endpoint finds championship but not pennant/division/make_playoffs. Likely a category matching issue.
+- Files: `routes/events.py` (related futures endpoint), `utils/market_label_normalization.py` (category classification)
+
+**Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
+- Status: Audit infrastructure not yet built for this layer. Needs Manus ground truth (enumerate ALL markets on Kalshi/Polymarket for a specific game).
+- Next: Build Manus prompt for deep game-level market enumeration.
+- Context: Tier 1 MLB games have 100+ markets (moneyline, player props per batter, 1st half, series winner, novelty). We need to show all of them.
+
+**Manus Ground Truth Prompt** — NOT YET BUILT
+- `Manus/prompts/event_matching_ground_truth.md` — single prompt covering Layers 1, 3, 4.
+- Sweeps today's games on Kalshi/Polymarket, deep-audits 3 games for market completeness, checks event detail pages for related futures.
+
+**Files:**
+- `backend/scripts/audit_event_matching.py` — four-layer audit script (self-check + layer2-only modes working)
+- `backend/scripts/audit_grid_accuracy.py` — grid accuracy (SHIPPED, 100%)
+- `Manus/prompts/event_matching_ground_truth.md` — TODO
+- Plan: `.claude/plans/wild-swinging-falcon.md`
 
 ---
 
@@ -67,31 +108,9 @@ Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player
 **Files:** `backend/app/routes/events.py` (headshot enrichment rewrite), `frontend/components/PlayerPropsDashboard.tsx:363`, `frontend/components/PlayerPropsGrid.tsx:91-100`, `frontend/lib/api.ts:574`
 **Parallel Safety:** Yellow (touches events.py + 2 frontend components)
 
-### 0f-3b. Player Prop Headshots Missing — ROSTER DATA EXISTS, ENRICHMENT NEEDS DEBUGGING
+### ~~0f-3b. Player Prop Headshots~~ ✅ DONE (April 23)
 
-**Problem:** All 97 player prop cards show initials instead of player headshot images. `player_headshot` is `MISSING` for every prop in the API response.
-
-**Investigation findings (April 22):**
-- MLB roster data EXISTS in DB: Red Sox 28 players, Yankees 28 players (confirmed via admin debug endpoint)
-- MLB Stats API works perfectly: returns 26 active roster players per team with headshot URLs (`img.mlbstatic.com/mlb-photos/...`)
-- The roster sync task (`sync_rosters`) runs daily at 7 AM UTC
-- The headshot enrichment code (`events.py:2636-2698`) queries `Team.roster_players WHERE Team.name IN (home_team_name, away_team_name)` — names match ("Boston Red Sox" in both event and team)
-
-**Suspected root cause:** Roster entries may be plain strings (just player names) instead of dicts with `{"name": "...", "headshot": "..."}`. This would happen if:
-- Rosters were synced before the headshot URL generation was added to `MLBAPIService.get_team_roster()` 
-- The MLB roster sync branch failed silently and only the ESPN/StatPal branch ran (which stores fewer fields)
-- Or there's a JSON serialization mismatch between what's stored and what's queried
-
-**Fix:** 
-1. Trigger a fresh MLB roster sync: `POST /api/admin/rosters/sync?sport_key=baseball_mlb` (via admin dashboard or Heroku one-off dyno)
-2. Verify roster entries have headshot keys: `SELECT name, roster_players->0 FROM teams WHERE name = 'Boston Red Sox'`
-3. If entries are plain strings, the sync code at `roster_sync.py:279-288` should replace them with dicts on next run
-
-**Previous code also had a gating bug (FIXED in local code):** The enrichment only ran matching logic when `player_headshots` dict was non-empty (required at least one headshot URL). New code uses `player_roster_info` which populates for ANY named roster player regardless of headshot availability. This ensures team assignment works even without headshots.
-
-**Files:** `backend/app/tasks/roster_sync.py` (MLB sync), `backend/app/services/mlb_api.py:254-289` (headshot URL generation), `backend/app/routes/events.py:2635-2698` (enrichment)
-**Parallel Safety:** Green (backend only, no frontend changes needed)
-**Also see:** iOS-17 (same underlying issue)
+Roster sync fixed: moved to 10 AM UTC, loaded 3,261 players across MLB/NBA/NHL with headshot URLs. Enrichment gating bug fixed (`player_roster_info` instead of `player_headshots`). Verified: 151/156 props return headshots + team assignments for Padres-Rockies game. Both web and iOS now display headshots.
 
 ### 0f-3. Live Box Score Integration for Player Props
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
@@ -595,36 +614,17 @@ Period markers on score diff chart, championship card filter fix, ChampionshipPa
 **Fix:** In `PlayerPropsCardView`, group rungs strictly by `marketName` (not just player name). The stat type label (HITS vs HITS+RUNS+RBIS) must scope each ladder independently.
 **Files:** `PlayerPropsCardView.swift`
 
-### iOS-15. Bigger Picture Section Needs Redesign
+### ~~iOS-15. Bigger Picture Section Redesign~~ ✅ DONE (April 23)
 
-**Problem:** The compact 2-column grid duplicates Player Props (same game prop data from related-futures). Shows last names + thresholds with no context. Users can't tell what markets these are.
+V6 redesign: renamed to "Season Futures". Stat leader markets (Doubles Leader, ERA Leader, etc.) extracted from championship bucket into new "Stat Leaders" section with 2-column grid grouped by stat type. Season Stats renamed to "Season Outlook". Division/conference winner patterns now properly route to championship path. All futures shown — nothing removed.
 
-**Current state:** `GamePropsView` renders game_prop futures from related-futures endpoint. `PlayerPropsCardView` renders from game-markets endpoint. Both show the same underlying data in different formats.
+### ~~iOS-16. Season Stats Categorization~~ ✅ DONE (April 23)
 
-**Fix options:**
-- Remove `GamePropsView` from Bigger Picture since `PlayerPropsCardView` covers game props better
-- Rename "Bigger Picture" to something that reflects what remains (awards, season stats, trades, novelty)
-- Or redesign to show only the non-game-prop futures (championship path already has its own section)
+iOS-side reclassification: expanded `isDivisionOrPlayoff` regex to catch "NL East Winner", "AL West Winner", etc. New `isStatLeader` regex catches "Leader" markets miscategorized as championship by backend. Active items filtered (skip <=1% and >=99%).
 
-**Principle (from Alex):** NEVER remove data to simplify. Show ALL futures beautifully grouped. The web's below-the-fold is the reference.
-**Files:** `RelatedFuturesView.swift`, `GamePropsView.swift`
+### ~~iOS-17. Player Headshot Images~~ ✅ DONE (April 23)
 
-### iOS-16. Season Stats Categorization Issues
-
-**Problem:** "NL East Winner 18%" shows in Season Stats but belongs in Championship Path. "Longest Losing Streak 69%" is confusing without context.
-
-**Root cause:** Backend `display_category` assignments are imperfect. "NL East Winner" is categorized as `season_stat` but should be `playoff_path` or `conference`. This is a backend data quality issue.
-
-**Fix:** Either fix categorization in `backend/app/routes/events.py` (related-futures response builder), or add iOS-side reclassification rules.
-**Files:** Backend: `routes/events.py` related-futures builder. iOS: `RelatedFuturesView.swift`
-
-### iOS-17. Player Headshot Images — SEE 0f-3b
-
-**Problem:** Player prop cards show initials avatars on both web and iOS. Backend headshot enrichment code exists but returns 0 headshots.
-
-**Root cause:** See `0f-3b` above — roster data exists, enrichment code looks correct, but headshot URLs may not be in the stored JSONB entries. Fix is backend-only: trigger roster re-sync, then both web and iOS get headshots automatically.
-
-**Files:** Backend: `routes/events.py` (game-markets endpoint enrichment). iOS: `PlayerPropsCardView.swift` (already handles headshot URLs)
+Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `player_headshot` + `player_team` on game-markets endpoint. iOS `PlayerPropsCardView` updated to show AsyncImage headshots with initials fallback, plus uses `playerTeam` from API instead of guessing from name.
 
 ### iOS-4. Dead/Stale Views Cleanup
 

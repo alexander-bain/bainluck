@@ -333,20 +333,24 @@ async def _poll_kalshi_markets():
                         generate_category_tags,
                         is_game_prop,
                     )
+                    # Check for game props BEFORE computing tier —
+                    # game props must be tier 5, not inherit from category
+                    if is_game_prop(market_name):
+                        category = "game_prop"
+
                     market_tier = compute_market_tier(
                         market_name, category,
                         sport_category=sport_category,
                     )
+                    # Force tier 5 for game props regardless of name patterns
+                    if category == "game_prop":
+                        market_tier = 5
 
                     # Detect league and season for cross-source matching
                     league = detect_league(market_name)
                     season = detect_season(
                         market_name, league, expiration_time,
                     )
-                    # For Olympics, use specific discipline as category
-                    # so curling matches curling, not all Olympics events.
-                    # For sports markets, use detect_market_type for specificity
-                    # (e.g., "al_cy_young" instead of generic "championship")
                     canon_category = detect_market_type(market_name)
                     if sport_category == "olympics":
                         discipline = extract_olympic_discipline(market_name)
@@ -360,10 +364,6 @@ async def _poll_kalshi_markets():
                     tags = generate_category_tags(
                         market_name, sport_category, league, category,
                     )
-
-                    # For game props, set category to "game_prop"
-                    if is_game_prop(market_name):
-                        category = "game_prop"
 
                     # Determine group hierarchy from Kalshi event structure
                     has_multiple_markets = len(event.markets) > 1
