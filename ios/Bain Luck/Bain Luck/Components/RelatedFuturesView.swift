@@ -519,7 +519,7 @@ struct RelatedFuturesView: View {
                             }
                             .foregroundStyle(.secondary)
 
-                            ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(6)) { future in
+                            ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(12)) { future in
                                 AwardCompactRowView(
                                     future: future,
                                     teamColor: future.outcomeName.localizedCaseInsensitiveContains(homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam) ? hColor : aColor
@@ -909,14 +909,41 @@ private struct GameMarketsPairView: View {
     let awayColor: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if !awayGames.isEmpty {
-                GameGrid(futures: Array(awayGames.prefix(4)), teamColor: awayColor, teamName: awayTeam)
-            }
-            if !homeGames.isEmpty {
-                GameGrid(futures: Array(homeGames.prefix(4)), teamColor: homeColor, teamName: homeTeam)
+        let merged = (awayGames + homeGames)
+            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+            .prefix(8)
+
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(merged)) { future in
+                NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                    HStack(spacing: 6) {
+                        Text(future.cleanLabel ?? future.outcomeName)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                        Spacer()
+                        if let prob = future.probability {
+                            Text(formatProbability(prob))
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                                .foregroundStyle(prob > 0.5 ? homeColor : .secondary)
+                        }
+                        if let change = future.probabilityChange24h, abs(change) >= 0.005 {
+                            Image(systemName: change > 0 ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(change > 0 ? .green : .red)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                }
+                .buttonStyle(.plain)
             }
         }
+        .padding(8)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -990,25 +1017,19 @@ private struct ChampionshipCard: View {
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
             VStack(alignment: .leading, spacing: 10) {
-                // Header: tier label + source
                 HStack {
-                    HStack(spacing: 4) {
-                        Text("\u{1F3C6}")
-                            .font(.system(size: 10))
-                        Text((future.marketTier ?? 0) <= 1 ? "CHAMPIONSHIP" : "CONFERENCE")
-                            .font(.system(size: 10, weight: .semibold))
-                            .tracking(0.8)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text((future.marketTier ?? 0) <= 1 ? "\u{1F3C6} Title" : "\u{1F3C6} Conf")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
                     Spacer()
                     SourceBadge(source: future.source)
                 }
 
-                // Market name (prefer clean label from backend)
                 Text(future.cleanLabel ?? future.marketName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 // Big probability + movement + rank
                 HStack(alignment: .bottom) {

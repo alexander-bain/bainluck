@@ -180,11 +180,20 @@ struct ScoreDifferentialChartView: View {
         let absMax = max(allDiffs.map { abs($0) }.max() ?? 5, 5)
         let yRange = -(absMax + 2)...(absMax + 2)
 
+        let periodMarkers = extractScoreDiffPeriodMarkers(dataPoints: dataPoints)
+
         return Chart {
             // Zero line
             RuleMark(y: .value("Even", 0.0))
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
+
+            // Period markers
+            ForEach(periodMarkers) { marker in
+                RuleMark(x: .value("Period", marker.date))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
+                    .foregroundStyle(.secondary.opacity(0.4))
+            }
 
             // Projected spread (orange dashed — contrasts with teal actual)
             ForEach(dataPoints.filter { $0.projectedDiff != nil }) { point in
@@ -232,5 +241,63 @@ struct ScoreDifferentialChartView: View {
                     .font(.caption2)
             }
         }
+    }
+
+    // MARK: - Period Markers
+
+    private struct ScoreDiffPeriodMarker: Identifiable {
+        let id = UUID()
+        let date: Date
+        let label: String
+    }
+
+    private func extractScoreDiffPeriodMarkers(dataPoints: [DiffPoint]) -> [ScoreDiffPeriodMarker] {
+        guard let minDate = dataPoints.first?.date,
+              let maxDate = dataPoints.last?.date else { return [] }
+
+        var seenLabels: Set<String> = []
+        var markers: [ScoreDiffPeriodMarker] = []
+
+        // Extract from ESPN history
+        for pt in (history.espnHistory ?? []) {
+            guard let period = pt.period, !period.isEmpty,
+                  let date = pt.timestamp.asDate,
+                  date >= minDate, date <= maxDate else { continue }
+            let label = normalizePeriodLabel(period)
+            guard !label.isEmpty, !seenLabels.contains(label) else { continue }
+            seenLabels.insert(label)
+            markers.append(ScoreDiffPeriodMarker(date: date, label: label))
+        }
+
+        // Supplement from win_prob_history game_state
+        for (_, points) in (history.winProbHistory ?? [:]) {
+            for pt in points {
+                guard let gs = pt.gameState, let date = pt.timestamp.asDate,
+                      date >= minDate, date <= maxDate else { continue }
+                let periodStr: String
+                if let p = gs.period, !p.isEmpty { periodStr = p }
+                else if let inning = gs.inning, inning > 0 { periodStr = "Top \(inning)" }
+                else { continue }
+                let label = normalizePeriodLabel(periodStr)
+                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
+                seenLabels.insert(label)
+                markers.append(ScoreDiffPeriodMarker(date: date, label: label))
+            }
+        }
+
+        return markers.sorted { $0.date < $1.date }
+    }
+
+    private func normalizePeriodLabel(_ raw: String) -> String {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("Top ") || s.hasPrefix("Middle ") || s.hasPrefix("Bottom ") || s.hasPrefix("End ") {
+            let parts = s.split(separator: " ")
+            if parts.count >= 2 { return String(parts.last!) }
+        }
+        if s.hasPrefix("Q") || s.hasPrefix("P") || s.hasPrefix("OT") { return s }
+        if s == "1st Half" || s == "1H" { return "1H" }
+        if s == "2nd Half" || s == "2H" { return "2H" }
+        if s == "Halftime" { return "HT" }
+        return s
     }
 }
