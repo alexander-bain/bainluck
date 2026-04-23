@@ -1395,6 +1395,8 @@ interface DataQualityReport {
       total_outcomes: number;
       linked_outcomes: number;
       unlinked_rate: number;
+      scope?: string;
+      non_sport_markets?: number;
     };
     source_distribution?: Record<string, number>;
   };
@@ -1503,10 +1505,17 @@ function DataQualityCard({ secret }: { secret: string }) {
             <div className={"text-lg font-bold " + (linking.unlinked_rate > 0.4 ? "text-yellow-400" : "text-green-400")}>
               {((1 - linking.unlinked_rate) * 100).toFixed(0)}%
             </div>
-            <div className="text-micro text-text-muted">Team Linked</div>
+            <div className="text-micro text-text-muted">Sports Team Linked</div>
           </div>
         )}
       </div>
+
+      {/* Non-sport context */}
+      {linking?.non_sport_markets != null && linking.non_sport_markets > 0 && (
+        <div className="text-micro text-text-muted mb-3 text-center">
+          {linking.non_sport_markets.toLocaleString()} non-sport markets excluded from linking metric
+        </div>
+      )}
 
       {/* Tier distribution */}
       {cls && (

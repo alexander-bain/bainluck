@@ -478,6 +478,81 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 ---
 
+### 19. "What Are The Odds?" Discovery Page
+
+**Goal:** Surface the most interesting prediction markets across ALL categories in one browsable page. The front door for non-sports content. Extends Bain Luck's "visual probability" brand from sports to everything.
+
+**URL:** `/explore` (or `/odds` — TBD)
+
+**Why now:** We're ingesting 15K+ markets from Kalshi and Polymarket but only surfacing sports + weather + economics. Markets like "Taylor Swift meets Pope Leo" and "Foldable iPhone in 2026" are sitting in the DB invisible to users. These are exactly the kind of questions that make someone stop and think.
+
+**Design concept:**
+
+```
+┌─────────────────────────────────────────────────┐
+│  What Are The Odds?                             │
+│                                                 │
+│  ┌───────────────────────────────────────────┐  │
+│  │  🔥 Featured: Will Taylor Swift meet      │  │
+│  │     Pope Leo XIV before 2027?        23%  │  │
+│  │     ████████░░░░░░░░  kalshi              │  │
+│  └───────────────────────────────────────────┘  │
+│                                                 │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐          │
+│  │ Pop      │ │ Politics│ │ Tech &  │          │
+│  │ Culture  │ │         │ │ Science │          │
+│  │ 47 mkts  │ │ 312 mkts│ │ 89 mkts │          │
+│  │          │ │         │ │         │          │
+│  │ Swift/   │ │ Alito   │ │ Foldable│          │
+│  │ Pope 23% │ │ retire  │ │ iPhone  │          │
+│  │          │ │ 18%     │ │ 12%     │          │
+│  │ Oscar    │ │         │ │         │          │
+│  │ host 45% │ │ Canada  │ │ GPT-5   │          │
+│  │          │ │ rate 67%│ │ 2026 88%│          │
+│  └─────────┘ └─────────┘ └─────────┘          │
+│                                                 │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐          │
+│  │ Weather  │ │Economics│ │ Health  │          │
+│  │ →/weather│ │→/econ   │ │ 31 mkts │          │
+│  └─────────┘ └─────────┘ └─────────┘          │
+└─────────────────────────────────────────────────┘
+```
+
+**Key design decisions:**
+- **Featured market** at top — algorithmic (most decisive probability, or most recently moved) with manual override via admin
+- **Category cards** — each shows market count + 2-3 most interesting markets as previews
+- Weather and Economics link to their existing dedicated pages
+- Categories without dedicated pages show an inline expanded view on click
+- Each market card: question text + probability bar + source badge (Kalshi/Polymarket/both)
+- Cross-source comparison when both platforms have the same market
+- Light mode only, probability-first design (consistent with rest of site)
+
+**"Interestingness" ranking** (for picking preview markets per category):
+1. Probability is decisive but not resolved (15-85%, not 50/50 noise)
+2. Multiple sources agree (cross-platform signal)
+3. Recently moved (price change in last 24h)
+4. Has resolution date within 90 days (timely)
+
+**Backend:**
+- `GET /api/explore` — returns all open non-sport markets grouped by `llm_sport_category`, sorted by interestingness
+- Featured market endpoint (or field in explore response): `GET /api/explore/featured`
+- Admin: `POST /api/admin/explore/feature?market_id=X` to pin a featured market
+- Uses existing `_NON_SPORT_CATEGORIES` set from `market_label_normalization.py`
+
+**Frontend:**
+- New page at `frontend/app/explore/page.tsx`
+- `CategoryPreviewCard` component (reusable for each category)
+- `MarketProbabilityCard` component (question + bar + source — reusable across site)
+- GA4 tracking hooks
+- No gambling language — "What are the odds" framing, not "bet on"
+
+**Relationship to Item 18:**
+Item 18 builds deep category pages (economics themes, political sub-categories). This page is the **discovery layer on top** — a curated front door that links into those deeper pages. Build this first as a lightweight MVP, then build deep category pages as follow-ups.
+
+**Parallel Safety:** Green (new route, new page, no conflicts)
+
+---
+
 ## iOS App — Web Parity & Polish (April 22, 2026)
 
 Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: hero with team logos/scores, multi-source win prob chart with period markers, score diff chart with period markers, ChampionshipPathView (from team-progression), PlayerPropsCardView (from game-markets), awards, season stats, trade watch, clean error messages.

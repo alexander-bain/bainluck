@@ -8498,9 +8498,8 @@ async def trigger_data_quality_check(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     from app.tasks.data_quality import _check_data_quality
-    from app.tasks.base import run_async
 
-    report = run_async(_check_data_quality())
+    report = await _check_data_quality()
     return report
 
 

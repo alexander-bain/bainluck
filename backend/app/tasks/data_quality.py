@@ -28,6 +28,11 @@ _UNCLASSIFIED_RATE_WARN = 0.15   # >15% unclassified = warning
 _UNCLASSIFIED_RATE_CRIT = 0.30   # >30% unclassified = critical
 _UNLINKED_RATE_WARN = 0.40       # >40% outcomes without team_id = warning
 
+_NON_SPORT_CATEGORIES = {
+    "politics", "crypto", "economics", "entertainment", "tech",
+    "weather", "geopolitics", "culture", "health", "legal", "other",
+}
+
 
 async def _check_data_quality() -> dict:
     """Run classification and matching health checks.
@@ -106,7 +111,9 @@ async def _check_data_quality() -> dict:
         ]
         report["checks"]["unclassified_samples"] = samples
 
-        # ── Check 3: Team linking coverage (open markets only) ──
+        # ── Check 3: Team linking coverage (sports markets only) ──
+        # Non-sport markets (politics, weather, etc.) can't have team links,
+        # so measuring them inflates the "unlinked" rate meaninglessly.
         linking_stats = await session.execute(
             select(
                 func.count(FuturesOutcome.id).label("total"),
@@ -116,6 +123,7 @@ async def _check_data_quality() -> dict:
             .where(
                 FuturesMarket.status != "resolved",
                 FuturesMarket.llm_sport_category.isnot(None),
+                FuturesMarket.llm_sport_category.notin_(_NON_SPORT_CATEGORIES),
             )
         )
         link_row = linking_stats.one()
@@ -126,15 +134,26 @@ async def _check_data_quality() -> dict:
             if total_outcomes > 0 else 0
         )
 
+        # Also count non-sport markets for context
+        non_sport_count = await session.execute(
+            select(func.count(FuturesMarket.id))
+            .where(
+                FuturesMarket.status != "resolved",
+                FuturesMarket.llm_sport_category.in_(_NON_SPORT_CATEGORIES),
+            )
+        )
+
         report["checks"]["team_linking"] = {
             "total_outcomes": total_outcomes,
             "linked_outcomes": linked_outcomes,
             "unlinked_rate": round(unlinked_rate, 3),
+            "scope": "sports_only",
+            "non_sport_markets": non_sport_count.scalar() or 0,
         }
 
         if unlinked_rate > _UNLINKED_RATE_WARN and total_outcomes >= 50:
             alert = (
-                f"WARNING: {unlinked_rate:.0%} of outcomes missing team_id "
+                f"WARNING: {unlinked_rate:.0%} of sports outcomes missing team_id "
                 f"({total_outcomes - linked_outcomes}/{total_outcomes})"
             )
             report["alerts"].append(alert)
