@@ -454,8 +454,8 @@ def record_odds_api_quota(
 
         # Log warnings at threshold crossings
         if remaining <= QUOTA_ALERT_THRESHOLD:
-            _quota_logger.critical(
-                "ODDS API QUOTA CRITICAL: %s remaining (%s used)", f"{remaining:,}", f"{used:,}"
+            _quota_logger.warning(
+                "ODDS API QUOTA LOW: %s remaining (%s used)", f"{remaining:,}", f"{used:,}"
             )
         elif remaining <= QUOTA_WARNING_THRESHOLD:
             _quota_logger.warning(

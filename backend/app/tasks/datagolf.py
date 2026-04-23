@@ -280,7 +280,7 @@ async def _poll_datagolf_markets() -> dict:
                     stats["tours_polled"] += 1
 
                 except Exception as e:
-                    logger.error("DataGolf poll error for tour=%s: %s", tour, e)
+                    logger.warning("DataGolf poll error for tour=%s: %s", tour, e)
                     stats["debug"][f"{tour}_error"] = str(e)[:300]
                     continue
 
@@ -424,7 +424,7 @@ async def _poll_datagolf_live() -> dict:
                                 logger.info("DataGolf live: no current event in schedule for tour=%s", tour)
                                 continue
                         except Exception as create_exc:
-                            logger.error("DataGolf live: market creation failed for tour=%s: %s", tour, create_exc)
+                            logger.warning("DataGolf live: market creation failed for tour=%s: %s", tour, create_exc)
                             continue
 
                     now = datetime.now(timezone.utc)
@@ -579,7 +579,7 @@ async def _poll_datagolf_live() -> dict:
                     stats["tours_polled"] += 1
 
                 except Exception as e:
-                    logger.error("DataGolf live poll error for tour=%s: %s", tour, e)
+                    logger.warning("DataGolf live poll error for tour=%s: %s", tour, e)
                     continue
 
     finally:
