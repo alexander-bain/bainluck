@@ -145,16 +145,21 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
 
     try:
         async with get_task_session() as session:
-            # --- Phase 1: Assign market_tier where missing ---
+            # --- Phase 1: Assign market_tier where missing or wrong ---
+            # Re-tier: NULL tiers, game_prop ordering bugs, AND non-game-prop
+            # markets stuck at tier 5 (catches regex improvements).
             tier_result = await session.execute(
                 select(FuturesMarket)
                 .where(
                     or_(
                         FuturesMarket.market_tier.is_(None),
-                        # Fix game props stuck at wrong tier (code ordering bug)
                         and_(
                             FuturesMarket.category == "game_prop",
                             FuturesMarket.market_tier != 5,
+                        ),
+                        and_(
+                            FuturesMarket.category != "game_prop",
+                            FuturesMarket.market_tier == 5,
                         ),
                     )
                 )
@@ -163,11 +168,13 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             markets_to_tier = tier_result.scalars().all()
 
             for market in markets_to_tier:
-                market.market_tier = compute_market_tier(
+                new_tier = compute_market_tier(
                     market.name, market.category,
                     sport_category=market.llm_sport_category,
                 )
-                stats["markets_tiered"] += 1
+                if market.market_tier != new_tier:
+                    market.market_tier = new_tier
+                    stats["markets_tiered"] += 1
 
             # --- Phase 2: Link outcomes to teams ---
             # Skip generic outcomes that can never match a team/player name.
