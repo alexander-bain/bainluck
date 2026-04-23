@@ -2883,7 +2883,10 @@ async def get_related_futures(
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
         season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
     season_result = await db.execute(
-        select(FuturesMarket.id).where(*season_filters).limit(500)
+        select(FuturesMarket.id)
+        .where(*season_filters)
+        .order_by(FuturesMarket.market_tier)
+        .limit(800)
     )
     season_market_ids = [row.id for row in season_result.all()]
 
