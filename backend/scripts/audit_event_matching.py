@@ -355,8 +355,9 @@ def run_self_check(sport: str | None = None):
 
     # Layer 4: Market type coverage (sample 3 live/scheduled events)
     print(f"\n  LAYER 4 — MARKET TYPE COVERAGE (sampling up to 3 events):")
+    # Only check live events — scheduled games may not have all market types yet
     sample4 = [e for e in events if e.get("sport") in GAME_TICKER_PREFIXES
-               and e.get("status") in ("live", "scheduled")][:3]
+               and e.get("status") == "live"][:3]
     expected_types = {
         "baseball_mlb": ["player_props", "totals", "spreads"],
         "basketball_nba": ["player_props", "totals", "spreads"],
