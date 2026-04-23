@@ -9,9 +9,13 @@ struct StatusBadge: View {
     /// ESPN period/quarter, e.g., "Q3", "2nd", "3rd Period"
     var period: String? = nil
 
-    /// Formatted live text: "Q3 5:42", "2nd Half", or "LIVE"
+    /// Formatted live text: "Q3 5:42", "Top 5th", or "LIVE"
     private var liveText: String {
-        let parts = [period, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+        var parts = [period, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+        // Baseball has no game clock — "0:00" is meaningless
+        if let clock = gameClock, clock == "0:00" || clock == "0" {
+            parts = [period].compactMap { $0 }.filter { !$0.isEmpty }
+        }
         return parts.isEmpty ? "LIVE" : parts.joined(separator: " ")
     }
 

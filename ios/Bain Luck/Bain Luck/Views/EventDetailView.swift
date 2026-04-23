@@ -186,7 +186,6 @@ struct EventDetailView: View {
                         )
                     }
                     if let context = event.standingsContext { standingsSection(context) }
-                    eventTagsSection(event)
                     RelatedFuturesView(
                         eventId: event.id,
                         awayTeamColor: teamColors(event).away,
@@ -260,9 +259,6 @@ struct EventDetailView: View {
             // Top meta row: status badge + countdown + broadcast + date
             HStack(spacing: 8) {
                 heroStatusBadge(event)
-                if !isFinished {
-                    refreshCountdownView()
-                }
                 Spacer()
                 if let broadcast = event.espn?.broadcast {
                     HStack(spacing: 3) {
@@ -402,9 +398,6 @@ struct EventDetailView: View {
             if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
-
-            // Divergence badge
-            divergenceBadge(event)
         }
         .padding()
         .background(
