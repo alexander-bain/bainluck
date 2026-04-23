@@ -2872,23 +2872,25 @@ async def get_related_futures(
     #         These are relevant to any event in the sport. Relatively small set.
     # Pass 2: Game-specific props (tier 5) — only for THIS event via event_id FK.
     #         Avoids loading props from every other game in the sport.
-    season_filters = [
+    base_season_filters = [
         rf_status_filter,
         or_(*sport_filters),
-        FuturesMarket.market_tier.in_([1, 2, 3, 4]),
     ]
-    # For completed events, limit to markets updated in the last 90 days
-    # to avoid pulling in tens of thousands of historical resolved markets.
     if event_is_finished:
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-        season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
-    season_result = await db.execute(
-        select(FuturesMarket.id)
-        .where(*season_filters)
-        .order_by(FuturesMarket.market_tier)
-        .limit(800)
-    )
-    season_market_ids = [row.id for row in season_result.all()]
+        base_season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
+
+    # Load season markets with per-tier limits to ensure representation
+    # across all tiers (championship through division). Without this,
+    # a single tier with hundreds of markets can crowd out other tiers.
+    season_market_ids = []
+    for tier_val, tier_limit in [(1, 100), (2, 100), (3, 100), (4, 100)]:
+        tier_result = await db.execute(
+            select(FuturesMarket.id)
+            .where(*base_season_filters, FuturesMarket.market_tier == tier_val)
+            .limit(tier_limit)
+        )
+        season_market_ids.extend(row.id for row in tier_result.all())
 
     # Debug: tier breakdown of season markets
     if debug and season_market_ids:
