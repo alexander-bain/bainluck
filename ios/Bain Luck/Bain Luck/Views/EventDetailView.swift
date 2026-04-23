@@ -13,6 +13,7 @@ final class EventDetailViewModel: ObservableObject {
     @Published var history: EventHistoryResponse?
     @Published var relatedFutures: RelatedFuturesResponse?
     @Published var teamProgression: TeamProgressionResponse?
+    @Published var gameMarkets: GameMarketsResponse?
 
     private var refreshTimer: Timer?
     let eventId: Int
@@ -38,6 +39,10 @@ final class EventDetailViewModel: ObservableObject {
             do { return try await APIClient.shared.fetchTeamProgression(eventId: eventId) }
             catch { logger.error("Team progression failed for \(self.eventId): \(error)"); return nil }
         }
+        let gameMarketsTask = Task { () -> GameMarketsResponse? in
+            do { return try await APIClient.shared.fetchGameMarkets(eventId: eventId) }
+            catch { logger.error("Game markets failed for \(self.eventId): \(error)"); return nil }
+        }
 
         // Await primary fetch (controls loading state)
         do {
@@ -57,6 +62,7 @@ final class EventDetailViewModel: ObservableObject {
         history = await historyTask.value
         relatedFutures = await relatedFuturesTask.value
         teamProgression = await progressionTask.value
+        gameMarkets = await gameMarketsTask.value
     }
 
     private func configureAutoRefresh() {
@@ -189,6 +195,17 @@ struct EventDetailView: View {
                             awayTeamColor: teamColors(event).away,
                             homeTeamAbbrev: event.homeTeamData?.abbreviation,
                             awayTeamAbbrev: event.awayTeamData?.abbreviation
+                        )
+                    }
+                    // Player Props (from game-markets endpoint)
+                    if let gm = vm.gameMarkets, let pp = gm.playerProps, !pp.isEmpty {
+                        PlayerPropsCardView(
+                            playerProps: pp,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            eventStatus: event.status
                         )
                     }
                     if let context = event.standingsContext { standingsSection(context) }

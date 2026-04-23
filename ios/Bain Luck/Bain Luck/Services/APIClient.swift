@@ -326,6 +326,12 @@ actor APIClient {
         return try await fetch("/api/events/\(eventId)/team-progression", cacheTTL: 120)
     }
 
+    // MARK: - Game Markets (Player Props, Spreads, Totals)
+
+    func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
+        return try await fetch("/api/events/\(eventId)/game-markets", cacheTTL: 60)
+    }
+
     // MARK: - Search
 
     func fetchSearch(query: String, sport: String? = nil, page: Int = 1) async throws -> SearchResponse {

@@ -199,7 +199,6 @@ struct ScoreDifferentialChartView: View {
         let yRange = -(absMax + 2)...(absMax + 2)
 
         let periodMarkers = extractScoreDiffPeriodMarkers(dataPoints: dataPoints)
-        let _ = print("ScoreDiff: \(dataPoints.count) data pts, \(periodMarkers.count) period markers, gameStart=\(gameStartDate?.description ?? "nil"), gameEnd=\(gameEndDate?.description ?? "nil")")
 
         return Chart {
             // Zero line

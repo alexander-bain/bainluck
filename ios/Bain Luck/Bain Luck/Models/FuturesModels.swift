@@ -26,6 +26,37 @@ nonisolated struct ProgressionStageData: Decodable, Sendable {
     let trend24h: Double?
 }
 
+// MARK: - Game Markets Response
+
+nonisolated struct GameMarketsResponse: Decodable, Sendable {
+    let eventId: Int
+    let homeTeam: String?
+    let awayTeam: String?
+    let status: String?
+    let playerProps: [GameMarketPlayerProp]?
+    let spreads: [GameMarketOutcome]?
+    let totals: [GameMarketOutcome]?
+    let teamTotals: [GameMarketOutcome]?
+}
+
+nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let threshold: Double?
+    let overProbability: Double?
+    let source: String?
+    let movement: Double?
+}
+
+nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let probability: Double?
+    let source: String?
+}
+
 // MARK: - Futures Market Detail
 
 nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
