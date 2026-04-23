@@ -414,14 +414,14 @@ Period markers on score diff chart, championship card filter fix, ChampionshipPa
 **Fix:** Only update `@Published` properties when the new value is non-nil. Already coded (April 22 evening), needs push.
 **Files:** `EventDetailView.swift`
 
-### iOS-12. Score Diff Actual Line Cuts Off Mid-Game
+### iOS-12. Score Diff Actual Line Cuts Off Mid-Game — BACKEND BUG
 
-**Problem:** The teal "Actual Score Diff" line stops partway through the game (e.g., 5th inning). Root cause: only 3 `ScoreSnapshot` data points + 7 ESPN history points. The line should continue through the full game using ESPN data.
+**Problem:** The teal "Actual Score Diff" line stops partway through the game (e.g., 5th inning).
 
-**Investigation needed:** The `buildDataPoints()` function merges ScoreSnapshot and ESPNSnapshot, but the actual diff line may be ending early because ESPN score data stops when ESPN sync stops polling. For completed games, the final score should extend as a flat line to game end.
+**Root cause found (April 22):** ALL 7 ESPN history points have `homeScore=None, awayScore=None`. The ESPN sync writes period/clock data to ESPNSnapshot but scores are null. The score diff chart only gets 3 ScoreSnapshot data points from the Odds API (5-minute polling). This is a BACKEND issue — the ESPN API response parsing may not be extracting scores, or ESPN isn't providing them for this event type.
 
-**Fix:** After the last actual score data point, extend the line with the final score value through to `completedAt`.
-**Files:** `ScoreDifferentialChartView.swift`
+**Fix:** Debug the ESPN sync score extraction: `ee.home_score` is None when writing ESPNSnapshot. Check what the ESPN API returns and how it's parsed. The `_sync_espn_live_events` function at line 493 sets `event.home_score = ee.home_score` — this path works for Event updates but the snapshot write at line 541 may be running before scores are available.
+**Files:** `backend/app/tasks/espn_sync.py` (ESPN API response parsing), `backend/app/services/espn_api.py`
 
 ### iOS-13. Score Diff X-Axis Doesn't Match Win Prob
 
