@@ -195,6 +195,26 @@ private func getStatConfig(_ category: String) -> StatCategoryConfig {
     return StatCategoryConfig(emoji: "\u{1F4CA}", label: category.capitalized)
 }
 
+/// Build a readable label for game market outcomes.
+/// "Paul Goldschmidt: 3+" is meaningless — include the market context.
+private func gameMarketLabel(_ f: RelatedFuture) -> String {
+    let outcome = f.outcomeName
+    let market = f.cleanLabel ?? f.marketName
+
+    // If the outcome already includes the team/matchup context, use it directly
+    if outcome.count > 20 { return outcome }
+
+    // Otherwise, combine: "Spread: NYY wins by 1.5+"
+    // Strip the matchup prefix from the market name for brevity
+    let shortMarket = market
+        .replacingOccurrences(of: #"^[^:]+:\s*"#, with: "", options: .regularExpression)
+
+    if shortMarket.isEmpty || shortMarket == market {
+        return "\(outcome) (\(market))"
+    }
+    return "\(shortMarket): \(outcome)"
+}
+
 private func sourceLabel(_ source: String?) -> String {
     switch source {
     case "polymarket": return "Polymarket"
@@ -420,24 +440,6 @@ struct RelatedFuturesView: View {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(Color.blue.opacity(0.06))
                         )
-                }
-
-                // Title Odds — side-by-side championship cards (dedup by label, keep best rank)
-                let awayChamp = bestChampionship(awayCats.championships)
-                let homeChamp = bestChampionship(homeCats.championships)
-                if awayChamp != nil || homeChamp != nil {
-                    HStack(alignment: .top, spacing: 8) {
-                        if let f = awayChamp {
-                            ChampionshipCard(future: f, teamColor: aColor, teamName: awayTeam)
-                        } else {
-                            Spacer()
-                        }
-                        if let f = homeChamp {
-                            ChampionshipCard(future: f, teamColor: hColor, teamName: homeTeam)
-                        } else {
-                            Spacer()
-                        }
-                    }
                 }
 
                 // Game Markets
@@ -927,7 +929,7 @@ private struct GameMarketsPairView: View {
             ForEach(Array(merged)) { future in
                 NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                     HStack(spacing: 6) {
-                        Text(future.outcomeName)
+                        Text(gameMarketLabel(future))
                             .font(.caption)
                             .foregroundStyle(.primary)
                             .lineLimit(2)
