@@ -346,37 +346,38 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 The iOS app has solid bones (57 Swift files, hero section, multi-source chart, score diff chart, related futures, feed sections, iPad sidebar) but has fallen behind the web on visual polish and some features. LineMovement removed April 22. Feed decoding hardened.
 
-### iOS-1. Period/Inning Markers on Charts — HIGH PRIORITY
+### ~~iOS-1. Period Markers~~ — SHIPPED
+### ~~iOS-2. Feed Card Polish~~ — SHIPPED
+### ~~iOS-3. Chart Clipping~~ — SHIPPED
+### ~~iOS-cleanup~~ — SHIPPED: removed LineMovement, divergence badge, tags, baseball clock, refresh countdown
 
-**Problem:** The win probability chart has no vertical lines at period/quarter/inning boundaries. The data comes from the API (`period_markers` in history response) and the iOS chart model already parses `PeriodMarker` structs — but `OddsChartView` doesn't render them as vertical reference lines.
+### iOS-7. Score Differential Chart Issues
 
-**Fix:** In `OddsChartView.chartView()`, add `RuleMark` annotations at each period marker's date position with a label. Filter to markers within the visible data range (already done for the markers array).
+**Problem:** Period markers added but not rendering visibly. Actual score diff line stops partway through. X-axes don't align between win prob and score diff charts.
 
-**Files:** `ios/Bain Luck/Bain Luck/Components/OddsChartView.swift`
-**Parallel Safety:** Green
+**Fix:** Debug `extractScoreDiffPeriodMarkers` — may return empty due to date filtering. X-axis alignment needs shared domain (web uses `onRenderedDomain` callback).
+**Files:** `ScoreDifferentialChartView.swift`
 
-### iOS-2. Feed Card Visual Polish
+### iOS-8. Championship Card Shows Wrong Market
 
-**Problem:** Web feed cards show team-colored probability bars, prominent live scores, sport emoji, and visual hierarchy that makes scanning easy. iOS feed cards are functional but visually flat — they lack the color and weight that makes the web feed feel alive.
+**Problem:** "40+ Home Run Season" shows as a championship card — it's tier 1 but NOT a championship. Web doesn't show it.
 
-**What to improve:**
-- Team-colored probability bar below each card (like web's gradient bar)
-- Larger, bolder score display for live games
-- Sport/league chip or emoji for context
-- Movement indicator (probability shift since open) — web shows this with colored arrows
-- Better visual distinction between live/completed/upcoming cards
+**Fix:** In `bestChampionship()`, filter to `display_category in ["playoff_path", "conference"]` before picking, not just by tier.
+**Files:** `RelatedFuturesView.swift`
 
-**Files:** `ios/Bain Luck/Bain Luck/Components/EventCardView.swift`
-**Parallel Safety:** Green
+### iOS-9. Championship Path Parity with Web — HIGH PRIORITY
 
-### iOS-3. `completed_at` Chart Clipping
+**Problem:** Web shows "Make Playoffs → Division → AL/NL Champ → World Series" with progress bars per team (see web screenshot). iOS `PlayoffPathPairView` exists but only receives `stage=Championship`. Need full stage data.
 
-**Problem:** The chart timing fix (0t-1) added `completed_at` to the history API and the web frontend uses it to clip charts at game end. The iOS chart doesn't read or use `completed_at` yet, so charts may still extend past game end on iOS.
+**Root cause:** The `categorizeFutures` function routes Make Playoffs / Division markets to the wrong bucket. Need to compare web's `RelatedFutures.tsx` data flow with iOS to find the gap.
+**Files:** `RelatedFuturesView.swift`, compare with `frontend/components/RelatedFutures.tsx`
 
-**Fix:** Read `completed_at` from `EventHistoryResponse`, pass to `OddsChartView`, use it to set the chart's x-axis upper bound for completed games.
+### iOS-10. Game Markets Should Show Individual Outcomes
 
-**Files:** `ios/Bain Luck/Bain Luck/Models/HistoryModels.swift`, `ios/Bain Luck/Bain Luck/Components/OddsChartView.swift`
-**Parallel Safety:** Green
+**Problem:** "Team Total = 75%" is meaningless — the market has 6 outcomes (wins by 1.5+, 2.5+, etc.). Should expand to show each outcome line, not collapse to one entry. Web shows these via the below-the-fold components.
+
+**Fix:** For multi-outcome game markets, show each outcome as a sub-row with its individual probability. May need the backend to return outcome-level data in related futures.
+**Files:** `RelatedFuturesView.swift`
 
 ### iOS-4. Dead/Stale Views Cleanup
 
