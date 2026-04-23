@@ -56,6 +56,59 @@ Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
 **Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
 
+### 0f-X. CRITICAL: Kalshi conference markets misclassified as wrong sport
+
+**Status:** Partially fixed, needs debugging. Direct DB fix applied April 22 as hotfix.
+
+**The Problem:**
+Kalshi's NHL Eastern/Western Conference markets (`KXNHLEAST-26`, `KXNHLWEST-26`) were classified as `llm_sport_category='basketball'` instead of `'hockey'`. This made them invisible to the NHL championship grid. The NHL grid showed 0.1% for Bruins conference odds when Kalshi has them at 6%.
+
+**Root Cause Chain (3 bugs stacked):**
+1. **`status=None` filter** (FIXED in commit `d8872ed`): Kalshi neg-risk events have `status=None` on the API, not `"open"`. Our `_fetch_all_events_unfiltered()` filtered on `status="open"`, silently skipping these events. Fixed by passing `status=None` explicitly.
+
+2. **Default parameter override** (FIXED in commit `038e185`): `get_events()` has `status="open"` as default parameter. Even after removing the explicit `status="open"` in `_fetch_all_events_unfiltered`, the default was still applied. Fixed by passing `status=None` explicitly.
+
+3. **Pagination gap** (FIXED in commit `17b2341`): Without the status filter, the API returns ALL Kalshi events (7,400+). KXNHLEAST might not appear within the 50-page limit. Added supplementary fetch for known sports series tickers (`KXNBA`, `KXNHL`, `KXMLB`, `KXNFL` + conference variants).
+
+4. **Sport misclassification** (FIXED in commit `9786298`): `_categorize_kalshi_market()` checked name-based rules BEFORE ticker-based classification. "Eastern Conference Finals Winner?" matched a basketball rule first. KXNHLEAST ticker is unambiguously hockey, but the ticker check was step 3 instead of step 1. Fixed by moving ticker check to step 1.
+
+5. **Upsert not updating llm_sport_category** (DEBUGGING — not yet confirmed fixed): Even after fix #4, the poll doesn't seem to update the stored `llm_sport_category` from `basketball` to `hockey`. The `on_conflict_do_update` at line 432 should update it when `sport_category != "other"`. Possible causes:
+   - The Celery worker may not be picking up the queued `poll_kalshi_markets` task (observed: task queued but never executed, worker was busy with `discover_events`, `sync_mm_bracket`, `sync_statpal_schedules`)
+   - The worker may have stale code despite restart (Celery preforking can cache imports)
+   - The `heroku run` one-off dyno successfully fetched 7,463 events including KXNHLEAST-26 with markets, but no evidence the poll task ran to completion on the scheduled worker
+
+**Hotfix Applied:**
+Direct SQL: `UPDATE futures_markets SET llm_sport_category = 'hockey' WHERE external_id IN ('KXNHLEAST-26', 'KXNHLWEST-26')` — fixes the grid immediately.
+
+**What Still Needs Debugging:**
+1. Run `heroku logs -a bainluck --ps worker-background -n 500 | grep -i "kalshi"` after the next scheduled Kalshi poll (runs at :45 past every 4th hour) to confirm the task actually executes
+2. Verify the classification fix works by checking `llm_sport_category` after the poll: `heroku pg:psql -a bainluck -c "SELECT external_id, llm_sport_category FROM futures_markets WHERE external_id LIKE 'KXNHL%' AND source='kalshi';"`
+3. If still `basketball`, add explicit logging to `_categorize_kalshi_market()` for KXNHL tickers to trace the classification path
+4. Check if there are OTHER misclassified conference markets across sports: `heroku pg:psql -a bainluck -c "SELECT external_id, name, llm_sport_category FROM futures_markets WHERE source='kalshi' AND (name LIKE '%Conference%' OR name LIKE '%Eastern%' OR name LIKE '%Western%') AND external_id NOT LIKE 'KXNBA%';"`
+
+**Also discovered:** `sync_mm_bracket` task is still running (March Madness ended weeks ago) — wastes worker capacity. Disable it.
+
+**Files:**
+- `backend/app/services/kalshi_api.py` — `_fetch_all_events_unfiltered()` (status filter + supplementary fetch)
+- `backend/app/tasks/kalshi.py` — `_categorize_kalshi_market()` (classification order), `poll_kalshi_markets` (upsert logic)
+- `backend/app/config/league_configs.py` — NHL_CONFIG conference matching rules
+- `backend/app/tasks/__init__.py` — Celery beat schedule (disable `sync_mm_bracket`)
+
+**Key commands for debugging:**
+```bash
+# Check classification
+heroku pg:psql -a bainluck -c "SELECT external_id, name, llm_sport_category FROM futures_markets WHERE source='kalshi' AND external_id LIKE 'KXNHL%';"
+
+# Trigger poll
+heroku ps:restart worker-background -a bainluck && sleep 30 && curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=cleanup-soccer-2024"
+
+# Check worker logs
+heroku logs -a bainluck --ps worker-background -n 300 | grep -i "kalshi\|Fetched.*unique\|supplement"
+
+# Verify grid
+curl -s "https://api.bainluck.com/api/playoffs/nhl?debug=true" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'  {m.get(\"source\"):12s} {m.get(\"external_id\")[:25]}') for m in d.get('_debug_column_markets',{}).get('conference',[])]"
+```
+
 ### 0f-4. Sport Hierarchy Page Data Quality (Manus audit April 22)
 
 Two issues reported by Manus league page audit. May be transient data issues — verify before investing time:
