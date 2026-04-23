@@ -393,24 +393,50 @@ struct OddsChartView: View {
     /// Uses a "smart start" approach: if there's a gap >30 min between
     /// commence_time and the first data point, start from the first data point
     /// instead — prevents empty chart space from schedule delays.
+    private var gameEndDate: Date? {
+        // Use authoritative completed_at from the API when available
+        if let ca = vm.history?.completedAt, let d = ca.asDate {
+            return d.addingTimeInterval(120) // 2 min buffer
+        }
+        // Fallback: infer from last ESPN or stat_model data point
+        guard isFinished else { return nil }
+        var candidates: [Date] = []
+        if let espn = vm.history?.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
+            candidates.append(d)
+        }
+        if let wp = vm.history?.winProbHistory {
+            for (source, points) in wp where source == "espn" || source == "stat_model" {
+                if let last = points.last, let d = last.timestamp.asDate {
+                    candidates.append(d)
+                }
+            }
+        }
+        guard let latest = candidates.max() else { return nil }
+        return latest.addingTimeInterval(120)
+    }
+
     private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
         guard vm.selectedRange == .sinceStart,
               let startDate = gameStartDate,
               isGameStarted else {
             return points
         }
-        let postStart = points.filter { $0.date >= startDate }
-        guard let firstPoint = postStart.first else {
-            return postStart
+        var filtered = points.filter { $0.date >= startDate }
+
+        // Clip end for completed games
+        if let endDate = gameEndDate {
+            filtered = filtered.filter { $0.date <= endDate }
         }
-        // If first data point is >30 min after commence_time, skip the gap
+
+        guard let firstPoint = filtered.first else {
+            return filtered
+        }
         let gap = firstPoint.date.timeIntervalSince(startDate)
         if gap > 1800 {
-            // Start 1 minute before the first data point for slight padding
             let adjustedStart = firstPoint.date.addingTimeInterval(-60)
-            return postStart.filter { $0.date >= adjustedStart }
+            return filtered.filter { $0.date >= adjustedStart }
         }
-        return postStart
+        return filtered
     }
 
     // MARK: - Period Markers

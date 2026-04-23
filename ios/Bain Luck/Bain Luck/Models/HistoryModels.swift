@@ -6,6 +6,8 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
     let awayTeam: String
+    let completedAt: String?
+    let status: String?
     let history: [HistoryPoint]
     let bookmakerHistory: [String: [BookmakerHistoryPoint]]?
     let scoreHistory: [ScoreHistoryPoint]?
