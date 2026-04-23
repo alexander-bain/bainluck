@@ -93,6 +93,20 @@ struct EventDetailView: View {
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
     @State private var lastRefreshDate: Date = Date()
+    private var sharedChartDomain: ClosedRange<Date>? {
+        guard let event = vm.event,
+              let ct = event.commenceTime, let start = ct.asDate else { return nil }
+        // End: use completedAt if available, fallback to last ESPN/stat_model data
+        if let ca = vm.history?.completedAt, let end = ca.asDate {
+            let buffered = end.addingTimeInterval(120)
+            return start...buffered
+        }
+        // Fallback for live games: now + small buffer
+        if event.status == "live" {
+            return start...Date().addingTimeInterval(60)
+        }
+        return nil
+    }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     init(eventId: Int) {
@@ -193,7 +207,8 @@ struct EventDetailView: View {
                             homeTeamColor: teamColors(event).home,
                             awayTeamColor: teamColors(event).away,
                             homeTeamAbbrev: event.homeTeamData?.abbreviation,
-                            awayTeamAbbrev: event.awayTeamData?.abbreviation
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            forcedDomain: sharedChartDomain
                         )
                     }
                     // Player Props (from game-markets endpoint)

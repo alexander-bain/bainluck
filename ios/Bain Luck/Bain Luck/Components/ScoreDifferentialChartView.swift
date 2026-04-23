@@ -15,6 +15,7 @@ struct ScoreDifferentialChartView: View {
     var awayTeamColor: Color?
     var homeTeamAbbrev: String?
     var awayTeamAbbrev: String?
+    var forcedDomain: ClosedRange<Date>?
 
     private var homeShort: String {
         homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
@@ -266,8 +267,9 @@ struct ScoreDifferentialChartView: View {
         }
     }
 
-    /// Match the OddsChart's x-axis domain: commenceTime to completedAt.
     private func chartXDomain(dataPoints: [DiffPoint]) -> ClosedRange<Date> {
+        // Use the forced domain from EventDetailView (shared with OddsChart)
+        if let forced = forcedDomain { return forced }
         let start = gameStartDate ?? dataPoints.first?.date ?? Date()
         let end = gameEndDate ?? dataPoints.last?.date ?? Date()
         guard start < end else { return start...start.addingTimeInterval(3600) }

@@ -339,12 +339,14 @@ class ESPNAPIService:
 
             for competitor in competition.get("competitors", []):
                 team = self._parse_team(competitor)
-                score = competitor.get("score")
-                if score:
+                raw_score = competitor.get("score")
+                if raw_score is not None:
                     try:
-                        score = int(score)
+                        score = int(raw_score)
                     except (ValueError, TypeError):
                         score = None
+                else:
+                    score = None
 
                 if competitor.get("homeAway") == "home":
                     home_team = team
