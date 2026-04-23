@@ -399,7 +399,7 @@ struct OddsChartView: View {
             return d.addingTimeInterval(120) // 2 min buffer
         }
         // Fallback: infer from last ESPN or stat_model data point
-        guard isFinished else { return nil }
+        guard status == "completed" || status == "closed" else { return nil }
         var candidates: [Date] = []
         if let espn = vm.history?.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
             candidates.append(d)
