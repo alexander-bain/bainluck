@@ -414,8 +414,6 @@ struct RelatedFuturesView: View {
             // Merge cross-team collections
             let mergedAwards = awayCats.awards + homeCats.awards
             let mergedNovelty = awayCats.novelty + homeCats.novelty
-            _ = awayCats.statProps + homeCats.statProps
-            _ = awayCats.games + homeCats.games
 
             VStack(alignment: .leading, spacing: 12) {
                 // Header
