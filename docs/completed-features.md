@@ -15,6 +15,24 @@
 - ✅ M2: ErrorBoundary + 12s loading timeout on event detail page (prevents infinite mobile spinner)
 - ✅ M4: Player props with over_probability >95% or <5% filtered (boring thresholds hidden)
 
+**Event Detail Polish (live game review):**
+- ✅ "Threshold probabilities" → "Projected combined scoring" (clearer label)
+- ✅ Removed duplicate "52 props across 20 players" subtitle + PLAYERS/TOTAL PROPS summary cards
+- ✅ Player prop cards now use team colors (were all gray due to broken team detection)
+- ✅ Special event outcome dedup operator precedence fix (was preventing dedup from working)
+- ✅ Hide old "Game Markets" / "Upcoming Games" section dividers when PlayerPropsDashboard handles data above
+- ✅ Score Differential: period marker label overlap fix — increased spacing to 5%, capped at 12 labels, reduced font weight
+- ✅ MLB headshot fallback: ILIKE search when exact team name match fails
+
+**Sentry Error Budget Fix:**
+- ✅ Quota warning was logged as CRITICAL (2,716 events/period) → downgraded to WARNING
+- ✅ DataGolf market creation failures for non-PGA tours (1,209 events) → WARNING
+- ✅ DataGolf tour-level errors for kft/opp (1,138 events) → WARNING
+- ✅ Estimated savings: ~5,000 error events/month (entire free tier budget was being consumed in 2 days)
+
+**Cross-Event Contamination Fix:**
+- ✅ Game markets query now requires BOTH team names to match (was OR, letting "Minnesota vs New York M" leak onto NYY vs BOS)
+
 **URL Architecture: /sport/[sport]/[league] as canonical pattern:**
 - ✅ All user-facing links migrated from `/playoffs/*` to `/sport/[sport]/[league]` paths
 - ✅ Footer, LeagueChips, TeamPlayoffCard, event detail Championship Grid link — all updated
