@@ -624,6 +624,131 @@ def run_full_audit(gt_path_str: str, save: bool = False, compare: bool = False):
 
 
 # ---------------------------------------------------------------------------
+# Layer 4 deep: Kalshi API → bainluck comparison
+# ---------------------------------------------------------------------------
+
+KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+
+
+def _kalshi_get(path: str) -> dict:
+    """Get from Kalshi API (no auth needed for public endpoints)."""
+    import os
+    url = f"{KALSHI_API_BASE}{path}"
+    req = __import__("urllib.request", fromlist=["Request"]).Request(url)
+    req.add_header("Accept", "application/json")
+    api_key = os.getenv("KALSHI_API_KEY", "")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
+    with urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def run_l4_deep(sport: str):
+    """Deep L4 audit: query Kalshi for all game tickers, compare vs bainluck."""
+    print(f"\n{'='*60}")
+    print(f"  LAYER 4 DEEP AUDIT — {sport.upper()}")
+    print(f"  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"{'='*60}\n")
+
+    prefixes = GAME_TICKER_PREFIXES.get(sport, [])
+    if not prefixes:
+        print(f"  No game ticker prefixes defined for {sport}")
+        return
+
+    # Get live/scheduled events from our feed
+    events = get_feed_events(sport)
+    live_events = [e for e in events if e.get("status") in ("live", "scheduled")]
+    print(f"  Live/scheduled events: {len(live_events)}")
+
+    if not live_events:
+        print("  No live/scheduled events to audit")
+        return
+
+    # For each event, search Kalshi for matching tickers
+    for ev in live_events[:3]:
+        event_id = ev["id"]
+        home = ev.get("home_team", "?")
+        away = ev.get("away_team", "?")
+        status = ev.get("status", "?")
+
+        print(f"\n  {away[:20]:20s} @ {home[:20]:20s} [{status}]")
+
+        # Get what we show
+        gm = get_game_markets(event_id)
+        our_items = []
+        for section in ["player_props", "totals", "spreads", "team_totals", "other"]:
+            our_items.extend(gm.get(section, []))
+        our_kalshi = [i for i in our_items if i.get("source") == "kalshi"]
+        our_market_names = set(i.get("market_name", "").lower() for i in our_kalshi)
+        our_tickers = set()
+        for i in our_kalshi:
+            ext = i.get("external_id", "") or ""
+            if ext:
+                our_tickers.add(ext.lower())
+
+        print(f"    bainluck: {len(our_market_names)} unique Kalshi markets, {len(our_kalshi)} outcomes")
+
+        # Query Kalshi for each ticker prefix, filter to this game by title matching
+        kalshi_markets_found = {}
+        home_lower = home.lower()
+        away_lower = away.lower()
+        # Extract matchable fragments: last word (mascot) and city
+        home_parts = [w.lower() for w in home.split() if len(w) >= 3]
+        away_parts = [w.lower() for w in away.split() if len(w) >= 3]
+
+        for prefix in prefixes:
+            try:
+                data = _kalshi_get(
+                    f"/events?status=open&with_nested_markets=true"
+                    f"&series_ticker={prefix.upper()}&limit=50"
+                )
+                for kalshi_event in data.get("events", []):
+                    event_title = kalshi_event.get("title", "")
+                    title_lower = event_title.lower()
+                    # Match by team name fragments in the event title
+                    # e.g., "New York Y vs Boston" matches home="Boston Red Sox", away="New York Yankees"
+                    has_home = any(p in title_lower for p in home_parts)
+                    has_away = any(p in title_lower for p in away_parts)
+                    if not (has_home and has_away):
+                        continue
+                    for m in kalshi_event.get("markets", []):
+                        ticker = m.get("ticker", "")
+                        title = m.get("title", m.get("subtitle", ""))
+                        if ticker and ticker.lower() not in kalshi_markets_found:
+                            kalshi_markets_found[ticker.lower()] = {
+                                "ticker": ticker,
+                                "title": title or event_title,
+                                "event_title": event_title,
+                            }
+            except Exception as e:
+                print(f"    ⚠ Kalshi API error for {prefix}: {e}")
+
+        print(f"    Kalshi API: {len(kalshi_markets_found)} markets found")
+
+        # Compare: which Kalshi markets are we missing?
+        missing = []
+        for ticker, info in sorted(kalshi_markets_found.items()):
+            # Check if we have this ticker in our data
+            if ticker not in our_tickers:
+                # Also check by fuzzy name match
+                title_lower = info["title"].lower()
+                name_match = any(title_lower in n or n in title_lower for n in our_market_names if n)
+                if not name_match:
+                    missing.append(info)
+
+        if missing:
+            print(f"    ✗ {len(missing)} markets on Kalshi NOT showing on bainluck:")
+            for m in missing[:10]:
+                print(f"      {m['ticker']:40s}  {m['title'][:50]}")
+            if len(missing) > 10:
+                print(f"      ... and {len(missing) - 10} more")
+        else:
+            print(f"    ✓ All Kalshi markets present on bainluck")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -632,6 +757,7 @@ def main():
     parser.add_argument("--ground-truth", help="Path to ground truth JSON, or 'latest'")
     parser.add_argument("--layer2-only", action="store_true", help="Run Layer 2 only (internal)")
     parser.add_argument("--self-check", action="store_true", help="Quick self-check (no Manus)")
+    parser.add_argument("--l4-deep", action="store_true", help="Deep L4: Kalshi API comparison")
     parser.add_argument("--sport", help="Filter to specific sport (e.g., baseball_mlb)")
     parser.add_argument("--save", action="store_true", help="Save results")
     parser.add_argument("--compare", action="store_true", help="Compare vs previous")
@@ -651,6 +777,11 @@ def main():
             print("--layer2-only requires --sport", file=sys.stderr)
             sys.exit(1)
         run_layer2_only(args.sport)
+    elif args.l4_deep:
+        if not args.sport:
+            print("--l4-deep requires --sport", file=sys.stderr)
+            sys.exit(1)
+        run_l4_deep(args.sport)
     elif args.ground_truth:
         run_full_audit(args.ground_truth, args.save, args.compare)
     else:
