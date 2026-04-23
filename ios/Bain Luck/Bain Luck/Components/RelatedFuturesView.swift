@@ -442,33 +442,7 @@ struct RelatedFuturesView: View {
                         )
                 }
 
-                // Game Markets
-                if !mergedStatProps.isEmpty || !mergedGames.isEmpty {
-
-                    // Stat Props (merged across teams)
-                    if !mergedStatProps.isEmpty {
-                        StatPropsSection(
-                            futures: mergedStatProps,
-                            teamColor: hColor,
-                            boxScore: rf.boxScore,
-                            eventStatus: rf.eventStatus,
-                            gamePeriod: rf.gamePeriod,
-                            gameClock: rf.gameClock,
-                            sportKey: sportKey
-                        )
-                    }
-
-                    // Game props: player threshold ladders
-                    if !mergedGames.isEmpty {
-                        GamePropsView(
-                            futures: mergedGames,
-                            homeTeam: homeTeam,
-                            awayTeam: awayTeam,
-                            homeColor: hColor,
-                            awayColor: aColor
-                        )
-                    }
-                }
+                // Game props handled by PlayerPropsCardView above (from game-markets endpoint)
 
                 // Awards + Trades
                 if !mergedAwards.isEmpty || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty || !mergedNovelty.isEmpty {

@@ -57,12 +57,11 @@ final class EventDetailViewModel: ObservableObject {
         loading = false
         configureAutoRefresh()
 
-        // Await secondary fetches (already running in parallel, may already be done)
-        // These update @Published properties so child views re-render as data arrives
-        history = await historyTask.value
-        relatedFutures = await relatedFuturesTask.value
-        teamProgression = await progressionTask.value
-        gameMarkets = await gameMarketsTask.value
+        // Await secondary fetches — only update if successful (preserve existing data on failure)
+        if let h = await historyTask.value { history = h }
+        if let rf = await relatedFuturesTask.value { relatedFutures = rf }
+        if let tp = await progressionTask.value { teamProgression = tp }
+        if let gm = await gameMarketsTask.value { gameMarkets = gm }
     }
 
     private func configureAutoRefresh() {

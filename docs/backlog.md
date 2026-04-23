@@ -404,33 +404,68 @@ The iOS app has solid bones (57 Swift files, hero section, multi-source chart, s
 ### ~~iOS-3. Chart Clipping~~ — SHIPPED
 ### ~~iOS-cleanup~~ — SHIPPED: removed LineMovement, divergence badge, tags, baseball clock, refresh countdown
 
-### iOS-7. Score Differential Chart Issues
+### ~~iOS-7/8/9/10~~ — SHIPPED (April 22)
+Period markers on score diff chart, championship card filter fix, ChampionshipPathView from team-progression endpoint, PlayerPropsCardView from game-markets endpoint.
 
-**Problem:** Period markers added but not rendering visibly. Actual score diff line stops partway through. X-axes don't align between win prob and score diff charts.
+### iOS-11. Sections Disappear on Auto-Refresh — CRITICAL BUG
 
-**Fix:** Debug `extractScoreDiffPeriodMarkers` — may return empty due to date filtering. X-axis alignment needs shared domain (web uses `onRenderedDomain` callback).
+**Problem:** Player Props, Championship Path, and other sections vanish after ~30 seconds. The auto-refresh re-runs `load()` which overwrites existing data with `nil` when a fetch fails transiently.
+
+**Fix:** Only update `@Published` properties when the new value is non-nil. Already coded (April 22 evening), needs push.
+**Files:** `EventDetailView.swift`
+
+### iOS-12. Score Diff Actual Line Cuts Off Mid-Game
+
+**Problem:** The teal "Actual Score Diff" line stops partway through the game (e.g., 5th inning). Root cause: only 3 `ScoreSnapshot` data points + 7 ESPN history points. The line should continue through the full game using ESPN data.
+
+**Investigation needed:** The `buildDataPoints()` function merges ScoreSnapshot and ESPNSnapshot, but the actual diff line may be ending early because ESPN score data stops when ESPN sync stops polling. For completed games, the final score should extend as a flat line to game end.
+
+**Fix:** After the last actual score data point, extend the line with the final score value through to `completedAt`.
 **Files:** `ScoreDifferentialChartView.swift`
 
-### iOS-8. Championship Card Shows Wrong Market
+### iOS-13. Score Diff X-Axis Doesn't Match Win Prob
 
-**Problem:** "40+ Home Run Season" shows as a championship card — it's tier 1 but NOT a championship. Web doesn't show it.
+**Problem:** Win prob chart shows 4:11-6:11 PM, score diff shows 4:00-6:00 PM. Both use `commenceTime` → `completedAt+2min` for domain, but the tick labels differ because Swift Charts auto-picks different nice-number intervals for different data densities.
 
-**Fix:** In `bestChampionship()`, filter to `display_category in ["playoff_path", "conference"]` before picking, not just by tier.
-**Files:** `RelatedFuturesView.swift`
+**Fix:** Both charts need identical x-axis domain. Options: (a) pass OddsChart domain down to ScoreDiffChart via state binding, or (b) use the raw `commenceTime` and `completedAt` strings parsed identically. Current code may have different Date precision (OddsChart may round/filter start differently).
+**Files:** `ScoreDifferentialChartView.swift`, `OddsChartView.swift`, `EventDetailView.swift`
 
-### iOS-9. Championship Path Parity with Web — HIGH PRIORITY
+### iOS-14. Player Prop Threshold Monotonicity
 
-**Problem:** Web shows "Make Playoffs → Division → AL/NL Champ → World Series" with progress bars per team (see web screenshot). iOS `PlayoffPathPairView` exists but only receives `stage=Championship`. Need full stage data.
+**Problem:** Goldschmidt shows 3+ Hits at 6% but 2+ Hits at 72%. Probabilities should be monotonically decreasing (P(3+) ≤ P(2+)). Root cause: likely mixing HITS and HITS+RUNS+RBIS stat types under the same player's card.
 
-**Root cause:** The `categorizeFutures` function routes Make Playoffs / Division markets to the wrong bucket. Need to compare web's `RelatedFutures.tsx` data flow with iOS to find the gap.
-**Files:** `RelatedFuturesView.swift`, compare with `frontend/components/RelatedFutures.tsx`
+**Fix:** In `PlayerPropsCardView`, group rungs strictly by `marketName` (not just player name). The stat type label (HITS vs HITS+RUNS+RBIS) must scope each ladder independently.
+**Files:** `PlayerPropsCardView.swift`
 
-### iOS-10. Game Markets Should Show Individual Outcomes
+### iOS-15. Bigger Picture Section Needs Redesign
 
-**Problem:** "Team Total = 75%" is meaningless — the market has 6 outcomes (wins by 1.5+, 2.5+, etc.). Should expand to show each outcome line, not collapse to one entry. Web shows these via the below-the-fold components.
+**Problem:** The compact 2-column grid duplicates Player Props (same game prop data from related-futures). Shows last names + thresholds with no context. Users can't tell what markets these are.
 
-**Fix:** For multi-outcome game markets, show each outcome as a sub-row with its individual probability. May need the backend to return outcome-level data in related futures.
-**Files:** `RelatedFuturesView.swift`
+**Current state:** `GamePropsView` renders game_prop futures from related-futures endpoint. `PlayerPropsCardView` renders from game-markets endpoint. Both show the same underlying data in different formats.
+
+**Fix options:**
+- Remove `GamePropsView` from Bigger Picture since `PlayerPropsCardView` covers game props better
+- Rename "Bigger Picture" to something that reflects what remains (awards, season stats, trades, novelty)
+- Or redesign to show only the non-game-prop futures (championship path already has its own section)
+
+**Principle (from Alex):** NEVER remove data to simplify. Show ALL futures beautifully grouped. The web's below-the-fold is the reference.
+**Files:** `RelatedFuturesView.swift`, `GamePropsView.swift`
+
+### iOS-16. Season Stats Categorization Issues
+
+**Problem:** "NL East Winner 18%" shows in Season Stats but belongs in Championship Path. "Longest Losing Streak 69%" is confusing without context.
+
+**Root cause:** Backend `display_category` assignments are imperfect. "NL East Winner" is categorized as `season_stat` but should be `playoff_path` or `conference`. This is a backend data quality issue.
+
+**Fix:** Either fix categorization in `backend/app/routes/events.py` (related-futures response builder), or add iOS-side reclassification rules.
+**Files:** Backend: `routes/events.py` related-futures builder. iOS: `RelatedFuturesView.swift`
+
+### iOS-17. Player Headshot Images
+
+**Problem:** Player prop cards show initials avatars. Web shows the same. ESPN has headshot URLs but they're not included in the game-markets API response.
+
+**Fix:** Add `espn_headshot_url` to the game-markets player prop response. Requires matching player names from Kalshi props to ESPN roster data.
+**Files:** Backend: `routes/events.py` (game-markets endpoint). iOS: `PlayerPropsCardView.swift`
 
 ### iOS-4. Dead/Stale Views Cleanup
 

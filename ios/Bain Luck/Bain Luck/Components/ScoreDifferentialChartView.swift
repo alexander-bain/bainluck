@@ -182,7 +182,6 @@ struct ScoreDifferentialChartView: View {
 
         merged.sort { $0.date < $1.date }
 
-        // Clip at game end
         if let endDate {
             return merged.filter { $0.date <= endDate }
         }
