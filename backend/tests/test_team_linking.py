@@ -460,8 +460,9 @@ class TestRelatedFuturesHelpers:
         patterns = _team_name_patterns("New England Patriots")
         assert "New England Patriots" in patterns
         assert "Patriots" in patterns
-        assert "New England" in patterns  # City/location name
-        assert len(patterns) == 3
+        assert "New England" in patterns
+        assert "England" in patterns
+        assert len(patterns) == 4
 
     def test_sport_prefix_to_llm_category(self):
         from app.routes.events import _SPORT_PREFIX_TO_LLM_CATEGORY

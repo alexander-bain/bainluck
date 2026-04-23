@@ -29,7 +29,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 **Audit tooling (April 23, 2026):**
 - `scripts/audit_grid_accuracy.py` — Grid structural correctness. **51/51 (100%)** after hill-climb.
 - `scripts/audit_event_matching.py` — Four-layer event matching audit (self-check + Manus ground truth modes).
-- Plan: `.claude/plans/wild-swinging-falcon.md`
+- Plan: `.claude/plans/clever-nibbling-bumblebee.md`
 
 ---
 
@@ -39,33 +39,51 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid audit: measure → fix biggest bucket → re-measure → repeat.
 
+**The real target**: every market on Kalshi/Polymarket for a game should appear on its bainluck event page. Not just championship/pennant/division — also novel props, broadcast props, announcer markets, "Which European finishes highest?", etc. If it exists, we show it.
+
+**How matching works (two passes):**
+- **Tier 1-4 (season markets)**: Load ALL markets for the sport, filter outcomes by team/player name matching. Catches championship, pennant, division, awards, make_playoffs.
+- **Tier 5 (game props)**: Load only markets linked to this event via `event_id` FK. Catches spreads, totals, player props, game-specific novelty.
+- **Gap**: Markets that are season-long but lack team names in outcomes (e.g., "Which European finishes highest?") fall through tier 1-4 matching. Markets that are game-adjacent but missing `event_id` linkage fall through tier 5.
+
 **Layer 1: Event Existence** — Does every game exist with all sources?
 - Status: Self-check mode working. MLB baseline: 4/8 events fully covered (4 sources), 2 with only 1 source.
-- Next: Build Manus ground truth prompt to independently verify event existence.
+- Next: Diagnose single-source events (event registry cross-match failure vs source gap).
 
 **Layer 2: Market → Event Linking** — Are all game markets linked correctly?
 - Status: Self-check mode working. MLB: 5-12 Kalshi markets/event. 1 event (White Sox @ Diamondbacks) has ZERO.
-- Next: Diagnose zero-market events, fix ticker parsing/matching.
+- Next: Diagnose zero-market events — is it a ticker parsing bug, team name mismatch, or genuine gap?
 
 **Layer 3: Futures Surfacing** — Do season futures show on event pages?
-- Status: **MAJOR GAP FOUND.** MLB event pages missing pennant, division, make_playoffs futures (only championship showing). NBA missing division futures.
-- Next: **HILL-CLIMB NOW** — investigate `get_related_futures()` in `routes/events.py:2730`. The endpoint finds championship but not pennant/division/make_playoffs. Likely a category matching issue.
-- Files: `routes/events.py` (related futures endpoint), `utils/market_label_normalization.py` (category classification)
+- Status: **MEASUREMENT BUG FOUND.** Audit's `EXPECTED_CATEGORIES` uses wrong vocabulary — checks for `"championship"`, `"pennant"` etc. but `classify_market_category()` returns `"playoff_path"`, `"season_stat"`. So audit always reports gaps even when markets ARE present.
+- Root cause confirmed April 23: tiers are correct (pennant=2, division=4, make_playoffs=4), and API returned `{'game_prop': 202, 'championship': 10, 'playoff_path': 3, 'season_stat': 2}` for test event 14523747 — markets likely present but miscounted by audit.
+- **Active fix**: (1) Fix audit vocabulary to match actual `display_category` values, (2) add granular sub-checks within `playoff_path` to distinguish championship vs pennant vs make_playoffs, (3) hill-climb any real gaps revealed.
+- Additional fixes in progress: `_team_name_patterns` individual-word matching (uncommitted), tier 4 regex `\bmake.(?:the.)?(?:playoffs|postseason)` may need widening for Kalshi verbose names.
+- Files: `routes/events.py` (related futures endpoint), `utils/market_label_normalization.py` (category classification), `scripts/audit_event_matching.py` (L3 audit)
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
-- Status: Audit infrastructure not yet built for this layer. Needs Manus ground truth (enumerate ALL markets on Kalshi/Polymarket for a specific game).
-- Next: Build Manus prompt for deep game-level market enumeration.
-- Context: Tier 1 MLB games have 100+ markets (moneyline, player props per batter, 1st half, series winner, novelty). We need to show all of them.
+- Status: Skeletal comparison logic in `run_full_audit()` (lines 517-543). Uses fuzzy name matching to compare Manus ground truth vs what we show.
+- Next: (1) Run Manus ground truth sweep, (2) enhance L4 to use ticker matching (more reliable than fuzzy names), (3) hill-climb every gap — including novel/creative markets that don't fit standard categories.
+- This is the layer that catches the long tail: announcer props, broadcast markets, format props, any market Kalshi/Polymarket creates that we haven't seen before.
+- Context: Tier 1 MLB games have 100+ markets (moneyline, player props per batter, 1st half, series winner, novelty). We need to show ALL of them.
 
-**Manus Ground Truth Prompt** — NOT YET BUILT
+**Manus Ground Truth Prompt** — BUILT ✓
 - `Manus/prompts/event_matching_ground_truth.md` — single prompt covering Layers 1, 3, 4.
 - Sweeps today's games on Kalshi/Polymarket, deep-audits 3 games for market completeness, checks event detail pages for related futures.
+- Not yet RUN — needs Manus execution to produce ground truth JSON.
+
+**Hill-climb protocol (per iteration):**
+1. Run audit → identify biggest gap bucket
+2. Trace root cause in code
+3. Write fix
+4. Re-run audit → confirm score improved
+5. If not 100%, go to step 1
 
 **Files:**
-- `backend/scripts/audit_event_matching.py` — four-layer audit script (self-check + layer2-only modes working)
+- `backend/scripts/audit_event_matching.py` — four-layer audit script
 - `backend/scripts/audit_grid_accuracy.py` — grid accuracy (SHIPPED, 100%)
-- `Manus/prompts/event_matching_ground_truth.md` — TODO
-- Plan: `.claude/plans/wild-swinging-falcon.md`
+- `Manus/prompts/event_matching_ground_truth.md` — ground truth prompt (built, not yet run)
+- Plan: `.claude/plans/clever-nibbling-bumblebee.md`
 
 ---
 

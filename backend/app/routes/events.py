@@ -2177,6 +2177,15 @@ def _team_name_patterns(full_name: str) -> list[str]:
             if escaped_city.lower() not in [p.lower() for p in patterns]:
                 patterns.append(escaped_city)
 
+        # For multi-word cities ("Boston Red", "New York"), also add
+        # individual words ≥4 chars. Kalshi uses just "Boston" not "Boston Red".
+        if len(parts) >= 3:
+            for word in parts[:-1]:
+                if len(word) >= 4:
+                    escaped_word = _escape_like(word)
+                    if escaped_word.lower() not in [p.lower() for p in patterns]:
+                        patterns.append(escaped_word)
+
     return patterns
 
 

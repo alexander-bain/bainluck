@@ -587,6 +587,24 @@ class TestComputeMarketTier:
     def test_central_division(self):
         assert compute_market_tier("Central Division Winner") == 4
 
+    def test_make_nba_playoffs(self):
+        assert compute_market_tier("Make NBA Playoffs") == 4
+
+    def test_make_mlb_playoffs(self):
+        assert compute_market_tier("Make MLB Playoffs") == 4
+
+    def test_make_the_playoffs(self):
+        assert compute_market_tier("Make the Playoffs") == 4
+
+    def test_make_the_nhl_playoffs(self):
+        assert compute_market_tier("Make the NHL Playoffs") == 4
+
+    def test_make_postseason(self):
+        assert compute_market_tier("Make Postseason") == 4
+
+    def test_playoff_qualifiers(self):
+        assert compute_market_tier("Pro Basketball Playoff Qualifiers") == 4
+
     # Tier 5: Other / Props
     def test_unknown_market(self):
         assert compute_market_tier("Something Random") == 5

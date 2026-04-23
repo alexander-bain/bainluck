@@ -203,15 +203,37 @@ class Layer3Report:
     leaks: list = field(default_factory=list)
     missing: list = field(default_factory=list)
 
-EXPECTED_CATEGORIES = {
-    "baseball_mlb": ["championship", "pennant", "division", "make_playoffs"],
-    "basketball_nba": ["championship", "conference", "division"],
-    "icehockey_nhl": ["championship", "conference", "division"],
+# Expected market types per sport. Each entry is a human-readable name
+# mapped to a regex that matches against clean_label values in the API response.
+# This checks for specific markets, not just display_category buckets.
+EXPECTED_MARKET_TYPES: dict[str, list[tuple[str, re.Pattern]]] = {
+    "baseball_mlb": [
+        ("championship", re.compile(r"World Series Champion", re.I)),
+        ("pennant", re.compile(r"(AL|NL|American League|National League) Champion", re.I)),
+        ("division", re.compile(r"(AL|NL)\s+(East|West|Central)\s+Winner", re.I)),
+        ("make_playoffs", re.compile(r"Make.*Playoffs", re.I)),
+    ],
+    "basketball_nba": [
+        ("championship", re.compile(r"NBA Champ", re.I)),
+        ("conference", re.compile(r"(Eastern|Western) Conference Champion", re.I)),
+        ("division", re.compile(r"Division", re.I)),
+        ("make_playoffs", re.compile(r"Make.*Playoffs", re.I)),
+    ],
+    "icehockey_nhl": [
+        ("championship", re.compile(r"Stanley Cup", re.I)),
+        ("conference", re.compile(r"(Eastern|Western) Conference", re.I)),
+        ("division", re.compile(r"Division", re.I)),
+    ],
 }
 
 
 def audit_layer3_for_event(event: dict) -> Layer3Report:
-    """Check related futures surfacing on an event detail page."""
+    """Check related futures surfacing on an event detail page.
+
+    Uses label-level matching: instead of checking display_category names,
+    checks whether specific market labels (e.g., "World Series Champion",
+    "NL Champion") appear in the related futures response.
+    """
     event_id = event.get("id")
     home = event.get("home_team", "")
     away = event.get("away_team", "")
@@ -228,22 +250,18 @@ def audit_layer3_for_event(event: dict) -> Layer3Report:
         report.missing.append("related_futures_endpoint_failed")
         return report
 
-    # Classify home/away futures by category
+    expected = EXPECTED_MARKET_TYPES.get(sport, [])
+
     for side, key in [("home", "home_team_futures"), ("away", "away_team_futures")]:
         futures = rf.get(key, [])
-        categories_found = set()
-        for f in futures:
-            cat = f.get("display_category", "other")
-            categories_found.add(cat)
+        labels = [f.get("clean_label", "") for f in futures]
 
         target = report.home_futures if side == "home" else report.away_futures
-        expected = EXPECTED_CATEGORIES.get(sport, [])
-        for cat in expected:
-            if cat in categories_found or any(cat in c for c in categories_found):
-                target[cat] = True
-            else:
-                target[cat] = False
-                report.missing.append(f"{side}_{cat}")
+        for market_type, pattern in expected:
+            found = any(pattern.search(label) for label in labels)
+            target[market_type] = found
+            if not found:
+                report.missing.append(f"{side}_{market_type}")
 
     return report
 
@@ -326,7 +344,7 @@ def run_self_check(sport: str | None = None):
 
     # Layer 3: Related futures (sample 5)
     print(f"\n  LAYER 3 — RELATED FUTURES (sampling up to 5 events):")
-    sample3 = [e for e in events if e.get("sport") in EXPECTED_CATEGORIES][:5]
+    sample3 = [e for e in events if e.get("sport") in EXPECTED_MARKET_TYPES][:5]
     for ev in sample3:
         report = audit_layer3_for_event(ev)
         missing_str = ", ".join(report.missing) if report.missing else "✓ all present"
