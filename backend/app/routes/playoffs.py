@@ -515,7 +515,10 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bdraft\b             |   # Draft markets
     \bdrafted\b           |   # "freshmen drafted"
     \bfreshmen\b          |   # Draft props
-    \bupset\b             |   # "1+ upsets" props
+    \bupsets?\b            |   # "1+ upsets", "Number of Series Upsets" props
+    \bsweeps?\b            |   # "Number of Series Sweeps" props
+    \badvance\s+to\b       |   # "Team to advance to Conference Finals" — advancement, not winner
+    \bnumber\s+of\s+series\b |  # "Number of Series Upsets/Sweeps" props
     \bseed\s+margin\b     |   # "Biggest Upset Seed Margin"
     \#\d+\s+seed\b        |   # "#1 Seed", "#2 Seed" — regular season finish, not playoffs
     \btop\s+seed\b        |   # "Top Seed" markets

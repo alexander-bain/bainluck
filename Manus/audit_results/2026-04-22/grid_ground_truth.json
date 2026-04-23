@@ -111,6 +111,16 @@
           "market_name": "Western Conference Champion",
           "market_ticker": "KXNHLWEST-26",
           "outcomes": {}
+        },
+        "polymarket_east": {
+          "market_name": "NHL: Eastern Conference Champion",
+          "market_ticker": "57120",
+          "outcomes": {}
+        },
+        "polymarket_west": {
+          "market_name": "NHL: Western Conference Champion",
+          "market_ticker": "57123",
+          "outcomes": {}
         }
       },
       "division": {
@@ -132,6 +142,26 @@
         "kalshi_pacific": {
           "market_name": "Pacific Division Winner",
           "market_ticker": "KXNHLPACIFIC-26",
+          "outcomes": {}
+        },
+        "polymarket_atlantic": {
+          "market_name": "NHL: Atlantic Division Winner",
+          "market_ticker": "57117",
+          "outcomes": {}
+        },
+        "polymarket_metro": {
+          "market_name": "NHL: Metropolitan Division Winner",
+          "market_ticker": "57116",
+          "outcomes": {}
+        },
+        "polymarket_central": {
+          "market_name": "NHL: Central Division Winner",
+          "market_ticker": "57115",
+          "outcomes": {}
+        },
+        "polymarket_pacific": {
+          "market_name": "NHL: Pacific Division Winner",
+          "market_ticker": "57114",
           "outcomes": {}
         }
       },
@@ -212,6 +242,36 @@
         "kalshi_nlwest": {
           "market_name": "NL West Winner",
           "market_ticker": "KXMLBNLWEST-26",
+          "outcomes": {}
+        },
+        "polymarket_215876": {
+          "market_name": "MLB: 2026 AL East Champion",
+          "market_ticker": "215876",
+          "outcomes": {}
+        },
+        "polymarket_215885": {
+          "market_name": "MLB: 2026 AL Central Champion",
+          "market_ticker": "215885",
+          "outcomes": {}
+        },
+        "polymarket_215886": {
+          "market_name": "MLB: 2026 AL West Champion",
+          "market_ticker": "215886",
+          "outcomes": {}
+        },
+        "polymarket_215891": {
+          "market_name": "MLB: 2026 NL East Champion",
+          "market_ticker": "215891",
+          "outcomes": {}
+        },
+        "polymarket_215896": {
+          "market_name": "MLB: 2026 NL Central Champion",
+          "market_ticker": "215896",
+          "outcomes": {}
+        },
+        "polymarket_215901": {
+          "market_name": "MLB: 2026 NL West Champion",
+          "market_ticker": "215901",
           "outcomes": {}
         }
       },
