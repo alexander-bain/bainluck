@@ -67,23 +67,41 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
   7. Audit regex: "Playoff Qualifiers" pattern for Kalshi's alternate naming
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
-- Status: **ACTIVE** — skeletal comparison logic in `run_full_audit()`. Needs Manus ground truth.
-- Next: (1) Run Manus ground truth sweep, (2) enhance L4 to use ticker matching, (3) hill-climb every gap — including novel/creative markets.
-- This catches the long tail: announcer props, broadcast markets, format props, etc.
+- Status: **ACTIVE HILL-CLIMB.** L4 deep audit (`--l4-deep`) built — checks per-game market type coverage against sport-specific expected types.
+- **Key finding**: We ingest EVERYTHING from Kalshi + Polymarket (minus crypto). Both polling tasks paginate unfiltered. The gap is purely linking + surfacing, not ingestion.
+- **Kalshi L4**: MLB 2/3 green (newly-live game pending matching), NBA 3/3 ✅, NHL 3/3 ✅
+- **Fixes shipped (April 23 afternoon):**
+  1. `is_game_prop()` now detects "Team vs Team Winner?" moneyline format
+  2. Game-markets fallback uses Kalshi ticker prefixes, not just `category="game_prop"`
+  3. NULL-status markets included for live events (many Kalshi markets have status=NULL)
+  4. Per-tier season market loading (100/tier) prevents crowding
+  5. L4 audit detects bare matchup names as moneylines
+- **Still needed:**
+  - Add Polymarket to L4 audit (currently Kalshi-only)
+  - Build DB-comparison mode (compare `futures_markets` table against endpoint output)
+  - Track design needs for newly-surfaced market types
+  - Investigate per-game coverage variance (some games get 13 types, others 5)
 
-**Manus Ground Truth Prompt** — BUILT ✓
-- `Manus/prompts/event_matching_ground_truth.md` — covers Layers 1, 3, 4.
-- Not yet RUN — needs Manus execution to produce ground truth JSON.
+**Design needs** (market types now surfacing that may need frontend work):
+| Type | Design Status | Notes |
+|------|--------------|-------|
+| Moneyline | ✅ | Win probability display |
+| Spread/Total | ✅ | Game markets section |
+| Player props | ✅ | Player props cards |
+| F5/First Half | ⚠ Needs design | Currently in "other" section |
+| Team totals | ⚠ Needs design | Separate from game totals |
+| First Inning Run | ⚠ Needs design | Binary prop, no section |
+| Announcer/broadcast | ❌ No design | Entirely new category |
 
 **Hill-climb protocol (per iteration):**
-1. Run audit → identify biggest gap bucket
+1. Run `--l4-deep --sport {sport}` → identify missing types
 2. Trace root cause in code
 3. Write fix
 4. Re-run audit → confirm score improved
 5. If not 100%, go to step 1
 
 **Files:**
-- `backend/scripts/audit_event_matching.py` — four-layer audit script
+- `backend/scripts/audit_event_matching.py` — four-layer audit script (self-check + L4 deep)
 - `backend/scripts/audit_grid_accuracy.py` — grid accuracy (SHIPPED, 100%)
 - `Manus/prompts/event_matching_ground_truth.md` — ground truth prompt (built, not yet run)
 - Plan: `.claude/plans/clever-nibbling-bumblebee.md`
