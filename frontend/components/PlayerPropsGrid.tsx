@@ -86,14 +86,16 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
       if (seen.has(key)) continue;
       seen.add(key);
 
-      // Determine team
-      const beforeColon = colonIdx >= 0 ? name.slice(0, colonIdx) : "";
-      let team: "home" | "away" | "unknown" = "unknown";
-      if (home_team && beforeColon.toLowerCase().includes(home_team.split(" ").pop()!.toLowerCase())) {
-        team = "home";
-      }
-      if (away_team && beforeColon.toLowerCase().includes(away_team.split(" ").pop()!.toLowerCase())) {
-        team = team === "home" ? "unknown" : "away";
+      // Determine team — prefer API-provided team, fall back to market name parsing
+      let team: "home" | "away" | "unknown" = p.player_team ?? "unknown";
+      if (team === "unknown") {
+        const beforeColon = colonIdx >= 0 ? name.slice(0, colonIdx) : "";
+        if (home_team && beforeColon.toLowerCase().includes(home_team.split(" ").pop()!.toLowerCase())) {
+          team = "home";
+        }
+        if (away_team && beforeColon.toLowerCase().includes(away_team.split(" ").pop()!.toLowerCase())) {
+          team = team === "home" ? "unknown" : "away";
+        }
       }
 
       parsed.push({

@@ -361,7 +361,7 @@ export default function PlayerPropsDashboard({
 
       const playerKey = parsed.player.toLowerCase();
       if (!playerMap.has(playerKey)) {
-        const team = detectTeam(parsed.team || p.market_name || "");
+        const team: "home" | "away" | "unknown" = p.player_team ?? detectTeam(parsed.team || p.market_name || "");
 
         playerMap.set(playerKey, {
           name: parsed.player,

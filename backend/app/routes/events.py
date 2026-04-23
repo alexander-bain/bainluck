@@ -2632,29 +2632,34 @@ async def get_game_markets(
         if 0.05 <= p["over_probability"] <= 0.95
     ]
 
-    # 10. Enrich player props with headshot URLs from team rosters
+    # 10. Enrich player props with headshot URLs + team assignment from rosters
     if player_props and event.sport_id:
-        player_headshots: dict[str, str] = {}
+        # player_name_lower → {"headshot": url, "team": "home"|"away"}
+        player_roster_info: dict[str, dict] = {}
         try:
-            # Primary: exact team name match
+            # Primary: exact team name match — query both teams with name so we know home vs away
             team_result = await db.execute(
-                select(Team.roster_players).where(
+                select(Team.name, Team.roster_players).where(
                     Team.name.in_([event.home_team_name, event.away_team_name]),
                     Team.sport_id == event.sport_id,
                 )
             )
-            for (roster,) in team_result.all():
+            for team_name, roster in team_result.all():
+                side = "home" if team_name == event.home_team_name else "away"
                 if roster and isinstance(roster, list):
                     for item in roster:
-                        if isinstance(item, dict) and item.get("name") and item.get("headshot"):
-                            player_headshots[item["name"].lower()] = item["headshot"]
+                        if isinstance(item, dict) and item.get("name"):
+                            info: dict = {"team": side}
+                            if item.get("headshot"):
+                                info["headshot"] = item["headshot"]
+                            player_roster_info[item["name"].lower()] = info
 
-            # Fallback: if no headshots found, try ILIKE match on team names
-            if not player_headshots:
+            # Fallback: ILIKE match on team short names
+            if not player_roster_info:
                 home_short = event.home_team_name.split()[-1] if event.home_team_name else ""
                 away_short = event.away_team_name.split()[-1] if event.away_team_name else ""
                 fallback_result = await db.execute(
-                    select(Team.roster_players).where(
+                    select(Team.name, Team.roster_players).where(
                         Team.sport_id == event.sport_id,
                         or_(
                             Team.name.ilike(f"%{home_short}%") if len(home_short) >= 4 else False,
@@ -2662,21 +2667,24 @@ async def get_game_markets(
                         ),
                     )
                 )
-                for (roster,) in fallback_result.all():
+                for team_name, roster in fallback_result.all():
+                    tn_lower = team_name.lower() if team_name else ""
+                    side = "home" if home_short.lower() in tn_lower else "away"
                     if roster and isinstance(roster, list):
                         for item in roster:
-                            if isinstance(item, dict) and item.get("name") and item.get("headshot"):
-                                player_headshots[item["name"].lower()] = item["headshot"]
+                            if isinstance(item, dict) and item.get("name"):
+                                info = {"team": side}
+                                if item.get("headshot"):
+                                    info["headshot"] = item["headshot"]
+                                player_roster_info[item["name"].lower()] = info
         except Exception:
             pass
 
-        if player_headshots:
+        if player_roster_info:
             for prop in player_props:
-                # Extract player name from market_name or outcome_name
                 name = prop.get("market_name", "")
                 colon_idx = name.find(":")
                 after_colon = name[colon_idx + 1:].strip() if colon_idx >= 0 else ""
-                # Try extracting from outcome for format 2
                 outcome = prop.get("outcome_name", "")
                 outcome_colon = outcome.find(":")
                 outcome_player = outcome[:outcome_colon].strip() if outcome_colon > 0 else ""
@@ -2684,17 +2692,21 @@ async def get_game_markets(
                 for candidate in [after_colon, outcome_player]:
                     if not candidate:
                         continue
-                    # Try exact match first
-                    headshot = player_headshots.get(candidate.lower())
-                    if headshot:
-                        prop["player_headshot"] = headshot
+                    # Exact match
+                    info = player_roster_info.get(candidate.lower())
+                    if info:
+                        if info.get("headshot"):
+                            prop["player_headshot"] = info["headshot"]
+                        prop["player_team"] = info["team"]
                         break
-                    # Try partial match — player name is prefix of market text
-                    for pname, pheadshot in player_headshots.items():
+                    # Partial match
+                    for pname, pinfo in player_roster_info.items():
                         if pname in candidate.lower() or candidate.lower() in pname:
-                            prop["player_headshot"] = pheadshot
+                            if pinfo.get("headshot"):
+                                prop["player_headshot"] = pinfo["headshot"]
+                            prop["player_team"] = pinfo["team"]
                             break
-                    if "player_headshot" in prop:
+                    if "player_team" in prop:
                         break
 
     return {

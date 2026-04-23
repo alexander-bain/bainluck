@@ -572,6 +572,7 @@ export interface GameMarketsResponse {
     source: string;
     movement: number | null;
     player_headshot?: string;
+    player_team?: "home" | "away";
   }[];
   team_totals: {
     threshold: number;

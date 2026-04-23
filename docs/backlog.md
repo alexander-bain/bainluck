@@ -52,6 +52,47 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player AH" etc. at 100% with 3400% y-axis. Outcome names are abbreviations instead of real names, probabilities are broken. Likely a Polymarket data parsing issue.
 **Files:** `tasks/polymarket.py` (outcome name parsing), `routes/futures.py` (display)
 
+### 0f-3a. Player Props: Team Filter Bug (SOX/YAN pills) — CODE FIX READY, NEEDS DEPLOY
+
+**Problem:** Clicking SOX or YAN team filter pills in the Player Props section causes ALL cards to disappear.
+
+**Root cause:** `PlayerPropsDashboard.tsx` `detectTeam()` parses the Kalshi market name prefix (e.g., "New York Y vs Boston") to determine which team a player is on. But BOTH team names appear in every market name. The position-based tiebreaker (`homeIdx < awayIdx`) always assigns ALL players to whichever team name appears first in the market string. For "New York Y vs Boston" → all players get `team="away"`. Clicking SOX (home filter) → zero matches → all cards disappear.
+
+**Fix (committed locally, not yet deployed):**
+1. **Backend** (`routes/events.py`): Headshot enrichment (step 10) now also determines team membership from roster data. Returns `player_team: "home" | "away"` per prop based on which team's roster contains the player. Works independently of headshot availability.
+2. **Frontend** (`PlayerPropsDashboard.tsx`, `PlayerPropsGrid.tsx`): Uses `player_team` from API when available, falls back to the (imperfect) market-name detection only when API doesn't provide team info.
+3. **Frontend type** (`lib/api.ts`): Added `player_team?: "home" | "away"` to `GameMarketsResponse.player_props`.
+
+**Tests:** 39 existing game-markets tests pass. No new TS errors introduced.
+**Files:** `backend/app/routes/events.py` (headshot enrichment rewrite), `frontend/components/PlayerPropsDashboard.tsx:363`, `frontend/components/PlayerPropsGrid.tsx:91-100`, `frontend/lib/api.ts:574`
+**Parallel Safety:** Yellow (touches events.py + 2 frontend components)
+
+### 0f-3b. Player Prop Headshots Missing — ROSTER DATA EXISTS, ENRICHMENT NEEDS DEBUGGING
+
+**Problem:** All 97 player prop cards show initials instead of player headshot images. `player_headshot` is `MISSING` for every prop in the API response.
+
+**Investigation findings (April 22):**
+- MLB roster data EXISTS in DB: Red Sox 28 players, Yankees 28 players (confirmed via admin debug endpoint)
+- MLB Stats API works perfectly: returns 26 active roster players per team with headshot URLs (`img.mlbstatic.com/mlb-photos/...`)
+- The roster sync task (`sync_rosters`) runs daily at 7 AM UTC
+- The headshot enrichment code (`events.py:2636-2698`) queries `Team.roster_players WHERE Team.name IN (home_team_name, away_team_name)` — names match ("Boston Red Sox" in both event and team)
+
+**Suspected root cause:** Roster entries may be plain strings (just player names) instead of dicts with `{"name": "...", "headshot": "..."}`. This would happen if:
+- Rosters were synced before the headshot URL generation was added to `MLBAPIService.get_team_roster()` 
+- The MLB roster sync branch failed silently and only the ESPN/StatPal branch ran (which stores fewer fields)
+- Or there's a JSON serialization mismatch between what's stored and what's queried
+
+**Fix:** 
+1. Trigger a fresh MLB roster sync: `POST /api/admin/rosters/sync?sport_key=baseball_mlb` (via admin dashboard or Heroku one-off dyno)
+2. Verify roster entries have headshot keys: `SELECT name, roster_players->0 FROM teams WHERE name = 'Boston Red Sox'`
+3. If entries are plain strings, the sync code at `roster_sync.py:279-288` should replace them with dicts on next run
+
+**Previous code also had a gating bug (FIXED in local code):** The enrichment only ran matching logic when `player_headshots` dict was non-empty (required at least one headshot URL). New code uses `player_roster_info` which populates for ANY named roster player regardless of headshot availability. This ensures team assignment works even without headshots.
+
+**Files:** `backend/app/tasks/roster_sync.py` (MLB sync), `backend/app/services/mlb_api.py:254-289` (headshot URL generation), `backend/app/routes/events.py:2635-2698` (enrichment)
+**Parallel Safety:** Green (backend only, no frontend changes needed)
+**Also see:** iOS-17 (same underlying issue)
+
 ### 0f-3. Live Box Score Integration for Player Props
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
 **Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
@@ -117,6 +158,48 @@ Two issues reported by Manus league page audit. May be transient data issues —
 
 **Verify:** Visit `/sport/soccer/epl` and `/sport/tennis/atp` in browser. If issues persist, trace the data loading path.
 **Files:** `frontend/app/sport/[sport]/[league]/page.tsx`, `frontend/app/categories/[slug]/page.tsx`
+
+---
+
+### 0f-3d. Event Detail Market Completeness — 5 ISSUES (April 22 audit)
+
+**Context:** Audited event 14523747 (Red Sox vs Yankees, April 22) to check if we're showing ALL available markets. Found 21 linked markets (all Kalshi), but several data quality issues.
+
+#### Issue 1: NBA markets incorrectly linked to MLB event
+Two NBA markets (`KXNBA2D-26APR09BOSNYK`, `KXNBA1HSPREAD-26APR09BOSNYK`) are linked to this MLB event via `event_id`. Root cause: "Boston" + "New York" city name collision — Celtics/Knicks game matched Red Sox/Yankees event. The game-markets endpoint filters these out via `llm_sport_category` so they don't display, but they waste the `event_id` FK slot.
+
+**Fix:** Add sport validation in prediction market matching — if market ticker starts with `KXNBA`, don't link to a `baseball_mlb` event. Check `sport_id` consistency between market and event before linking.
+**Files:** `tasks/prediction_market_matching.py` (Pass 2 general scan)
+
+#### Issue 2: Zero Polymarket game-specific markets linked
+~20 Polymarket markets exist mentioning Red Sox/Yankees (NRFI, win markets), but ALL have `sport_id=None` and `llm_sport_category=None`. They're never considered for linking because the matching task requires sport identification.
+
+**Fix:** Improve Polymarket sport classification. These markets have team names in their titles ("New York Yankees vs. Boston Red Sox") — the matching task should detect the sport from team names even without explicit sport metadata.
+**Files:** `tasks/polymarket.py` (sport classification), `tasks/prediction_market_matching.py`
+
+#### Issue 3: Tomorrow's game markets linked to today's event
+6 Kalshi markets with APR23 tickers (tomorrow's game) are linked to today's event. The matching task linked them based on team name + time window without distinguishing the game date embedded in the ticker.
+
+**Fix:** Extract game date from Kalshi ticker (e.g., `KXMLBHIT-26APR23NYYBOS` → April 23) and compare to event `commence_time` date. Reject if dates differ by >1 day.
+**Files:** `tasks/prediction_market_matching.py`, `utils/prediction_market_matching.py` (`extract_game_date_from_ticker`)
+
+#### Issue 4: Series Winner market unlinked (ticker parsing bug)
+Market `KXMLBSERIES-26APR21NYYBOS` ("Yankees vs Red Sox: Series Winner") exists but isn't linked. The ticker team extraction returned `["Yankees", "Celtics"]` instead of `["Yankees", "Red Sox"]` — a parsing bug.
+
+**Fix:** Debug ticker team extraction for `KXMLBSERIES` prefix. The Celtics/Red Sox confusion suggests the city-to-team mapping defaults to the wrong sport.
+**Files:** `utils/prediction_market_matching.py` (ticker team extraction)
+
+#### Issue 5: Game props have market_tier=1 (should be tier 5) — CODE ORDERING BUG
+85/136 outcomes in related-futures are game props with `market_tier=1`. Root cause is a code ordering bug in `kalshi.py`:
+1. Line 287: `_kalshi_category_to_internal()` returns `"championship"` for all sports categories
+2. Line 336-338: `compute_market_tier()` sees `category=="championship"` → returns tier 1
+3. Line 364-366: `is_game_prop()` correctly updates `category = "game_prop"` — but AFTER tier was already computed
+
+**Impact:** Game props leak into the season-long query (Pass 1 of related-futures, which loads tiers 1-4) instead of being restricted to Pass 2 (game-prop query, `event_id == event_id`). This means game props from OTHER games could appear on the wrong event page.
+
+**Fix:** Move `is_game_prop()` check and `category = "game_prop"` assignment to BEFORE `compute_market_tier()`, OR add game prop detection inside `compute_market_tier()`. Then backfill existing market_tier values.
+**Files:** `tasks/kalshi.py:336-366`, `utils/market_label_normalization.py:737-792` (`compute_market_tier`)
+**Parallel Safety:** Yellow (affects market ingestion + grid/futures display)
 
 ---
 
@@ -460,12 +543,13 @@ Period markers on score diff chart, championship card filter fix, ChampionshipPa
 **Fix:** Either fix categorization in `backend/app/routes/events.py` (related-futures response builder), or add iOS-side reclassification rules.
 **Files:** Backend: `routes/events.py` related-futures builder. iOS: `RelatedFuturesView.swift`
 
-### iOS-17. Player Headshot Images
+### iOS-17. Player Headshot Images — SEE 0f-3b
 
-**Problem:** Player prop cards show initials avatars. Web shows the same. ESPN has headshot URLs but they're not included in the game-markets API response.
+**Problem:** Player prop cards show initials avatars on both web and iOS. Backend headshot enrichment code exists but returns 0 headshots.
 
-**Fix:** Add `espn_headshot_url` to the game-markets player prop response. Requires matching player names from Kalshi props to ESPN roster data.
-**Files:** Backend: `routes/events.py` (game-markets endpoint). iOS: `PlayerPropsCardView.swift`
+**Root cause:** See `0f-3b` above — roster data exists, enrichment code looks correct, but headshot URLs may not be in the stored JSONB entries. Fix is backend-only: trigger roster re-sync, then both web and iOS get headshots automatically.
+
+**Files:** Backend: `routes/events.py` (game-markets endpoint enrichment). iOS: `PlayerPropsCardView.swift` (already handles headshot URLs)
 
 ### iOS-4. Dead/Stale Views Cleanup
 
