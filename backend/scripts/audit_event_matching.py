@@ -353,6 +353,28 @@ def run_self_check(sport: str | None = None):
         away = ev.get("away_team", "?")
         print(f"    {away[:15]:15s} @ {home[:15]:15s}  {missing_str}")
 
+    # Layer 4: Market type coverage (sample 3 live/scheduled events)
+    print(f"\n  LAYER 4 — MARKET TYPE COVERAGE (sampling up to 3 events):")
+    sample4 = [e for e in events if e.get("sport") in GAME_TICKER_PREFIXES
+               and e.get("status") in ("live", "scheduled")][:3]
+    expected_types = {
+        "baseball_mlb": ["player_props", "totals", "spreads"],
+        "basketball_nba": ["player_props", "totals", "spreads"],
+        "icehockey_nhl": ["player_props", "totals"],
+    }
+    for ev in sample4:
+        gm = get_game_markets(ev["id"])
+        home = ev.get("home_team", "?")
+        away = ev.get("away_team", "?")
+        missing_types = []
+        for mtype in expected_types.get(ev.get("sport", ""), []):
+            if not gm.get(mtype):
+                missing_types.append(mtype)
+        if missing_types:
+            print(f"    {away[:15]:15s} @ {home[:15]:15s}  missing: {', '.join(missing_types)}")
+        else:
+            print(f"    {away[:15]:15s} @ {home[:15]:15s}  ✓ all types present")
+
     print()
 
 
