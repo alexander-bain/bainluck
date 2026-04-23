@@ -417,6 +417,171 @@ def run_layer2_only(sport: str):
 
 
 # ---------------------------------------------------------------------------
+# Full four-layer audit with Manus ground truth
+# ---------------------------------------------------------------------------
+
+MANUS_RESULTS = Path(__file__).parent / ".." / ".." / "Manus" / "audit_results"
+
+
+def run_full_audit(gt_path_str: str, save: bool = False, compare: bool = False):
+    """Full four-layer audit using Manus ground truth."""
+    if gt_path_str == "latest":
+        gt_path = MANUS_RESULTS / "latest" / "event_matching_ground_truth.json"
+    else:
+        gt_path = Path(gt_path_str)
+
+    if not gt_path.exists():
+        print(f"Ground truth not found: {gt_path}", file=sys.stderr)
+        print("Run: MANUS_API_KEY=... python3 scripts/manus_health_suite.py --modules event_matching", file=sys.stderr)
+        sys.exit(1)
+
+    gt = json.loads(gt_path.read_text())
+    gt_date = gt.get("date", "unknown")
+
+    print(f"\n{'='*60}")
+    print(f"  FOUR-LAYER EVENT MATCHING AUDIT")
+    print(f"  Ground truth: {gt_date}")
+    print(f"  Compared at:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"{'='*60}")
+
+    # Get feed events for matching
+    feed_events = get_feed_events()
+
+    # --- Layer 1: Event Existence ---
+    games = gt.get("games_today", [])
+    print(f"\n  LAYER 1 — EVENT EXISTENCE ({len(games)} games in ground truth):")
+
+    l1_found = 0
+    l1_partial = 0
+    l1_missing = 0
+
+    for game in games:
+        sport = game.get("sport", "")
+        home = game.get("home_team", "")
+        away = game.get("away_team", "")
+        gt_sources = game.get("sources", {})
+
+        # Find matching event in feed
+        matched_event = None
+        for ev in feed_events:
+            ev_sport = ev.get("sport", "")
+            ev_home = ev.get("home_team", "")
+            ev_away = ev.get("away_team", "")
+            if ev_sport != sport:
+                continue
+            # Fuzzy team match
+            home_match = (home.lower() in ev_home.lower() or ev_home.lower() in home.lower() or
+                         home.split()[-1].lower() in ev_home.lower())
+            away_match = (away.lower() in ev_away.lower() or ev_away.lower() in away.lower() or
+                         away.split()[-1].lower() in ev_away.lower())
+            if home_match and away_match:
+                matched_event = ev
+                break
+
+        if matched_event:
+            # Check source coverage
+            has_odds = bool(matched_event.get("bookmaker_odds"))
+            has_espn = bool(matched_event.get("espn", {}).get("espn_id"))
+            wps = matched_event.get("win_probability_sources", {})
+            source_count = len(wps)
+
+            if source_count >= 3:
+                l1_found += 1
+                icon = "✓"
+            else:
+                l1_partial += 1
+                icon = "⚠"
+            sources_str = ", ".join(sorted(wps.keys()))
+            print(f"    {icon} {away[:18]:18s} @ {home[:18]:18s}  {source_count} sources ({sources_str})")
+        else:
+            l1_missing += 1
+            print(f"    ✗ {away[:18]:18s} @ {home[:18]:18s}  NOT FOUND in our DB")
+
+    total_l1 = len(games)
+    print(f"\n    Score: {l1_found}/{total_l1} fully covered, {l1_partial} partial, {l1_missing} missing")
+
+    # --- Layer 3+4: Deep Audits ---
+    deep_audits = gt.get("deep_audits", [])
+    if deep_audits:
+        print(f"\n  LAYER 3+4 — DEEP AUDITS ({len(deep_audits)} games):")
+
+        for audit in deep_audits:
+            home = audit.get("home_team", "")
+            away = audit.get("away_team", "")
+            sport = audit.get("sport", "")
+            event_url = audit.get("bainluck_event_url", "")
+
+            print(f"\n    {away} @ {home}:")
+
+            # Layer 4: Market completeness
+            gt_kalshi = audit.get("kalshi_markets", [])
+            gt_poly = audit.get("polymarket_markets", [])
+
+            if gt_kalshi:
+                # Extract event ID from URL
+                event_id = None
+                if event_url:
+                    parts = event_url.strip("/").split("/")
+                    if parts:
+                        try:
+                            event_id = int(parts[-1])
+                        except ValueError:
+                            pass
+
+                if event_id:
+                    gm = get_game_markets(event_id)
+                    all_items = []
+                    for section in ["player_props", "totals", "spreads", "team_totals", "other"]:
+                        all_items.extend(gm.get(section, []))
+                    our_kalshi_names = set(i.get("market_name", "").lower() for i in all_items if i.get("source") == "kalshi")
+
+                    print(f"      Layer 4 (Kalshi): {len(gt_kalshi)} markets on Kalshi, {len(our_kalshi_names)} showing on bainluck")
+                    for m in gt_kalshi:
+                        ticker = m.get("ticker", "")
+                        name = m.get("name", "")
+                        if not any(name.lower() in n or n in name.lower() for n in our_kalshi_names if n):
+                            print(f"        ✗ NOT SHOWING: {ticker} — {name}")
+
+            # Layer 3: Related futures
+            bl_detail = audit.get("bainluck_event_detail", {})
+            rf = bl_detail.get("related_futures", {})
+            if rf:
+                missing_cats = []
+                for cat in ["championship", "conference_or_pennant", "division", "make_playoffs"]:
+                    if not rf.get(cat):
+                        missing_cats.append(cat)
+                leaks = rf.get("wrong_sport_leaks", [])
+
+                if missing_cats:
+                    print(f"      Layer 3: Missing futures: {', '.join(missing_cats)}")
+                else:
+                    print(f"      Layer 3: ✓ All expected futures categories present")
+                if leaks:
+                    print(f"      Layer 3: ⚠ Wrong-sport leaks: {leaks}")
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"  SUMMARY")
+    print(f"  Layer 1 (Event Existence): {l1_found + l1_partial}/{total_l1} ({100*(l1_found+l1_partial)/max(total_l1,1):.0f}%)")
+    if deep_audits:
+        print(f"  Layer 3+4: See deep audit details above")
+    print(f"{'='*60}\n")
+
+    if save:
+        RESULTS_DIR.mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result = {
+            "ground_truth_date": gt_date,
+            "compared_at": datetime.now(timezone.utc).isoformat(),
+            "layer1": {"total": total_l1, "found": l1_found, "partial": l1_partial, "missing": l1_missing},
+            "deep_audits": len(deep_audits),
+        }
+        out_path = RESULTS_DIR / f"event_matching_{ts}.json"
+        out_path.write_text(json.dumps(result, indent=2))
+        print(f"Saved: {out_path}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -445,8 +610,7 @@ def main():
             sys.exit(1)
         run_layer2_only(args.sport)
     elif args.ground_truth:
-        print("Full four-layer audit with Manus ground truth — coming soon")
-        print("Use --self-check or --layer2-only for now")
+        run_full_audit(args.ground_truth, args.save, args.compare)
     else:
         parser.print_help()
 

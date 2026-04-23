@@ -69,6 +69,18 @@ MODULES = {
         "name": "Championship Grid Deep Audit",
         "priority": 2,
     },
+    "grid_ground_truth": {
+        "file": "grid_ground_truth.md",
+        "name": "Grid Ground Truth Capture",
+        "priority": 3,
+        "timeout": 1200,
+    },
+    "event_matching": {
+        "file": "event_matching_ground_truth.md",
+        "name": "Event Matching Ground Truth Sweep",
+        "priority": 1,
+        "timeout": 1800,
+    },
 }
 
 
@@ -183,6 +195,25 @@ def extract_report(messages: dict) -> str:
     return "\n\n".join(parts)
 
 
+GROUND_TRUTH_MODULES = {"grid_ground_truth", "event_matching"}
+
+
+def extract_json_from_report(report_text: str) -> dict | None:
+    """Extract a JSON code block from a Manus report.
+
+    Ground truth modules output structured JSON inside ```json ... ``` blocks.
+    """
+    import re
+    pattern = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
+    match = pattern.search(report_text)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
 def run_suite(module_names: list[str]):
     """Run the full audit suite."""
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -252,6 +283,20 @@ def run_suite(module_names: list[str]):
             report_path = output_dir / f"{name}.md"
             report_path.write_text(report)
             print(f"    Report: {report_path}")
+
+            # Extract structured JSON from ground truth modules
+            if name in GROUND_TRUTH_MODULES:
+                gt_data = extract_json_from_report(report)
+                if gt_data:
+                    gt_filename = {
+                        "grid_ground_truth": "grid_ground_truth.json",
+                        "event_matching": "event_matching_ground_truth.json",
+                    }.get(name, f"{name}_ground_truth.json")
+                    gt_path = output_dir / gt_filename
+                    gt_path.write_text(json.dumps(gt_data, indent=2))
+                    print(f"    Ground truth JSON: {gt_path}")
+                else:
+                    print(f"    ⚠ No JSON block found in {name} report")
         manifest["tasks"][name]["credits"] = credits
 
     # Phase 3: Generate combined report
