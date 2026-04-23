@@ -1,0 +1,232 @@
+{
+  "captured_at": "2026-04-23T17:29:41.820066+00:00",
+  "capture_method": "manual_from_debug_api",
+  "capture_notes": "Bootstrapped from debug API, manually curated to remove wrong-column markets. Tickers are authoritative.",
+  "leagues": {
+    "nba": {
+      "championship": {
+        "kalshi": {
+          "market_name": "Pro Basketball Champion",
+          "market_ticker": "KXNBA-26",
+          "outcomes": {}
+        },
+        "polymarket": {
+          "market_name": "2026 NBA Champion",
+          "market_ticker": "27830",
+          "outcomes": {}
+        },
+        "odds_api": {
+          "market_name": "NBA Championship Winner",
+          "market_ticker": "basketball_nba_championship_winner",
+          "outcomes": {}
+        }
+      },
+      "conference": {
+        "kalshi_east": {
+          "market_name": "Eastern Conference Champion",
+          "market_ticker": "KXNBAEAST-26",
+          "outcomes": {}
+        },
+        "kalshi_west": {
+          "market_name": "Western Conference Champion",
+          "market_ticker": "KXNBAWEST-26",
+          "outcomes": {}
+        },
+        "polymarket_east": {
+          "market_name": "NBA Eastern Conference Champion",
+          "market_ticker": "32755",
+          "outcomes": {}
+        },
+        "polymarket_west": {
+          "market_name": "NBA Western Conference Champion",
+          "market_ticker": "32756",
+          "outcomes": {}
+        }
+      },
+      "division": {
+        "kalshi_atlantic": {
+          "market_name": "Pro Basketball Atlantic Division Winner",
+          "market_ticker": "KXNBAATLANTIC-25",
+          "outcomes": {}
+        },
+        "kalshi_central": {
+          "market_name": "Pro Basketball Central Division Winner",
+          "market_ticker": "KXNBACENTRAL-25",
+          "outcomes": {}
+        },
+        "kalshi_southeast": {
+          "market_name": "Pro Basketball Southeast Division Winner",
+          "market_ticker": "KXNBASOUTHEAST-25",
+          "outcomes": {}
+        },
+        "kalshi_northwest": {
+          "market_name": "Pro Basketball Northwest Division Winner",
+          "market_ticker": "KXNBANORTHWEST-25",
+          "outcomes": {}
+        },
+        "kalshi_pacific": {
+          "market_name": "Pro Basketball Pacific Division Winner",
+          "market_ticker": "KXNBAPACIFIC-25",
+          "outcomes": {}
+        },
+        "kalshi_southwest": {
+          "market_name": "Pro Basketball Southwest Division Winner",
+          "market_ticker": "KXNBASOUTHWEST-25",
+          "outcomes": {}
+        }
+      },
+      "make_playoffs": {
+        "kalshi": {
+          "market_name": "Pro Basketball Playoff Qualifiers",
+          "market_ticker": "KXNBAPLAYOFF-26",
+          "outcomes": {}
+        }
+      }
+    },
+    "nhl": {
+      "championship": {
+        "kalshi": {
+          "market_name": "Pro Hockey Champion",
+          "market_ticker": "KXNHL-26",
+          "outcomes": {}
+        },
+        "polymarket": {
+          "market_name": "Stanley Cup Winner",
+          "market_ticker": "27829",
+          "outcomes": {}
+        },
+        "odds_api": {
+          "market_name": "NHL Championship Winner",
+          "market_ticker": "icehockey_nhl_championship_winner",
+          "outcomes": {}
+        }
+      },
+      "conference": {
+        "kalshi_east": {
+          "market_name": "Eastern Conference Champion",
+          "market_ticker": "KXNHLEAST-26",
+          "outcomes": {}
+        },
+        "kalshi_west": {
+          "market_name": "Western Conference Champion",
+          "market_ticker": "KXNHLWEST-26",
+          "outcomes": {}
+        }
+      },
+      "division": {
+        "kalshi_atlantic": {
+          "market_name": "Atlantic Division Winner",
+          "market_ticker": "KXNHLATLANTIC-26",
+          "outcomes": {}
+        },
+        "kalshi_metro": {
+          "market_name": "Metropolitan Division Winner",
+          "market_ticker": "KXNHLMETROPOLITAN-26",
+          "outcomes": {}
+        },
+        "kalshi_central": {
+          "market_name": "Central Division Winner",
+          "market_ticker": "KXNHLCENTRAL-26",
+          "outcomes": {}
+        },
+        "kalshi_pacific": {
+          "market_name": "Pacific Division Winner",
+          "market_ticker": "KXNHLPACIFIC-26",
+          "outcomes": {}
+        }
+      },
+      "make_playoffs": {
+        "kalshi": {
+          "market_name": "Pro Hockey Playoff Qualifiers",
+          "market_ticker": "KXNHLPLAYOFF-26",
+          "outcomes": {}
+        }
+      }
+    },
+    "mlb": {
+      "championship": {
+        "kalshi": {
+          "market_name": "Pro Baseball Champion",
+          "market_ticker": "KXMLB-26",
+          "outcomes": {}
+        },
+        "polymarket": {
+          "market_name": "World Series Winner",
+          "market_ticker": "179312",
+          "outcomes": {}
+        },
+        "odds_api": {
+          "market_name": "World Series Winner",
+          "market_ticker": "baseball_mlb_world_series_winner",
+          "outcomes": {}
+        }
+      },
+      "pennant": {
+        "kalshi_al": {
+          "market_name": "AL Champion",
+          "market_ticker": "KXMLBAL-26",
+          "outcomes": {}
+        },
+        "kalshi_nl": {
+          "market_name": "NL Champion",
+          "market_ticker": "KXMLBNL-26",
+          "outcomes": {}
+        },
+        "polymarket_al": {
+          "market_name": "AL Pennant Winner",
+          "market_ticker": "215866",
+          "outcomes": {}
+        },
+        "polymarket_nl": {
+          "market_name": "NL Pennant Winner",
+          "market_ticker": "215871",
+          "outcomes": {}
+        }
+      },
+      "division": {
+        "kalshi_aleast": {
+          "market_name": "AL East Winner",
+          "market_ticker": "KXMLBALEAST-26",
+          "outcomes": {}
+        },
+        "kalshi_alcent": {
+          "market_name": "AL Central Winner",
+          "market_ticker": "KXMLBALCENT-26",
+          "outcomes": {}
+        },
+        "kalshi_alwest": {
+          "market_name": "AL West Winner",
+          "market_ticker": "KXMLBALWEST-26",
+          "outcomes": {}
+        },
+        "kalshi_nleast": {
+          "market_name": "NL East Winner",
+          "market_ticker": "KXMLBNLEAST-26",
+          "outcomes": {}
+        },
+        "kalshi_nlcent": {
+          "market_name": "NL Central Winner",
+          "market_ticker": "KXMLBNLCENT-26",
+          "outcomes": {}
+        },
+        "kalshi_nlwest": {
+          "market_name": "NL West Winner",
+          "market_ticker": "KXMLBNLWEST-26",
+          "outcomes": {}
+        }
+      },
+      "make_playoffs": {
+        "kalshi": {
+          "market_name": "Pro Baseball Playoff Qualifiers",
+          "market_ticker": "KXMLBPLAYOFFS-26",
+          "outcomes": {}
+        },
+        "polymarket": {
+          "market_name": "MLB Playoffs",
+          "market_ticker": "340193",
+          "outcomes": {}
+        }
+      }
+    }
+  }
+}
