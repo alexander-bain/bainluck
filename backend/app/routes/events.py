@@ -2462,12 +2462,25 @@ async def get_game_markets(
 
             sport_filter = or_(*sport_conditions) if sport_conditions else True
 
+            # Accept markets tagged as game_prop OR with game-level ticker prefixes.
+            # Moneylines ("Winner?") may not get category="game_prop" but DO have
+            # game-level tickers like KXMLBGAME, KXNBAGAME, etc.
+            from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
+            game_ticker_conditions = [
+                FuturesMarket.external_id.ilike(f"{prefix}%")
+                for prefix in KALSHI_TICKER_TO_SPORT_KEY
+                if KALSHI_TICKER_TO_SPORT_KEY[prefix] == sport_key
+            ]
+            category_or_ticker = [FuturesMarket.category == "game_prop"]
+            if game_ticker_conditions:
+                category_or_ticker.extend(game_ticker_conditions)
+
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
                     FuturesMarket.event_id.is_(None),
                     status_filter,
-                    FuturesMarket.category == "game_prop",
+                    or_(*category_or_ticker),
                     sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),

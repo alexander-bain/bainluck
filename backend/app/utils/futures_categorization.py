@@ -414,9 +414,21 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
     return None
 
 
+_GAME_MATCHUP_WINNER_RE = re.compile(
+    r'^(.+?)\s+(?:at|vs\.?|@)\s+(.+?)\s+(?:Winner|winner)\??$',
+)
+
+
 def is_game_prop(market_name: str) -> bool:
-    """Check if a market name looks like a game prop (Team at Team: Stat)."""
-    return _GAME_PROP_RE.match(market_name) is not None
+    """Check if a market name looks like a game prop or game moneyline.
+
+    Matches both "Team vs Team: Stat" and "Team vs Team Winner?" formats.
+    """
+    if _GAME_PROP_RE.match(market_name) is not None:
+        return True
+    if _GAME_MATCHUP_WINNER_RE.match(market_name) is not None:
+        return True
+    return False
 
 
 # Pattern: "Team at/vs Team" (bare matchup without stat, typical Kalshi format)
