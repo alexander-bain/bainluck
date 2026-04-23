@@ -407,14 +407,6 @@ struct RelatedFuturesView: View {
                         .font(.headline)
                         .fontWeight(.semibold)
                     Spacer()
-                    Text("\(totalCount)")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(Capsule())
                 }
 
                 // AI Summary
@@ -436,21 +428,20 @@ struct RelatedFuturesView: View {
                 if awayChamp != nil || homeChamp != nil {
                     HStack(alignment: .top, spacing: 8) {
                         if let f = awayChamp {
-                            ChampionshipCard(future: f, teamColor: aColor)
+                            ChampionshipCard(future: f, teamColor: aColor, teamName: awayTeam)
                         } else {
                             Spacer()
                         }
                         if let f = homeChamp {
-                            ChampionshipCard(future: f, teamColor: hColor)
+                            ChampionshipCard(future: f, teamColor: hColor, teamName: homeTeam)
                         } else {
                             Spacer()
                         }
                     }
                 }
 
-                // ── Level 3: Game Markets ──
+                // Game Markets
                 if !mergedStatProps.isEmpty || !mergedGames.isEmpty {
-                    SectionDividerView(level: 3, label: "Game Markets", count: mergedStatProps.count + mergedGames.count)
 
                     // Stat Props (merged across teams)
                     if !mergedStatProps.isEmpty {
@@ -485,22 +476,10 @@ struct RelatedFuturesView: View {
                     !mergedNovelty.isEmpty
 
                 if hasSeasonContext {
-                    SectionDividerView(level: 4, label: "Season Context")
-
                     // Playoff Path
                     PlayoffPathPairView(
                         homeFutures: homeCats.championships,
                         awayFutures: awayCats.championships,
-                        homeTeam: homeTeam,
-                        awayTeam: awayTeam,
-                        homeColor: hColor,
-                        awayColor: aColor
-                    )
-
-                    // Season Stats (win totals etc) — side-by-side hero cards
-                    WinTotalsPairView(
-                        homeStats: homeCats.seasonStats,
-                        awayStats: awayCats.seasonStats,
                         homeTeam: homeTeam,
                         awayTeam: awayTeam,
                         homeColor: hColor,
@@ -563,15 +542,6 @@ struct RelatedFuturesView: View {
                     }
                 }
 
-                // Footer
-                HStack {
-                    Spacer()
-                    Text("\(totalCount) related futures from multiple sources")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Spacer()
-                }
-                .padding(.top, 4)
             }
             .padding()
             .background(Color.cardBackground)
@@ -1065,14 +1035,20 @@ private struct NoveltyCardView: View {
 private struct ChampionshipCard: View {
     let future: RelatedFuture
     let teamColor: Color
+    var teamName: String = ""
+
+    private var shortTeam: String {
+        teamName.split(separator: " ").last.map(String.init) ?? teamName
+    }
 
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text((future.marketTier ?? 0) <= 1 ? "\u{1F3C6} Title" : "\u{1F3C6} Conf")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                    Text(shortTeam)
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(teamColor)
                     Spacer()
                     SourceBadge(source: future.source)
                 }
@@ -1083,7 +1059,6 @@ private struct ChampionshipCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // Big probability + movement + rank
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -1092,11 +1067,6 @@ private struct ChampionshipCard: View {
                                 .monospacedDigit()
                                 .foregroundStyle(teamColor)
                             MovementPill(change: future.probabilityChange24h)
-                        }
-                        if let odds = future.americanOdds {
-                            Text(formatOdds(odds))
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
