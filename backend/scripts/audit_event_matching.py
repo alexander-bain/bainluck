@@ -744,10 +744,37 @@ def run_l4_deep(sport: str):
         missing_types = expected - kalshi_event_types
 
         if missing_types:
-            print(f"    ✗ Missing market types: {', '.join(sorted(missing_types))}")
-            print(f"    Present types: {', '.join(sorted(kalshi_event_types)) or 'none'}")
+            print(f"    Kalshi: ✗ Missing: {', '.join(sorted(missing_types))}")
+            print(f"      Present: {', '.join(sorted(kalshi_event_types)) or 'none'}")
         else:
-            print(f"    ✓ All expected market types present ({len(kalshi_event_types)} types)")
+            print(f"    Kalshi: ✓ All expected types ({len(kalshi_event_types)})")
+
+        # Polymarket coverage
+        our_poly = [i for i in our_items if i.get("source") == "polymarket"]
+        poly_market_names = sorted(set(i.get("market_name", "") for i in our_poly))
+        has_poly_moneyline = any(
+            "vs" in n.lower() or " at " in n.lower()
+            for n in poly_market_names
+        )
+
+        # Also check related futures for Polymarket season markets
+        rf = get_related_futures(event_id)
+        poly_rf = 0
+        if rf:
+            for side in ["home_team_futures", "away_team_futures"]:
+                poly_rf += sum(1 for f in rf.get(side, []) if f.get("source") == "polymarket")
+
+        poly_status = []
+        if our_poly:
+            poly_status.append(f"{len(poly_market_names)} game mkts")
+        if has_poly_moneyline:
+            poly_status.append("moneyline ✓")
+        if poly_rf:
+            poly_status.append(f"{poly_rf} futures")
+        if not our_poly and not poly_rf:
+            poly_status.append("none found")
+
+        print(f"    Polymarket: {', '.join(poly_status)}")
 
     print()
 
