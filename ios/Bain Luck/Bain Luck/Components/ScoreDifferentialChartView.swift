@@ -107,8 +107,21 @@ struct ScoreDifferentialChartView: View {
         let actualDiff: Double?
     }
 
+    private var gameEndDate: Date? {
+        if let ca = history.completedAt, let d = ca.asDate {
+            return d.addingTimeInterval(120)
+        }
+        guard eventStatus == "completed" || eventStatus == "closed" else { return nil }
+        // Fallback: last ESPN point
+        if let espn = history.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
+            return d.addingTimeInterval(120)
+        }
+        return nil
+    }
+
     private func buildDataPoints() -> [DiffPoint] {
         let startDate = isGameStarted ? gameStartDate : nil
+        let endDate = gameEndDate
 
         // Projected spread from odds history (projected home score - projected away score)
         var projectedByMinute: [Int: DiffPoint] = [:]
@@ -168,6 +181,11 @@ struct ScoreDifferentialChartView: View {
         }
 
         merged.sort { $0.date < $1.date }
+
+        // Clip at game end
+        if let endDate {
+            return merged.filter { $0.date <= endDate }
+        }
         return merged
     }
 
