@@ -290,11 +290,18 @@ struct ScoreDifferentialChartView: View {
 
     private func normalizePeriodLabel(_ raw: String) -> String {
         let s = raw.trimmingCharacters(in: .whitespaces)
-        if s.hasPrefix("Top ") || s.hasPrefix("Middle ") || s.hasPrefix("Bottom ") || s.hasPrefix("End ") {
-            let parts = s.split(separator: " ")
-            if parts.count >= 2 { return String(parts.last!) }
+        let lower = s.lowercased()
+        // Baseball: "Top 3rd" / "Middle 1st" / "Bottom 5th" → "3" / "1" / "5"
+        if lower.hasPrefix("top ") || lower.hasPrefix("middle ") || lower.hasPrefix("bottom ") || lower.hasPrefix("end ") || lower.hasPrefix("mid ") {
+            let digits = s.filter(\.isNumber)
+            if !digits.isEmpty { return digits }
         }
+        // Quarters
         if s.hasPrefix("Q") || s.hasPrefix("P") || s.hasPrefix("OT") { return s }
+        if lower == "1st" { return "Q1" }
+        if lower == "2nd" { return "Q2" }
+        if lower == "3rd" { return "Q3" }
+        if lower == "4th" { return "Q4" }
         if s == "1st Half" || s == "1H" { return "1H" }
         if s == "2nd Half" || s == "2H" { return "2H" }
         if s == "Halftime" { return "HT" }

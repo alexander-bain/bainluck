@@ -701,13 +701,20 @@ private struct SeasonStatRowView: View {
     let future: RelatedFuture
     let teamColor: Color
 
+    private var shortLabel: String {
+        let label = future.cleanLabel ?? future.marketName
+        // Strip league prefix — context is already clear from the team header
+        return label
+            .replacingOccurrences(of: #"^(NBA|NFL|NHL|MLB|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
+    }
+
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
             HStack(spacing: 6) {
-                Text(future.cleanLabel ?? future.marketName)
+                Text(shortLabel)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 Spacer()
                 if let prob = future.probability {
                     Text(formatProbability(prob))
@@ -748,7 +755,16 @@ private struct WinTotalsPairView: View {
 
     private func statColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
         let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
-        let sorted = futures.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+        // Dedup by cleanLabel — keep highest probability per label
+        var seenLabels: Set<String> = []
+        let sorted = futures
+            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+            .filter {
+                let key = $0.cleanLabel ?? $0.marketName
+                guard !seenLabels.contains(key) else { return false }
+                seenLabels.insert(key)
+                return true
+            }
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 RoundedRectangle(cornerRadius: 2)
@@ -934,7 +950,18 @@ private struct GameMarketsPairView: View {
     let awayColor: Color
 
     var body: some View {
-        let merged = (awayGames + homeGames)
+        // Filter out resolved/boring markets (>95% or <5%)
+        let meaningful = (awayGames + homeGames)
+            .filter { ($0.probability ?? 0) > 0.05 && ($0.probability ?? 0) < 0.95 }
+        // Dedup by cleanLabel
+        var seen: Set<String> = []
+        let deduped = meaningful.filter {
+            let key = $0.cleanLabel ?? $0.outcomeName
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+        let merged = deduped
             .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
             .prefix(8)
 

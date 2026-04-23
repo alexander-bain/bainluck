@@ -1008,8 +1008,8 @@ struct OddsChartView: View {
             return "\(digits)H"
         }
 
-        // Baseball innings: "Top 3rd" / "Bottom 3rd" / "Mid 3rd" → "3"
-        if let match = s.range(of: #"^(?:top|bottom|mid|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
+        // Baseball innings: "Top 3rd" / "Bottom 3rd" / "Middle 3rd" → "3"
+        if let match = s.range(of: #"^(?:top|bottom|mid|middle|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
             let digits = s[match].filter(\.isNumber)
             return digits
         }
