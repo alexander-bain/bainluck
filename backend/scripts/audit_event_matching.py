@@ -211,13 +211,13 @@ EXPECTED_MARKET_TYPES: dict[str, list[tuple[str, re.Pattern]]] = {
         ("championship", re.compile(r"World Series Champion", re.I)),
         ("pennant", re.compile(r"(AL|NL|American League|National League) Champion", re.I)),
         ("division", re.compile(r"(AL|NL)\s+(East|West|Central)\s+Winner", re.I)),
-        ("make_playoffs", re.compile(r"Make.*Playoffs", re.I)),
+        ("make_playoffs", re.compile(r"Make.*Playoffs|Playoff Qualif", re.I)),
     ],
     "basketball_nba": [
         ("championship", re.compile(r"NBA Champ", re.I)),
         ("conference", re.compile(r"(Eastern|Western) Conference Champion", re.I)),
         ("division", re.compile(r"Division", re.I)),
-        ("make_playoffs", re.compile(r"Make.*Playoffs", re.I)),
+        ("make_playoffs", re.compile(r"Make.*Playoffs|Playoff Qualif", re.I)),
     ],
     "icehockey_nhl": [
         ("championship", re.compile(r"Stanley Cup", re.I)),
@@ -249,6 +249,7 @@ def audit_layer3_for_event(event: dict) -> Layer3Report:
     if not rf:
         report.missing.append("related_futures_endpoint_failed")
         return report
+
 
     expected = EXPECTED_MARKET_TYPES.get(sport, [])
 
