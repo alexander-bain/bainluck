@@ -132,6 +132,32 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player AH" etc. at 100% with 3400% y-axis. Outcome names are abbreviations instead of real names, probabilities are broken. Likely a Polymarket data parsing issue.
 **Files:** `tasks/polymarket.py` (outcome name parsing), `routes/futures.py` (display)
 
+### 0f-4. Event Detail Page Quality Issues (April 23 live audit)
+
+Spotted during Yankees vs Red Sox live game (event 14594074):
+
+**0f-4a. Player prop monotonicity violation (BUG — wrong data)**
+Aaron Judge shows lower odds for 1+ hits than 5+ hits. P(1+) must always be >= P(2+) >= P(3+) etc. Either Kalshi data is wrong, or we're mapping thresholds to the wrong probabilities. This shows clearly incorrect data to users.
+**Files:** `routes/events.py` (game-markets outcome ordering), `tasks/kalshi.py` (outcome parsing)
+
+**0f-4b. Score differential chart empty after 1st inning**
+The actual score diff line disappears after the first inning — only projected spread shows. ESPN live data may not be flowing for score updates, or the chart is only plotting points where the score CHANGES.
+**Files:** Frontend `components/ScoreDifferentialChart.tsx`, backend ESPN sync
+
+**0f-4c. Player props: no pre-game vs current comparison**
+Cards show current probabilities but not what they were pre-game or actual results so far. During a live game, "was 22% pre-game, now 45%" would be much more useful context. Need pre-game snapshot + actual stat tracking.
+**Files:** Frontend `components/PlayerPropsCardView`, backend game-markets endpoint
+
+**0f-4d. Player award headshots missing**
+The AL MVP section in "Bigger Picture" shows initials (AA, JD) instead of player headshot images. Roster data has headshots but they're not being passed to the awards display.
+**Files:** `routes/events.py` (related futures player enrichment), frontend Related Futures component
+
+**0f-4e. Slow headshot loading (~60s)**
+Player prop cards show initials for ~60 seconds before headshots load. Either the roster data fetch is slow or headshot URLs need preloading.
+**Files:** Frontend image loading, backend roster sync timing
+
+---
+
 ### 0f-3a. Player Props: Team Filter Bug (SOX/YAN pills) — CODE FIX READY, NEEDS DEPLOY
 
 **Problem:** Clicking SOX or YAN team filter pills in the Player Props section causes ALL cards to disappear.
