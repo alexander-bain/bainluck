@@ -1,4 +1,6 @@
-# CLAUDE.md - Project Guidelines for Claude Code
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -14,15 +16,20 @@
 
 The core magic of Bain Luck is **perfect semantic understanding** of every event, market, and source — then grouping and matching them so the user sees one unified view. This is the hardest technical problem in the product and the biggest leverage point.
 
-There are 3 layers of matching, each with its own measurement:
+There are 4 layers of matching, measured by `scripts/audit_event_matching.py`:
 
-| Layer | What it does | Measurement | Target | Monitor |
-|-------|-------------|-------------|--------|---------|
-| **Event ↔ Source** | Links ESPN, StatPal, Odds API data to the same game | Source count per event (admin dashboard) | >3 sources on live events | `/api/admin/dashboard` |
-| **Market ↔ Event** | Links Kalshi/Polymarket game props to event records | Link rate by sport (link-rate endpoint) | >80% for major sports | `/api/admin/prediction-markets/link-rate` |
-| **Market ↔ Grid** | Places championship/futures markets in correct grid cells | Grid fill rate (playoffs endpoint) | >90% per column | `/api/playoffs/{league}` |
+| Layer | What it measures | Audit | Status (April 24) |
+|-------|-----------------|-------|-------------------|
+| **L1: Event Existence** | Every game exists with all sources | `--self-check` | ✅ 100% |
+| **L2: Market → Event** | Game markets linked via event_id | `--self-check` | ✅ 100% |
+| **L3: Futures Surfacing** | Season futures on event detail pages | `--self-check` | ✅ 100% (MLB/NBA/NHL) |
+| **L4: Market Completeness** | Every market type showing per game | `--l4-deep` | Needs live verification |
 
-**Philosophy**: If we're at 40% on a metric, we need to distinguish "40% of markets that SHOULD match" vs "40% including markets that CAN'T match (e.g., no event exists)". The link-rate endpoint already filters to sports-only markets. **Any metric below target for markets that SHOULD match is a bug, not a feature gap.**
+Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
+
+**Hill-climb playbook**: `docs/hill-climb-guide.md` — measure → fix biggest bucket → re-measure → repeat.
+
+**Philosophy**: Any metric below target for markets that SHOULD match is a bug, not a feature gap. Distinguish "our bug" from "upstream gap" (Kalshi liquidity, Polymarket coverage).
 
 ---
 
@@ -44,7 +51,7 @@ There are 3 layers of matching, each with its own measurement:
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,315 tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,321 tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -67,7 +74,7 @@ There are 3 layers of matching, each with its own measurement:
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,315 tests as of April 22)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,321 tests as of April 23)
 - **Frontend tests**: `cd frontend && npx jest`
 
 ### Key Admin URLs
@@ -113,6 +120,12 @@ bainluck/
 **Prediction Market Matching** (`tasks/prediction_market_matching.py`): Hourly task links Kalshi/Polymarket game markets to events. Three-phase: Link (Pass 1 ticker scan + Pass 2 general scan) → Re-validate (Phase 1.5) → Snapshot writing (Phase 2). Per-market commit to avoid deadlocks with live polling task. Link rate tracked at `/api/admin/prediction-markets/link-rate`.
 
 **Source-Agnostic Resilience**: System works when any single source goes dark (validated during March 2026 Odds API quota exhaustion).
+
+**Prediction Market Pipeline** (Kalshi/Polymarket → event detail page):
+1. `poll_kalshi_markets` (every 2h) / `poll_polymarket_markets` (every 1h) — ingest ALL markets (minus crypto). Both paginate unfiltered.
+2. `match_prediction_markets` (every 15 min) — link game markets to events via `event_id` FK. Pass 1: Kalshi ticker scan. Pass 2: Polymarket name matching.
+3. `poll_live_prediction_markets` (every 2 min, realtime queue) — live price updates for linked markets.
+4. Game-markets endpoint: loads via `event_id` FK + fallback (unlinked markets matching both team names + game ticker prefix or `category="game_prop"`).
 
 ---
 
@@ -198,6 +211,9 @@ team_identity_mapping — Cross-source team identity index
 13. **iOS ViewModels: NO `@MainActor` on class** — only on individual async methods
 14. **Python 3.12+ redundant imports cause UnboundLocalError** — check task files
 15. **Safari breaks Firebase Google Auth** — use GIS + backend custom token fallback
+16. **`compute_market_tier()` must check name patterns BEFORE `game_prop` category** — Kalshi labels some season markets (division winners, playoff qualifiers) as `category="game_prop"`. Name patterns ("Division Winner", "Make Playoffs") are more reliable than the category field.
+17. **Kalshi market backfill must use `status=None`** — live game markets have `status="active"` on Kalshi, not `"open"`. The backfill query for events with 0 nested markets must omit the status filter to pick up active markets.
+18. **Kalshi threshold outcomes ("2+", "Aaron Judge: 1+") are OVER probabilities** — don't invert them. Only invert outcomes that explicitly start with "Under" or equal "No".
 
 ---
 
@@ -260,3 +276,4 @@ When fixing ANY data quality, matching, or display issue:
 | Architecture | `docs/architecture-reference.md` |
 | Gotchas (full) | `docs/gotchas-reference.md` |
 | Quality audit | `docs/quality-audit.md` |
+| Hill-climb guide | `docs/hill-climb-guide.md` |
