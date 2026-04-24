@@ -680,7 +680,7 @@ interface LinkRateSport {
   open_link_rate: number;
 }
 interface LinkRateSource {
-  totals: { total: number; linked: number; link_rate_pct: number; open_total: number; open_linked: number };
+  totals: { total: number; linked: number; link_rate_pct: number; open_total: number; open_linked: number; open_link_rate_pct: number };
   by_sport: LinkRateSport[];
 }
 interface LinkRateData {
@@ -709,19 +709,19 @@ function LinkRateCard({ secret }: { secret: string }) {
     <div className="bg-surface-card rounded-xl border border-surface-border p-4">
       <h3 className="text-sm font-semibold text-text-primary mb-1">Game Market Link Rate</h3>
       <p className="text-xs text-text-muted mb-3">
-        % of sports game markets linked to events (excludes politics/crypto/weather)
+        % of open sports game markets linked to events (excludes politics/crypto/weather)
       </p>
       <div className="grid grid-cols-2 gap-3 mb-3">
         {(["kalshi", "polymarket"] as const).map((src) => {
           const s = data[src];
           return (
             <div key={src} className="text-center">
-              <span className={"text-2xl font-bold " + rateColor(s.totals.link_rate_pct)}>
-                {s.totals.link_rate_pct}%
+              <span className={"text-2xl font-bold " + rateColor(s.totals.open_link_rate_pct)}>
+                {s.totals.open_link_rate_pct}%
               </span>
               <div className="text-xs text-text-muted capitalize">{src}</div>
               <div className="text-micro text-text-muted">
-                {s.totals.linked.toLocaleString()} / {s.totals.total.toLocaleString()}
+                {s.totals.open_linked.toLocaleString()} / {s.totals.open_total.toLocaleString()}
               </div>
             </div>
           );
@@ -733,8 +733,8 @@ function LinkRateCard({ secret }: { secret: string }) {
           <div key={src} className="mb-3">
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-medium text-text-secondary capitalize">{src}</span>
-              <span className={"text-xs font-bold " + rateColor(s.totals.link_rate_pct)}>
-                {s.totals.link_rate_pct}%
+              <span className={"text-xs font-bold " + rateColor(s.totals.open_link_rate_pct)}>
+                {s.totals.open_link_rate_pct}%
               </span>
             </div>
             <div className="space-y-0.5">
@@ -745,13 +745,13 @@ function LinkRateCard({ secret }: { secret: string }) {
                     <div
                       className={
                         "h-full rounded-full " +
-                        (sp.link_rate >= 80 ? "bg-green-500/60" : sp.link_rate >= 50 ? "bg-yellow-500/60" : "bg-red-500/60")
+                        (sp.open_link_rate >= 80 ? "bg-green-500/60" : sp.open_link_rate >= 50 ? "bg-yellow-500/60" : "bg-red-500/60")
                       }
-                      style={{ width: barWidth(sp.link_rate) + "%" }}
+                      style={{ width: barWidth(sp.open_link_rate) + "%" }}
                     />
                   </div>
-                  <span className={"w-10 text-right font-mono " + rateColor(sp.link_rate)}>
-                    {sp.link_rate}%
+                  <span className={"w-10 text-right font-mono " + rateColor(sp.open_link_rate)}>
+                    {sp.open_link_rate}%
                   </span>
                 </div>
               ))}

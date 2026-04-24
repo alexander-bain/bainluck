@@ -3584,6 +3584,7 @@ async def prediction_market_link_rate(
             "totals": {
                 **kalshi_totals,
                 "link_rate_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
+                "open_link_rate_pct": round(kalshi_totals["open_linked"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
             },
             "by_sport": kalshi_by_sport,
         },
@@ -3591,6 +3592,7 @@ async def prediction_market_link_rate(
             "totals": {
                 **poly_totals,
                 "link_rate_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
+                "open_link_rate_pct": round(poly_totals["open_linked"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
             },
             "by_sport": poly_by_sport,
         },

@@ -44,6 +44,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
 | `docs/completed-features.md` | Shipped features log | When features ship |
+| `docs/design-system.md` | Visual design system: colors, type, motion, voice, components | When design tokens or patterns change |
 
 ---
 
