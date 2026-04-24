@@ -150,9 +150,8 @@ Root cause: ESPN sync task only wrote 2 data points for the entire Yankees-Red S
 Cards show current probabilities but not what they were pre-game or actual results so far. During a live game, "was 22% pre-game, now 45%" would be much more useful context. Need pre-game snapshot + actual stat tracking.
 **Files:** Frontend `components/PlayerPropsCardView`, backend game-markets endpoint
 
-**0f-4d. Player award headshots missing**
-The AL MVP section in "Bigger Picture" shows initials (AA, JD) instead of player headshot images. Roster data has headshots but they're not being passed to the awards display.
-**Files:** `routes/events.py` (related futures player enrichment), frontend Related Futures component
+**~~0f-4d. Player award headshots missing~~ ✅ FIXED (April 23)**
+Roster `player_metadata` was skipped for completed events. Now builds headshot lookup always (cheap dict), while still skipping expensive ILIKE patterns for completed games. Award outcomes now match against roster data for headshot enrichment.
 
 **0f-4e. Slow headshot loading (~60s)**
 Player prop cards show initials for ~60 seconds before headshots load. Either the roster data fetch is slow or headshot URLs need preloading.
