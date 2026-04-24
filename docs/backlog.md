@@ -67,20 +67,23 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
   7. Audit regex: "Playoff Qualifiers" pattern for Kalshi's alternate naming
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
-- Status: ✅ **100% for all markets with actual data.** L4 deep audit (`--l4-deep`) checks required + bonus types per sport.
-- **Key finding**: We ingest EVERYTHING from Kalshi + Polymarket (minus crypto). Both polling tasks paginate unfiltered. No ingestion gap.
-- **Per-game coverage variance RESOLVED**: Some games show fewer market types (e.g., 5 vs 13) because Kalshi markets exist but have zero liquidity (no bids/asks/trades). We correctly skip outcomes without pricing. Not a bug — upstream Kalshi liquidity gap.
-- **Kalshi L4**: ✅ All required types present across MLB, NBA, NHL. Bonus types (spread/total/F5 for MLB) show when Kalshi has liquidity.
-- **Polymarket L4**: ✅ Game moneylines for NBA (playoffs). Season futures for all sports. No game-level markets for regular season MLB/NHL (expected).
-- **Fixes shipped (April 23, 8 commits):**
+- Status: **NEEDS LIVE VERIFICATION.** Fixes deployed but not yet verified on a live game.
+- **Key finding**: We ingest EVERYTHING from Kalshi + Polymarket (minus crypto). No ingestion gap. Kalshi creates game markets 2-3 days before games. Discovery is NOT the bottleneck.
+- **Root cause (confirmed)**: Kalshi market backfill queried `status=open` but live game markets have `status=active`. This prevented spread/total/F5/moneyline outcomes from being populated during games, even though the FuturesMarket records existed. **Fixed** — backfill now uses `status=None` (no filter).
+- **Kalshi L4**: Required types (player props) ✅ present. Bonus types (spread/total/F5/moneyline) need live game verification — the backfill fix should make them appear when Kalshi has liquidity.
+- **Polymarket L4**: ✅ Game moneylines for NBA playoffs. Season futures for all sports.
+- **VERIFY April 24**: During the first live MLB game, check if spread/total/F5 appear on the event page and if Kalshi shows as a source on the win probability chart.
+- **Fixes shipped (April 23, 10 commits):**
   1. `is_game_prop()` detects "Team vs Team Winner?" moneyline format
   2. Game-markets fallback uses Kalshi ticker prefixes, not just `category="game_prop"`
   3. NULL-status markets included for live events
   4. Per-tier season market loading (100/tier) prevents crowding
   5. Kalshi market backfill: removed `status=open` filter (missed `active` markets)
-  6. Kalshi polling increased from every 4h to every 1h
-  7. Polymarket coverage added to L4 audit
-  8. L4 audit distinguishes required vs bonus (liquidity-dependent) market types
+  6. Kalshi polling: 2h (markets posted days early, 4h was fine for discovery — backfill bug was the real issue)
+  7. Matching task: every 15 min (was hourly) for faster linking
+  8. Polymarket coverage added to L4 audit
+  9. L4 audit distinguishes required vs bonus (liquidity-dependent) market types
+  10. Bare matchup moneyline detection in audit
 
 **Design needs** (market types now surfacing that may need frontend work):
 | Type | Design Status | Notes |
