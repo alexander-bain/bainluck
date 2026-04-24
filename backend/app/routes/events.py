@@ -2570,6 +2570,8 @@ async def get_game_markets(
                     "outcome_name": o.name,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
+                    "_market_id": market.id,
+                    "_external_id": market.external_id,
                 })
 
         elif market_type == "player_prop":
