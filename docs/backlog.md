@@ -548,6 +548,131 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ---
 
+## PREQ Sprint — Performance, Reliability, Efficiency, Quality
+
+Dedicated pass to make everything faster, more reliable, and higher quality. Ordered by impact-to-effort ratio.
+
+### Phase 1: Quick Wins (ship in one session)
+
+#### PREQ-1. Request Timing Middleware
+**What:** Add FastAPI middleware that logs slow requests (>500ms) and sets `X-Response-Time` header on every response. Gives us real latency data instead of guessing.
+**Files:** `backend/app/main.py`
+**Risk:** Middleware runs on every request — adds ~0.1ms overhead per request.
+**Mitigation:** Only the logging branch (>500ms) does string formatting. Header assignment is negligible. No DB or I/O in the hot path.
+**Parallel Safety:** Green
+
+#### PREQ-2. API Client Timeout
+**What:** Add 15s `AbortController` timeout to `apiFetch()` in the frontend. Prevents infinite white-screen hangs when the API is slow or unreachable.
+**Files:** `frontend/lib/api.ts` — `apiFetch()`
+**Risk:** Aggressive timeout could abort legitimately slow endpoints (admin audit, data quality check).
+**Mitigation:** 15s is generous for user-facing endpoints (feed, events, playoffs). Admin endpoints already have their own fetch wrappers. Could add per-call timeout override parameter.
+**Parallel Safety:** Green
+
+#### PREQ-3. HTTP Cache-Control Headers
+**What:** Add `Cache-Control` response headers so browsers cache stable data:
+- `/api/feed` — `max-age=10` (changes frequently)
+- `/api/events/{id}` (completed) — `max-age=300` (5 min, data frozen)
+- `/api/events/{id}` (live) — `max-age=5`
+- `/api/playoffs/{sport}` — `max-age=60`
+- `/api/events/{id}/history` — `max-age=30`
+**Files:** `backend/app/routes/feed.py`, `events.py`, `playoffs.py`
+**Risk:** Stale data shown to users if cache TTL is too long. Live game data could be 5-10s behind.
+**Mitigation:** Conservative TTLs (5-10s for live, 60s for grids). Users already see 30s refresh intervals on the frontend (SWR), so 5-10s server cache is invisible. `Vary: Authorization` header ensures authenticated vs anon responses aren't cross-cached. Completed events are truly immutable — 5 min is safe.
+**Parallel Safety:** Yellow (touches multiple route files)
+
+#### PREQ-4. Connection Pool Tuning
+**What:** Increase SQLAlchemy connection pool from `pool_size=10, max_overflow=15` to `pool_size=20, max_overflow=20`. Under concurrent load (5 users × 8 queries = 40 connections), current pool exhausts and requests queue.
+**Files:** `backend/app/services/database.py`
+**Risk:** Exceeding Heroku Postgres connection limit causes hard errors (connection refused).
+**Mitigation:** Check `heroku pg:info` for plan limit first (Standard-0 = 120 connections). With 20+20=40 max from web dyno, plus 4 realtime workers + 2 background workers (each with their own sync connections), we're well under 120. Monitor with `heroku pg:info | grep Connections` after deploy.
+**Parallel Safety:** Green
+
+#### PREQ-5. SWR Refresh Interval Tuning
+**What:** Reduce unnecessary polling:
+- My Stuff page: 15s → 60s (pins don't change that fast)
+- Grouped feed: 60s → 120s (or merge into main feed response)
+- Add `dedupingInterval: 5000` globally to prevent duplicate requests when components remount
+**Files:** `frontend/app/my-stuff/page.tsx`, `frontend/app/page.tsx`
+**Risk:** User sees stale data on My Stuff for up to 60s after pinning something elsewhere.
+**Mitigation:** SWR still revalidates on focus and on mount. Manual pin/unpin actions trigger immediate `mutate()` calls already. The 15s interval was burning API quota for no visible benefit.
+**Parallel Safety:** Green
+
+### Phase 2: Backend Performance
+
+#### PREQ-6. Feed Endpoint Redis Caching
+**What:** Add Redis-backed response cache to `/api/feed` with 10-15s TTL. Key by `(sport_filter, auth_state)`. Uses existing Redis connection from Celery. Most expensive endpoint (6-10 queries, complex scoring) — serves identical results to all anonymous users.
+**Files:** `backend/app/routes/feed.py`
+**Risk:** (1) Cache serving stale data during rapid odds changes. (2) Redis connection failure blocks feed. (3) Cache key collision between users with different preferences.
+**Mitigation:** (1) 10-15s TTL means data is at most 15s stale — same as current SWR interval. (2) Wrap Redis in try/except — on failure, fall through to DB query (graceful degradation). (3) Key includes user ID for authenticated users; anonymous users share cache (acceptable — they all see the same feed).
+**Parallel Safety:** Yellow (touches feed.py)
+
+#### PREQ-7. N+1 Query Audit
+**What:** Resolve top Sentry N+1 warnings. Search for `await db.execute(select(` inside loops. Replace with `selectinload()` eager loading or batch queries.
+**Files:** `routes/feed.py`, `routes/events.py`, `routes/playoffs.py`
+**Risk:** Eager loading can fetch too much data if relationships are large (e.g., loading all outcomes for all futures markets).
+**Mitigation:** Use `selectinload()` (separate IN query) not `joinedload()` (cartesian product). Profile before/after with PREQ-1 timing middleware. Only fix patterns that Sentry flags as high-frequency (>100 events).
+**Parallel Safety:** Yellow (one file at a time)
+
+### Phase 3: Frontend Performance
+
+#### PREQ-8. Dynamic Imports for Heavy Libraries
+**What:** Recharts (~200KB) and framer-motion (~100KB) are loaded on every page. Use `next/dynamic` with `{ ssr: false }` for chart components so they're only loaded on pages that use them.
+**Files:** Components importing Recharts: `OddsChart.tsx`, `EvolutionChart.tsx`, `FuturesChart.tsx`, `ScoreDifferentialChart.tsx`, `TournamentChart.tsx`
+**Risk:** Flash of empty space while chart loads asynchronously. SSR output won't include charts (but we're already client-side only with `"use client"`).
+**Mitigation:** Add a loading skeleton (`<div className="h-48 bg-surface-elevated animate-pulse rounded" />`) as the `loading` prop to `dynamic()`. Since these components already use `"use client"`, SSR isn't affected.
+**Parallel Safety:** Green
+
+#### PREQ-9. Image Optimization
+**What:** Audit `<img>` tags for team logos and replace with Next.js `<Image>` for automatic lazy loading, sizing, and format optimization. Add `loading="lazy"` for below-fold images.
+**Files:** `frontend/components/EntityImage.tsx`, `FeedCard.tsx`, any component using `<img src={espnCdn}>`
+**Risk:** Next.js Image requires `width`/`height` or `fill` prop — could break layout if sizes aren't specified correctly. ESPN CDN domain needs to be in `next.config` `images.remotePatterns`.
+**Mitigation:** Use `fill` with `sizes` prop for dynamic team logos. Check `next.config` already allows `a.espncdn.com` (likely does since logos already load). Test on a single component before bulk migration.
+**Parallel Safety:** Green
+
+### Phase 4: Reliability & Quality
+
+#### PREQ-10. Health Endpoint Enhancement
+**What:** Enhance `/health` to check DB connectivity, Redis connectivity, and last successful poll timestamp per source. Returns structured health object for monitoring.
+**Files:** `backend/app/routes/health.py`
+**Risk:** Health check itself could be slow if DB/Redis are unhealthy (timeout waiting for connection).
+**Mitigation:** Add 2s timeout on DB `SELECT 1` and Redis `PING`. If either times out, return `degraded` status with the failing component identified. Don't let the health check hang.
+**Parallel Safety:** Green
+
+#### PREQ-11. Graceful Source Degradation
+**What:** Wrap each source enrichment step in feed/event endpoints with try/except. If ESPN is down, still return betting + prediction market data. If Kalshi is down, still return Polymarket + Odds API.
+**Files:** `backend/app/routes/feed.py`, `routes/events.py`
+**Risk:** Silently swallowing errors could mask real bugs.
+**Mitigation:** Log each source failure at WARNING level with source name + error. Add a `_degraded_sources` field to the API response so the frontend could show "ESPN data unavailable" if needed. Already validated this pattern during March 2026 Odds API outage.
+**Parallel Safety:** Yellow
+
+#### PREQ-12. Sentry Noise Cleanup
+**What:** Resolve top 3 N+1 warnings by event count (covered by PREQ-7). For remaining low-frequency warnings (WorkerLost/SIGTERM, Redis transient drops), configure Sentry ignore rules so real errors surface faster.
+**Files:** `backend/app/main.py` (Sentry config)
+**Risk:** Over-filtering could hide real errors.
+**Mitigation:** Only ignore specific known-harmless error types: `WorkerLost` (normal recycling), `TimeLimitExceeded` (Polymarket poll — already known), transient Redis `ConnectionError`. Never ignore 500s or unhandled exceptions.
+**Parallel Safety:** Green
+
+### Implementation Order
+
+| # | Item | Effort | Impact | Risk Level |
+|---|------|--------|--------|------------|
+| PREQ-1 | Request timing middleware | 15 min | Unlocks data | Low |
+| PREQ-2 | API client timeout | 10 min | Reliability | Low |
+| PREQ-3 | Cache-Control headers | 30 min | **High** perf win | Medium |
+| PREQ-4 | Connection pool tuning | 5 min | Moderate | Low (check plan limits) |
+| PREQ-5 | SWR interval tuning | 15 min | Moderate | Low |
+| PREQ-6 | Feed Redis caching | 45 min | **Highest** perf win | Medium |
+| PREQ-7 | N+1 query audit | 1-2 hr | Moderate | Medium |
+| PREQ-8 | Dynamic imports | 20 min | Bundle size | Low |
+| PREQ-9 | Image optimization | 30 min | LCP improvement | Low |
+| PREQ-10 | Health endpoint | 30 min | Reliability | Low |
+| PREQ-11 | Source degradation | 30 min | Reliability | Medium |
+| PREQ-12 | Sentry cleanup | 15 min | Quality | Low |
+
+**Start with PREQ-1 through PREQ-5 (quick wins, ~75 min). Then PREQ-6 (biggest single win). Then remainder.**
+
+---
+
 ## Tier 3 — Valuable But Can Wait
 
 ### Operational Health
