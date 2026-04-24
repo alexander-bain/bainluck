@@ -724,30 +724,42 @@ def run_l4_deep(sport: str):
             if "rbi" in name or "runs + " in name:
                 kalshi_event_types.add("hits_runs_rbis")
 
-        # Expected types per sport for live games
-        _EXPECTED_LIVE = {
-            "baseball_mlb": {"moneyline", "spread", "total_runs", "first_5",
-                             "player_hits", "home_runs", "strikeouts"},
+        # Required types: markets that reliably have liquidity on Kalshi.
+        # "Bonus" types exist on Kalshi but often have zero liquidity
+        # (no bids/asks/trades) — we correctly skip those.
+        _REQUIRED_LIVE = {
+            "baseball_mlb": {"player_hits", "home_runs", "strikeouts"},
             "basketball_nba": {"moneyline", "spread", "total_runs"},
-            "icehockey_nhl": {"moneyline", "spread", "total_runs"},
+            "icehockey_nhl": {"moneyline"},
         }
-        _EXPECTED_SCHED = {
+        _BONUS_LIVE = {
+            "baseball_mlb": {"moneyline", "spread", "total_runs", "first_5"},
+            "basketball_nba": set(),
+            "icehockey_nhl": {"spread", "total_runs"},
+        }
+        _REQUIRED_SCHED = {
             "baseball_mlb": {"player_hits", "home_runs", "strikeouts"},
             "basketball_nba": {"moneyline", "spread", "total_runs"},
             "icehockey_nhl": {"moneyline"},
         }
         sport_key = ev.get("sport", "")
-        expected_live_types = _EXPECTED_LIVE.get(sport_key, set())
-        expected_scheduled_types = _EXPECTED_SCHED.get(sport_key, set())
+        required = (_REQUIRED_LIVE if status == "live" else _REQUIRED_SCHED).get(sport_key, set())
+        bonus = _BONUS_LIVE.get(sport_key, set()) if status == "live" else set()
 
-        expected = expected_live_types if status == "live" else expected_scheduled_types
-        missing_types = expected - kalshi_event_types
+        missing_required = required - kalshi_event_types
+        missing_bonus = bonus - kalshi_event_types
+        present_bonus = bonus & kalshi_event_types
 
-        if missing_types:
-            print(f"    Kalshi: ✗ Missing: {', '.join(sorted(missing_types))}")
+        if missing_required:
+            print(f"    Kalshi: ✗ Missing required: {', '.join(sorted(missing_required))}")
             print(f"      Present: {', '.join(sorted(kalshi_event_types)) or 'none'}")
         else:
-            print(f"    Kalshi: ✓ All expected types ({len(kalshi_event_types)})")
+            bonus_str = ""
+            if present_bonus:
+                bonus_str = f" + {len(present_bonus)} bonus"
+            if missing_bonus:
+                bonus_str += f" ({len(missing_bonus)} illiquid on Kalshi)"
+            print(f"    Kalshi: ✓ All required types ({len(required)}{bonus_str})")
 
         # Polymarket coverage
         our_poly = [i for i in our_items if i.get("source") == "polymarket"]
