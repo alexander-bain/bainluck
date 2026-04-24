@@ -139,9 +139,8 @@ Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player
 
 Spotted during Yankees vs Red Sox live game (event 14594074):
 
-**0f-4a. Player prop monotonicity violation (BUG — wrong data)**
-Aaron Judge shows lower odds for 1+ hits than 5+ hits. P(1+) must always be >= P(2+) >= P(3+) etc. Either Kalshi data is wrong, or we're mapping thresholds to the wrong probabilities. This shows clearly incorrect data to users.
-**Files:** `routes/events.py` (game-markets outcome ordering), `tasks/kalshi.py` (outcome parsing)
+**~~0f-4a. Player prop monotonicity violation~~ ✅ FIXED (April 23)**
+Kalshi "2+", "Aaron Judge: 1+" outcomes weren't detected as "over" thresholds — probabilities were inverted (`1-prob`), causing P(2+ runs) = 90% but P(5+ runs) = 97%. Fixed to recognize `N+` pattern as over outcomes. Affects both game totals and player props. **Needs live game verification April 24.**
 
 **0f-4b. Score differential chart empty after 1st inning**
 The actual score diff line disappears after the first inning — only projected spread shows. ESPN live data may not be flowing for score updates, or the chart is only plotting points where the score CHANGES.
