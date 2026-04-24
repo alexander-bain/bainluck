@@ -161,30 +161,26 @@ Player prop cards show initials for ~60 seconds before headshots load. Either th
 
 Spotted on 76ers vs Celtics (event 14595395, scheduled playoff game):
 
-**0f-5a. Monotonicity violation in Projected Combined Scoring (Odds API)**
-93.5+ at 67% but 103.5+ at 73% — the April 23 fix only handles Kalshi "N+" format. Odds API over/under markets ("Over 93.5") use a different name pattern. The `is_over` detection needs to also handle Odds API outcome names.
-**Files:** `routes/events.py` (game-markets `is_over` logic)
+**~~0f-5a. Monotonicity in Projected Combined Scoring~~ ✅ FIXED (April 24)**
+Root cause: 1H/2H totals ("First Half Total", "Second Half Total") were classified as `game_total` instead of `half_total`. The pattern check only matched "1st half" not "First Half". Fixed in `_classify_game_market()`. Verified: 11 game_total items, all monotonically decreasing.
 
-**0f-5b. Spread section is a raw unsorted dump**
-~30 Kalshi spread outcomes listed vertically with no grouping. Full game, 1H, and 2H spreads are interleaved. Needs: (1) group by market type (Full Game / 1H / 2H), (2) sort by threshold within each group, (3) proper card design instead of a raw list.
-**Files:** Frontend spread display component, `routes/events.py` (market_type classification)
+**~~0f-5b. Spread section raw dump~~ ✅ FIXED (April 24)**
+Now groups by market name (Full Game / First Half / Second Half), sorts by probability within each group, caps at 8 outcomes per group with "+N more" indicator.
 
-**0f-5c. Polymarket "Yes" outcome labels**
-Under "Other Markets": "Celtics vs. 76ers — Yes 71%" and "76ers vs. Celtics — Yes 28%". "Yes" is meaningless. Should resolve to the team name (e.g., "Celtics Win: 71%"). Polymarket binary game markets use "Yes"/"No" as outcome names — we need to map "Yes" to the team that the market title implies.
-**Files:** `routes/events.py` (related futures outcome name resolution), `RelatedFutures.tsx`
+**~~0f-5c. Polymarket "Yes" labels~~ ✅ FIXED (April 24)**
+"Yes"/"No" outcomes on matchup markets now resolved to team names. "Celtics vs. 76ers — Yes 71%" → "Celtics Win 71%". Regex extracts team from market name.
 
-**0f-5d. "since start" label on pre-game events**
-Shows "↓ -3% 76ers since start" but the game hasn't started. Should say "since open".
-**Files:** Frontend event detail page hero section
+**~~0f-5d. "since start" label~~ ✅ FIXED (April 24)**
+Changed to "since open" for all events (pre-game and post-game).
 
-**0f-5e. "NBA Playoffs: Finals MVP" label too verbose**
-Award labels in Bigger Picture should be shortened: "Finals MVP" not "NBA Playoffs: Finals MVP".
-**Files:** `RelatedFutures.tsx` (shortAwardLabel function)
+**~~0f-5e. Award label verbosity~~ ✅ FIXED (April 24)**
+`shortAwardLabel()` now strips "NBA Playoffs:", "Eastern/Western Conference" prefixes. "NBA Playoffs: Finals MVP" → "Finals MVP".
 
-### 0f-6. iOS Score Differential Chart Formatting (April 24)
+### ~~0f-6. iOS/Web Chart Axis Alignment~~ ✅ FIXED (April 24)
 
-Score Differential chart on iOS has rendering issues — chart is cut off at the bottom, legend overlaps with tab bar. Visible on Rockets vs Lakers completed game.
-**Files:** iOS `ScoreDifferentialView.swift` or web view rendering
+Two fixes:
+1. **iOS Score Diff chart noise**: X-axis `AxisMarks` had no count limit, creating grid lines at every data point (hundreds). Fixed to `desiredCount: 5`.
+2. **Web + iOS chart axis alignment**: Win Probability and Score Differential charts now share a single computed domain (`sharedChartDomain`) from ALL data sources. Both charts fill every minute in the range, ensuring identical x-axes, linear time, and aligned period markers. Previously OddsChart computed its own domain and reported it async — now both use the same parent-computed domain.
 
 ### 0f-7. Mac App (April 24)
 
