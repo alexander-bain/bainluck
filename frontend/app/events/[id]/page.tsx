@@ -1474,27 +1474,69 @@ export default function EventPage({ params }: EventPageProps) {
             />
           )}
 
-          {/* Spreads section */}
-          {(gameMarkets.spreads?.length ?? 0) > 0 && (
-            <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-text-primary">Spread</span>
-                <span className="text-micro text-text-muted">
-                  {[...new Set(gameMarkets.spreads.map(s => s.source))].map(s => s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : s).join(' · ')}
-                </span>
+          {/* Spreads section — grouped by market, sorted by threshold */}
+          {(gameMarkets.spreads?.length ?? 0) > 0 && (() => {
+            const grouped: Record<string, typeof gameMarkets.spreads> = {};
+            for (const s of gameMarkets.spreads) {
+              const key = s.market_name || "Spread";
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push(s);
+            }
+            // Sort outcomes within each group by threshold (ascending)
+            for (const outcomes of Object.values(grouped)) {
+              outcomes.sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
+            }
+            // Sort groups: full game first, then 1H, then 2H
+            const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
+              const order = (name: string) => {
+                const lower = name.toLowerCase();
+                if (lower.includes("1st half") || lower.includes("first half") || lower.includes("1h")) return 1;
+                if (lower.includes("2nd half") || lower.includes("second half") || lower.includes("2h")) return 2;
+                return 0; // full game
+              };
+              return order(a) - order(b);
+            });
+            return (
+              <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-text-primary">Spread</span>
+                  <span className="text-micro text-text-muted">
+                    {[...new Set(gameMarkets.spreads.map(s => s.source))].map(s => s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : s).join(' · ')}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {sortedGroups.map(([marketName, outcomes]) => (
+                    <div key={marketName}>
+                      {sortedGroups.length > 1 && (
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">
+                          {marketName.includes("First Half") || marketName.includes("1st Half") || marketName.includes("1H")
+                            ? "First Half"
+                            : marketName.includes("Second Half") || marketName.includes("2nd Half") || marketName.includes("2H")
+                            ? "Second Half"
+                            : "Full Game"}
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        {outcomes.slice(0, 8).map((s, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm">
+                            <span className="text-text-secondary">{s.outcome_name}</span>
+                            <span className="font-semibold text-text-primary tabular-nums">
+                              {s.probability != null ? `${Math.round(s.probability * 100)}%` : '—'}
+                            </span>
+                          </div>
+                        ))}
+                        {outcomes.length > 8 && (
+                          <div className="text-[10px] text-text-muted text-center">
+                            +{outcomes.length - 8} more
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1.5">
-                {gameMarkets.spreads.map((s, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <span className="text-text-secondary">{s.outcome_name}</span>
-                    <span className="font-semibold text-text-primary tabular-nums">
-                      {s.probability != null ? `${Math.round(s.probability * 100)}%` : '—'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Period Markets (half/quarter totals, spreads, winners) */}
           {(gameMarkets.period_markets?.length ?? 0) > 0 && (() => {
