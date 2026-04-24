@@ -3893,6 +3893,29 @@ async def get_event_odds_history(
         # Table may not exist yet
         pass
 
+    # Supplement espn_history with score data from win_prob_history sources.
+    # ESPN's scoreboard API provides sparse score data for MLB (~2 points/game).
+    # The MLB Stats API source has dense score data in game_state (~50 points/game).
+    if len(espn_history) < 10:
+        espn_timestamps = {eh["timestamp"][:16] for eh in espn_history}
+        for source_key in ("mlb", "stat_model"):
+            for wp in win_prob_history.get(source_key, []):
+                gs = wp.get("game_state") or {}
+                if gs.get("home_score") is not None and gs.get("away_score") is not None:
+                    ts_minute = wp["timestamp"][:16]
+                    if ts_minute not in espn_timestamps:
+                        espn_history.append({
+                            "timestamp": wp["timestamp"],
+                            "home_probability": wp.get("home_probability"),
+                            "away_probability": wp.get("away_probability"),
+                            "home_score": gs["home_score"],
+                            "away_score": gs["away_score"],
+                            "game_clock": gs.get("game_clock"),
+                            "period": gs.get("period") or gs.get("inning"),
+                        })
+                        espn_timestamps.add(ts_minute)
+        espn_history.sort(key=lambda x: x["timestamp"])
+
     # Extract scoring plays — prefer ESPN (full game history) over StatPal (last 10 only)
     espn_scoring = (event.box_score_data or {}).get("scoring_plays", [])
     if espn_scoring:
