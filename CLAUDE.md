@@ -34,6 +34,7 @@ There are 3 layers of matching, each with its own measurement:
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
 | `docs/gotchas-reference.md` | Extended gotchas (items 16-39+) | When new gotchas discovered |
 | `docs/quality-audit.md` | Audit script usage, check catalog | When checks added/removed |
+| `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
 | `docs/completed-features.md` | Shipped features log | When features ship |
 
