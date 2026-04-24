@@ -258,9 +258,9 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartXAxis {
-            AxisMarks { _ in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
-                    .foregroundStyle(.secondary.opacity(0.3))
+            AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
+                    .foregroundStyle(.secondary.opacity(0.15))
                 AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
                     .font(.caption2)
             }

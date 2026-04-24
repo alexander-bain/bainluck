@@ -677,9 +677,20 @@ export default function ScoreDifferentialChart({
               ]}
             />
 
-            {/* Individual bookmaker lines — hidden by default.
-                The projected spread (green) already aggregates all sportsbooks.
-                Individual lines create visual noise without adding insight. */}
+            {/* Individual bookmaker spread lines (subtle gray) */}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_diff`}
+                type="monotone"
+                dataKey={`${bookmaker}_diff`}
+                stroke="rgba(0,0,0,0.12)"
+                strokeWidth={1}
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+              />
+            ))}
 
             {/* Projected score differential (spread) */}
             {hasProjectedScoreData && (
@@ -740,7 +751,11 @@ export default function ScoreDifferentialChart({
         </ResponsiveContainer>
       </div>
 
-      {/* Sportsbook lines removed — projected spread already aggregates them */}
+      {bookmakers.length > 0 && (
+        <p className="text-xs text-text-muted text-center shrink-0">
+          Gray lines show individual sportsbooks
+        </p>
+      )}
     </div>
   );
 }
