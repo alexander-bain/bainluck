@@ -81,6 +81,12 @@ MODULES = {
         "priority": 1,
         "timeout": 1800,
     },
+    "market_accuracy": {
+        "file": "market_accuracy_ground_truth.md",
+        "name": "Market Accuracy & Monotonicity Audit",
+        "priority": 1,
+        "timeout": 1800,
+    },
 }
 
 
