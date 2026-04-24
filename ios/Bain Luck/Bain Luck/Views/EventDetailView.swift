@@ -177,6 +177,7 @@ struct EventDetailView: View {
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
                                      refreshCountdown: refreshCountdown,
                                      refreshInterval: refreshInterval,
+                                     forcedDomain: sharedChartDomain,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history)
                         if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {

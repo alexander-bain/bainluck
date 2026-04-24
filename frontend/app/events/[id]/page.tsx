@@ -531,9 +531,44 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers]);
 
-  // OddsChart reports its actual rendered time domain via onRenderedDomain callback,
-  // stored in oddsChartDomain state. Passed directly to ScoreDifferentialChart as
-  // chartStartTime/chartEndTime so both charts share the exact same x-axis range.
+  // Shared chart domain — computed once, passed to both OddsChart and ScoreDiffChart
+  // so they have IDENTICAL x-axes and period markers.
+  const sharedChartDomain = useMemo(() => {
+    if (!historyData) return null;
+    // Collect all timestamps across all data sources
+    const timestamps: number[] = [];
+    for (const pt of historyData.history ?? []) {
+      const t = new Date(pt.timestamp).getTime();
+      if (!isNaN(t)) timestamps.push(t);
+    }
+    for (const pts of Object.values(historyData.win_prob_history ?? {})) {
+      for (const pt of pts) {
+        const t = new Date(pt.timestamp).getTime();
+        if (!isNaN(t)) timestamps.push(t);
+      }
+    }
+    for (const pt of historyData.espn_history ?? []) {
+      const t = new Date(pt.timestamp).getTime();
+      if (!isNaN(t)) timestamps.push(t);
+    }
+    for (const pts of Object.values(historyData.bookmaker_history ?? {})) {
+      for (const pt of pts) {
+        const t = new Date(pt.timestamp).getTime();
+        if (!isNaN(t)) timestamps.push(t);
+      }
+    }
+    if (timestamps.length === 0) return null;
+    let start = new Date(Math.min(...timestamps));
+    let end = new Date(Math.max(...timestamps));
+    // Use completedAt as authoritative end if available
+    if (historyData.completed_at) {
+      const ca = new Date(historyData.completed_at);
+      if (!isNaN(ca.getTime())) end = new Date(Math.max(end.getTime(), ca.getTime()));
+    }
+    start.setSeconds(0, 0);
+    end.setSeconds(0, 0);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, [historyData]);
 
   // Compute the most recent chart point for GamePlayCard default display
   const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
@@ -1336,6 +1371,8 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               onActivePointChange={setActiveChartPoint}
               onRenderedDomain={handleRenderedDomain}
+              chartStartTime={sharedChartDomain?.start}
+              chartEndTime={sharedChartDomain?.end}
             />
           )}
           {/* Game Play Card — shows score/period/play as user hovers the chart */}
@@ -1430,8 +1467,8 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
-            chartStartTime={oddsChartDomain?.start}
-            chartEndTime={oddsChartDomain?.end}
+            chartStartTime={sharedChartDomain?.start}
+            chartEndTime={sharedChartDomain?.end}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>

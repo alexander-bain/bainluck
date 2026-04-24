@@ -98,6 +98,8 @@ struct OddsChartView: View {
     var refreshCountdown: Int = 0
     /// Total refresh interval in seconds
     var refreshInterval: Int = 30
+    /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
+    var forcedDomain: ClosedRange<Date>?
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -938,15 +940,16 @@ struct OddsChartView: View {
 
     // MARK: - X-Axis Domain
 
-    /// Compute a tight x-axis domain from the data points with small padding.
+    /// Compute x-axis domain. Uses forcedDomain when available for chart alignment.
     private func xAxisDomain(for dataPoints: [ChartDataPoint]) -> ClosedRange<Date> {
+        if let forced = forcedDomain { return forced }
         let dates = dataPoints.map(\.date)
         guard let minDate = dates.min(), let maxDate = dates.max() else {
             let now = Date()
             return now...now
         }
         let range = maxDate.timeIntervalSince(minDate)
-        let padding = max(range * 0.02, 60) // At least 1 minute padding
+        let padding = max(range * 0.02, 60)
         return minDate.addingTimeInterval(-padding)...maxDate.addingTimeInterval(padding)
     }
 

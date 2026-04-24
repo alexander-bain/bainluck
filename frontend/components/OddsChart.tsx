@@ -85,6 +85,10 @@ interface OddsChartProps {
   /** Callback reporting the chart's actual rendered time domain (first & last timestamps).
    *  Used by ScoreDifferentialChart to match its x-axis exactly. */
   onRenderedDomain?: (startISO: string, endISO: string) => void;
+  /** Shared chart domain from parent — when set, overrides internal domain computation
+   *  so OddsChart and ScoreDiffChart have identical x-axes. */
+  chartStartTime?: string;
+  chartEndTime?: string;
   /** Authoritative game end time from the backend (set when any source confirms game over) */
   completedAt?: string;
 }
@@ -162,6 +166,8 @@ export default function OddsChart({
   awayTeamAbbrev,
   onActivePointChange,
   onRenderedDomain,
+  chartStartTime,
+  chartEndTime,
   completedAt,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -601,15 +607,28 @@ export default function OddsChart({
 
     // Fill missing minutes for uniform x-axis spacing.
     // Both OddsChart and ScoreDifferentialChart use categorical XAxis where
-    // each category gets equal pixel width. Without filling gaps, the two
-    // charts have different numbers of categories, causing period markers
-    // to appear at different pixel positions. Filling every minute ensures
-    // both charts have identical category sets.
-    if (timeRange === "live") {
-      const allTimestamps = Array.from(dataMap.keys()).sort();
-      if (allTimestamps.length >= 2) {
-        const first = parseISO(allTimestamps[0]);
-        const last = parseISO(allTimestamps[allTimestamps.length - 1]);
+    // each category gets equal pixel width. Without filling gaps, the charts
+    // have non-linear x-axes (chunks of time appear compressed or expanded).
+    // Filling every minute ensures linear time and identical category sets.
+    {
+      let first: Date | null = null;
+      let last: Date | null = null;
+
+      if (chartStartTime && chartEndTime) {
+        // Use shared domain from parent for perfect chart alignment
+        first = parseISO(chartStartTime);
+        last = parseISO(chartEndTime);
+      } else {
+        const allTimestamps = Array.from(dataMap.keys()).sort();
+        if (allTimestamps.length >= 2) {
+          first = parseISO(allTimestamps[0]);
+          last = parseISO(allTimestamps[allTimestamps.length - 1]);
+        }
+      }
+
+      if (first && last && first < last) {
+        first.setSeconds(0, 0);
+        last.setSeconds(0, 0);
         const cursor = new Date(first.getTime());
         cursor.setMinutes(cursor.getMinutes() + 1);
         while (cursor <= last) {
