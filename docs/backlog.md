@@ -734,6 +734,15 @@ Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `p
 - iOS beyond parity — App Store, widgets, push, share extension
 - Apple Watch / Apple TV apps
 - Weather visualization — prediction market weather maps
+- **Self-Evolving Website** — closed-loop autonomous improvement cycle:
+  - (A) User browsing → events captured (clicks, scrolls, dwell time) → `events.jsonl`
+  - (B) Coding sessions → MyClaw indexes sessions, extracts patterns & insights → facts
+  - (3) Self-evolve cron (hourly): reads events + facts, decides what to build
+  - (4) Claude writes code: React pages, API routes, nav-registry.json, sidebar entries
+  - (5) Deploy → new features appear via hot reload
+  - `/evolution` page: the website watches itself grow
+  - Inspiration: "75 runs, 59 features shipped autonomously, 8→30 pages, zero human commits, ~24 min longest single build"
+  - Key principle: "Usage data is the best product spec"
 
 ---
 
