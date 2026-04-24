@@ -215,9 +215,9 @@ Roster sync fixed: moved to 10 AM UTC, loaded 3,261 players across MLB/NBA/NHL w
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
 **Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
 
-### 0f-X. CRITICAL: Kalshi conference markets misclassified as wrong sport
+### ~~0f-X. Kalshi conference markets misclassified as wrong sport~~ ✅ RESOLVED (April 24)
 
-**Status:** Partially fixed, needs debugging. Direct DB fix applied April 22 as hotfix.
+**Status:** RESOLVED. Verified April 24: both KXNHLEAST-26 and KXNHLWEST-26 showing correctly in NHL grid with `llm_sport_category=hockey`. The classification order fix + Kalshi poll cycle resolved it. Hotfix no longer needed.
 
 **The Problem:**
 Kalshi's NHL Eastern/Western Conference markets (`KXNHLEAST-26`, `KXNHLWEST-26`) were classified as `llm_sport_category='basketball'` instead of `'hockey'`. This made them invisible to the NHL championship grid. The NHL grid showed 0.1% for Bruins conference odds when Kalshi has them at 6%.
