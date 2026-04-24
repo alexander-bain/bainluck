@@ -1060,7 +1060,7 @@ export default function EventPage({ params }: EventPageProps) {
                       )}
                     </svg>
                     <span className={`text-xs font-semibold ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
-                      {isPositive ? "+" : ""}{Math.round(delta * 100)}% {homeShort} since{isFinished ? " open" : " start"}
+                      {isPositive ? "+" : ""}{Math.round(delta * 100)}% {homeShort} since open
                     </span>
                   </div>
                 );

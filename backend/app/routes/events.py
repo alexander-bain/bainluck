@@ -2253,7 +2253,7 @@ def _classify_game_market(name: str) -> str:
     if "total" in lower or "o/u" in lower:
         if "team" in lower:
             return "team_total"
-        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h", "first half", "second half")):
             return "half_total"
         if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
             return "quarter_total"
@@ -3351,6 +3351,18 @@ async def get_related_futures(
             clean_label, raw_name=market.name or "",
         )
 
+        # Resolve "Yes"/"No" outcome names for binary matchup markets.
+        # Polymarket uses "Yes"/"No" for game moneylines like "Celtics vs. 76ers".
+        # "Yes" = first team wins, "No" = first team loses.
+        resolved_name = outcome.name
+        if outcome.name in ("Yes", "No") and market.name:
+            matchup = re.match(r'^(.+?)\s+(?:vs\.?|at|@)\s+(.+?)(?:\s*[-:]|$)', market.name)
+            if matchup:
+                if outcome.name == "Yes":
+                    resolved_name = f"{matchup.group(1).strip()} Win"
+                else:
+                    resolved_name = f"{matchup.group(2).strip()} Win"
+
         entry = {
             "market_id": market.id,
             "market_name": market.name,
@@ -3364,7 +3376,7 @@ async def get_related_futures(
             "category": market.category,
             "source": market.source,
             "outcome_id": outcome.id,
-            "outcome_name": outcome.name,
+            "outcome_name": resolved_name,
             "probability": float(outcome.current_probability) if outcome.current_probability else None,
             "american_odds": outcome.current_american_odds,
             "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,

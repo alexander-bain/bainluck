@@ -830,10 +830,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_statpal_team_stats",
         "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Weekly Monday 9:00 AM UTC
     },
-    "sync-mm-bracket": {
-        "task": "app.tasks.sync_mm_bracket",
-        "schedule": crontab(minute="*/15", hour="*", day_of_month="15-30", month_of_year="3,4"),
-    },
+    # March Madness bracket sync — disabled (season over). Re-enable in March.
+    # "sync-mm-bracket": {
+    #     "task": "app.tasks.sync_mm_bracket",
+    #     "schedule": crontab(minute="*/15", hour="*", day_of_month="15-30", month_of_year="3,4"),
+    # },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
         "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC

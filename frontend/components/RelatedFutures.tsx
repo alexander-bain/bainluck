@@ -406,12 +406,15 @@ function HeroFutureCard({
  */
 function shortAwardLabel(marketName: string, cleanLabel?: string): string {
   // Use backend clean_label if available — already normalized
-  if (cleanLabel && cleanLabel !== marketName) {
-    return cleanLabel;
-  }
-  const cleaned = cleanMarketName(marketName);
+  const raw = (cleanLabel && cleanLabel !== marketName) ? cleanLabel : cleanMarketName(marketName);
+  // Strip verbose prefixes: "NBA Playoffs: Finals MVP" → "Finals MVP"
+  const cleaned = raw
+    .replace(/^(?:NBA|NFL|NHL|MLB)\s+(?:Playoffs?:?\s+)?/i, "")
+    .replace(/^(?:Eastern|Western)\s+Conf(?:erence)?\s+/i, "")
+    .trim();
   // Common abbreviations
   if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
+  if (/\bfinals\s+mvp\b/i.test(cleaned)) return "Finals MVP";
   if (/\brookie\s+of\s+the\s+year\b/i.test(cleaned)) return "Rookie of the Year";
   if (/\bdefensive\s+player/i.test(cleaned)) return "DPOY";
   if (/\bmost\s+improved/i.test(cleaned)) return "Most Improved";
