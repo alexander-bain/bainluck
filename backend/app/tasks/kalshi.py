@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, delete as sa_delete, select
+from sqlalchemy import func, delete as sa_delete, select, update as sa_update
 
 from app.tasks.base import get_task_session, run_async
 
@@ -494,6 +494,29 @@ async def _poll_kalshi_markets():
                             "american": american,
                             "outcome_name": outcome_name,
                         })
+
+                    # Null out stale outcomes: if an outcome exists in the DB but
+                    # Kalshi returns no pricing (bid/ask/last all NULL), its probability
+                    # is stale from a previous poll. Clear it to prevent phantom data
+                    # (e.g., Game 2's 1H total pricing showing on Game 3's page).
+                    priced_tickers = {od["market"].ticker for od in outcome_data}
+                    all_tickers = {m.ticker for m in event.markets}
+                    unpriced_tickers = all_tickers - priced_tickers
+                    if unpriced_tickers:
+                        await session.execute(
+                            sa_update(FuturesOutcome)
+                            .where(
+                                FuturesOutcome.market_id == futures_market_id,
+                                FuturesOutcome.external_id.in_(list(unpriced_tickers)),
+                            )
+                            .values(
+                                current_probability=None,
+                                current_american_odds=None,
+                                current_yes_bid=None,
+                                current_yes_ask=None,
+                                last_updated=func.now(),
+                            )
+                        )
 
                     # Sort by probability descending to compute ranks (1 = highest)
                     outcome_data.sort(key=lambda x: x["prob"], reverse=True)
