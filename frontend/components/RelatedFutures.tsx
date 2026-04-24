@@ -2215,10 +2215,6 @@ function extractTradePlayer(marketName: string): string {
 /** Categorize a list of related futures into display groups. */
 function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", awayTeam: string = "") {
   const active = futures.filter((f) => {
-    const p = f.probability;
-    if (p === null || p === undefined) return true;
-    if (p <= 0.01 || p >= 0.99) return false;
-    // Filter mismatched game props
     if (!isRelevantGameProp(f, homeTeam, awayTeam)) return false;
     return true;
   });
