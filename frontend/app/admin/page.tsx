@@ -1560,14 +1560,58 @@ function DataQualityCard({ secret }: { secret: string }) {
       {/* Unclassified samples */}
       {samples.length > 0 && (
         <div>
-          <div className="text-micro text-text-muted mb-1">Unclassified Markets (sample)</div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-micro text-text-muted">Unclassified Markets (sample)</div>
+            <span
+              onClick={() => {
+                const lines = samples.map((s) => `- "${s.name}" (${s.source})`).join("\n");
+                const guesses = samples.map((s) => {
+                  const n = s.name.toLowerCase();
+                  if (/total|spread|over|under|half|quarter|inning|first \d|f5/i.test(s.name))
+                    return { ...s, guess: "Game prop — needs is_game_prop() pattern or ticker prefix mapping" };
+                  if (/map|round|game \d|match/i.test(s.name))
+                    return { ...s, guess: "Esports match prop — needs esports event source or manual sport tagging" };
+                  if (/double|triple|hit|strikeout|run|home run|foul/i.test(s.name))
+                    return { ...s, guess: "Player/team stat prop — needs stat-type classification in compute_market_tier()" };
+                  if (/vs\.?|at /i.test(s.name) && !/will|release/i.test(s.name))
+                    return { ...s, guess: "Game matchup — likely missing from KALSHI_TICKER_TO_SPORT_KEY or Polymarket sport detection" };
+                  if (/champion|winner|mvp|award|playoff/i.test(s.name))
+                    return { ...s, guess: "Season futures — needs llm_sport_category assignment or ticker mapping" };
+                  return { ...s, guess: "Non-sport or novel market — may need new category or manual exclusion" };
+                });
+                const analysis = guesses.map((g) => `- "${g.name}" (${g.source})\n  → ${g.guess}`).join("\n");
+                const prompt = `## Unclassified Markets Analysis\n\nThe admin dashboard shows ${cls?.unclassified_count ?? samples.length} unclassified markets (${((cls?.unclassified_rate ?? 0) * 100).toFixed(1)}% of 24h intake). Here are samples with suspected root causes:\n\n${analysis}\n\n### Suggested fixes:\n1. Review \`utils/sport_keys.py\` KALSHI_TICKER_TO_SPORT_KEY for missing ticker prefixes\n2. Review \`tasks/kalshi.py\` _categorize_kalshi_market() for name patterns that should match\n3. Review \`utils/market_label_normalization.py\` compute_market_tier() for unhandled market types\n4. Check if any are non-sport markets that should be added to _NON_SPORT_CATEGORIES\n\nPlease investigate each sample, trace the classification path, and add fixes to the backlog.`;
+                navigator.clipboard.writeText(prompt);
+                alert("Copied analysis prompt to clipboard!");
+              }}
+              className="text-micro px-2 py-1 rounded bg-accent-futures/10 text-accent-futures cursor-pointer hover:bg-accent-futures/20 transition-colors"
+            >
+              📋 Copy backlog prompt
+            </span>
+          </div>
           <div className="max-h-48 overflow-y-auto space-y-0.5">
-            {samples.map((s, i) => (
-              <div key={i} className="flex items-center text-xs py-0.5">
-                <span className="text-text-secondary flex-1 truncate" title={s.name}>{s.name}</span>
-                <span className="text-micro text-text-muted ml-2 shrink-0">{s.source}</span>
-              </div>
-            ))}
+            {samples.map((s, i) => {
+              let guess = "";
+              if (/total|spread|over|under|half|quarter|inning|first \d|f5/i.test(s.name))
+                guess = "game prop";
+              else if (/map|round|game \d|match/i.test(s.name))
+                guess = "esports";
+              else if (/double|triple|hit|strikeout|run|home run|foul/i.test(s.name))
+                guess = "stat prop";
+              else if (/vs\.?|at /i.test(s.name) && !/will|release/i.test(s.name))
+                guess = "matchup";
+              else if (/champion|winner|mvp|award|playoff/i.test(s.name))
+                guess = "season futures";
+              else
+                guess = "non-sport?";
+              return (
+                <div key={i} className="flex items-center text-xs py-0.5 gap-2">
+                  <span className="text-text-secondary flex-1 truncate" title={s.name}>{s.name}</span>
+                  <span className="text-micro px-1.5 py-0.5 rounded bg-surface-elevated text-text-muted shrink-0">{guess}</span>
+                  <span className="text-micro text-text-muted shrink-0">{s.source}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1581,6 +1625,7 @@ function DataQualityCard({ secret }: { secret: string }) {
 interface GridAuditResult {
   scores: Record<string, number>;
   avg_score: number | null;
+  fetched_at?: string;
   grids: Record<string, {
     health_score?: number;
     findings?: { check: string; severity: string; description: string; details?: Record<string, unknown> }[];
@@ -1599,6 +1644,12 @@ function GridHealthCard({ secret }: { secret: string }) {
   );
 
   const [checking, setChecking] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+
+  // Track when data was fetched
+  if (data && !fetchedAt) {
+    setFetchedAt(new Date().toISOString());
+  }
 
   const refresh = async () => {
     setChecking(true);
@@ -1608,6 +1659,7 @@ function GridHealthCard({ secret }: { secret: string }) {
       );
       const report = await r.json();
       mutate(report, false);
+      setFetchedAt(new Date().toISOString());
     } finally {
       setChecking(false);
     }
@@ -1622,6 +1674,12 @@ function GridHealthCard({ secret }: { secret: string }) {
   const severityIcon = (s: string) =>
     s === "critical" ? "🔴" : s === "warning" ? "🟡" : "🔵";
 
+  const allFindings = data?.grids
+    ? Object.entries(data.grids).flatMap(([grid, v]) =>
+        (v.findings || []).map((f) => ({ ...f, grid }))
+      )
+    : [];
+
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4">
       <div className="flex items-center justify-between mb-3">
@@ -1633,12 +1691,17 @@ function GridHealthCard({ secret }: { secret: string }) {
             </span>
           )}
         </h3>
-        <span
-          onClick={refresh}
-          className="text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border text-text-muted cursor-pointer hover:text-text-primary"
-        >
-          {checking ? "Auditing..." : data ? "Refresh" : "Run Audit"}
-        </span>
+        <div className="flex items-center gap-3">
+          {fetchedAt && !checking && (
+            <span className="text-micro text-text-muted">{timeAgo(fetchedAt)}</span>
+          )}
+          <span
+            onClick={refresh}
+            className={"text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border cursor-pointer hover:text-text-primary transition-colors " + (checking ? "text-accent-brand animate-pulse" : "text-text-muted")}
+          >
+            {checking ? "Auditing…" : data ? "Refresh" : "Run Audit"}
+          </span>
+        </div>
       </div>
 
       {!data && !checking && (
@@ -1688,6 +1751,28 @@ function GridHealthCard({ secret }: { secret: string }) {
           </div>
         ))
       }
+
+      {/* Generate backlog prompt button */}
+      {allFindings.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-surface-border flex justify-end">
+          <span
+            onClick={() => {
+              const scores = data?.scores
+                ? Object.entries(data.scores).map(([g, s]) => `- ${g.toUpperCase()}: ${s}/100`).join("\n")
+                : "";
+              const findingsList = allFindings
+                .map((f) => `- [${f.severity.toUpperCase()}] ${f.grid.toUpperCase()}: ${f.description}`)
+                .join("\n");
+              const prompt = `## Grid Health Audit Findings\n\nOverall score: ${data?.avg_score ?? "?"}/100\n\nPer-grid scores:\n${scores}\n\n### Findings (${allFindings.length} total):\n${findingsList}\n\n### Action requested:\nFor each finding above:\n1. Identify the root cause in the backend code (likely in \`routes/playoffs.py\`, \`config/league_configs.py\`, or \`tasks/prediction_market_matching.py\`)\n2. Determine if it's a real data issue, a classification bug, or expected behavior\n3. For real issues, add a fix to the backlog with file paths and suggested approach\n4. For source disagreements (e.g., Polymarket vs Kalshi), note whether it's a data freshness issue or a genuine coverage gap`;
+              navigator.clipboard.writeText(prompt);
+              alert("Copied grid health prompt to clipboard!");
+            }}
+            className="text-micro px-2 py-1 rounded bg-accent-futures/10 text-accent-futures cursor-pointer hover:bg-accent-futures/20 transition-colors"
+          >
+            📋 Copy backlog prompt
+          </span>
+        </div>
+      )}
     </div>
   );
 }
