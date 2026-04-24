@@ -731,7 +731,7 @@ celery_app.conf.beat_schedule = {
     },
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
-        "schedule": crontab(minute=45),  # Every hour — game props need timely ingestion for live events
+        "schedule": crontab(minute="15,45"),  # Every 30 min — game markets need timely ingestion
     },
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",
@@ -760,7 +760,7 @@ celery_app.conf.beat_schedule = {
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
-        "schedule": crontab(minute=5),  # Every hour — game props need timely linking
+        "schedule": crontab(minute="5,20,35,50"),  # Every 15 min — link new markets ASAP
         "kwargs": {"limit": 500},
     },
     "poll-live-prediction-markets": {
