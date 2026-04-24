@@ -143,8 +143,8 @@ Spotted during Yankees vs Red Sox live game (event 14594074):
 Kalshi "2+", "Aaron Judge: 1+" outcomes weren't detected as "over" thresholds — probabilities were inverted (`1-prob`), causing P(2+ runs) = 90% but P(5+ runs) = 97%. Fixed to recognize `N+` pattern as over outcomes. Affects both game totals and player props. **Needs live game verification April 24.**
 
 **0f-4b. Score differential chart empty after 1st inning**
-The actual score diff line disappears after the first inning — only projected spread shows. ESPN live data may not be flowing for score updates, or the chart is only plotting points where the score CHANGES.
-**Files:** Frontend `components/ScoreDifferentialChart.tsx`, backend ESPN sync
+Root cause: ESPN sync task only wrote 2 data points for the entire Yankees-Red Sox game (Bottom 1st and Top 7th — 90 min gap). ScoreSnapshot had 5 points. The chart correctly renders what data exists, but the data is too sparse. The ESPN sync task should write every 60s during live games — investigate why it stopped.
+**Files:** `tasks/espn_sync.py` (data collection), `tasks/odds_polling.py` (score snapshots)
 
 **0f-4c. Player props: no pre-game vs current comparison**
 Cards show current probabilities but not what they were pre-game or actual results so far. During a live game, "was 22% pre-game, now 45%" would be much more useful context. Need pre-game snapshot + actual stat tracking.
