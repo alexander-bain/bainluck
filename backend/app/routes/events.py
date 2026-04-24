@@ -2475,6 +2475,11 @@ async def get_game_markets(
             if game_ticker_conditions:
                 category_or_ticker.extend(game_ticker_conditions)
 
+            # Time window: only match markets whose commence_time is within ±12h
+            # of this event. Prevents Game 1's 1H total from leaking into Game 3.
+            time_lower = event.commence_time - timedelta(hours=12)
+            time_upper = event.commence_time + timedelta(hours=12)
+
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
@@ -2484,6 +2489,13 @@ async def get_game_markets(
                     sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),
+                    or_(
+                        and_(
+                            FuturesMarket.commence_time >= time_lower,
+                            FuturesMarket.commence_time <= time_upper,
+                        ),
+                        FuturesMarket.commence_time.is_(None),
+                    ),
                 )
             )
             linked_ids = {m.id for m in markets}
