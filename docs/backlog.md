@@ -149,12 +149,46 @@ Root cause: ESPN's scoreboard API only provides ~2 win probability data points p
 Cards show current probabilities but not what they were pre-game or actual results so far. During a live game, "was 22% pre-game, now 45%" would be much more useful context. Need pre-game snapshot + actual stat tracking.
 **Files:** Frontend `components/PlayerPropsCardView`, backend game-markets endpoint
 
-**~~0f-4d. Player award headshots missing~~ ✅ FIXED (April 23)**
-Roster `player_metadata` was skipped for completed events. Now builds headshot lookup always (cheap dict), while still skipping expensive ILIKE patterns for completed games. Award outcomes now match against roster data for headshot enrichment.
+**0f-4d. Player award headshots STILL missing**
+Roster `player_metadata` lookup was enabled for completed events (April 23 fix), but award outcomes often reference players NOT on either team's roster (e.g., Quentin Grimes for 6MOY). The headshot lookup only checks the two event teams' rosters. Fix needs to either: look up ALL rosters for the sport, or use a separate player image service.
+**Files:** `routes/events.py` (player_metadata scope), `RelatedFutures.tsx` (PlayerHeadshot component)
 
 **0f-4e. Slow headshot loading (~60s)**
 Player prop cards show initials for ~60 seconds before headshots load. Either the roster data fetch is slow or headshot URLs need preloading.
 **Files:** Frontend image loading, backend roster sync timing
+
+### 0f-5. Event Detail Issues from Celtics Playoff Game Audit (April 24)
+
+Spotted on 76ers vs Celtics (event 14595395, scheduled playoff game):
+
+**0f-5a. Monotonicity violation in Projected Combined Scoring (Odds API)**
+93.5+ at 67% but 103.5+ at 73% — the April 23 fix only handles Kalshi "N+" format. Odds API over/under markets ("Over 93.5") use a different name pattern. The `is_over` detection needs to also handle Odds API outcome names.
+**Files:** `routes/events.py` (game-markets `is_over` logic)
+
+**0f-5b. Spread section is a raw unsorted dump**
+~30 Kalshi spread outcomes listed vertically with no grouping. Full game, 1H, and 2H spreads are interleaved. Needs: (1) group by market type (Full Game / 1H / 2H), (2) sort by threshold within each group, (3) proper card design instead of a raw list.
+**Files:** Frontend spread display component, `routes/events.py` (market_type classification)
+
+**0f-5c. Polymarket "Yes" outcome labels**
+Under "Other Markets": "Celtics vs. 76ers — Yes 71%" and "76ers vs. Celtics — Yes 28%". "Yes" is meaningless. Should resolve to the team name (e.g., "Celtics Win: 71%"). Polymarket binary game markets use "Yes"/"No" as outcome names — we need to map "Yes" to the team that the market title implies.
+**Files:** `routes/events.py` (related futures outcome name resolution), `RelatedFutures.tsx`
+
+**0f-5d. "since start" label on pre-game events**
+Shows "↓ -3% 76ers since start" but the game hasn't started. Should say "since open".
+**Files:** Frontend event detail page hero section
+
+**0f-5e. "NBA Playoffs: Finals MVP" label too verbose**
+Award labels in Bigger Picture should be shortened: "Finals MVP" not "NBA Playoffs: Finals MVP".
+**Files:** `RelatedFutures.tsx` (shortAwardLabel function)
+
+### 0f-6. iOS Score Differential Chart Formatting (April 24)
+
+Score Differential chart on iOS has rendering issues — chart is cut off at the bottom, legend overlaps with tab bar. Visible on Rockets vs Lakers completed game.
+**Files:** iOS `ScoreDifferentialView.swift` or web view rendering
+
+### 0f-7. Mac App (April 24)
+
+Consider building a Mac app (Catalyst or SwiftUI for macOS). The iOS app already has most of the views — macOS would give a desktop experience with sidebar navigation.
 
 ---
 
