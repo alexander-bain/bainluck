@@ -4,6 +4,7 @@
 
 - ✅ **Link rate dashboard fix**: Admin dashboard now shows open-market-only link rates instead of all-time (which included 50K+ resolved/closed markets in the denominator, making the metric useless). Backend already calculated both — frontend was just reading the wrong field.
 - ✅ **Design system doc**: Added `docs/design-system.md` — comprehensive visual design reference extracted by Claude Design (colors, typography, motion, voice, component specs). Linked in CLAUDE.md.
+- ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
 
 ## April 22, 2026 (Evening — iOS Parity Session)
 
