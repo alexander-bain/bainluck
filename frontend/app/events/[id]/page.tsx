@@ -1556,7 +1556,7 @@ export default function EventPage({ params }: EventPageProps) {
                           </div>
                         )}
                         <div className="space-y-1.5">
-                          {outcomes.slice(0, 6).map((s, i) => {
+                          {outcomes.map((s, i) => {
                             const pct = s.probability != null ? Math.round(s.probability * 100) : 0;
                             return (
                               <div key={i} className="flex items-center gap-2">
@@ -1573,11 +1573,6 @@ export default function EventPage({ params }: EventPageProps) {
                               </div>
                             );
                           })}
-                          {outcomes.length > 6 && (
-                            <div className="text-[10px] text-text-muted text-center pt-0.5">
-                              +{outcomes.length - 6} more
-                            </div>
-                          )}
                         </div>
                       </div>
                     );
@@ -1612,7 +1607,7 @@ export default function EventPage({ params }: EventPageProps) {
                       <div key={marketName}>
                         <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1.5">{shortName}</div>
                         <div className="space-y-1.5">
-                          {outcomes.slice(0, 6).map((o, i) => {
+                          {outcomes.map((o, i) => {
                             const pct = Math.round((o.over_probability ?? o.probability ?? 0) * 100);
                             return (
                               <div key={i} className="flex items-center gap-2">
@@ -1629,11 +1624,6 @@ export default function EventPage({ params }: EventPageProps) {
                               </div>
                             );
                           })}
-                          {outcomes.length > 6 && (
-                            <div className="text-[10px] text-text-muted text-center pt-0.5">
-                              +{outcomes.length - 6} more
-                            </div>
-                          )}
                         </div>
                       </div>
                     );
