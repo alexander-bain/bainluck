@@ -731,7 +731,7 @@ celery_app.conf.beat_schedule = {
     },
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
-        "schedule": crontab(minute="15,45"),  # Every 30 min — game markets need timely ingestion
+        "schedule": crontab(minute=45, hour="*/2"),  # Every 2 hours — markets created days ahead, pricing appears day-of
     },
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",
