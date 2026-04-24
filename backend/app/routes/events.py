@@ -3061,6 +3061,27 @@ async def get_related_futures(
 
     all_team_ids = home_team_ids | away_team_ids
 
+    # Supplement player_metadata with ALL rosters in this sport for award headshots.
+    # Award outcomes (MVP, DPOY) reference players from any team, not just the event's two.
+    if event.sport_id and len(player_metadata) < 500:
+        all_rosters_result = await db.execute(
+            select(Team.roster_players)
+            .where(Team.sport_id == event.sport_id, Team.roster_players.isnot(None))
+        )
+        for row in all_rosters_result.all():
+            roster = row.roster_players
+            if not isinstance(roster, list):
+                continue
+            for item in roster:
+                if isinstance(item, dict):
+                    pname = item.get("name")
+                    if pname and pname.lower() not in player_metadata:
+                        if item.get("espn_id") or item.get("headshot"):
+                            player_metadata[pname.lower()] = {
+                                k: v for k, v in item.items()
+                                if k in ("espn_id", "headshot", "name")
+                            }
+
     # Build ILIKE conditions for outcome name matching
     home_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in home_patterns]
     away_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in away_patterns]
