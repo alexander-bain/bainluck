@@ -69,7 +69,7 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
   7. Audit regex: "Playoff Qualifiers" pattern for Kalshi's alternate naming
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
-- Status: **NEEDS LIVE VERIFICATION.** Fixes deployed but not yet verified on a live game.
+- Status: ✅ **VERIFIED LIVE** (April 24 Celtics game). 15 Kalshi markets, all required types, Polymarket moneyline showing.
 - **Key finding**: We ingest EVERYTHING from Kalshi + Polymarket (minus crypto). No ingestion gap. Kalshi creates game markets 2-3 days before games. Discovery is NOT the bottleneck.
 - **Root cause (confirmed)**: Kalshi market backfill queried `status=open` but live game markets have `status=active`. This prevented spread/total/F5/moneyline outcomes from being populated during games, even though the FuturesMarket records existed. **Fixed** — backfill now uses `status=None` (no filter).
 - **Kalshi L4**: Required types (player props) ✅ present. Bonus types (spread/total/F5/moneyline) need live game verification — the backfill fix should make them appear when Kalshi has liquidity.
