@@ -34,6 +34,13 @@ cd backend && python3 -m pytest tests/ --co -q 2>&1 | tail -1
 git log --oneline -3
 git status --short | head -10
 
+# Matching accuracy self-check (4 layers)
+cd backend && python3 scripts/audit_event_matching.py --self-check --sport basketball_nba 2>&1 | tail -15
+
+# Market accuracy self-check (monotonicity)
+python3 scripts/audit_market_accuracy.py --self-check --sport basketball_nba 2>&1 | tail -10
+cd ..
+
 # Manus audit — last run date + status
 cat Manus/audit_results/latest/manifest.json 2>/dev/null || echo "No Manus audit results"
 
