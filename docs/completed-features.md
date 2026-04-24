@@ -1,5 +1,10 @@
 # Completed Features (Shipped)
 
+## April 24, 2026
+
+- ✅ **Link rate dashboard fix**: Admin dashboard now shows open-market-only link rates instead of all-time (which included 50K+ resolved/closed markets in the denominator, making the metric useless). Backend already calculated both — frontend was just reading the wrong field.
+- ✅ **Design system doc**: Added `docs/design-system.md` — comprehensive visual design reference extracted by Claude Design (colors, typography, motion, voice, component specs). Linked in CLAUDE.md.
+
 ## April 22, 2026 (Evening — iOS Parity Session)
 
 **iOS Event Detail Overhaul (~30 commits):**

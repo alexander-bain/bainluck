@@ -10,7 +10,9 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + admin dashboard at `/admin`
 
-**Current state (April 20, 2026):**
+**FIXED (April 24):** Dashboard was showing all-time link rates (including resolved/closed markets in denominator). Now shows open-market-only rates. Numbers should be significantly higher and actually reflect matching work.
+
+**Current state (April 20, 2026 — STALE, update after open-rate deploy):**
 
 | Sport | Kalshi open | Polymarket open | Target | Status |
 |-------|------------|----------------|--------|--------|
