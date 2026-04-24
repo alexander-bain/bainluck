@@ -2532,12 +2532,19 @@ async def get_game_markets(
                 threshold = _extract_threshold(o.name)
                 if threshold is None:
                     continue
-                is_over = o.name.lower().startswith("over") or "yes" in o.name.lower()
+                name_lower = o.name.lower().strip()
+                is_over = (
+                    name_lower.startswith("over")
+                    or "yes" in name_lower
+                    or re.match(r'^\d+\+', name_lower)  # "2+", "3+" = threshold-style over
+                )
+                is_under = name_lower.startswith("under") or name_lower == "no"
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 if prob is None:
                     continue
                 # For "Under X", convert to "probability of going OVER"
-                over_prob = prob if is_over else 1.0 - prob
+                # For threshold outcomes ("2+", "3+"), prob IS the over probability
+                over_prob = prob if is_over or not is_under else 1.0 - prob
 
                 # Detect player props hiding inside team_total markets.
                 # Kalshi names markets "Team at Team: Steals" but outcomes
@@ -2571,8 +2578,15 @@ async def get_game_markets(
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 if prob is None:
                     continue
-                is_over = o.name.lower().startswith("over") or "yes" in o.name.lower()
-                over_prob = prob if is_over else 1.0 - prob
+                pp_name_lower = o.name.lower().strip()
+                is_over = (
+                    pp_name_lower.startswith("over")
+                    or "yes" in pp_name_lower
+                    or re.match(r'^\d+\+', pp_name_lower)
+                    or re.match(r'^.+:\s*\d+\+', pp_name_lower)  # "Aaron Judge: 1+"
+                )
+                is_under = pp_name_lower.startswith("under") or pp_name_lower == "no"
+                over_prob = prob if is_over or not is_under else 1.0 - prob
 
                 # Try to extract player name and stat type from market name
                 # Market names look like "Boston at Atlanta: Trae Young Points"
