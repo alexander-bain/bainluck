@@ -1558,13 +1558,21 @@ export default function EventPage({ params }: EventPageProps) {
                         <div className="space-y-1.5">
                           {outcomes.map((s, i) => {
                             const pct = s.probability != null ? Math.round(s.probability * 100) : 0;
+                            // Determine team color based on outcome name
+                            const nameL = (s.outcome_name || "").toLowerCase();
+                            const homeL = event.home_team.toLowerCase();
+                            const awayL = event.away_team.toLowerCase();
+                            const isHome = homeL.split(" ").some(w => w.length >= 3 && nameL.includes(w));
+                            const barColor = isHome
+                              ? (event.home_team_data?.primary_color || "#6366f1") + "99"
+                              : (event.away_team_data?.primary_color || "#10b981") + "99";
                             return (
                               <div key={i} className="flex items-center gap-2">
                                 <span className="text-xs text-text-secondary flex-1 min-w-0 truncate">{s.outcome_name}</span>
                                 <div className="w-24 h-2 rounded-full bg-surface-border overflow-hidden shrink-0">
                                   <div
-                                    className="h-full rounded-full bg-accent-brand/60 transition-all"
-                                    style={{ width: `${pct}%` }}
+                                    className="h-full rounded-full transition-all"
+                                    style={{ width: `${pct}%`, backgroundColor: barColor }}
                                   />
                                 </div>
                                 <span className="text-xs font-semibold text-text-primary tabular-nums w-8 text-right shrink-0">
