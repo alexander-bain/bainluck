@@ -60,9 +60,12 @@ export function normalizePeriodLabel(raw: string): string {
   const hMatch = s.match(/^(\d+)\w*\s+half$/i);
   if (hMatch) return `${hMatch[1]}H`;
 
-  // Baseball innings: "Top 3rd" → "T3", "Bottom 5th" → "B5", "Mid 7th" → "M7"
-  const iMatch = s.match(/^(top|bottom|mid|end)\s+(\d+)/i);
+  // Baseball innings: "Top 3rd" → "T3", "Bottom 5th" → "B5"
+  // Skip "Middle" and "End" to avoid chart clutter — only show half-inning starts
+  const iMatch = s.match(/^(top|bottom|mid(?:dle)?|end)\s+(\d+)/i);
   if (iMatch) {
+    const half = iMatch[1].toLowerCase();
+    if (half === "mid" || half === "middle" || half === "end") return "";
     const prefix = iMatch[1][0].toUpperCase();
     return `${prefix}${iMatch[2]}`;
   }
