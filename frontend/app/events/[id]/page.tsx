@@ -1541,35 +1541,47 @@ export default function EventPage({ params }: EventPageProps) {
                     {[...new Set(gameMarkets.spreads.map(s => s.source))].map(s => s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : s).join(' · ')}
                   </span>
                 </div>
-                <div className="space-y-3">
-                  {sortedGroups.map(([marketName, outcomes]) => (
-                    <div key={marketName}>
-                      {sortedGroups.length > 1 && (
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">
-                          {marketName.includes("First Half") || marketName.includes("1st Half") || marketName.includes("1H")
-                            ? "First Half"
-                            : marketName.includes("Second Half") || marketName.includes("2nd Half") || marketName.includes("2H")
-                            ? "Second Half"
-                            : "Full Game"}
-                        </div>
-                      )}
-                      <div className="space-y-1">
-                        {outcomes.slice(0, 8).map((s, i) => (
-                          <div key={i} className="flex items-center justify-between text-sm">
-                            <span className="text-text-secondary">{s.outcome_name}</span>
-                            <span className="font-semibold text-text-primary tabular-nums">
-                              {s.probability != null ? `${Math.round(s.probability * 100)}%` : '—'}
-                            </span>
-                          </div>
-                        ))}
-                        {outcomes.length > 8 && (
-                          <div className="text-[10px] text-text-muted text-center">
-                            +{outcomes.length - 8} more
+                <div className="space-y-4">
+                  {sortedGroups.map(([marketName, outcomes]) => {
+                    const groupLabel = marketName.toLowerCase().includes("first half") || marketName.toLowerCase().includes("1st half") || marketName.toLowerCase().includes("1h")
+                      ? "First Half"
+                      : marketName.toLowerCase().includes("second half") || marketName.toLowerCase().includes("2nd half") || marketName.toLowerCase().includes("2h")
+                      ? "Second Half"
+                      : "Full Game";
+                    return (
+                      <div key={marketName}>
+                        {sortedGroups.length > 1 && (
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">
+                            {groupLabel}
                           </div>
                         )}
+                        <div className="space-y-1.5">
+                          {outcomes.slice(0, 6).map((s, i) => {
+                            const pct = s.probability != null ? Math.round(s.probability * 100) : 0;
+                            return (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="text-xs text-text-secondary flex-1 min-w-0 truncate">{s.outcome_name}</span>
+                                <div className="w-24 h-2 rounded-full bg-surface-border overflow-hidden shrink-0">
+                                  <div
+                                    className="h-full rounded-full bg-accent-brand/60 transition-all"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-semibold text-text-primary tabular-nums w-8 text-right shrink-0">
+                                  {pct > 0 ? `${pct}%` : '—'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {outcomes.length > 6 && (
+                            <div className="text-[10px] text-text-muted text-center pt-0.5">
+                              +{outcomes.length - 6} more
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -1591,27 +1603,37 @@ export default function EventPage({ params }: EventPageProps) {
                     {Object.keys(grouped).length} markets
                   </span>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {Object.entries(grouped).map(([marketName, outcomes]) => {
                     const shortName = marketName.includes(':')
                       ? marketName.split(':').pop()!.trim()
                       : marketName;
                     return (
                       <div key={marketName}>
-                        <div className="text-micro font-medium text-text-muted mb-1">{shortName}</div>
-                        <div className="space-y-1">
-                          {outcomes.map((o, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm">
-                              <span className="text-text-secondary">{o.outcome_name}</span>
-                              <span className="font-semibold text-text-primary tabular-nums">
-                                {o.over_probability != null
-                                  ? `${Math.round(o.over_probability * 100)}%`
-                                  : o.probability != null
-                                    ? `${Math.round(o.probability * 100)}%`
-                                    : '—'}
-                              </span>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1.5">{shortName}</div>
+                        <div className="space-y-1.5">
+                          {outcomes.slice(0, 6).map((o, i) => {
+                            const pct = Math.round((o.over_probability ?? o.probability ?? 0) * 100);
+                            return (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="text-xs text-text-secondary flex-1 min-w-0 truncate">{o.outcome_name}</span>
+                                <div className="w-24 h-2 rounded-full bg-surface-border overflow-hidden shrink-0">
+                                  <div
+                                    className="h-full rounded-full bg-purple-500/40 transition-all"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-semibold text-text-primary tabular-nums w-8 text-right shrink-0">
+                                  {pct > 0 ? `${pct}%` : '—'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {outcomes.length > 6 && (
+                            <div className="text-[10px] text-text-muted text-center pt-0.5">
+                              +{outcomes.length - 6} more
                             </div>
-                          ))}
+                          )}
                         </div>
                       </div>
                     );

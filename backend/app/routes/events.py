@@ -2652,6 +2652,29 @@ async def get_game_markets(
             period_markets.append(t)
     game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
 
+    # 7b. Enforce monotonicity on totals — P(over threshold) must decrease as threshold increases.
+    # Kalshi neg-risk markets can have independent pricing that violates this.
+    # Clip violations: if a higher threshold has a higher probability, use the previous value.
+    def _enforce_monotonicity(items: list[dict], prob_key: str = "over_probability") -> None:
+        if len(items) < 2:
+            return
+        for i in range(1, len(items)):
+            prev = items[i - 1].get(prob_key)
+            curr = items[i].get(prob_key)
+            if prev is not None and curr is not None and curr > prev:
+                items[i][prob_key] = prev
+
+    _enforce_monotonicity(game_totals)
+
+    # Also enforce on period_markets grouped by market_name
+    pm_by_market: dict[str, list[dict]] = {}
+    for pm in period_markets:
+        pm_by_market.setdefault(pm.get("market_name", ""), []).append(pm)
+    for items in pm_by_market.values():
+        items.sort(key=lambda x: x.get("threshold", 0) or 0)
+        prob_key = "over_probability" if "over_probability" in (items[0] if items else {}) else "probability"
+        _enforce_monotonicity(items, prob_key)
+
     # 8. Calculate pace
     pace = _estimate_game_pace(
         event.home_score,
