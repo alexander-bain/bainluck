@@ -1140,7 +1140,7 @@ export default function OddsChart({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 11, fill: "#6B7280" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               interval={
@@ -1151,8 +1151,8 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
-              width={38}
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              width={42}
+              tick={{ fontSize: 12, fill: "#6B7280" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               tickFormatter={formatYTick}
