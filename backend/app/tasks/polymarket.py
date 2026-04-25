@@ -257,6 +257,7 @@ async def _poll_polymarket_markets():
         # groupItemTitle wasn't parsed at the time.
         async with get_task_session() as session:
             from sqlalchemy import delete as sa_delete
+            from app.models import FuturesMarket, FuturesOutcome
             orphan_sub = select(FuturesOutcome.id).where(
                 FuturesOutcome.external_id.is_(None),
                 FuturesOutcome.market_id.in_(
