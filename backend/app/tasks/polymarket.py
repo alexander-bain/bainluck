@@ -251,37 +251,35 @@ async def _poll_polymarket_markets():
 
     try:
         # One-time cleanup: delete orphan outcomes with NULL external_id
-        # across all Polymarket markets. These were created by an older code
-        # path and can never match the upsert ON CONFLICT (market_id, external_id).
-        # Their names are often garbage ("player AA", "player W") because
-        # groupItemTitle wasn't parsed at the time.
-        async with get_task_session() as session:
-            from sqlalchemy import delete as sa_delete
-            from app.models import FuturesMarket, FuturesOutcome
-            orphan_sub = select(FuturesOutcome.id).where(
-                FuturesOutcome.external_id.is_(None),
-                FuturesOutcome.market_id.in_(
-                    select(FuturesMarket.id).where(
-                        FuturesMarket.source == "polymarket"
-                    )
-                ),
-            )
-            orphan_ids = (await session.execute(orphan_sub)).scalars().all()
-            if orphan_ids:
-                logger.info("Cleanup: deleting %d Polymarket orphan outcomes with NULL external_id", len(orphan_ids))
-                from app.models import FuturesOddsSnapshot
-                await session.execute(
-                    sa_delete(FuturesOddsSnapshot).where(
-                        FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
-                    )
+        try:
+            async with get_task_session() as session:
+                from sqlalchemy import delete as sa_delete
+                from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+                orphan_sub = select(FuturesOutcome.id).where(
+                    FuturesOutcome.external_id.is_(None),
+                    FuturesOutcome.market_id.in_(
+                        select(FuturesMarket.id).where(
+                            FuturesMarket.source == "polymarket"
+                        )
+                    ),
                 )
-                await session.execute(
-                    sa_delete(FuturesOutcome).where(
-                        FuturesOutcome.id.in_(orphan_ids)
+                orphan_ids = (await session.execute(orphan_sub)).scalars().all()
+                if orphan_ids:
+                    logger.info("Cleanup: deleting %d Polymarket orphan outcomes with NULL external_id", len(orphan_ids))
+                    await session.execute(
+                        sa_delete(FuturesOddsSnapshot).where(
+                            FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
+                        )
                     )
-                )
-                await session.commit()
-                logger.info("Polymarket orphan cleanup complete: %d outcomes deleted", len(orphan_ids))
+                    await session.execute(
+                        sa_delete(FuturesOutcome).where(
+                            FuturesOutcome.id.in_(orphan_ids)
+                        )
+                    )
+                    await session.commit()
+                    logger.info("Polymarket orphan cleanup complete: %d deleted", len(orphan_ids))
+        except Exception as e:
+            logger.warning("Polymarket orphan cleanup failed (non-fatal): %s", e)
 
         # Stream events page-by-page instead of loading all into memory.
         # Each page is processed and committed in batches.
