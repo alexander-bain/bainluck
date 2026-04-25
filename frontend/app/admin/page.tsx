@@ -1364,6 +1364,9 @@ export default function AdminDashboard() {
           <DataQualityCard secret={submittedSecret} />
           <GridHealthCard secret={submittedSecret} />
 
+          {/* PREQ Performance */}
+          <PREQCard secret={submittedSecret} />
+
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />
 
@@ -1776,6 +1779,153 @@ function GridHealthCard({ secret }: { secret: string }) {
     </div>
   );
 }
+
+// --- PREQ Performance Card ---
+
+interface HealthReadyResponse {
+  status: string;
+  checks: {
+    database?: string;
+    redis?: string;
+    last_polls?: Record<string, string | null>;
+    odds_api?: Record<string, unknown>;
+  };
+}
+
+function PREQCard({ secret }: { secret: string }) {
+  const [latencies, setLatencies] = useState<Record<string, number | null>>({});
+  const [measuring, setMeasuring] = useState(false);
+  const [cacheStatus, setCacheStatus] = useState<Record<string, string>>({});
+  const { data: healthData } = useSWR<HealthReadyResponse>(
+    "health-ready",
+    () => fetch(API_URL + "/health/ready").then((r) => r.json()),
+    { refreshInterval: 300000 }
+  );
+
+  const measureLatency = async () => {
+    setMeasuring(true);
+    const endpoints = [
+      { name: "Feed", path: "/api/feed?limit=10" },
+      { name: "Events", path: "/api/sports" },
+      { name: "Playoffs", path: "/api/playoffs/nba" },
+      { name: "Golf", path: "/api/golf" },
+      { name: "Health", path: "/health/ready" },
+    ];
+    const results: Record<string, number | null> = {};
+    const cache: Record<string, string> = {};
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(API_URL + ep.path);
+        const rt = res.headers.get("X-Response-Time");
+        results[ep.name] = rt ? parseInt(rt) : null;
+        const cc = res.headers.get("Cache-Control");
+        cache[ep.name] = cc || "none";
+      } catch {
+        results[ep.name] = null;
+      }
+    }
+    setLatencies(results);
+    setCacheStatus(cache);
+    setMeasuring(false);
+  };
+
+  const latencyColor = (ms: number | null) => {
+    if (ms === null) return "text-text-muted";
+    if (ms < 200) return "text-green-400";
+    if (ms < 500) return "text-yellow-400";
+    return "text-red-400";
+  };
+
+  const polls = healthData?.checks?.last_polls;
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-text-primary">
+          PREQ Performance
+          {healthData && (
+            <span className={"ml-2 text-micro font-normal " + (healthData.checks?.redis === "ok" ? "text-green-400" : "text-red-400")}>
+              {healthData.status === "ready" ? "ALL HEALTHY" : "DEGRADED"}
+            </span>
+          )}
+        </h3>
+        <span
+          onClick={measureLatency}
+          className={"text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border cursor-pointer hover:text-text-primary transition-colors " + (measuring ? "text-accent-brand animate-pulse" : "text-text-muted")}
+        >
+          {measuring ? "Measuring…" : Object.keys(latencies).length > 0 ? "Re-measure" : "Measure Latency"}
+        </span>
+      </div>
+
+      {/* Infrastructure status */}
+      {healthData && (
+        <div className="flex gap-4 mb-3 text-xs">
+          <span className="flex items-center gap-1">
+            <span className={"w-2 h-2 rounded-full " + (healthData.checks?.database === "ok" ? "bg-green-400" : "bg-red-400")} />
+            DB
+          </span>
+          <span className="flex items-center gap-1">
+            <span className={"w-2 h-2 rounded-full " + (healthData.checks?.redis === "ok" ? "bg-green-400" : "bg-red-400")} />
+            Redis
+          </span>
+          {healthData.checks?.odds_api && (
+            <span className="flex items-center gap-1">
+              <span className={"w-2 h-2 rounded-full " + ((healthData.checks.odds_api as Record<string, string>).status === "ok" ? "bg-green-400" : "bg-yellow-400")} />
+              Odds API
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Latency measurements */}
+      {Object.keys(latencies).length > 0 && (
+        <div className="mb-3">
+          <div className="text-micro text-text-muted mb-1">Endpoint Latency</div>
+          <div className="space-y-1">
+            {Object.entries(latencies).map(([name, ms]) => (
+              <div key={name} className="flex items-center gap-2 text-xs">
+                <span className="w-16 text-text-muted">{name}</span>
+                <div className="flex-1 h-3 bg-surface-elevated rounded-full overflow-hidden">
+                  <div
+                    className={"h-full rounded-full " + (ms !== null && ms < 200 ? "bg-green-500/60" : ms !== null && ms < 500 ? "bg-yellow-500/60" : "bg-red-500/60")}
+                    style={{ width: ms !== null ? Math.min(100, (ms / 1000) * 100) + "%" : "2%" }}
+                  />
+                </div>
+                <span className={"w-14 text-right font-mono " + latencyColor(ms)}>
+                  {ms !== null ? ms + "ms" : "err"}
+                </span>
+                <span className="w-16 text-right text-micro text-text-muted truncate" title={cacheStatus[name]}>
+                  {cacheStatus[name]?.includes("max-age") ? "cached" : "no-cache"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Last poll timestamps */}
+      {polls && (
+        <div>
+          <div className="text-micro text-text-muted mb-1">Last Source Polls</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-1 text-xs">
+            {Object.entries(polls).map(([source, ts]) => (
+              <div key={source} className="flex items-center gap-1.5">
+                <span className={"w-2 h-2 rounded-full " + (ts ? "bg-green-400" : "bg-text-muted")} />
+                <span className="text-text-muted capitalize">{source.replace("_", " ")}</span>
+                <span className="text-text-muted ml-auto">{ts ? timeAgo(ts) : "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!healthData && Object.keys(latencies).length === 0 && (
+        <p className="text-xs text-text-muted">Click &quot;Measure Latency&quot; to benchmark endpoint response times.</p>
+      )}
+    </div>
+  );
+}
+
 
 // --- Project Costs ---
 
