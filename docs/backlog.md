@@ -189,7 +189,29 @@ Two fixes:
 1. **iOS Score Diff chart noise**: X-axis `AxisMarks` had no count limit, creating grid lines at every data point (hundreds). Fixed to `desiredCount: 5`.
 2. **Web + iOS chart axis alignment**: Win Probability and Score Differential charts now share a single computed domain (`sharedChartDomain`) from ALL data sources. Both charts fill every minute in the range, ensuring identical x-axes, linear time, and aligned period markers. Previously OddsChart computed its own domain and reported it async — now both use the same parent-computed domain.
 
-### 0f-7. Mac App (April 24)
+### 0f-7. Kalshi Win Probability Spikes — DATA BUG (April 25)
+
+**Problem:** Win probability chart shows wild Kalshi spikes (80% → 5% → 80%) during live NBA games. Visible on Celtics vs 76ers (April 24). The spikes are clearly not real probability movement — they look like a data bug.
+
+**Root cause (investigated):** Kalshi creates **separate binary markets per team outcome** for each game (e.g., "Celtics win?" YES=0.80 AND "76ers win?" YES=0.80). The live polling task iterates through all linked markets and writes `yes_bid` from each. If it alternates between reading the "Celtics win" market (80% home) and the "76ers win" market (80% = 20% home probability), it writes oscillating values to `win_probability_sources["kalshi"]`.
+
+**NOT a fix:** Don't clamp or smooth the spikes — that masks the real issue. The data itself is wrong.
+
+**Fix:** When writing Kalshi probability to `win_probability_sources`, determine which market corresponds to the HOME team and always use that one. If the market is for the AWAY team, flip the probability (1 - yes_bid). Key: match the Kalshi market outcome name to the event's `home_team` / `away_team`.
+
+**Files:** `backend/app/tasks/live_prediction_markets.py` (or wherever Kalshi live prices write to event), `backend/app/tasks/kalshi.py` (market-to-team mapping)
+**Parallel Safety:** Yellow
+
+### 0f-8. Win Probability Chart Mobile Readability (April 25)
+
+**Problem:** Y-axis labels (50%, 60%, 70%, etc.) are too small/light on mobile. Hard to read the scale when watching a game on phone.
+
+**Fix:** Increase y-axis tick label font size on mobile (currently inherits Recharts default ~11px). Use `fontSize: 12` with `fill: "#6B7280"` (text-secondary) instead of text-muted. Consider slightly bolder weight.
+
+**Files:** `frontend/components/OddsChart.tsx` (YAxis tick props)
+**Parallel Safety:** Green
+
+### 0f-9. Mac App (April 24)
 
 Consider building a Mac app (Catalyst or SwiftUI for macOS). The iOS app already has most of the views — macOS would give a desktop experience with sidebar navigation.
 
@@ -407,19 +429,45 @@ Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 - Link rate dashboard + API endpoint
 - 324 prediction market matching tests
 
+**Current open rates (April 25):** Basketball 58.9% K / 93.8% PM | Hockey 59% K / 23.8% PM | Baseball 75.1% K / 73.4% PM
+
 **Remaining sub-items (in priority order):**
 
-#### 1a. Basketball 57% → 85%+
-**Action:** Monitor. If still <75% by April 25, diagnose specific failing markets via debug endpoint.
+#### 1a. Time Window Expansion (48h → 7d for Kalshi) — HIGHEST IMPACT
+**Root cause:** Kalshi's `commence_time` is the market RESOLUTION date, not the game date. The current 48h matching window is too strict — prop markets resolve 1-2 weeks after the game. Polymarket already has a 14-day fallback but Kalshi doesn't.
+**Fix:** Make time window source-specific: `MAX_TIME_DELTA_KALSHI = timedelta(days=7)`, keep 48h for Polymarket. In `_find_event_by_sport_and_time()`, use source-specific window.
+**Expected impact:** +8-12% link rate for basketball AND hockey.
+**Files:** `tasks/prediction_market_matching.py:178` (MAX_TIME_DELTA), `tasks/prediction_market_matching.py:1007-1107` (_find_event_by_sport_and_time)
+**Effort:** 1-2 hours
+**Parallel Safety:** Yellow
 
-#### 1b. Hockey 52% → 80%+
-**Fix:** Sample 20 unlinked open NHL markets. Identify failing name patterns. Add to abbreviation map.
-**Files:** `utils/prediction_market_matching.py`
+#### 1b. Ticker-Based Team Name Fallback — HIGH IMPACT
+**Root cause:** Fuzzy name matching fails when Kalshi market text uses abbreviated/city-only team names. But the 3-letter team code in the Kalshi ticker (e.g., "BOS" in KXNBAGAME-26APR24BOSPHI) is always reliable.
+**Fix:** In `match_teams_to_event()`, after fuzzy name match fails, fall back to `extract_teams_from_ticker()` which uses the `_KALSHI_TEAM_ABBREVS` dict. This is already implemented but not used as a fallback — it's an alternative path.
+**Expected impact:** +5-7% link rate for basketball and hockey.
+**Files:** `utils/prediction_market_matching.py:527-565` (match_teams_to_event), `utils/prediction_market_matching.py:794-848` (extract_teams_from_ticker)
+**Effort:** 2-3 hours
+**Parallel Safety:** Yellow
 
-#### 1c. MMA Polymarket 25% → 70%+
-**Fix:** Add sport filter to debug endpoint, then diagnose name patterns.
+#### 1c. Sport Key Extraction Validation
+**Root cause:** When sport key extraction fails from a Kalshi market, the code falls back to generic time-based matching with NO sport filtering. This can cause cross-sport mismatches (basketball market matching a hockey event).
+**Fix:** Always extract sport key from ticker in Pass 1. Add sport filtering to the generic fallback in `_find_event_by_sport_and_time()`. Add stats counter `sport_key_extraction_failed`.
+**Expected impact:** +3-5% link rate, eliminates cross-sport mismatches.
+**Files:** `tasks/prediction_market_matching.py:235-349` (Pass 1), `tasks/prediction_market_matching.py:1007` (_find_event_by_sport_and_time)
+**Effort:** 1-2 hours
+**Parallel Safety:** Yellow
 
-#### 1d. Kalshi team aliases for championship grids (R3)
+#### 1d. Non-NHL Hockey Markets (KHL/AHL/DEL)
+**Root cause:** Kalshi has markets for KHL, AHL, DEL leagues. Our event DB only covers NHL. These markets fail silently — they're counted in the denominator but can never link.
+**Fix:** Either (a) filter them from the link rate denominator, or (b) add these leagues to event ingestion. Short-term: add explicit tracking counter `non_nhl_hockey_market_skipped`.
+**Expected impact:** Adjusts denominator, hockey rate would jump 5-10% if filtered.
+**Files:** `utils/sport_keys.py` (KALSHI_TICKER_TO_SPORT_KEY), `tasks/prediction_market_matching.py`
+**Effort:** 1 hour to filter, 1-2 days to ingest
+**Parallel Safety:** Green
+
+#### ~~1e. MMA~~ ✅ TARGET MET (86.3% Kalshi)
+
+#### 1f. Kalshi team aliases for championship grids (R3)
 **Fix:** Admin endpoint to extract all 30 Kalshi outcome names per sport, add as `Team.alternate_names`.
 
 ---
