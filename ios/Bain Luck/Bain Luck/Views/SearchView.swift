@@ -1,6 +1,9 @@
 import SwiftUI
 import Combine
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "search")
 
@@ -264,9 +267,11 @@ struct SearchView: View {
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateLandscapeColumns()
         }
+        #endif
     }
 
     // MARK: - Search Field
@@ -304,7 +309,7 @@ struct SearchView: View {
             }
         }
         .padding(10)
-        .background(Color(.secondarySystemGroupedBackground))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -337,7 +342,7 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(isSelected ? Color.blue.opacity(0.15) : Color(.tertiarySystemGroupedBackground))
+                        .background(isSelected ? Color.blue.opacity(0.15) : Color.cardBackgroundDark)
                         .foregroundStyle(isSelected ? .blue : .primary)
                         .clipShape(Capsule())
                     }
@@ -478,7 +483,7 @@ struct SearchView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(.tertiarySystemGroupedBackground))
+            .background(Color.cardBackgroundDark)
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -531,8 +536,12 @@ struct SearchView: View {
 
     private func updateLandscapeColumns() {
         guard sizeClass == .regular else { return }
+        #if os(iOS)
         let bounds = UIScreen.main.bounds
         landscapeColumns = bounds.width > bounds.height
+        #else
+        landscapeColumns = true
+        #endif
     }
 
     // MARK: - Search Results
@@ -551,7 +560,7 @@ struct SearchView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .padding(12)
-                                .background(Color(.tertiarySystemGroupedBackground))
+                                .background(Color.cardBackgroundDark)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
@@ -593,7 +602,7 @@ struct SearchView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .padding(12)
-                                .background(Color(.tertiarySystemGroupedBackground))
+                                .background(Color.cardBackgroundDark)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }

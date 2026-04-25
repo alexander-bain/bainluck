@@ -27,11 +27,11 @@ struct OnboardingView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 if vm.currentStep < vm.totalSteps {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .confirmationAction) {
                         Button("Skip") { vm.goNext() }
                             .font(.subheadline)
                     }

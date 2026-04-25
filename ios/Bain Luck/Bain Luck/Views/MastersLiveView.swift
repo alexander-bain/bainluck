@@ -20,7 +20,9 @@ struct MastersLiveView: View {
             }
         }
         .navigationTitle("Live Leaderboard")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task { await vm.load() }
     }
 
@@ -30,7 +32,7 @@ struct MastersLiveView: View {
         VStack(spacing: 8) {
             ForEach(0..<10, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.systemGray6)
                     .frame(height: 28)
             }
         }

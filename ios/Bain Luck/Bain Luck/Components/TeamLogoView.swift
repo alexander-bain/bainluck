@@ -9,7 +9,7 @@ struct TeamLogoView: View {
     /// Optional sport key for ESPN logo fallback (e.g., "basketball_nba")
     var sportKey: String? = nil
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var loadFailed = false
     @State private var triedEspnFallback = false
 
@@ -29,7 +29,7 @@ struct TeamLogoView: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)

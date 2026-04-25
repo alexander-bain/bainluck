@@ -1,7 +1,9 @@
 import Combine
 import SwiftUI
-import UIKit
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "mystuff")
 
@@ -114,7 +116,7 @@ struct MyStuffView: View {
             #endif
             .toolbar {
                 if authManager.isAuthenticated && authManager.user?.onboardingCompleted == true {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .confirmationAction) {
                         NavigationLink(value: Route.preferences) {
                             Image(systemName: "gearshape")
                                 .font(.body)
@@ -152,9 +154,11 @@ struct MyStuffView: View {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
             updateLandscapeColumns()
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateLandscapeColumns()
         }
+        #endif
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             if navCoordinator.selectedTab == .myStuff,
                let route = navCoordinator.consumeRoute() {
@@ -268,10 +272,18 @@ struct MyStuffView: View {
 
             Spacer()
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView()
                 .environmentObject(authManager)
         }
+        #else
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView()
+                .environmentObject(authManager)
+                .frame(minWidth: 500, minHeight: 400)
+        }
+        #endif
     }
 
     // MARK: - State 3: Team Feed
@@ -334,8 +346,12 @@ struct MyStuffView: View {
 
     private func updateLandscapeColumns() {
         guard sizeClass == .regular else { return }
+        #if os(iOS)
         let bounds = UIScreen.main.bounds
         landscapeColumns = bounds.width > bounds.height
+        #else
+        landscapeColumns = true
+        #endif
     }
 
     private var teamFeedList: some View {
@@ -364,7 +380,9 @@ struct MyStuffView: View {
         #endif
         .refreshable {
             await vm.load()
+            #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            #endif
         }
     }
 
@@ -378,7 +396,7 @@ struct MyStuffView: View {
                     ForEach(items) { item in
                         feedRow(item)
                             .padding(12)
-                            .background(Color(.tertiarySystemGroupedBackground))
+                            .background(Color.cardBackgroundDark)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .contextMenu { pinContextMenu(item) }
                     }
@@ -770,7 +788,7 @@ private struct PlayoffJourneyCard: View {
             }
         }
         .padding(12)
-        .background(Color(.tertiarySystemGroupedBackground))
+        .background(Color.cardBackgroundDark)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(alignment: .leading) {
             if let c = journey.teamColor {

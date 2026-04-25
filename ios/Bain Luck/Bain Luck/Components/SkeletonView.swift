@@ -41,7 +41,7 @@ struct SkeletonShape: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Color(.systemGray5))
+            .fill(Color.systemGray5)
             .frame(width: width, height: height)
     }
 }
@@ -61,7 +61,7 @@ struct SkeletonEventCard: View {
 
             // Away team row
             HStack(spacing: 8) {
-                Circle().fill(Color(.systemGray5)).frame(width: 24, height: 24)
+                Circle().fill(Color.systemGray5).frame(width: 24, height: 24)
                 SkeletonShape(width: .random(in: 90...140), height: 14)
                 Spacer()
                 SkeletonShape(width: 32, height: 14)
@@ -72,7 +72,7 @@ struct SkeletonEventCard: View {
 
             // Home team row
             HStack(spacing: 8) {
-                Circle().fill(Color(.systemGray5)).frame(width: 24, height: 24)
+                Circle().fill(Color.systemGray5).frame(width: 24, height: 24)
                 SkeletonShape(width: .random(in: 90...140), height: 14)
                 Spacer()
                 SkeletonShape(width: 32, height: 14)

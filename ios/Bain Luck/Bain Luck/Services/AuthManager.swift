@@ -3,6 +3,11 @@ import Combine
 import GoogleSignIn
 import os
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "auth")
 
@@ -231,12 +236,6 @@ final class AuthManager: ObservableObject {
     }
 
     private func handleGoogleSignIn() async {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let rootViewController = windowScene.windows.first?.rootViewController else {
-            error = "Cannot present sign-in"
-            return
-        }
-
         guard let clientID = googleClientID() else {
             error = "Google Sign-In not configured"
             logger.error("GoogleService-Info.plist missing or has no CLIENT_ID")
@@ -246,7 +245,20 @@ final class AuthManager: ObservableObject {
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
 
         do {
+            #if os(iOS)
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                error = "Cannot present sign-in"
+                return
+            }
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+            #elseif os(macOS)
+            guard let window = NSApplication.shared.keyWindow else {
+                error = "Cannot present sign-in"
+                return
+            }
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: window)
+            #endif
             let accessToken = result.user.accessToken.tokenString
 
             let response = try await APIClient.shared.signInWithGoogle(accessToken: accessToken)
@@ -322,11 +334,15 @@ private class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegat
 
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
+            #if os(iOS)
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = scene.windows.first else {
                 return ASPresentationAnchor()
             }
             return window
+            #elseif os(macOS)
+            return NSApplication.shared.keyWindow ?? NSWindow()
+            #endif
         }
     }
 }

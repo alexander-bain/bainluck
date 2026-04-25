@@ -178,7 +178,7 @@ struct FuturesListView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(isSelected ? Color.purple.opacity(0.15) : Color(.tertiarySystemGroupedBackground))
+            .background(isSelected ? Color.purple.opacity(0.15) : Color.cardBackgroundDark)
             .foregroundStyle(isSelected ? .purple : .primary)
             .clipShape(Capsule())
         }

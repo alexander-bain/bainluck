@@ -28,10 +28,23 @@ extension Color {
         )
     }
 
-    // System-adaptive colors (light + dark mode)
+    #if os(iOS)
     static let cardBackground = Color(.secondarySystemGroupedBackground)
     static let cardBackgroundDark = Color(.tertiarySystemGroupedBackground)
     static let barTrack = Color(.separator)
+    static let systemBackground = Color(.systemBackground)
+    static let groupedBackground = Color(.systemGroupedBackground)
+    static let systemGray5 = Color(.systemGray5)
+    static let systemGray6 = Color(.systemGray6)
+    #elseif os(macOS)
+    static let cardBackground = Color(nsColor: .controlBackgroundColor)
+    static let cardBackgroundDark = Color(nsColor: .windowBackgroundColor)
+    static let barTrack = Color(nsColor: .separatorColor)
+    static let systemBackground = Color(nsColor: .windowBackgroundColor)
+    static let groupedBackground = Color(nsColor: .controlBackgroundColor)
+    static let systemGray5 = Color.gray.opacity(0.2)
+    static let systemGray6 = Color.gray.opacity(0.15)
+    #endif
     static let heroDarkBackground = Color(red: 0.035, green: 0.035, blue: 0.043) // #09090b
 }
 

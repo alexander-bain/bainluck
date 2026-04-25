@@ -59,8 +59,8 @@ struct SportFilterChips: View {
             // Fade hint showing more chips to the right
             LinearGradient(
                 colors: [
-                    Color(.systemGroupedBackground).opacity(0),
-                    Color(.systemGroupedBackground),
+                    Color.groupedBackground.opacity(0),
+                    Color.groupedBackground,
                 ],
                 startPoint: .leading,
                 endPoint: .trailing

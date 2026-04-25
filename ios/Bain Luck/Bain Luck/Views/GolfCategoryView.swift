@@ -27,7 +27,9 @@ struct GolfCategoryView: View {
             }
         }
         .navigationTitle("Golf")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
+        #endif
         .task { await vm.load() }
     }
 
@@ -172,7 +174,7 @@ struct GolfCategoryView: View {
                     .foregroundStyle(.blue)
             }
             .padding(12)
-            .background(Color(.systemGray6).opacity(0.7))
+            .background(Color.systemGray6.opacity(0.7))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)

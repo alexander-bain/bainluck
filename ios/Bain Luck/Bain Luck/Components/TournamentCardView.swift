@@ -67,7 +67,7 @@ struct TournamentHeroCard: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color(.systemGray6))
+                        .background(Color.systemGray6)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
             }
@@ -104,7 +104,7 @@ struct TournamentHeroCard: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.systemGray6).opacity(0.7))
+                .background(Color.systemGray6.opacity(0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
@@ -145,11 +145,11 @@ struct TournamentHeroCard: View {
                 .padding(.bottom, 8)
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(.separator), lineWidth: 0.5)
+                .stroke(Color.barTrack, lineWidth: 0.5)
         )
     }
 }
@@ -200,11 +200,11 @@ struct TournamentCompactRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(.separator), lineWidth: 0.5)
+                .stroke(Color.barTrack, lineWidth: 0.5)
         )
     }
 }

@@ -28,10 +28,18 @@ struct PreferencesView: View {
         .task {
             await vm.load()
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView()
                 .environmentObject(authManager)
         }
+        #else
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView()
+                .environmentObject(authManager)
+                .frame(minWidth: 500, minHeight: 400)
+        }
+        #endif
         .onChange(of: showOnboarding) { _, isShowing in
             if !isShowing {
                 Task { await vm.load() }

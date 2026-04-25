@@ -1,7 +1,9 @@
 import Combine
 import Foundation
-import UIKit
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "pins")
 
@@ -45,14 +47,20 @@ final class PinManager: ObservableObject {
 
         if alreadyPinned {
             removeLocally(type: type, id: id)
+            #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            #endif
         } else {
             guard canPin(type: type) else {
+                #if os(iOS)
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                #endif
                 return
             }
             addLocally(type: type, id: id)
+            #if os(iOS)
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            #endif
         }
 
         saveToDefaults()

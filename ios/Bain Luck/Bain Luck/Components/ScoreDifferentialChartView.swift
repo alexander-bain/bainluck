@@ -206,12 +206,12 @@ struct ScoreDifferentialChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
-            // Period markers
-            ForEach(periodMarkers) { marker in
+            // Period markers — alternate top/bottom to prevent overlap
+            ForEach(Array(periodMarkers.enumerated()), id: \.element.id) { index, marker in
                 RuleMark(x: .value("Period", marker.date))
                     .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [4, 4]))
                     .foregroundStyle(.secondary.opacity(0.5))
-                    .annotation(position: .top, alignment: .leading) {
+                    .annotation(position: index % 2 == 0 ? .top : .bottom, alignment: .leading) {
                         Text(marker.label)
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.secondary.opacity(0.6))
@@ -319,7 +319,15 @@ struct ScoreDifferentialChartView: View {
             }
         }
 
-        return markers.sorted { $0.date < $1.date }
+        let sorted = markers.sorted { $0.date < $1.date }
+        var filtered: [ScoreDiffPeriodMarker] = []
+        for marker in sorted {
+            if let last = filtered.last, marker.date.timeIntervalSince(last.date) < 120 {
+                continue
+            }
+            filtered.append(marker)
+        }
+        return filtered
     }
 
     private func normalizePeriodLabel(_ raw: String) -> String {

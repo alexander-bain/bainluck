@@ -8,6 +8,11 @@
 import FirebaseCore
 import GoogleSignIn
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @main
 struct Bain_LuckApp: App {
@@ -38,10 +43,17 @@ struct Bain_LuckApp: App {
                     pinManager.isAuthenticated = authManager.isAuthenticated
                     await pinManager.loadPins()
                 }
+                #if os(iOS)
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
                     authManager.checkCredentialState()
                     authManager.retrySessionIfNeeded()
                 }
+                #elseif os(macOS)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    authManager.checkCredentialState()
+                    authManager.retrySessionIfNeeded()
+                }
+                #endif
                 .onOpenURL { url in
                     // Google Sign-In uses the reversed client ID scheme
                     if url.scheme?.contains("googleusercontent") == true {
@@ -55,6 +67,23 @@ struct Bain_LuckApp: App {
                         _ = navCoordinator.handleURL(url)
                     }
                 }
+                .preferredColorScheme(.light)
         }
+        #if os(macOS)
+        .defaultSize(width: 1200, height: 800)
+        .commands {
+            CommandGroup(replacing: .newItem) { }
+            CommandMenu("Navigate") {
+                Button("Feed") { navCoordinator.selectedTab = .feed }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("Leagues") { navCoordinator.selectedTab = .leagues }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("Search") { navCoordinator.selectedTab = .search }
+                    .keyboardShortcut("3", modifiers: .command)
+                Button("My Stuff") { navCoordinator.selectedTab = .myStuff }
+                    .keyboardShortcut("4", modifiers: .command)
+            }
+        }
+        #endif
     }
 }

@@ -322,7 +322,7 @@ struct LeagueGridView: View {
                 .fontWeight(.medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isActive ? Color.accentColor.opacity(0.2) : Color(.secondarySystemGroupedBackground))
+                .background(isActive ? Color.accentColor.opacity(0.2) : Color.cardBackground)
                 .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 .clipShape(Capsule())
         }

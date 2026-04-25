@@ -91,7 +91,7 @@ struct FuturesDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .confirmationAction) {
                 PinButton(type: "future", id: marketId)
             }
         }

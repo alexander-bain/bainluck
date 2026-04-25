@@ -215,6 +215,20 @@ private func gameMarketLabel(_ f: RelatedFuture) -> String {
     return "\(shortMarket): \(outcome)"
 }
 
+private func isClinched(_ f: RelatedFuture) -> Bool {
+    (f.probability ?? 0) >= 0.995
+}
+
+private func isEliminated(_ f: RelatedFuture) -> Bool {
+    (f.probability ?? 1) <= 0.005
+}
+
+private func settledProbabilityText(_ f: RelatedFuture) -> String {
+    if isClinched(f) { return "✓" }
+    if isEliminated(f) { return "<1%" }
+    return formatProbability(f.probability ?? 0)
+}
+
 private func sourceLabel(_ source: String?) -> String {
     switch source {
     case "polymarket": return "Polymarket"
@@ -289,11 +303,12 @@ private func extractTradePlayer(_ marketName: String) -> String {
     return marketName
 }
 
-// MARK: - Categorize Futures (V5)
+// MARK: - Categorize Futures (V6)
 
 private struct CategorizedFutures {
     var championships: [RelatedFuture] = []
     var awards: [RelatedFuture] = []
+    var statLeaders: [RelatedFuture] = []
     var seasonStats: [RelatedFuture] = []
     var games: [RelatedFuture] = []
     var statProps: [RelatedFuture] = []
@@ -303,7 +318,12 @@ private struct CategorizedFutures {
 }
 
 private let divisionPlayoffPattern = try! NSRegularExpression(
-    pattern: "division|playoff|play[- ]?in|#1\\s+seed|best\\s+record|worst\\s+record",
+    pattern: "division|playoff|play[- ]?in|#1\\s+seed|best\\s+record|worst\\s+record|east\\s+winner|west\\s+winner|central\\s+winner|north\\s+winner|south\\s+winner|atlantic\\s+winner|pacific\\s+winner|\\b[NAEW][LFC]\\s+\\w+\\s+winner",
+    options: .caseInsensitive
+)
+
+private let statLeaderPattern = try! NSRegularExpression(
+    pattern: "leader|\\bleads?\\b|per\\s+game|batting\\s+average|earned\\s+run|home\\s+run.*leader",
     options: .caseInsensitive
 )
 
@@ -313,17 +333,31 @@ private func isDivisionOrPlayoff(_ f: RelatedFuture) -> Bool {
     return divisionPlayoffPattern.firstMatch(in: text, range: range) != nil
 }
 
+private func isStatLeader(_ f: RelatedFuture) -> Bool {
+    let text = f.cleanLabel ?? f.marketName
+    let range = NSRange(text.startIndex..., in: text)
+    return statLeaderPattern.firstMatch(in: text, range: range) != nil
+}
+
 private func categorizeFutures(_ futures: [RelatedFuture]) -> CategorizedFutures {
     var cats = CategorizedFutures()
     for f in futures {
         let tier = effectiveTier(f)
+
+        // Reclassify stat leader markets that backend incorrectly tags as championship
+        if isStatLeader(f) && (tier == 1 || tier == 2 || f.displayCategory == "championship") {
+            cats.statLeaders.append(f)
+            continue
+        }
+
         switch tier {
         case 1, 2: cats.championships.append(f)
         case 3: cats.awards.append(f)
         case 4:
-            // Pull division/playoff items into championship path instead
             if isDivisionOrPlayoff(f) {
                 cats.championships.append(f)
+            } else if isStatLeader(f) {
+                cats.statLeaders.append(f)
             } else {
                 cats.seasonStats.append(f)
             }
@@ -397,7 +431,7 @@ struct RelatedFuturesView: View {
         }
     }
 
-    // MARK: - Content (V5 Cross-Team Layout)
+    // MARK: - Content (V6 Cross-Team Layout)
 
     @ViewBuilder
     private func content(_ rf: RelatedFuturesResponse) -> some View {
@@ -411,87 +445,79 @@ struct RelatedFuturesView: View {
             let hColor = homeTeamColor
             let aColor = awayTeamColor
 
-            // Merge cross-team collections
             let mergedAwards = awayCats.awards + homeCats.awards
+            let mergedStatLeaders = awayCats.statLeaders + homeCats.statLeaders
             let mergedNovelty = awayCats.novelty + homeCats.novelty
+            let hasSections = !mergedAwards.isEmpty || !mergedStatLeaders.isEmpty
+                || !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty
+                || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty
+                || !mergedNovelty.isEmpty
 
-            VStack(alignment: .leading, spacing: 12) {
-                // Header
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.xaxis.ascending")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                    Text("Bigger Picture")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    Spacer()
-                }
+            if hasSections {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chart.bar.xaxis.ascending")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                        Text("Season Futures")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text("\(totalCount)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
 
-                // AI Summary
-                if let summary = rf.summary {
-                    Text(summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.blue.opacity(0.06))
-                        )
-                }
+                    if let summary = rf.summary {
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.blue.opacity(0.06))
+                            )
+                    }
 
-                // Game props handled by PlayerPropsCardView above (from game-markets endpoint)
-
-                // Awards + Trades
-                if !mergedAwards.isEmpty || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty || !mergedNovelty.isEmpty {
+                    // Awards
                     if !mergedAwards.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "star.fill")
-                                    .font(.system(size: 10))
-                                Text("AWARDS")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .tracking(0.8)
-                            }
-                            .foregroundStyle(.secondary)
-
-                            ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(12)) { future in
-                                AwardCompactRowView(
-                                    future: future,
-                                    teamColor: future.outcomeName.localizedCaseInsensitiveContains(homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam) ? hColor : aColor
-                                )
-                            }
+                        sectionHeader(icon: "star.fill", label: "AWARDS")
+                        ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(12)) { future in
+                            AwardCompactRowView(
+                                future: future,
+                                teamColor: teamColorForFuture(future, hColor: hColor, aColor: aColor)
+                            )
                         }
                     }
 
-                    // Season Stats — full labels, side-by-side
+                    // Season Outlook (win totals, division winners minus stat leaders)
                     if !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "chart.line.uptrend.xyaxis")
-                                    .font(.system(size: 10))
-                                Text("SEASON STATS")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .tracking(0.8)
-                            }
-                            .foregroundStyle(.secondary)
-
-                            HStack(alignment: .top, spacing: 8) {
-                                seasonStatsColumn(
-                                    futures: awayCats.seasonStats,
-                                    teamName: awayTeam,
-                                    color: aColor
-                                )
-                                seasonStatsColumn(
-                                    futures: homeCats.seasonStats,
-                                    teamName: homeTeam,
-                                    color: hColor
-                                )
-                            }
+                        sectionHeader(icon: "calendar", label: "SEASON OUTLOOK")
+                        HStack(alignment: .top, spacing: 8) {
+                            seasonStatsColumn(
+                                futures: awayCats.seasonStats,
+                                teamName: awayTeam,
+                                color: aColor
+                            )
+                            seasonStatsColumn(
+                                futures: homeCats.seasonStats,
+                                teamName: homeTeam,
+                                color: hColor
+                            )
                         }
                     }
 
-                    // Trade Watch — side-by-side
+                    // Stat Leaders (extracted from championship bucket)
+                    if !mergedStatLeaders.isEmpty {
+                        statLeadersSection(
+                            leaders: mergedStatLeaders,
+                            hColor: hColor,
+                            aColor: aColor
+                        )
+                    }
+
+                    // Trade Watch
                     if !homeCats.trades.isEmpty || !awayCats.trades.isEmpty {
                         TradeWatchPairView(
                             homeTrades: homeCats.trades,
@@ -503,39 +529,128 @@ struct RelatedFuturesView: View {
                         )
                     }
 
-                    // Novelty — horizontal scroll
+                    // Novelty
                     if !mergedNovelty.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 10))
-                                Text("NOVELTY & FUN")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .tracking(0.8)
-                            }
-                            .foregroundStyle(.secondary)
-
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    ForEach(Array(mergedNovelty.enumerated()), id: \.element.id) { idx, future in
-                                        NoveltyCardView(future: future, index: idx)
-                                    }
+                        sectionHeader(icon: "sparkles", label: "NOVELTY & FUN")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(Array(mergedNovelty.enumerated()), id: \.element.id) { idx, future in
+                                    NoveltyCardView(future: future, index: idx)
                                 }
                             }
                         }
                     }
                 }
-
+                .padding()
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
-            .padding()
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+    }
+
+    private func sectionHeader(icon: String, label: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func teamColorForFuture(_ future: RelatedFuture, hColor: Color, aColor: Color) -> Color {
+        let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        return future.outcomeName.localizedCaseInsensitiveContains(homeShort) ? hColor : aColor
+    }
+
+    @ViewBuilder
+    private func statLeadersSection(leaders: [RelatedFuture], hColor: Color, aColor: Color) -> some View {
+        let grouped = Dictionary(grouping: leaders) { f -> String in
+            let label = (f.cleanLabel ?? f.marketName)
+                .replacingOccurrences(of: #"^(MLB|NBA|NFL|NHL|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
+            return label
+        }
+        let sortedGroups = grouped.sorted { $0.value.count > $1.value.count }
+
+        sectionHeader(icon: "trophy.fill", label: "STAT LEADERS")
+
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(Array(sortedGroups.prefix(8).enumerated()), id: \.offset) { _, group in
+                statLeaderCard(title: group.key, players: group.value, hColor: hColor, aColor: aColor)
+            }
+        }
+
+        if sortedGroups.count > 8 {
+            Text("+\(sortedGroups.count - 8) more categories")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func statLeaderCard(title: String, players: [RelatedFuture], hColor: Color, aColor: Color) -> some View {
+        let sorted = players
+            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.3)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            ForEach(Array(sorted.prefix(4).enumerated()), id: \.element.id) { _, future in
+                compactAwardRow(future: future, hColor: hColor, aColor: aColor)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func compactAwardRow(future: RelatedFuture, hColor: Color, aColor: Color) -> some View {
+        let nameParts = future.outcomeName.split(separator: " ")
+        let lastName: String = nameParts.last.map(String.init) ?? future.outcomeName
+        let nameColor: Color = isEliminated(future) ? Color.secondary.opacity(0.5) : .primary
+        let probColor: Color = isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : teamColorForFuture(future, hColor: hColor, aColor: aColor))
+
+        HStack(spacing: 4) {
+            if let headshot = future.matchedPlayer?.headshot, let url = URL(string: headshot) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Circle().fill(teamColorForFuture(future, hColor: hColor, aColor: aColor).opacity(0.2))
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .clipShape(Circle())
+            }
+
+            Text(lastName)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .foregroundStyle(nameColor)
+
+            Spacer()
+
+            Text(settledProbabilityText(future))
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(probColor)
         }
     }
 
     private func seasonStatsColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
         let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
-        // Dedup by label, strip league prefix, full text
         var seen: Set<String> = []
         let deduped = futures
             .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
@@ -557,21 +672,22 @@ struct RelatedFuturesView: View {
                 let label = (future.cleanLabel ?? future.marketName)
                     .replacingOccurrences(of: #"^(NBA|NFL|NHL|MLB|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
 
-                HStack(spacing: 4) {
-                    Text(label)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer()
-                    if let prob = future.probability {
-                        Text(formatProbability(prob))
+                NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                    HStack(spacing: 4) {
+                        Text(label)
+                            .font(.caption2)
+                            .foregroundStyle(isEliminated(future) ? .tertiary : .secondary)
+                            .lineLimit(2)
+                        Spacer()
+                        Text(settledProbabilityText(future))
                             .font(.caption2)
                             .fontWeight(.bold)
                             .monospacedDigit()
-                            .foregroundStyle(prob >= 0.10 ? color : .secondary)
+                            .foregroundStyle(isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : (future.probability ?? 0) >= 0.10 ? color : .secondary))
                     }
+                    .padding(.vertical, 1)
                 }
-                .padding(.vertical, 1)
+                .buttonStyle(.plain)
             }
         }
         .padding(8)
@@ -795,7 +911,7 @@ private struct WinTotalsPairView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.systemBackground))
+                .fill(Color.systemBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -811,6 +927,8 @@ private struct AwardCompactRowView: View {
     let future: RelatedFuture
     let teamColor: Color
 
+    private var settled: Bool { isClinched(future) || isEliminated(future) }
+
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
             HStack(spacing: 8) {
@@ -825,7 +943,7 @@ private struct AwardCompactRowView: View {
                     .font(.caption)
                     .fontWeight(.medium)
                     .lineLimit(1)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(isEliminated(future) ? .secondary : .primary)
 
                 Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel))
                     .font(.system(size: 9))
@@ -834,15 +952,15 @@ private struct AwardCompactRowView: View {
 
                 Spacer()
 
-                if let prob = future.probability {
-                    Text(formatProbability(prob))
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .foregroundStyle(teamColor)
-                }
+                Text(settledProbabilityText(future))
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .monospacedDigit()
+                    .foregroundStyle(isClinched(future) ? .green : (isEliminated(future) ? .secondary : teamColor))
 
-                MovementPill(change: future.probabilityChange24h)
+                if !settled {
+                    MovementPill(change: future.probabilityChange24h)
+                }
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
@@ -1729,7 +1847,7 @@ private struct PlayerHeadshotView: View {
     let teamColor: Color
     var size: CGFloat = 44
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var loadFailed = false
 
     private var imageURLString: String? {
@@ -1745,7 +1863,7 @@ private struct PlayerHeadshotView: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
             } else if loadFailed || imageURLString == nil {

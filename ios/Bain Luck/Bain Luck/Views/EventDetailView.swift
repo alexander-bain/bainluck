@@ -130,7 +130,7 @@ struct EventDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     PinButton(type: "event", id: eventId)
                 }
             }

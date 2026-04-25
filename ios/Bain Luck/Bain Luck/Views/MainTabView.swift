@@ -97,6 +97,7 @@ struct MainTabView: View {
                 }
             }
             .navigationTitle("🍀 Bain Luck")
+            .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 260)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .eventDetail(let id):

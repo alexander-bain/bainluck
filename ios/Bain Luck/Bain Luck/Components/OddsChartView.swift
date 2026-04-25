@@ -139,6 +139,7 @@ struct OddsChartView: View {
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          refreshCountdown: Int = 0, refreshInterval: Int = 30,
+         forcedDomain: ClosedRange<Date>? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
@@ -153,6 +154,7 @@ struct OddsChartView: View {
         self.awayTeamAbbrev = awayTeamAbbrev
         self.refreshCountdown = refreshCountdown
         self.refreshInterval = refreshInterval
+        self.forcedDomain = forcedDomain
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
@@ -271,9 +273,16 @@ struct OddsChartView: View {
             }
             await vm.load()
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: $isFullscreen) {
             fullscreenChart
         }
+        #else
+        .sheet(isPresented: $isFullscreen) {
+            fullscreenChart
+                .frame(minWidth: 800, minHeight: 500)
+        }
+        #endif
     }
 
     // MARK: - Fullscreen Chart
@@ -327,14 +336,16 @@ struct OddsChartView: View {
                 }
             }
             .navigationTitle("Win Probability")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 if status == "live" || status == "scheduled" {
-                    ToolbarItem(placement: .navigationBarLeading) {
+                    ToolbarItem(placement: .cancellationAction) {
                         refreshCountdownRing
                     }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button { isFullscreen = false } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 14, weight: .medium))

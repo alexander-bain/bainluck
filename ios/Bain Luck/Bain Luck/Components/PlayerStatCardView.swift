@@ -168,7 +168,7 @@ struct PlayerAvatarView: View {
     var sportKey: String? = nil
     var size: CGFloat = 28
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var loadFailed = false
 
     private var resolvedURL: String? {
@@ -191,7 +191,7 @@ struct PlayerAvatarView: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: size, height: size)

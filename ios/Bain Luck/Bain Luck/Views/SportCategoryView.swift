@@ -1,7 +1,9 @@
 import SwiftUI
 import Combine
-import UIKit
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "sportCategory")
 
@@ -149,7 +151,9 @@ struct SportCategoryView: View {
         }
         .refreshable {
             await vm.load()
+            #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            #endif
         }
     }
 

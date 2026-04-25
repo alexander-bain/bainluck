@@ -139,21 +139,21 @@ struct TournamentChartView: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(topFilter == n ? Color.primary : Color.clear)
-                            .foregroundStyle(topFilter == n ? Color(.systemBackground) : .secondary)
+                            .foregroundStyle(topFilter == n ? Color.systemBackground : .secondary)
                     }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(.separator), lineWidth: 0.5)
+                    .stroke(Color.barTrack, lineWidth: 0.5)
             )
 
             Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
+        .background(Color.cardBackground.opacity(0.5))
     }
 
     // MARK: - Chart
@@ -217,7 +217,7 @@ struct TournamentChartView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal)
             .padding(.vertical, 6)
-            .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
+            .background(Color.cardBackground.opacity(0.5))
 
             Divider()
 
@@ -271,7 +271,7 @@ struct TournamentChartView: View {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color(.separator).opacity(0.3))
+                                        .fill(Color.barTrack.opacity(0.3))
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(color.opacity(0.6))
                                         .frame(width: geo.size.width * min(1, probPct / 100))

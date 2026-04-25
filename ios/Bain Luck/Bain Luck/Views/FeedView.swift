@@ -1,7 +1,9 @@
 import SwiftUI
 import Combine
-import UIKit
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "feed")
 
@@ -199,9 +201,11 @@ struct FeedView: View {
         .onDisappear {
             vm.stopRefresh()
         }
+        #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateLandscapeColumns()
         }
+        #endif
         .onChange(of: vm.liveCount) { _, count in
             navCoordinator.liveGameCount = count
         }
@@ -224,8 +228,12 @@ struct FeedView: View {
 
     private func updateLandscapeColumns() {
         guard sizeClass == .regular else { return }
+        #if os(iOS)
         let bounds = UIScreen.main.bounds
         landscapeColumns = bounds.width > bounds.height
+        #else
+        landscapeColumns = true
+        #endif
     }
 
     private var pinnedItems: [FeedItem] {
@@ -285,7 +293,9 @@ struct FeedView: View {
         #endif
         .refreshable {
             await vm.load()
+            #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            #endif
         }
     }
 
@@ -299,7 +309,7 @@ struct FeedView: View {
                     ForEach(items) { item in
                         feedRow(item)
                             .padding(12)
-                            .background(Color(.tertiarySystemGroupedBackground))
+                            .background(Color.cardBackgroundDark)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .contextMenu { pinContextMenu(item) }
                     }
@@ -341,7 +351,7 @@ struct FeedView: View {
                     ForEach(vm.groupedItems) { item in
                         groupedRow(item)
                             .padding(12)
-                            .background(Color(.tertiarySystemGroupedBackground))
+                            .background(Color.cardBackgroundDark)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
