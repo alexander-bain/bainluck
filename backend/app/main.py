@@ -3,11 +3,15 @@ Bain Luck API
 Main FastAPI application entry point.
 """
 
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
+
+logger = logging.getLogger(__name__)
 
 from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics
 from app.services.database import init_db
@@ -67,7 +71,20 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Response-Time"],
 )
+
+
+@app.middleware("http")
+async def request_timing(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
+    if duration_ms > 500 and "/admin" not in request.url.path:
+        logger.warning("SLOW %s %s %dms", request.method, request.url.path, duration_ms)
+    return response
+
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
