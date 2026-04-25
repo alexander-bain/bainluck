@@ -7,6 +7,13 @@
 - ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
 - ✅ **PREQ-1: Request timing middleware**: Every API response now includes `X-Response-Time` header (visible in DevTools). Requests >500ms logged as warnings (excludes admin). CORS `expose_headers` updated so frontend JS can read the header.
 
+## April 25, 2026
+
+- ✅ **PREQ-2: API client timeout**: 15s AbortController on all `apiFetch()` calls. Prevents infinite white-screen hangs.
+- ✅ **PREQ-3: Cache-Control headers**: Feed 10s, playoffs/golf/weather/economics 60s, sports 120s, history 30s. Back-navigation now instant.
+- ✅ **PREQ-4: Connection pool tuning**: pool_size 10→20, max_overflow 15→20. Prevents pool exhaustion under concurrent load.
+- ✅ **PREQ-5: SWR interval tuning**: My Stuff 15s→60s, grouped feed 60s→120s. Reduces unnecessary API polling.
+
 ## April 22, 2026 (Evening — iOS Parity Session)
 
 **iOS Event Detail Overhaul (~30 commits):**
