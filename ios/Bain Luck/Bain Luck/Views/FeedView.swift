@@ -222,8 +222,7 @@ struct FeedView: View {
     // MARK: - iPad Grid
 
     private var iPadGridColumns: [GridItem] {
-        let count = landscapeColumns ? 3 : 2
-        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+        [GridItem(.adaptive(minimum: 340), spacing: 12)]
     }
 
     private func updateLandscapeColumns() {
