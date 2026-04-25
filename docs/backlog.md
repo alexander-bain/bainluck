@@ -217,7 +217,7 @@ Consider building a Mac app (Catalyst or SwiftUI for macOS). The iOS app already
 
 ---
 
-### 0f-3a. Player Props: Team Filter Bug (SOX/YAN pills) — CODE FIX READY, NEEDS DEPLOY
+### ~~0f-3a. Player Props: Team Filter Bug (SOX/YAN pills)~~ ✅ DEPLOYED (April 24)
 
 **Problem:** Clicking SOX or YAN team filter pills in the Player Props section causes ALL cards to disappear.
 
