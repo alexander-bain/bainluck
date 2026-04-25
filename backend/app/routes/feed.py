@@ -9,6 +9,8 @@ Anonymous users see the generic interestingness feed.
 """
 
 import asyncio
+import hashlib
+import json as _json_module
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -95,6 +97,20 @@ async def get_feed(
     - data: full event or futures payload
     - personalized: whether score was personalized (only present if true)
     """
+    # --- PREQ-6: Redis response cache for anonymous users ---
+    _cache_key = None
+    if user is None and not my_teams_only:
+        try:
+            from app.tasks.redis_state import get_redis_client
+            _redis = get_redis_client()
+            _parts = f"feed:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}"
+            _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
+            cached = _redis.get(_cache_key)
+            if cached:
+                return _json_module.loads(cached)
+        except Exception:
+            _cache_key = None  # Redis down — fall through to DB
+
     now = datetime.now(timezone.utc)
 
     # Parse tag filter — split into static (SQL-pushable) and dynamic (inline)
@@ -262,6 +278,15 @@ async def get_feed(
             "pinned_events": len(ctx.pinned_event_ids),
             "pinned_futures": len(ctx.pinned_futures_ids),
         }
+
+    # --- PREQ-6: Write to cache for anonymous users ---
+    if _cache_key and not ctx.is_authenticated:
+        try:
+            from app.tasks.redis_state import get_redis_client
+            _redis = get_redis_client()
+            _redis.setex(_cache_key, 15, _json_module.dumps(response, default=str))
+        except Exception:
+            pass
 
     return response
 
