@@ -138,9 +138,11 @@ Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs
 **Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
 **Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
-### 0f-2. Futures Detail Page Data Quality
-Polymarket `futures/132810` (2026 AL Cy Young Winner) shows "player AO", "player AH" etc. at 100% with 3400% y-axis. Outcome names are abbreviations instead of real names, probabilities are broken. Likely a Polymarket data parsing issue.
-**Files:** `tasks/polymarket.py` (outcome name parsing), `routes/futures.py` (display)
+### 0f-2. Futures Detail Page Data Quality — IN PROGRESS (April 25)
+Polymarket Cy Young (futures/132810) showed "player AA" garbage names. Root cause: (1) orphan outcomes with NULL external_id from old polling code, (2) Polymarket poll capped at 10K events but 10,542 exist — Cy Young market fell outside pagination. 
+**Fixes deployed:** orphan cleanup + pagination increased to 13K + one-off fix script. Awaiting next poll to verify.
+**Cross-game contamination FIXED:** ±18h time window on BOTH linked and fallback queries. NBA went from 38 violations → 0.
+**Files:** `tasks/polymarket.py`, `routes/events.py`, `scripts/fix_polymarket_cy_young.py`
 
 ### 0f-4. Event Detail Page Quality Issues (April 23 live audit)
 
