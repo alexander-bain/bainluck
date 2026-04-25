@@ -13,6 +13,8 @@
 - ✅ **PREQ-3: Cache-Control headers**: Feed 10s, playoffs/golf/weather/economics 60s, sports 120s, history 30s. Back-navigation now instant.
 - ✅ **PREQ-4: Connection pool tuning**: pool_size 10→20, max_overflow 15→20. Prevents pool exhaustion under concurrent load.
 - ✅ **PREQ-5: SWR interval tuning**: My Stuff 15s→60s, grouped feed 60s→120s. Reduces unnecessary API polling.
+- ✅ **PREQ-6: Redis feed caching**: Anonymous feed requests cached in Redis with 15s TTL. Authenticated users bypass cache. Redis failures silently fall through to DB.
+- ✅ **PREQ-8: Dynamic imports**: Already implemented — OddsChart, ScoreDifferentialChart, BookmakerTable all use `next/dynamic`. No additional work needed.
 
 ## April 22, 2026 (Evening — iOS Parity Session)
 
