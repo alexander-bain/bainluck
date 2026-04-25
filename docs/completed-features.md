@@ -15,6 +15,10 @@
 - ✅ **PREQ-5: SWR interval tuning**: My Stuff 15s→60s, grouped feed 60s→120s. Reduces unnecessary API polling.
 - ✅ **PREQ-6: Redis feed caching**: Anonymous feed requests cached in Redis with 15s TTL. Authenticated users bypass cache. Redis failures silently fall through to DB.
 - ✅ **PREQ-8: Dynamic imports**: Already implemented — OddsChart, ScoreDifferentialChart, BookmakerTable all use `next/dynamic`. No additional work needed.
+- ✅ **PREQ-9: Image optimization**: Investigated — all `<img>` tags are tiny team logos (12-44px) already sized correctly. Next.js `<Image>` adds overhead for images this small. No changes needed.
+- ✅ **PREQ-10: Health endpoint**: `/health/ready` now checks Redis connectivity and reports last poll timestamps per source.
+- ✅ **PREQ-11: Source degradation**: Feed endpoint wraps event/futures/golf scoring in try/except — partial feed returned on source failure instead of 500.
+- ✅ **PREQ-12: Sentry cleanup**: `before_send` filter drops WorkerLost, TimeLimitExceeded, and transient Redis ConnectionError noise.
 
 ## April 22, 2026 (Evening — iOS Parity Session)
 
