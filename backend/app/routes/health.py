@@ -73,6 +73,35 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
         checks["database"] = f"error: {e}"
         all_ok = False
 
+    # Check Redis connectivity
+    try:
+        from app.tasks.redis_state import get_redis_client
+        _redis = get_redis_client()
+        _redis.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+        all_ok = False
+
+    # Check last poll timestamps per source
+    try:
+        from app.tasks.redis_state import get_redis_client
+        _redis = get_redis_client()
+        poll_keys = {
+            "odds_api": "last_poll:odds",
+            "espn": "last_poll:espn",
+            "kalshi": "last_poll:kalshi",
+            "polymarket": "last_poll:polymarket",
+            "statpal": "last_poll:statpal",
+        }
+        poll_times = {}
+        for source, key in poll_keys.items():
+            val = _redis.get(key)
+            poll_times[source] = val.decode() if val else None
+        checks["last_polls"] = poll_times
+    except Exception:
+        checks["last_polls"] = "unavailable"
+
     # Check Odds API quota (from Redis cache — avoids burning an API request)
     try:
         from app.tasks.redis_state import get_odds_api_quota

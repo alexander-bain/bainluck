@@ -165,8 +165,11 @@ async def get_feed(
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
-        feed_items.extend(event_items)
+        try:
+            event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
+            feed_items.extend(event_items)
+        except Exception as e:
+            logger.error("Feed: event scoring failed, returning partial feed: %s", e)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
     # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
@@ -197,43 +200,49 @@ async def get_feed(
         if sport_tags and "sport:golf" not in sport_tags:
             _skip_golf = True
     if not _skip_golf:
-        tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
-        if tournament_items:
-            feed_items.extend(tournament_items)
+        try:
+            tournament_items = await _score_golf_tournaments(db, now, sport, ctx)
+            if tournament_items:
+                feed_items.extend(tournament_items)
+        except Exception as e:
+            logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
+        try:
+            futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
 
-        # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
-        # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
-        # all appear as separate cards in the feed.
-        #
-        # Safety: verify top outcome names overlap before collapsing.  Two markets
-        # sharing a canonical key but with zero outcome overlap are likely a
-        # false positive (e.g., different award markets both keyed as
-        # "basketball:NBA:game_prop:2025-26").
-        seen_canonical: dict[str, dict] = {}
-        deduped: list[dict] = []
-        for fitem in futures_items:
-            key = fitem["data"].get("canonical_market_key")
-            if key is None:
-                deduped.append(fitem)  # No canonical key — can't dedup
-                continue
-            if key not in seen_canonical:
-                seen_canonical[key] = fitem
-            elif fitem["score"] > seen_canonical[key]["score"]:
-                # Verify outcome overlap before replacing
-                if _outcomes_overlap(seen_canonical[key], fitem):
+            # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
+            # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
+            # all appear as separate cards in the feed.
+            #
+            # Safety: verify top outcome names overlap before collapsing.  Two markets
+            # sharing a canonical key but with zero outcome overlap are likely a
+            # false positive (e.g., different award markets both keyed as
+            # "basketball:NBA:game_prop:2025-26").
+            seen_canonical: dict[str, dict] = {}
+            deduped: list[dict] = []
+            for fitem in futures_items:
+                key = fitem["data"].get("canonical_market_key")
+                if key is None:
+                    deduped.append(fitem)  # No canonical key — can't dedup
+                    continue
+                if key not in seen_canonical:
                     seen_canonical[key] = fitem
+                elif fitem["score"] > seen_canonical[key]["score"]:
+                    # Verify outcome overlap before replacing
+                    if _outcomes_overlap(seen_canonical[key], fitem):
+                        seen_canonical[key] = fitem
+                    else:
+                        deduped.append(fitem)  # False positive — keep both
                 else:
-                    deduped.append(fitem)  # False positive — keep both
-            else:
-                # Lower score — still verify overlap before dropping
-                if not _outcomes_overlap(seen_canonical[key], fitem):
-                    deduped.append(fitem)  # False positive — keep both
-        deduped.extend(seen_canonical.values())
-        feed_items.extend(deduped)
+                    # Lower score — still verify overlap before dropping
+                    if not _outcomes_overlap(seen_canonical[key], fitem):
+                        deduped.append(fitem)  # False positive — keep both
+            deduped.extend(seen_canonical.values())
+            feed_items.extend(deduped)
+        except Exception as e:
+            logger.error("Feed: futures scoring failed, returning partial feed: %s", e)
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker
