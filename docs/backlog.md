@@ -213,6 +213,51 @@ Two fixes:
 **Files:** `frontend/components/OddsChart.tsx` (YAxis tick props)
 **Parallel Safety:** Green
 
+### Manus Site Sweep Findings (April 25) — NEW
+
+Full report: `Manus/audit_results/site_sweep_april25.md`
+
+#### MS-1. Small text audit — 388 elements <11px across site
+**Problem:** Insight text on feed cards ("New York Knicks odds shifted 19%"), "Opened 46/54" labels, source indicators (B, P, K), and 24h change values are too small to read on mobile.
+**Fix:** Audit all `text-micro` and `text-[10px]` usage. Bump minimum to 11px on mobile. Key files: `FeedCard.tsx`, `ChampionshipGrid.tsx`, `RelatedFutures.tsx`.
+**Parallel Safety:** Green
+
+#### MS-2. Cookie consent banner overlaps bottom nav
+**Problem:** The cookie banner partially obscures the bottom tab bar and lowest feed cards on mobile.
+**Fix:** Add `bottom-nav-safe` padding or position the banner above the nav bar. File: `frontend/components/Analytics/ConsentBanner.tsx`.
+**Parallel Safety:** Green
+
+#### MS-3. Missing team logos on event detail (pink/grey placeholders)
+**Problem:** Team logos in event detail header render as colored placeholder circles instead of actual logos. Manus saw this on Hawks vs Knicks.
+**Fix:** Investigate — could be ESPN CDN image loading failure, missing `next.config` image domain, or a race condition. File: `frontend/app/events/[id]/page.tsx` (EntityImage usage).
+**Parallel Safety:** Green
+
+#### MS-4. Game props missing team names
+**Problem:** Game props section shows "Team 199.5 84%" instead of "Hawks 199.5 84%". Team name not being passed through.
+**Fix:** Check game-markets API response — `team_name` may be null for some market types. File: `frontend/components/PlayerPropsDashboard.tsx`, `backend/app/routes/events.py` (game-markets endpoint).
+**Parallel Safety:** Yellow
+
+#### MS-5. NYC rainfall listed 8 times with conflicting probabilities
+**Problem:** Weather page "Above 1 inch this month" shows NYC 8 times (mostly 0%, one 100%) instead of 10 distinct cities.
+**Fix:** Likely a dedup bug in the weather rainfall endpoint or a Kalshi market naming collision. File: `backend/app/routes/weather.py` (rain endpoint).
+**Parallel Safety:** Green
+
+#### MS-6. Tornado months non-chronological
+**Problem:** Tornadoes section lists months as Apr, May, Nov, Dec, Oct, Aug, Jun, Sep, Jul instead of chronological order.
+**Fix:** Sort by month number, not alphabetically. File: `backend/app/routes/weather.py` or `frontend/components/weather/NaturalEvents.tsx`.
+**Parallel Safety:** Green
+
+#### MS-7. Championship grid: no horizontal scroll indicator on mobile
+**Problem:** Conference tables only show Team + Make Playoffs columns. Champion column is off-screen with no visual cue that horizontal scrolling is available.
+**Fix:** Add a subtle gradient fade on the right edge, or a scroll hint arrow. File: `frontend/components/ChampionshipGrid.tsx`.
+**Parallel Safety:** Green
+
+#### MS-8. Kalshi 1.0% minimum tick misleading in grids
+**Problem:** Many teams show exactly "1.0%" for Conference/Champion odds. This is Kalshi's minimum tick, not a real 1% probability — it's misleading when aggregated.
+**Fix:** Filter or annotate Kalshi values at the minimum tick (0.01). Either: (a) exclude from aggregation when it's the only source at 1%, or (b) show "< 1%" instead of "1.0%". This is similar to the existing Kalshi noise filter (0.45-0.65 range).
+**Files:** `backend/app/routes/playoffs.py` (grid cell assembly), `backend/app/utils/playoff_grid.py`
+**Parallel Safety:** Yellow
+
 ### 0f-9. Mac App — SHIPPED + Polish (April 24-25)
 
 **SHIPPED:** Native macOS target compiles and runs. SwiftUI multiplatform — same codebase as iOS with `#if os` conditionals. 30 files modified. Sidebar nav, adaptive grid, keyboard shortcuts (Cmd+1-4), light mode, Mac icon.
