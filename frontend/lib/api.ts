@@ -58,7 +58,7 @@ export function setAuthTokenGetter(getter: (() => Promise<string | null>) | null
 /**
  * Base fetch wrapper with error handling and optional auth
  */
-async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string> || {}),
   };
@@ -71,17 +71,30 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> 
     }
   }
 
-  const res = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 15000);
 
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(error.detail || `API error: ${res.status}`);
+    }
+
+    return res.json();
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timeout: ${endpoint}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return res.json();
 }
 
 /**

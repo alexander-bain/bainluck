@@ -111,7 +111,7 @@ function MyTeamsFeed() {
   } = useSWR(
     "my-teams-feed",
     () => fetchFeed({ limit: 100, my_teams_only: true, include_futures: false }),
-    { refreshInterval: 15000 },
+    { refreshInterval: 60000 },
   );
 
   // Fetch team futures ("Your Teams' Odds")

@@ -84,7 +84,7 @@ export default function HomePage() {
   } = useSWR<GroupedFeedResponse>(
     authLoading ? null : "grouped-feed",
     () => fetchGroupedFeed({ limit: 20 }),
-    { refreshInterval: 60000 }
+    { refreshInterval: 120000 }
   );
 
   // =========================================================================

@@ -75,6 +75,17 @@ app.add_middleware(
 )
 
 
+CACHE_RULES: list[tuple[str, int]] = [
+    ("/api/feed", 10),
+    ("/api/playoffs/", 60),
+    ("/api/sports", 120),
+    ("/api/golf", 60),
+    ("/api/weather", 60),
+    ("/api/economics", 60),
+    ("/api/categories", 60),
+]
+
+
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
     start = time.perf_counter()
@@ -83,6 +94,17 @@ async def request_timing(request: Request, call_next):
     response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
     if duration_ms > 500 and "/admin" not in request.url.path:
         logger.warning("SLOW %s %s %dms", request.method, request.url.path, duration_ms)
+
+    if request.method == "GET" and response.status_code == 200:
+        path = request.url.path
+        if "/admin" not in path:
+            for prefix, max_age in CACHE_RULES:
+                if path.startswith(prefix):
+                    response.headers["Cache-Control"] = f"public, max-age={max_age}"
+                    break
+            # Event detail: longer cache for completed events
+            if path.startswith("/api/events/") and "/history" in path:
+                response.headers["Cache-Control"] = "public, max-age=30"
     return response
 
 
