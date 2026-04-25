@@ -118,6 +118,77 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 
 ---
 
+## Tier 0.5 — Feed & Navigation Quality (April 25 Review)
+
+### 0n. Navigation Redesign — NEEDS DESIGN BRIEF
+
+**Proposed structure:** Feed | Categories | My Stuff + Search bar (all platforms)
+
+**Categories** (dropdown on hover/click + full `/categories` page):
+- **Sport** — subcategories for each sport/league (NBA, NFL, MLB, NHL, Golf, Soccer, etc.)
+- **Weather** — existing `/weather` page
+- **Economics** — existing `/economics` page
+- **Entertainment** — placeholder filtered feed view
+- **Politics** — placeholder filtered feed view
+
+**Current state (inconsistent):**
+- Desktop web: Feed | Search | Weather | Economics | My Stuff
+- Mobile web: Feed | Search | My Stuff (no Weather, Economics, Leagues)
+- iOS: Feed | Leagues | Search | My Stuff
+- Mac: Same as iOS with sidebar
+
+**Requirements:**
+- Consistent across web desktop, web mobile, iOS, Mac
+- Dropdown + full page for Categories (confirmed April 25)
+- Sport subcategories show leagues within each sport
+- Needs a proper design brief before implementation (memory: "Nav needs design")
+
+**Files:** `frontend/components/DesktopNav.tsx`, `frontend/components/BottomNav.tsx`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, new `/categories` routing
+**Parallel Safety:** Red (touches navigation on all platforms)
+
+### 0p. Sport/League Pages: Add Live Events
+
+`/sport/basketball/nba` shows only the championship grid — no live game cards. During playoffs, visiting the NBA page should show tonight's games prominently.
+
+**Fix:** Add a "Today's Games" section above the championship grid. Query the feed API filtered by sport, show live events first, then scheduled, then recently completed. Same event cards as the feed.
+
+**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`
+**Parallel Safety:** Yellow (frontend only, one file)
+
+### 0q. Feed "Top Markets" Stale Data (BUG — user-facing)
+
+Multiple stale/nonsensical markets showing in the feed's "Top Markets" section:
+
+**0q-1. "Pro Basketball Best Regular Season Record"** — NBA season is complete. Market shows nonsensical options (teams with 0% and 100%). Should be hidden because the market is effectively resolved even if status is still "open".
+**Root cause:** Feed filter checks `status=="open"` and `resolution_date >= now`, but doesn't catch markets where the underlying event/season has concluded.
+**Fix:** Add a staleness heuristic: if ALL outcomes are <5% or >95%, the market is effectively resolved → hide it. OR check if the market's `canonical_market_key` relates to a completed season.
+
+**0q-2. Stale Masters golf market** — Masters was April 9-12, still showing in feed weeks later.
+**Root cause:** Same as above — status still "open", resolution_date hasn't passed.
+**Fix:** Same staleness filter. Also: for tournament-specific markets, check if the tournament has completed.
+
+**0q-3. No probability bars on Top Markets futures** — Just showing numbers without visual context. Event cards have probability bars, but futures cards in the feed are text-only.
+**Fix:** Add probability bars to `FeedCard` / `CombinedFeedCard` for futures items.
+
+**0q-4. Truncated futures names** — "2026 Pro Football Draft: Number of RBs drafted O/U 16.5" is cut off.
+**Fix:** Show full market name or use smarter truncation (truncate the prefix, keep the distinguishing part).
+
+**Files:** `backend/app/routes/feed.py` (staleness filtering), `frontend/components/FeedCard.tsx` (display)
+**Parallel Safety:** Yellow
+
+### 0r. Golf Data Quality Issues (April 25)
+
+**0r-1. Tiger Woods British Open odds** — showing meaningful chance when he won't compete. The `_NON_WINNER_MARKET_RE` filter may not cover all cases.
+**Fix:** Check if British Open winner market outcomes include Tiger from "compete in" markets leaking through.
+
+**0r-2. Dead category links in golf** — "Rory McIlroy Golf Majors In 2026" and "Zurich Classic of New Orleans" link to `/categories/` pages which look bad. Should link to sport hierarchy or tournament pages.
+**Fix:** Golf feed cards should link to `/sport/golf/pga` or tournament detail pages, not `/categories/`.
+
+**Files:** `backend/app/routes/golf.py`, golf frontend components
+**Parallel Safety:** Yellow
+
+---
+
 ## Tier 1 — High Leverage, Do Next
 
 ### 0. Mystery Shopper Critical Fixes — ALL SHIPPED (April 22)
