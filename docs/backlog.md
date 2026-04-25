@@ -12,19 +12,24 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **FIXED (April 24):** Dashboard was showing all-time link rates (including resolved/closed markets in denominator). Now shows open-market-only rates. Numbers should be significantly higher and actually reflect matching work.
 
-**Current state (April 20, 2026 — STALE, update after open-rate deploy):**
+**Current state (April 25, 2026 — open markets only):**
+
+Kalshi: **61.9%** (7,991 / 12,917) | Polymarket: **72%** (3,467 / 4,814)
 
 | Sport | Kalshi open | Polymarket open | Target | Status |
 |-------|------------|----------------|--------|--------|
-| Tennis | 95.9% | 0.3% | >90% K, accept PM | **Kalshi: GOOD** |
-| Basketball | 56.8% | 88.2% | >85% | Needs work |
-| Baseball | 76.7% | 71.2% | >85% | Close |
-| Hockey | 52.1% | 50.0% | >80% | Needs work |
-| MMA | 77.3% | 25.0% | >80% | Kalshi close, PM needs investigation |
-| Soccer | 33.7% | 98.4% | varies | PM great, Kalshi limited by minor league coverage |
-| Esports | 13.5% | 3.9% | ~20% | Structural limit — no event source |
-| Golf | 1.4% | — | N/A | Not a bug — futures use grid, not event_id |
-| Football | 0.0% | — | N/A | Offseason |
+| Tennis | 98.6% | 0.2% | >90% K, accept PM | **Kalshi: EXCELLENT** |
+| MMA | 86.3% | — | >80% | **Kalshi: TARGET MET** |
+| Baseball | 75.1% | 73.4% | >85% | Close on both |
+| Esports | 69.4% | 5.1% | ~20% | **Kalshi: WAY above target** |
+| Basketball | 58.9% | 93.8% | >85% | PM great, Kalshi needs work |
+| Hockey | 59% | 23.8% | >80% | Both need work |
+| Soccer | 44.4% | 98.6% | varies | PM excellent, Kalshi limited by minor league coverage |
+| Rugby | — | 97.6% | N/A | PM only |
+| Cricket | — | 28.2% | N/A | PM only |
+| Golf | 0.7% | — | N/A | Not a bug — futures use grid, not event_id |
+
+**Grid Health: 94/100** (NBA 94, NHL 97, MLB 87, Golf 100)
 
 **Target: 100%** for all sports where matching is possible. Any miss on a market that SHOULD match is a bug.
 
