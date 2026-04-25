@@ -85,5 +85,20 @@ struct Bain_LuckApp: App {
             }
         }
         #endif
+
+        #if os(macOS)
+        WindowGroup(for: Int.self) { $eventId in
+            if let id = eventId {
+                NavigationStack {
+                    EventDetailView(eventId: id)
+                        .environmentObject(authManager)
+                        .environmentObject(navCoordinator)
+                        .environmentObject(pinManager)
+                }
+                .preferredColorScheme(.light)
+            }
+        }
+        .defaultSize(width: 900, height: 700)
+        #endif
     }
 }

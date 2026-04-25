@@ -123,15 +123,44 @@ struct EventDetailView: View {
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
     private var contentMaxWidth: CGFloat { isIPad ? 900 : 700 }
 
+    private var dynamicTitle: String {
+        guard let event = vm.event else { return "Game Details" }
+        let away = event.awayTeamData?.abbreviation ?? String(event.awayTeam.split(separator: " ").last ?? "")
+        let home = event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? "")
+        if let hs = event.homeScore, let as_ = event.awayScore {
+            let parts = [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+            let state = parts.joined(separator: " ")
+            return "\(away) \(as_) - \(home) \(hs)" + (state.isEmpty ? "" : " • \(state)")
+        }
+        return "\(away) vs \(home)"
+    }
+
+    private var shareURL: URL {
+        URL(string: "https://bainluck.com/events/\(eventId)")!
+    }
+
     var body: some View {
         contentView
-            .navigationTitle("Game Details")
+            .navigationTitle(dynamicTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                if isLive {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button { Task { await vm.load(); lastRefreshDate = Date() } } label: {
+                            refreshRing
+                        }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    PinButton(type: "event", id: eventId)
+                    HStack(spacing: 4) {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14))
+                        }
+                        PinButton(type: "event", id: eventId)
+                    }
                 }
             }
             .task {
@@ -877,6 +906,21 @@ struct EventDetailView: View {
     }
 
     // MARK: - Refresh Countdown
+
+    private var refreshRing: some View {
+        let total = max(refreshInterval, 1)
+        let progress = Double(total - refreshCountdown) / Double(total)
+        return ZStack {
+            Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 2)
+            Circle().trim(from: 0, to: progress)
+                .stroke(Color(hex: "#10B981"), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(refreshCountdown)")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 22, height: 22)
+    }
 
     /// Refresh interval in seconds (matches ViewModel's 30s for live, 120s for scheduled)
     private var refreshInterval: Int {

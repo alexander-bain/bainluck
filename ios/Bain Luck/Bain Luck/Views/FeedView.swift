@@ -132,9 +132,13 @@ struct FeedView: View {
     @State private var path = NavigationPath()
     @State private var selectedCategory: String = "all"
     @State private var landscapeColumns = false
+    @State private var hoveredItemId: String?
     @EnvironmentObject var navCoordinator: NavigationCoordinator
     @EnvironmentObject var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -306,11 +310,7 @@ struct FeedView: View {
                 // iPad: multi-column grid with context menu for pin
                 LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                     ForEach(items) { item in
-                        feedRow(item)
-                            .padding(12)
-                            .background(Color.cardBackgroundDark)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .contextMenu { pinContextMenu(item) }
+                        gridCard(item)
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -401,6 +401,23 @@ struct FeedView: View {
         }
     }
 
+    // MARK: - Grid Card (iPad/Mac with hover + context menu)
+
+    private func gridCard(_ item: FeedItem) -> some View {
+        let isHovered = hoveredItemId == item.id
+        return feedRow(item)
+            .padding(12)
+            .background(Color.cardBackgroundDark)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            #if os(macOS)
+            .onHover { hovering in hoveredItemId = hovering ? item.id : nil }
+            .scaleEffect(isHovered ? 1.015 : 1.0)
+            .shadow(color: .black.opacity(isHovered ? 0.1 : 0), radius: 4)
+            .animation(.easeInOut(duration: 0.15), value: hoveredItemId)
+            #endif
+            .contextMenu { cardContextMenu(item) }
+    }
+
     // MARK: - Row
 
     @ViewBuilder
@@ -446,13 +463,31 @@ struct FeedView: View {
     // MARK: - Context Menu Pin (iPad)
 
     @ViewBuilder
-    private func pinContextMenu(_ item: FeedItem) -> some View {
+    private func cardContextMenu(_ item: FeedItem) -> some View {
         if let pinInfo = pinInfo(for: item) {
             let isPinned = pinManager.isPinned(type: pinInfo.type, id: pinInfo.id)
             Button {
                 pinManager.togglePin(type: pinInfo.type, id: pinInfo.id)
             } label: {
                 Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
+            }
+        }
+        if let event = item.event {
+            Divider()
+            ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
+                Label("Share Link", systemImage: "square.and.arrow.up")
+            }
+            #if os(macOS)
+            Button {
+                openWindow(value: event.id)
+            } label: {
+                Label("Open in New Window", systemImage: "macwindow.badge.plus")
+            }
+            #endif
+        } else if let futures = item.futures {
+            Divider()
+            ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)")!) {
+                Label("Share Link", systemImage: "square.and.arrow.up")
             }
         }
     }

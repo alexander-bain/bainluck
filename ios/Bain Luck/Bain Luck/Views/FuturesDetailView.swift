@@ -92,7 +92,13 @@ struct FuturesDetailView: View {
         #endif
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                PinButton(type: "future", id: marketId)
+                HStack(spacing: 4) {
+                    ShareLink(item: URL(string: "https://bainluck.com/futures/\(marketId)")!) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14))
+                    }
+                    PinButton(type: "future", id: marketId)
+                }
             }
         }
         .task {

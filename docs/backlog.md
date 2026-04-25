@@ -211,9 +211,27 @@ Two fixes:
 **Files:** `frontend/components/OddsChart.tsx` (YAxis tick props)
 **Parallel Safety:** Green
 
-### 0f-9. Mac App (April 24)
+### 0f-9. Mac App — SHIPPED + Polish (April 24-25)
 
-Consider building a Mac app (Catalyst or SwiftUI for macOS). The iOS app already has most of the views — macOS would give a desktop experience with sidebar navigation.
+**SHIPPED:** Native macOS target compiles and runs. SwiftUI multiplatform — same codebase as iOS with `#if os` conditionals. 30 files modified. Sidebar nav, adaptive grid, keyboard shortcuts (Cmd+1-4), light mode, Mac icon.
+
+**Remaining macOS polish items:**
+
+| # | Feature | Effort | Notes |
+|---|---------|--------|-------|
+| MAC-1 | **Live-updating title bar** | 1-2h | Show score in window title (e.g., "BOS 87 - PHI 82 • Q4 2:31") when on event detail. Visible even when app is backgrounded. |
+| MAC-2 | **Multi-window support** | 2-3h | Cmd+click event → opens in own window. Watch multiple games. THE killer desktop feature. Uses SwiftUI `openWindow(value:)`. |
+| MAC-3 | **Keyboard navigation** | 2-3h | Arrow keys between feed cards, Enter to open, Escape to go back. `.focusable()` + `onKeyPress`. |
+| MAC-4 | **Toolbar refresh button** | 30min | Add refresh button + countdown ring to toolbar on event detail. |
+| MAC-5 | **Menu bar extra (scores)** | 3-4h | Clover icon in macOS menu bar → dropdown with live scores. `MenuBarExtra` API. |
+| MAC-6 | **Push notifications** | 2-3h | Game start, momentum shifts, upsets. macOS notification center. |
+| MAC-7 | **Hover states** | 1-2h | Feed cards highlight on mouse hover. `.onHover` modifier. |
+| MAC-8 | **Right-click context menus** | 1h | Pin, copy probability, open in new window. Some already via `.contextMenu`. |
+| MAC-9 | **Share button + universal links** | 2-3h | Share button on event detail (top-right). Shares `https://bainluck.com/events/{id}`. Falls back to web for non-app users. Also consider drag-and-drop of cards to create shareable links. |
+| MAC-12 | **macOS widgets** | 3-4h | Desktop widgets showing live scores/probabilities. `WidgetKit`. |
+
+**Files:** `ios/Bain Luck/Bain Luck/` (various Views, Bain_LuckApp.swift)
+**Parallel Safety:** Green (iOS-only changes)
 
 ---
 
