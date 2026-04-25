@@ -88,6 +88,11 @@ struct SportCategoryView: View {
     let categoryName: String
     @StateObject private var vm: SportCategoryViewModel
     @EnvironmentObject var pinManager: PinManager
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var iPadGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 340), spacing: 12)]
+    }
 
     init(categoryKey: String, categoryName: String) {
         self.categoryKey = categoryKey
@@ -215,11 +220,23 @@ struct SportCategoryView: View {
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
-            ForEach(items) { item in
-                feedRow(item)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        pinSwipeButton(item)
+            if sizeClass == .regular {
+                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
+                    ForEach(items) { item in
+                        feedRow(item)
+                            .padding(12)
+                            .background(Color.cardBackgroundDark)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            } else {
+                ForEach(items) { item in
+                    feedRow(item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            pinSwipeButton(item)
+                        }
+                }
             }
         } header: {
             HStack(spacing: 6) {
