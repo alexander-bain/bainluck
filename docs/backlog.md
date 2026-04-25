@@ -959,7 +959,30 @@ Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `p
 - Related Futures Phase 5 — Bidirectional
 - Frontend tests — Jest config exists, zero test files
 - iOS tests — ViewModels with deterministic state logic
-- iOS beyond parity — App Store, widgets, push, share extension
+- iOS/Mac beyond parity — App Store, widgets, push, share extension
+
+### Platform Parity Checklist (April 25, 2026)
+
+**Core features at parity:** Feed, Event Detail, Search, My Stuff, Championship Grids, Futures Detail, Golf, Preferences, Onboarding
+
+**Event detail sub-features at parity:** Win Prob Chart, Score Diff Chart, Player Props, Divergence Badge, Championship Path, Related Futures, Game Play Card, Auto-refresh, Pin/Bookmark
+
+**iOS/Mac gaps (web has, native doesn't):**
+
+| Priority | Feature | Web Component | Effort |
+|----------|---------|--------------|--------|
+| Medium | Game Segments (quarter/half breakdown) | `GameSegments.tsx` | Small |
+| Medium | Total Points Spectrum (spread+total viz) | `TotalPointsSpectrum.tsx` | Medium |
+| Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
+| Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |
+| Low | Line Movement Explainer | `LineMovementExplainer.tsx` | Small |
+| Low | Weather page | 16 components | Large |
+| Low | Economics page | `/economics` | Medium |
+| Low | Explore / faceted browser | `/explore` | Medium |
+| N/A | Admin pages (4) | Intentionally web-only | — |
+| N/A | Seasonal (Oscars, March Madness) | Web-only | — |
+
+**Web gap (iOS has, web doesn't):** EI Rankings standalone page (iOS has `EIRankingsView.swift` with sport filters)
 - Apple Watch / Apple TV apps
 - Weather visualization — prediction market weather maps
 - **Self-Evolving Website** — closed-loop autonomous improvement cycle:
