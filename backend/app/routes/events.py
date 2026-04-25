@@ -2440,6 +2440,20 @@ async def get_game_markets(
                 FuturesMarket.llm_sport_category.is_(None),
             )
         )
+    # Filter out markets from other games in the same series (cross-game contamination).
+    # The matching task may have linked Game 3's markets to Game 4's event.
+    if event.commence_time:
+        time_lower = event.commence_time - timedelta(hours=18)
+        time_upper = event.commence_time + timedelta(hours=18)
+        linked_query = linked_query.where(
+            or_(
+                and_(
+                    FuturesMarket.commence_time >= time_lower,
+                    FuturesMarket.commence_time <= time_upper,
+                ),
+                FuturesMarket.commence_time.is_(None),
+            )
+        )
     market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
 
