@@ -7,6 +7,10 @@
 - ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
 - ✅ **PREQ-1: Request timing middleware**: Every API response now includes `X-Response-Time` header (visible in DevTools). Requests >500ms logged as warnings (excludes admin). CORS `expose_headers` updated so frontend JS can read the header.
 
+## April 26, 2026
+
+- ✅ **iOS Game Detail triage**: 14 items added to backlog from BOS @ BAL review. Priority: GD3 (win prob drifts to 50% post-final — wrong market linked). Also: hero polish, chart legend/axis/indicators, player headshots, Championship Path league-awareness, Bigger Picture cards, award bars, Season Stats dedup, Game Info state labels.
+
 ## April 25, 2026
 
 - ✅ **PREQ-2: API client timeout**: 15s AbortController on all `apiFetch()` calls. Prevents infinite white-screen hangs.
