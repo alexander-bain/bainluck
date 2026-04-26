@@ -607,11 +607,11 @@ struct OddsChartView: View {
                 }
             }
 
-            // Period marker vertical lines (labels rendered via chartOverlay below)
+            // Period markers — light vertical gridlines at inning/quarter boundaries
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
-                    .foregroundStyle(.secondary.opacity(0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    .foregroundStyle(.secondary.opacity(0.25))
             }
         }
         .chartYScale(domain: yMin...yMax)
@@ -619,18 +619,17 @@ struct OddsChartView: View {
         // Period marker labels positioned inside chart via overlay
         .chartOverlay { proxy in
             GeometryReader { geo in
+                // Small floating period chips near the top of the chart
                 ForEach(Array(visibleMarkers.enumerated()), id: \.element.id) { index, marker in
                     if let xPos = proxy.position(forX: marker.date) {
-                        // Alternate label y-position to avoid overlap
-                        let yPos: CGFloat = index % 2 == 0 ? 12 : 28
                         Text(marker.label)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.primary.opacity(0.7))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color.cardBackground.opacity(0.9))
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .position(x: xPos + 16, y: yPos)
+                            .position(x: xPos, y: 8)
                     }
                 }
             }
@@ -649,7 +648,7 @@ struct OddsChartView: View {
             }
         }
         .chartXAxis {
-            AxisMarks { _ in
+            AxisMarks(values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
                 AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)

@@ -221,8 +221,7 @@ struct EventDetailView: View {
                                 lastPoint: lastPlayPoint(event: event)
                             )
                         }
-                        // Sources toggle (bookmaker odds inside chart card)
-                        sourcesToggle(event)
+                        // Sources toggle removed (GD6) — non-functional, wastes space
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
