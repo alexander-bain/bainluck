@@ -471,8 +471,8 @@ struct EventDetailView: View {
                 .frame(maxWidth: .infinity)
             }
 
-            // EI strip — hide for completed games (EI is meaningless post-final)
-            if !isFinished, let ei = event.ei ?? event.pulse {
+            // EI strip (compact, inline)
+            if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
         }
