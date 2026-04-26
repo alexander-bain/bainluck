@@ -373,7 +373,9 @@ struct EventDetailView: View {
                             .foregroundStyle(winnerColor(isAway: true, event: event))
                     }
                     if let record = event.awayTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.secondary)
+                        Text(record)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -462,14 +464,16 @@ struct EventDetailView: View {
                             .foregroundStyle(winnerColor(isAway: false, event: event))
                     }
                     if let record = event.homeTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.secondary)
+                        Text(record)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
 
-            // EI strip (compact, inline)
-            if let ei = event.ei ?? event.pulse {
+            // EI strip — hide for completed games (EI is meaningless post-final)
+            if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
         }
