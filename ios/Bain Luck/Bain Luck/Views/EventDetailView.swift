@@ -720,12 +720,23 @@ struct EventDetailView: View {
                         .background(Color.secondary.opacity(0.08))
                         .clipShape(Capsule())
                     }
-                    if let ct = event.commenceTime {
+                    if let ct = event.commenceTime, let date = ct.asDate {
                         HStack(spacing: 5) {
                             Image(systemName: "clock")
                                 .font(.system(size: 10))
-                            RelativeTimeText(dateString: ct)
+                            if isFinished {
+                                Text("Final · \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if isLive {
+                                Text("Started \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else {
+                                RelativeTimeText(dateString: ct)
+                            }
                         }
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Color.secondary.opacity(0.08))
