@@ -1065,6 +1065,104 @@ Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `p
 **Files:** `ios/Bain Luck/Bain Luck/Views/FeedView.swift` — already fixed, needs build verification.
 **Parallel Safety:** Green
 
+### iOS Game Detail Triage (April 26)
+
+Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
+
+#### iOS-GD1. Mystery "8" icon between teams in hero
+**Problem:** Unlabeled value (likely EI badge) appears between team logos in the hero section. No context for what it means.
+**Approach:** Confirm what the value represents in `EIBadgeView`. Label it clearly, or hide it for completed games since EI is a pre-game/live concept — showing it post-final is meaningless.
+**Files:** `ios/.../Components/EIBadgeView.swift`, `EventDetailView.swift` (hero section)
+**Parallel Safety:** Green
+
+#### iOS-GD2. Records visually merge with score
+**Problem:** Team records ("10-17" / "13-14") sit directly under scores ("17 / 1") with similar font weight and color, making them hard to distinguish at a glance.
+**Approach:** Reduce font size/weight on records, switch to `text-muted` color, and/or prefix with "Record:" to differentiate from the score.
+**Files:** `ios/.../Views/EventDetailView.swift` (hero section)
+**Parallel Safety:** Green
+
+#### iOS-GD3. Win prob chart drifts toward 50% post-final — PRIORITY
+**Problem:** For BOS @ BAL (final 17–1), the aggregate win probability drifts toward ~50% after the game ends, even though real sources resolved to ~100%. Likely a wrong Kalshi/Polymarket market linked to the event, and/or upstream market resolution status isn't propagating.
+**Approach:** Investigate via: `SELECT id, source, source_market_id, name, status, last_price FROM prediction_markets WHERE event_id = <id>`. Fix root cause in match logic (`app/utils/prediction_market_matching.py`) and/or status propagation (`app/tasks/prediction_market_matching.py`, `poll_live_prediction_markets`). Add audit: for every completed event, every linked market should be resolved upstream and our latest snapshot should match the realized outcome within tolerance. New check in `scripts/audit_matching_quality.py` or `audit_post_final_consistency.py`.
+**Files:** `backend/app/utils/prediction_market_matching.py`, `backend/app/tasks/prediction_market_matching.py`, `backend/app/tasks/live_prediction_markets.py`
+**Parallel Safety:** Yellow (backend matching logic)
+
+#### iOS-GD4. Two "Bain Luck" series in chart legend
+**Problem:** Chart legend shows both "Bain Luck" (aggregate) and "Bain Luck Model" — confusing which is which.
+**Approach:** Rename aggregate series to "Bain Luck Agg". For "Bain Luck Model", look up what the model is actually based on (start in `app/config/win_prob_sources.py`, follow the source key, then check `app/services/`/`app/utils/` for implementation) and rename to reflect the basis. Update source label in `win_prob_sources.py` and legend strings in `OddsChartView`.
+**Files:** `backend/app/config/win_prob_sources.py`, `ios/.../Components/OddsChartView.swift`
+**Parallel Safety:** Yellow (touches backend config + iOS)
+
+#### iOS-GD5. Game-state indicators cluttered on chart
+**Problem:** Inning numbers above the chart frame are cramped and hard to read.
+**Approach:** KEEP x-axis time-based (do NOT make innings/periods the primary tick units — breaks for sports with few phases). Drop the cramped strip of inning numbers above the chart frame. Replace with light vertical gridlines at inning-boundary timestamps and small floating chips ("1"…"9") tied to each gridline near the top of the plot area. Degrade gracefully to "1H/2H" for soccer/basketball halves. Time labels at the bottom remain the only x-axis ticks.
+**Files:** `ios/.../Components/OddsChartView.swift`
+**Parallel Safety:** Green
+
+#### iOS-GD6. Dead "BainLuck — Sportsbooks   Sources" row
+**Problem:** Non-functional UI row in the chart section. No interaction, wastes vertical space.
+**Approach:** Remove the row from `OddsChartView`.
+**Files:** `ios/.../Components/OddsChartView.swift`
+**Parallel Safety:** Green
+
+#### iOS-GD7. First x-axis tick rounds up past game start
+**Problem:** First x-axis tick is 10:00 AM despite a 9:05 AM game start, creating a misleading gap.
+**Approach:** Adjust tick generator so the first label aligns with game start (or a half-hour-aligned tick that includes the start) instead of rounding up to the next whole hour. Likely a one-line axis configuration change.
+**Files:** `ios/.../Components/OddsChartView.swift`
+**Parallel Safety:** Green
+
+#### iOS-GD8. Player props show initials instead of headshots
+**Problem:** Player prop cards use colored-initial chips instead of headshots, even when headshot URLs are available.
+**Approach:** Replace colored-initial chips in `PlayerPropsCardView` with the headshot pattern Awards uses in `RelatedFuturesView`. Initials are the fallback when no headshot URL is available. Reuse the existing image-loading helper.
+**Files:** `ios/.../Components/PlayerPropsCardView.swift`, `ios/.../Components/RelatedFuturesView.swift` (reference)
+**Parallel Safety:** Green
+
+#### iOS-GD9. Championship Path shows wrong league rows
+**Problem:** "AL / NL Champ" row appears for AL-only matchups (e.g., two AL teams). Should show only the relevant pennant.
+**Approach:** Make the row league-aware in `ChampionshipPathView`: when both teams share a league/conference, show only that pennant ("AL Pennant"); otherwise keep "AL / NL Champ" for cross-league matchups. Apply same logic for NBA/NHL/NFL conference finals. League is already on the team record.
+**Files:** `ios/.../Components/ChampionshipPathView.swift`
+**Parallel Safety:** Green
+
+#### iOS-GD10. Bigger Picture section is prose instead of cards
+**Problem:** Related futures section shows a text summary blob instead of the card-based design the web app uses.
+**Approach:** Port the web card design. Find components under `frontend/components/RelatedFutures*`, enumerate the props they consume, verify the iOS related-futures payload provides the same fields (extend if not), then build SwiftUI equivalents in `RelatedFuturesView.swift` to replace the `summary` text block.
+**Files:** `ios/.../Components/RelatedFuturesView.swift`, `frontend/components/RelatedFutures.tsx` (reference)
+**Parallel Safety:** Green
+
+#### iOS-GD11. Awards section: numbers without probability bars
+**Problem:** Award outcomes show percentages but no visual bars, unlike the web version.
+**Approach:** Port the web award card design to SwiftUI. Bar primitive already exists (`ProbabilityBar.swift`). Match the web row layout: headshot, player name, award label, probability bar, percent.
+**Files:** `ios/.../Components/RelatedFuturesView.swift` (awards section), `ios/.../Components/ProbabilityBar.swift`
+**Parallel Safety:** Green
+
+#### iOS-GD12. Trevor Story missing headshot
+**Problem:** Trevor Story's award row shows an initials chip instead of a headshot.
+**Approach:** Verify whether the headshot URL is missing in the API payload or just not loading on iOS. Add a generic player silhouette as fallback so rows look uniform even when headshots are unavailable.
+**Files:** `ios/.../Components/RelatedFuturesView.swift`, backend roster data
+**Parallel Safety:** Green
+
+#### iOS-GD13. Season Stats duplicates Championship Path rows
+**Problem:** "Make Playoffs" (Championship Path: BOS 32%, BAL 50%) and "Team to make postseason" (Season Stats: BOS 31%, BAL 51%) are the same concept matched as two separate markets with slightly different numbers.
+**Approach:** Treat as a futures-side matching problem first: identify the two `futures_markets` rows feeding each section, unify them at the futures matcher, then drop the postseason row from Season Stats (Championship Path is canonical). Repeat for "AL East Winner" — likely folds into a Division row. After consolidation, reassess whether Season Stats earns its place at all. Add an audit check for futures markets that should have unified but didn't.
+**Files:** `backend/app/routes/events.py` (related-futures logic), `backend/app/utils/related_futures.py` (dedup), `ios/.../Components/RelatedFuturesView.swift`
+**Parallel Safety:** Yellow (backend dedup logic)
+
+#### iOS-GD14. Game Info footer says "Today" for completed games
+**Problem:** Footer shows "Today 9:05 AM" for a FINAL game. Should be state-aware.
+**Approach:** Make the label driven by `event.status`:
+- Scheduled → "Today 9:05 AM" / "Tomorrow 7:00 PM"
+- Live → "Started 9:05 AM"
+- Final → "Final · Apr 25, 9:05 AM"
+**Files:** `ios/.../Views/EventDetailView.swift` (espnSection / game info footer)
+**Parallel Safety:** Green
+
+#### iOS-GD — NOT YET APPROVED (ask before adding)
+- Score Differential chart inning labels cramped; "Projected Spread" occluded by "Actual Score Diff."
+- Player Props 2-col grid leaves orphan card on odd counts
+- Game Info footer duplicates broadcaster + time already in hero
+- No final-state visual treatment / blowout indicator
+- Bookmark icon floats outside standard nav cluster
+
 ---
 
 ## Tier 4 — Someday / Maybe
