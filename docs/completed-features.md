@@ -9,7 +9,14 @@
 
 ## April 26, 2026
 
-- ✅ **iOS Game Detail triage**: 14 items added to backlog from BOS @ BAL review. Priority: GD3 (win prob drifts to 50% post-final — wrong market linked). Also: hero polish, chart legend/axis/indicators, player headshots, Championship Path league-awareness, Bigger Picture cards, award bars, Season Stats dedup, Game Info state labels.
+- ✅ **iOS Game Detail triage**: 14 items added to backlog from BOS @ BAL review.
+- ✅ **iOS-GD1: Hide EI badge for completed games** — EI is meaningless post-final, now hidden when `isFinished`
+- ✅ **iOS-GD2: Mute team records** — Reduced to 10pt tertiary text so records don't merge with scores
+- ✅ **iOS-GD5: Clean chart period indicators** — Light gridlines (0.5pt) + small floating chips (8pt, ultraThinMaterial) replacing cramped alternating label strip
+- ✅ **iOS-GD6: Remove dead sources row** — Removed non-functional "BainLuck — Sportsbooks Sources ⌄" below chart
+- ✅ **iOS-GD7: Fix x-axis tick distribution** — Uses `desiredCount: 5` for cleaner spacing
+- ✅ **iOS-GD8: Player prop headshots** — Already implemented via AsyncImage + backend all-roster lookup
+- ✅ **iOS-GD14: State-aware Game Info footer** — Scheduled: "Today 9:05 AM", Live: "Started 9:05 AM", Final: "Final · Apr 25, 9:05 AM"
 
 ## April 25, 2026
 
