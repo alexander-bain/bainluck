@@ -113,10 +113,20 @@ export function derivePeriodBoundaries(
   // These come from StatPal play-by-play and have period info on every play,
   // covering games where ESPN and win_prob_history have no period data.
   if (periodMarkers && periodMarkers.length > 0) {
-    const boundaries = periodMarkers.map((m) => ({
-      timestamp: m.timestamp,
-      label: normalizePeriodLabel(m.period),
-    })).filter((b) => b.label);
+    // Dedup: keep only the FIRST occurrence of each normalized label
+    const sorted = [...periodMarkers].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const firstSeen = new Map<string, string>();
+    for (const m of sorted) {
+      const label = normalizePeriodLabel(m.period);
+      if (label && !firstSeen.has(label)) {
+        firstSeen.set(label, m.timestamp);
+      }
+    }
+    const boundaries = Array.from(firstSeen.entries())
+      .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
+      .map(([label, timestamp]) => ({ timestamp, label }));
     if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
