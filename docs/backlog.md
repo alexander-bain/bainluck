@@ -981,6 +981,49 @@ Item 18 builds deep category pages (economics themes, political sub-categories).
 
 **Parallel Safety:** Green (new route, new page, no conflicts)
 
+### 20. Market Interestingness Scoring (powers Item 19)
+
+**Goal:** Build an algorithmic interestingness scorer calibrated against Kalshi/Polymarket marketing emails as ground truth. Those emails are hand-curated by their marketing teams — a free labeled dataset of "what humans find interesting."
+
+**Why feature-based, not ML:** Small dataset (~5-15 markets per email, a few emails/week), interpretable weights, debuggable, Alex can tune intuitively, no training infrastructure.
+
+**Phase 1 — Ground Truth Collection:**
+- Start: copy/paste email text into Claude session, extract market names
+- Graduate to: Google Apps Script + Google Sheet (Gmail filter → daily auto-extract → structured sheet)
+- Sheet columns: `[date, source, market_name, market_url, extracted_question]`
+- Goal: 50-100 labeled "interesting" markets before calibration
+
+**Phase 2 — Scoring Formula:**
+```python
+interestingness = (
+    w1 * decisiveness(prob)          # prefer 15-85% range, not 50% or 99%
+    + w2 * has_multi_source           # both Kalshi AND Polymarket
+    + w3 * recency(created_at)        # new markets are more newsworthy
+    + w4 * movement(price_change_24h) # movement = something happened
+    + w5 * resolution_proximity(date) # 7-90 days out is the sweet spot
+    + w6 * category_novelty(category) # "Swift meets Pope" >> "GDP Q2"
+    + w7 * volume(open_interest)      # liquidity = people care
+    + w8 * llm_question_quality(name) # GPT-4o-mini: "would a casual person find this interesting?"
+)
+```
+
+**Phase 3 — Calibration (hill-climb):**
+1. Score ALL markets in DB
+2. Check: what percentile do email markets land at? Goal: top 5%
+3. Identify failure modes (email markets that score low = missing feature; non-email markets that score high = false positive)
+4. Adjust weights, re-score, repeat
+5. **Metrics:** Precision@20, Recall@50, NDCG
+
+**Phase 4 — Product Integration:**
+- `/explore` page sort (Item 19)
+- Feed futures card ranking
+- "Trending" section (biggest interestingness increase in 24h)
+- Push notifications (macOS/iOS) for high-scoring new markets
+- Featured market hero on `/explore`
+
+**Files:** `utils/market_interestingness.py` (new), `scripts/calibrate_interestingness.py` (new), ground truth in Google Sheet
+**Parallel Safety:** Green (new utility, no existing code modified)
+
 ---
 
 ## iOS App — Web Parity & Polish (April 22, 2026)
