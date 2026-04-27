@@ -23,7 +23,7 @@ export function ConsentBanner() {
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[100] p-2 sm:p-4 animate-slide-up">
+    <div className="fixed bottom-16 md:bottom-0 left-0 right-0 z-[100] p-2 sm:p-4 animate-slide-up">
       <div className="max-w-4xl mx-auto bg-surface-card rounded-xl shadow-2xl border border-surface-border overflow-hidden">
         {/* Main Banner */}
         <div className="p-3 sm:p-6">

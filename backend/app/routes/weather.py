@@ -487,12 +487,19 @@ async def get_rain(db: AsyncSession = Depends(get_db)):
     monthly_result = await db.execute(monthly_query)
     monthly_markets: list[FuturesMarket] = list(monthly_result.scalars().all())
 
-    monthly_rain = []
+    # Dedup by city — keep the market with the latest resolution date per city
+    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market)
     for m in monthly_markets:
-        prob = _get_yes_probability(m)
         city_match = re.search(r"Rain in (.+?) in \w+ \d{4}", m.name, re.I)
         city_name = city_match.group(1).strip() if city_match else m.name
+        res_date = m.resolution_date
+        existing = city_best.get(city_name)
+        if not existing or (res_date and (not existing[0] or res_date > existing[0])):
+            city_best[city_name] = (res_date, m)
 
+    monthly_rain = []
+    for city_name, (_, m) in city_best.items():
+        prob = _get_yes_probability(m)
         delta = 0
         best_prob = 0.0
         for o in m.outcomes:
@@ -510,6 +517,8 @@ async def get_rain(db: AsyncSession = Depends(get_db)):
             "src": _market_source(m),
             "delta24h": delta,
         })
+
+    monthly_rain.sort(key=lambda x: x["prob"], reverse=True)
 
     return {
         "daily": daily_rain,
@@ -560,6 +569,7 @@ async def get_events(db: AsyncSession = Depends(get_db)):
             "prob": _highest_prob(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
+            "_res_date": m.resolution_date,
         }
         name = m.name
         if _HURRICANE_RE.search(name):
@@ -569,9 +579,15 @@ async def get_events(db: AsyncSession = Depends(get_db)):
         elif _TORNADO_RE.search(name):
             groups["tornadoes"].append(item)
 
-    # Sort each group by probability descending
-    for key in groups:
-        groups[key].sort(key=lambda x: x["prob"], reverse=True)
+    # Sort: tornadoes chronologically, others by probability
+    groups["tornadoes"].sort(key=lambda x: x.get("_res_date") or datetime.max)
+    groups["hurricane"].sort(key=lambda x: x["prob"], reverse=True)
+    groups["earthquake"].sort(key=lambda x: x["prob"], reverse=True)
+
+    # Remove internal sort key
+    for group in groups.values():
+        for item in group:
+            item.pop("_res_date", None)
 
     return groups
 
