@@ -1461,15 +1461,21 @@ async def _poll_live_prediction_market_prices():
                             # corresponds to the FIRST listed team, not necessarily
                             # the team our outcome record represents. We must match
                             # by name to get the right price.
+                            ltp = pm.get("lastTradePrice")
+                            best_bid = pm.get("bestBid")
+                            best_ask = pm.get("bestAsk")
+
+                            # Skip entirely if no trading activity — stale price from
+                            # hours/days ago is worse than no data.
+                            if ltp is None and (best_bid is None or float(best_bid) == 0):
+                                continue
+
                             prob = float(prices[0])  # default: outcomePrices midpoint
 
                             # Prefer lastTradePrice when bid/ask spread is wide (>15pp).
                             # During blowouts, the order book becomes illiquid and the
                             # midpoint is meaningless (e.g., bid=0.34 ask=0.43 → mid=0.385
                             # but the game is effectively over).
-                            ltp = pm.get("lastTradePrice")
-                            best_bid = pm.get("bestBid")
-                            best_ask = pm.get("bestAsk")
                             if (ltp is not None
                                 and best_bid is not None and best_ask is not None):
                                 spread = abs(float(best_ask) - float(best_bid))
