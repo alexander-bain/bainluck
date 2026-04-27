@@ -35,8 +35,9 @@ export function normalizePeriodLabel(raw: string): string {
   // ESPN status_detail includes game clock before the period name
   s = s.replace(/^[\d.:]+\s*-\s*/, "");
 
-  // Strip "End of " / "Start of " prefix: "End of 1st Quarter" → "1st Quarter"
-  s = s.replace(/^(?:end|start)\s+of\s+/i, "");
+  // Detect "End of" / "Start of" prefix before stripping
+  const isEnd = /^end\s+(?:of\s+)?/i.test(s);
+  s = s.replace(/^(?:end|start)\s+(?:of\s+)?/i, "");
 
   // Halftime
   if (/^half\s*time$/i.test(s) || s === "HT") return "HT";
@@ -48,17 +49,17 @@ export function normalizePeriodLabel(raw: string): string {
     return m ? `OT${m[1]}` : "OT";
   }
 
-  // Quarter (basketball, football): "1st Quarter" -> "Q1"
+  // Quarter (basketball, football): "1st Quarter" → "Q1", "End of 1st Quarter" → "/Q1"
   const qMatch = s.match(/^(\d+)\w*\s+quarter$/i);
-  if (qMatch) return `Q${qMatch[1]}`;
+  if (qMatch) return isEnd ? `/Q${qMatch[1]}` : `Q${qMatch[1]}`;
 
-  // Period (hockey): "1st Period" -> "P1"
+  // Period (hockey): "1st Period" → "P1", "End of 1st Period" → "/P1"
   const pMatch = s.match(/^(\d+)\w*\s+period$/i);
-  if (pMatch) return `P${pMatch[1]}`;
+  if (pMatch) return isEnd ? `/P${pMatch[1]}` : `P${pMatch[1]}`;
 
-  // Half (soccer): "1st Half" -> "1H"
+  // Half (soccer): "1st Half" → "1H", "End of 1st Half" → "/1H"
   const hMatch = s.match(/^(\d+)\w*\s+half$/i);
-  if (hMatch) return `${hMatch[1]}H`;
+  if (hMatch) return isEnd ? `/${hMatch[1]}H` : `${hMatch[1]}H`;
 
   // Baseball innings: "Top 3rd" → "T3", "Bottom 5th" → "B5"
   // Skip "Middle" and "End" to avoid chart clutter — only show half-inning starts
@@ -113,7 +114,7 @@ export function derivePeriodBoundaries(
   // These come from StatPal play-by-play and have period info on every play,
   // covering games where ESPN and win_prob_history have no period data.
   if (periodMarkers && periodMarkers.length > 0) {
-    // Dedup: keep only the FIRST occurrence of each normalized label
+    // Dedup by exact label (start "Q1" and end "/Q1" are distinct)
     const sorted = [...periodMarkers].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
