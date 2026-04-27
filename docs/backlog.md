@@ -293,10 +293,8 @@ Full report: `Manus/audit_results/site_sweep_april25.md`
 **Fix:** Audit all `text-micro` and `text-[10px]` usage. Bump minimum to 11px on mobile. Key files: `FeedCard.tsx`, `ChampionshipGrid.tsx`, `RelatedFutures.tsx`.
 **Parallel Safety:** Green
 
-#### MS-2. Cookie consent banner overlaps bottom nav
-**Problem:** The cookie banner partially obscures the bottom tab bar and lowest feed cards on mobile.
-**Fix:** Add `bottom-nav-safe` padding or position the banner above the nav bar. File: `frontend/components/Analytics/ConsentBanner.tsx`.
-**Parallel Safety:** Green
+#### ~~MS-2. Cookie consent banner overlaps bottom nav~~ ✅ SHIPPED (April 27)
+Banner uses `bottom-16` on mobile to sit above the tab bar.
 
 #### MS-3. Missing team logos on event detail (pink/grey placeholders)
 **Problem:** Team logos in event detail header render as colored placeholder circles instead of actual logos. Manus saw this on Hawks vs Knicks.
@@ -569,21 +567,11 @@ Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 
 **Remaining sub-items (in priority order):**
 
-#### 1a. Time Window Expansion (48h → 7d for Kalshi) — HIGHEST IMPACT
-**Root cause:** Kalshi's `commence_time` is the market RESOLUTION date, not the game date. The current 48h matching window is too strict — prop markets resolve 1-2 weeks after the game. Polymarket already has a 14-day fallback but Kalshi doesn't.
-**Fix:** Make time window source-specific: `MAX_TIME_DELTA_KALSHI = timedelta(days=7)`, keep 48h for Polymarket. In `_find_event_by_sport_and_time()`, use source-specific window.
-**Expected impact:** +8-12% link rate for basketball AND hockey.
-**Files:** `tasks/prediction_market_matching.py:178` (MAX_TIME_DELTA), `tasks/prediction_market_matching.py:1007-1107` (_find_event_by_sport_and_time)
-**Effort:** 1-2 hours
-**Parallel Safety:** Yellow
+#### ~~1a. Time Window Expansion (48h → 7d for Kalshi)~~ ✅ ALREADY SHIPPED
+Commit `eb32ace`. Kalshi uses 7-day window in broad fallback, 48h when ticker game date is available.
 
-#### 1b. Ticker-Based Team Name Fallback — HIGH IMPACT
-**Root cause:** Fuzzy name matching fails when Kalshi market text uses abbreviated/city-only team names. But the 3-letter team code in the Kalshi ticker (e.g., "BOS" in KXNBAGAME-26APR24BOSPHI) is always reliable.
-**Fix:** In `match_teams_to_event()`, after fuzzy name match fails, fall back to `extract_teams_from_ticker()` which uses the `_KALSHI_TEAM_ABBREVS` dict. This is already implemented but not used as a fallback — it's an alternative path.
-**Expected impact:** +5-7% link rate for basketball and hockey.
-**Files:** `utils/prediction_market_matching.py:527-565` (match_teams_to_event), `utils/prediction_market_matching.py:794-848` (extract_teams_from_ticker)
-**Effort:** 2-3 hours
-**Parallel Safety:** Yellow
+#### ~~1b. Ticker-Based Team Name Fallback~~ ✅ SHIPPED (April 27)
+Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching fails, falls back to `extract_teams_from_ticker()` which uses reliable 3-letter Kalshi ticker codes. 2 new tests.
 
 #### 1c. Sport Key Extraction Validation
 **Root cause:** When sport key extraction fails from a Kalshi market, the code falls back to generic time-based matching with NO sport filtering. This can cause cross-sport mismatches (basketball market matching a hockey event).

@@ -528,6 +528,7 @@ def match_teams_to_event(
     matchup: MatchupInfo,
     event_home_team: str,
     event_away_team: str,
+    external_id: str = "",
 ) -> Optional[dict]:
     """
     Determine how a matchup's teams map to an event's home/away teams.
@@ -561,6 +562,23 @@ def match_teams_to_event(
         if other_matches_away and not other_matches_home:
             # Other team is away, so yes_team is home
             return {"yes_is_home": True, "matched_team": yes_team}
+
+    # Fallback: extract team names from Kalshi ticker abbreviations.
+    # Tickers like KXNBAGAME-26APR24BOSPHI encode reliable 3-letter team
+    # codes that work even when the market text is generic.
+    if external_id:
+        ticker_teams = extract_teams_from_ticker(external_id)
+        if ticker_teams:
+            ticker_a, ticker_b = ticker_teams
+            a_home = _fuzzy_team_match(ticker_a, event_home_team)
+            a_away = _fuzzy_team_match(ticker_a, event_away_team)
+            b_home = _fuzzy_team_match(ticker_b, event_home_team)
+            b_away = _fuzzy_team_match(ticker_b, event_away_team)
+            # ticker_a is the first team in the ticker (away in Kalshi convention)
+            if a_away and b_home:
+                return {"yes_is_home": b_home, "matched_team": f"ticker:{ticker_b}"}
+            if a_home and b_away:
+                return {"yes_is_home": True, "matched_team": f"ticker:{ticker_a}"}
 
     return None
 

@@ -505,6 +505,27 @@ class TestMatchTeamsToEvent:
         assert result is not None
         assert result["yes_is_home"] is False
 
+    def test_ticker_fallback_when_names_dont_match(self):
+        """When market text is generic, fall back to ticker team abbreviations."""
+        matchup = MatchupInfo("Game", None, yes_team="Game", format_type="will_win")
+        result = match_teams_to_event(
+            matchup, "Boston Celtics", "Philadelphia 76ers",
+            external_id="KXNBAGAME-26APR24BOSPHI",
+        )
+        assert result is not None
+        assert "ticker:" in result["matched_team"]
+
+    def test_ticker_fallback_not_used_when_names_match(self):
+        """Ticker fallback should NOT activate when fuzzy matching succeeds."""
+        matchup = extract_matchup("Celtics vs 76ers")
+        assert matchup is not None
+        result = match_teams_to_event(
+            matchup, "Boston Celtics", "Philadelphia 76ers",
+            external_id="KXNBAGAME-26APR24BOSPHI",
+        )
+        assert result is not None
+        assert "ticker:" not in result["matched_team"]
+
 
 # =============================================================================
 # find_moneyline_outcome (for multi-outcome game events)

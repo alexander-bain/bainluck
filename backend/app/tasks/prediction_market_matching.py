@@ -950,6 +950,7 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
             matchup,
             event.home_team_name,
             event.away_team_name,
+            external_id=market.external_id or "",
         )
         if not team_match:
             continue
@@ -1214,7 +1215,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     event, was_created = await find_or_create_event(session, identity)
 
     # Determine yes_is_home mapping
-    team_match = match_teams_to_event(matchup, team_a, team_b)
+    team_match = match_teams_to_event(matchup, team_a, team_b, external_id=external_id)
     yes_is_home = team_match["yes_is_home"] if team_match else True
 
     logger.info(
