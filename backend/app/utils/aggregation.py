@@ -266,21 +266,33 @@ def compute_current_aggregate(
     return round(_weighted_median(values, wts), 6)
 
 
-def compute_aggregate_probability(event) -> Optional[float]:
+_EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
+
+
+def compute_aggregate_probability(event, event_status: Optional[str] = None) -> Optional[float]:
     """Compute aggregate home win probability from all available sources.
 
     Uses SOURCE_WEIGHTS to produce a weighted average of all available
     probability readings on the event model.  Falls back through three
     tiers of decreasing richness.
 
+    When event_status is "completed" or "closed", prediction market sources
+    (Kalshi, Polymarket) are excluded — their prices go stale post-final
+    and drag the aggregate away from the resolved sportsbook/ESPN values.
+
     Works on any object with win_probability_sources, espn_win_prob_home,
     and opening_home_probability attributes (typically an Event model).
     """
+    status = event_status or getattr(event, "status", None)
+    is_finished = status in ("completed", "closed")
+
     # Tier 1: win_probability_sources JSONB (live games — multiple sources)
     wps = getattr(event, "win_probability_sources", None) or {}
     prob_readings: dict[str, float] = {}
     for k, v in wps.items():
         if k not in SOURCE_WEIGHTS:
+            continue
+        if is_finished and k in _EXCLUDE_WHEN_COMPLETED:
             continue
         if isinstance(v, (int, float)):
             prob_readings[k] = float(v)
