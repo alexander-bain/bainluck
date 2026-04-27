@@ -615,6 +615,33 @@ class TestFindMoneylineOutcome:
         outcome, _ = result
         assert outcome.name == "Golden State Warriors"
 
+    def test_deterministic_when_both_teams_present(self):
+        """When both home and away outcomes exist (Kalshi separate markets),
+        always pick the home outcome for deterministic results across polls."""
+        home_first = [
+            _MockOutcome("Boston Celtics", 0.65),
+            _MockOutcome("Philadelphia 76ers", 0.35),
+        ]
+        away_first = [
+            _MockOutcome("Philadelphia 76ers", 0.35),
+            _MockOutcome("Boston Celtics", 0.65),
+        ]
+        matchup = extract_matchup("76ers vs. Celtics")
+        assert matchup is not None
+
+        r1 = find_moneyline_outcome(
+            home_first, matchup, "Boston Celtics", "Philadelphia 76ers",
+        )
+        r2 = find_moneyline_outcome(
+            away_first, matchup, "Boston Celtics", "Philadelphia 76ers",
+        )
+        assert r1 is not None and r2 is not None
+        # Both should select the home team outcome regardless of list order
+        assert r1[0].name == "Boston Celtics"
+        assert r2[0].name == "Boston Celtics"
+        assert r1[1] is True  # yes_is_home
+        assert r2[1] is True
+
     def test_matchup_name_outcome_fallback(self):
         """Outcome named with full matchup (e.g., 'Pistons vs. Bulls')."""
         outcomes = [

@@ -671,13 +671,14 @@ def find_moneyline_outcome(
 
     yes_is_home = team_mapping["yes_is_home"]
 
-    # Pick the outcome matching the "yes" team
-    if yes_is_home and home_outcomes:
-        return (home_outcomes[0], True)
-    elif not yes_is_home and away_outcomes:
-        return (away_outcomes[0], False)
+    # Sort for deterministic selection (highest probability first breaks ties stably)
+    home_outcomes.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
+    away_outcomes.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
 
-    # If we found any team-matched outcome, use it with correct mapping
+    # Always prefer the HOME outcome — avoids oscillation when both exist.
+    # When Kalshi has separate "Celtics win?" and "76ers win?" markets,
+    # both home_outcomes and away_outcomes will be populated. Using home
+    # consistently means we never flip between the two across poll cycles.
     if home_outcomes:
         return (home_outcomes[0], True)
     if away_outcomes:
