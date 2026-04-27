@@ -2440,20 +2440,10 @@ async def get_game_markets(
                 FuturesMarket.llm_sport_category.is_(None),
             )
         )
-    # Filter out markets from other games in the same series (cross-game contamination).
-    # The matching task may have linked Game 3's markets to Game 4's event.
-    if event.commence_time:
-        time_lower = event.commence_time - timedelta(hours=18)
-        time_upper = event.commence_time + timedelta(hours=18)
-        linked_query = linked_query.where(
-            or_(
-                and_(
-                    FuturesMarket.commence_time >= time_lower,
-                    FuturesMarket.commence_time <= time_upper,
-                ),
-                FuturesMarket.commence_time.is_(None),
-            )
-        )
+    # Trust linked markets — if the matching task set event_id, don't second-guess it.
+    # The time window filter is only on the FALLBACK query below (unlinked markets).
+    # Kalshi's commence_time is the resolution date (gotcha #9), not the game date,
+    # so a time window here incorrectly filters out game totals/spreads.
     market_result = await db.execute(linked_query)
     markets = list(market_result.scalars().all())
 
