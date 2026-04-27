@@ -857,9 +857,13 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     past_cutoff = now - MAX_PAST_GAME_DELTA
 
     # ── Pass 1: Time-windowed search ──────────────────────────────────
+    # Kalshi commence_time is the market RESOLUTION date (often weeks after
+    # the game), so we use a wider window when matching by ticker-extracted
+    # game date. Polymarket dates are closer to actual game time.
     reference_time = game_date_override or market.commence_time or now
-    time_start = reference_time - MAX_TIME_DELTA
-    time_end = reference_time + MAX_TIME_DELTA
+    time_delta = timedelta(days=7) if market.source == "kalshi" else MAX_TIME_DELTA
+    time_start = reference_time - time_delta
+    time_end = reference_time + time_delta
 
     event_result = await session.execute(
         select(Event)
@@ -1035,7 +1039,12 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
     if not reference_time:
         return None
 
-    window_hours = 3 if game_date_override else 6
+    if game_date_override and market.source == "kalshi":
+        window_hours = 48
+    elif game_date_override:
+        window_hours = 3
+    else:
+        window_hours = 6
     time_start = reference_time - timedelta(hours=window_hours)
     time_end = reference_time + timedelta(hours=window_hours)
 
