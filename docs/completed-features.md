@@ -9,6 +9,8 @@
 
 ## April 26, 2026
 
+- ✅ **iOS-GD3 fix: Post-final win prob drift**: Completed events now exclude Kalshi/Polymarket from aggregate probability — their stale ~50% prices were dragging resolved 100% sources toward 50%.
+- ✅ **Linking 1a: Kalshi time window 48h→7d**: Source-specific matching windows. Kalshi gets 7 days (commence_time is resolution date, not game date). Expected +8-12% link rate for basketball and hockey.
 - ✅ **iOS Game Detail triage**: 14 items added to backlog from BOS @ BAL review.
 - ✅ **iOS-GD1: Hide EI badge for completed games** — EI is meaningless post-final, now hidden when `isFinished`
 - ✅ **iOS-GD2: Mute team records** — Reduced to 10pt tertiary text so records don't merge with scores
