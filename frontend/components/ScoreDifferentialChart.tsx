@@ -51,6 +51,9 @@ interface ScoreDifferentialChartProps {
   chartStartTime?: string;
   /** End timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartEndTime?: string;
+  /** External time range from parent — syncs both charts' All/Since Start toggle */
+  externalTimeRange?: "all" | "live";
+  onTimeRangeChange?: (range: "all" | "live") => void;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
     implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
@@ -98,6 +101,8 @@ export default function ScoreDifferentialChart({
   awayTeamLogo,
   chartStartTime,
   chartEndTime,
+  externalTimeRange,
+  onTimeRangeChange,
   pmSpreadData,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -114,13 +119,19 @@ export default function ScoreDifferentialChart({
 
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
-  const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>(defaultTimeRange);
+
+  const timeRange = externalTimeRange ?? internalTimeRange;
+  const handleTimeRangeChange = (range: TimeRange) => {
+    if (onTimeRangeChange) onTimeRangeChange(range);
+    else setInternalTimeRange(range);
+  };
 
   // Sync timeRange when data loads asynchronously
   const [hasUserOverridden, setHasUserOverridden] = useState(false);
   useEffect(() => {
-    if (!hasUserOverridden && defaultTimeRange === "live") {
-      setTimeRange("live");
+    if (!hasUserOverridden && !externalTimeRange && defaultTimeRange === "live") {
+      setInternalTimeRange("live");
     }
   }, [defaultTimeRange, hasUserOverridden]);
 
@@ -548,7 +559,7 @@ export default function ScoreDifferentialChart({
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
             key={option.value}
-            onClick={() => { setTimeRange(option.value); setHasUserOverridden(true); }}
+            onClick={() => { handleTimeRangeChange(option.value); setHasUserOverridden(true); }}
             className={`font-medium rounded-full transition-colors ${
               fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${

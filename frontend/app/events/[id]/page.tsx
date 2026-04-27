@@ -323,6 +323,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [chartFullscreen, setChartFullscreen] = useState(false);
+  const [chartTimeRange, setChartTimeRange] = useState<"all" | "live">("live");
   const handleRenderedDomain = useCallback((start: string, end: string) => {
     setOddsChartDomain((prev) => {
       if (prev && prev.start === start && prev.end === end) return prev;
@@ -531,8 +532,8 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers]);
 
-  // Shared chart domain — computed once, passed to both OddsChart and ScoreDiffChart
-  // so they have IDENTICAL x-axes and period markers.
+  // Shared chart domain — time-range-aware, passed to both OddsChart and ScoreDiffChart
+  // so they have IDENTICAL x-axes, tick labels, and period markers.
   const sharedChartDomain = useMemo(() => {
     if (!historyData) return null;
     // Collect all timestamps across all data sources
@@ -558,17 +559,23 @@ export default function EventPage({ params }: EventPageProps) {
       }
     }
     if (timestamps.length === 0) return null;
-    let start = new Date(Math.min(...timestamps));
+
+    const allStart = new Date(Math.min(...timestamps));
     let end = new Date(Math.max(...timestamps));
-    // Use completedAt as authoritative end if available
     if (historyData.completed_at) {
       const ca = new Date(historyData.completed_at);
       if (!isNaN(ca.getTime())) end = new Date(Math.max(end.getTime(), ca.getTime()));
     }
+
+    // "Since Start" mode: start from commenceTime (game start)
+    const gameStart = event?.commence_time ? new Date(event.commence_time) : null;
+    const liveStart = gameStart && !isNaN(gameStart.getTime()) ? gameStart : allStart;
+
+    const start = chartTimeRange === "live" ? liveStart : allStart;
     start.setSeconds(0, 0);
     end.setSeconds(0, 0);
     return { start: start.toISOString(), end: end.toISOString() };
-  }, [historyData]);
+  }, [historyData, chartTimeRange, event?.commence_time]);
 
   // Compute the most recent chart point for GamePlayCard default display
   const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
@@ -1373,6 +1380,8 @@ export default function EventPage({ params }: EventPageProps) {
               onRenderedDomain={handleRenderedDomain}
               chartStartTime={sharedChartDomain?.start}
               chartEndTime={sharedChartDomain?.end}
+              externalTimeRange={chartTimeRange}
+              onTimeRangeChange={setChartTimeRange}
             />
           )}
           {/* Game Play Card — shows score/period/play as user hovers the chart */}
@@ -1469,6 +1478,8 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
             chartStartTime={sharedChartDomain?.start}
             chartEndTime={sharedChartDomain?.end}
+            externalTimeRange={chartTimeRange}
+            onTimeRangeChange={setChartTimeRange}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>

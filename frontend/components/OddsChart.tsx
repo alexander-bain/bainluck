@@ -89,6 +89,9 @@ interface OddsChartProps {
    *  so OddsChart and ScoreDiffChart have identical x-axes. */
   chartStartTime?: string;
   chartEndTime?: string;
+  /** External time range from parent — when set, syncs both charts' All/Since Start toggle */
+  externalTimeRange?: "all" | "live";
+  onTimeRangeChange?: (range: "all" | "live") => void;
   /** Authoritative game end time from the backend (set when any source confirms game over) */
   completedAt?: string;
 }
@@ -168,6 +171,8 @@ export default function OddsChart({
   onRenderedDomain,
   chartStartTime,
   chartEndTime,
+  externalTimeRange,
+  onTimeRangeChange,
   completedAt,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -191,17 +196,24 @@ export default function OddsChart({
 
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
-  const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>(defaultTimeRange);
+
+  // Use external time range when provided (syncs both charts), fall back to internal
+  const timeRange = externalTimeRange ?? internalTimeRange;
+  const handleTimeRangeChange = (range: TimeRange) => {
+    if (onTimeRangeChange) onTimeRangeChange(range);
+    else setInternalTimeRange(range);
+  };
 
   // Sync timeRange when data loads asynchronously — useState only uses
   // its initial value on mount, so if history arrives after first render
   // the default stays "all" even when it should be "live"
   const [hasUserOverridden, setHasUserOverridden] = useState(false);
   useEffect(() => {
-    if (!hasUserOverridden && defaultTimeRange === "live") {
-      setTimeRange("live");
+    if (!hasUserOverridden && !externalTimeRange && defaultTimeRange === "live") {
+      setInternalTimeRange("live");
     }
-  }, [defaultTimeRange, hasUserOverridden]);
+  }, [defaultTimeRange, hasUserOverridden, externalTimeRange]);
 
   // For "Since Start" mode, use commenceTime directly as the start cutoff.
   // Previously used a "smartStartTime" that scanned for the first 2% odds
@@ -797,7 +809,7 @@ export default function OddsChart({
   if (chartData.length === 0) {
     if (timeRange === "live" && history && history.length > 0) {
       // Data exists but all pre-start — reset filter silently
-      setTimeRange("all");
+      handleTimeRangeChange("all");
       setHasUserOverridden(false);
       return null; // Will re-render with "all" data
     }
@@ -1034,7 +1046,7 @@ export default function OddsChart({
             onClick={() => {
               if (isDisabled) return;
               const previousRange = timeRange;
-              setTimeRange(option.value);
+              handleTimeRangeChange(option.value);
               setHasUserOverridden(true);
               if (eventId) {
                 track('chart_time_range', {
