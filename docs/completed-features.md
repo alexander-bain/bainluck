@@ -12,6 +12,9 @@
 - ✅ **Polymarket stale pricing fix**: Two-layer defense against misleading Polymarket prices during blowouts: (1) skip outcomes with zero trading activity (no lastTradePrice AND no bids), (2) use lastTradePrice instead of midpoint when bid/ask spread >15pp. Fixes "Polymarket has 76ers at 38% vs sportsbooks at 6%" divergence badge during 94-120 blowout.
 - ✅ **Chart x-axis fix**: Shared time range syncs both Win Probability and Score Differential charts. "Since Start" now shows game time only (~2h), not 24h of pre-game data. Toggling one chart toggles both.
 - ✅ **Period marker dedup**: "Q1" no longer appears 3 times. Start vs end of period distinguished: Q1 (start) vs /Q1 (end). Same labels on both charts.
+- ✅ **MS-2: Cookie banner above nav**: Consent banner now sits above the mobile bottom tab bar instead of overlapping it.
+- ✅ **MS-5: Rain dedup by city**: Monthly rain section deduplicates by city name (was showing NYC 8 times). Keeps latest resolution date per city.
+- ✅ **MS-6: Tornado chronological sort**: Tornado markets sorted by resolution date instead of probability. Months now appear in order.
 - ✅ **Game-markets linked query fix**: Removed ±18h time window from linked query that was filtering out game totals/spreads (Kalshi's commence_time is resolution date, not game date). Time window stays on fallback query only.
 
 ## April 26, 2026
