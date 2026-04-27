@@ -306,15 +306,11 @@ Banner uses `bottom-16` on mobile to sit above the tab bar.
 **Fix:** Check game-markets API response — `team_name` may be null for some market types. File: `frontend/components/PlayerPropsDashboard.tsx`, `backend/app/routes/events.py` (game-markets endpoint).
 **Parallel Safety:** Yellow
 
-#### MS-5. NYC rainfall listed 8 times with conflicting probabilities
-**Problem:** Weather page "Above 1 inch this month" shows NYC 8 times (mostly 0%, one 100%) instead of 10 distinct cities.
-**Fix:** Likely a dedup bug in the weather rainfall endpoint or a Kalshi market naming collision. File: `backend/app/routes/weather.py` (rain endpoint).
-**Parallel Safety:** Green
+#### ~~MS-5. NYC rainfall listed 8 times~~ ✅ SHIPPED (April 27)
+Monthly rain deduplicates by city name, keeps latest resolution date.
 
-#### MS-6. Tornado months non-chronological
-**Problem:** Tornadoes section lists months as Apr, May, Nov, Dec, Oct, Aug, Jun, Sep, Jul instead of chronological order.
-**Fix:** Sort by month number, not alphabetically. File: `backend/app/routes/weather.py` or `frontend/components/weather/NaturalEvents.tsx`.
-**Parallel Safety:** Green
+#### ~~MS-6. Tornado months non-chronological~~ ✅ SHIPPED (April 27)
+Tornado markets sorted by resolution date (chronological).
 
 #### MS-7. Championship grid: no horizontal scroll indicator on mobile
 **Problem:** Conference tables only show Team + Make Playoffs columns. Champion column is off-screen with no visual cue that horizontal scrolling is available.
