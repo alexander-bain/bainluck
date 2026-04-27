@@ -7,12 +7,19 @@
 - ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
 - ✅ **PREQ-1: Request timing middleware**: Every API response now includes `X-Response-Time` header (visible in DevTools). Requests >500ms logged as warnings (excludes admin). CORS `expose_headers` updated so frontend JS can read the header.
 
+## April 27, 2026
+
+- ✅ **Polymarket stale pricing fix**: Two-layer defense against misleading Polymarket prices during blowouts: (1) skip outcomes with zero trading activity (no lastTradePrice AND no bids), (2) use lastTradePrice instead of midpoint when bid/ask spread >15pp. Fixes "Polymarket has 76ers at 38% vs sportsbooks at 6%" divergence badge during 94-120 blowout.
+- ✅ **Chart x-axis fix**: Shared time range syncs both Win Probability and Score Differential charts. "Since Start" now shows game time only (~2h), not 24h of pre-game data. Toggling one chart toggles both.
+- ✅ **Period marker dedup**: "Q1" no longer appears 3 times. Start vs end of period distinguished: Q1 (start) vs /Q1 (end). Same labels on both charts.
+- ✅ **Game-markets linked query fix**: Removed ±18h time window from linked query that was filtering out game totals/spreads (Kalshi's commence_time is resolution date, not game date). Time window stays on fallback query only.
+
 ## April 26, 2026
 
 - ✅ **iOS-GD3 fix: Post-final win prob drift**: Completed events now exclude Kalshi/Polymarket from aggregate probability — their stale ~50% prices were dragging resolved 100% sources toward 50%.
 - ✅ **Linking 1a: Kalshi time window 48h→7d**: Source-specific matching windows. Kalshi gets 7 days (commence_time is resolution date, not game date). Expected +8-12% link rate for basketball and hockey.
 - ✅ **iOS Game Detail triage**: 14 items added to backlog from BOS @ BAL review.
-- ✅ **iOS-GD1: Hide EI badge for completed games** — EI is meaningless post-final, now hidden when `isFinished`
+- ✅ **iOS-GD1: EI badge reverted** — Shows for all games (needs label, not hiding). Reverted after initially hiding for completed games.
 - ✅ **iOS-GD2: Mute team records** — Reduced to 10pt tertiary text so records don't merge with scores
 - ✅ **iOS-GD5: Clean chart period indicators** — Light gridlines (0.5pt) + small floating chips (8pt, ultraThinMaterial) replacing cramped alternating label strip
 - ✅ **iOS-GD6: Remove dead sources row** — Removed non-functional "BainLuck — Sportsbooks Sources ⌄" below chart
