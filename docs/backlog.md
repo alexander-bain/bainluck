@@ -98,7 +98,7 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 | Moneyline | ✅ | Win probability display |
 | Spread/Total | ✅ | Game markets section |
 | Player props | ✅ | Player props cards |
-| F5/First Half | ⚠ Needs design | Currently in "other" section |
+| F5/First Half | ✅ Removed | Period markets removed; market maps replace them |
 | Team totals | ⚠ Needs design | Separate from game totals |
 | First Inning Run | ⚠ Needs design | Binary prop, no section |
 | Announcer/broadcast | ❌ No design | Entirely new category |
@@ -1252,11 +1252,13 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Views/EventDetailView.swift` (espnSection / game info footer)
 **Parallel Safety:** Green
 
+#### ~~iOS/macOS Event Detail Parity Sweep~~ ✅ SHIPPED (April 28)
+Full parity achieved. See `docs/completed-features.md`. Added: tag chips, trend indicator, projected score, divergence warnings, stakes context, bookmaker table, market maps, special event markets, series probability, league page link, related-by-tag. Removed from web: Game Segments, Period Markets, Blowout Warning.
+
 #### iOS-GD — NOT YET APPROVED (ask before adding)
 - Score Differential chart inning labels cramped; "Projected Spread" occluded by "Actual Score Diff."
 - Player Props 2-col grid leaves orphan card on odd counts
 - Game Info footer duplicates broadcaster + time already in hero
-- No final-state visual treatment / blowout indicator
 - Bookmark icon floats outside standard nav cluster
 
 ---
