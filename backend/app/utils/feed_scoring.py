@@ -32,6 +32,73 @@ TAG_BOOSTS = {
 }
 
 
+def compute_content_richness_penalty(
+    event_status: str,
+    raw_ei: float | None,
+    home_score: int | None,
+    away_score: int | None,
+    source_count: int | None,
+    game_progress: float | None,
+    sport_key: str | None,
+) -> tuple[int, list[str]]:
+    """Penalize live events with flat/thin content so they don't outrank interesting games.
+
+    Returns (adjustment, reasons) where adjustment is typically negative.
+    Only applies to live events — scheduled/completed are unaffected.
+    Combined penalty is capped at -20.
+    """
+    if event_status != "live":
+        return 0, []
+
+    penalty = 0
+    bonus = 0
+    reasons: list[str] = []
+    progress = game_progress or 0.0
+
+    # Signal A: Probability stasis (flat EI)
+    # Gate on progress >= 0.25 — EI is naturally 0 at game start
+    if progress >= 0.25:
+        if raw_ei is None or raw_ei == 0.0:
+            penalty -= 10
+            reasons.append("flat_line")
+        elif raw_ei < 0.05:
+            penalty -= 5
+            reasons.append("low_movement")
+
+    # Signal B: Score stasis (0-0 deep into game)
+    # Exempt soccer and hockey where 0-0 is normal/tense
+    is_low_score_sport = sport_key and (
+        sport_key.startswith("soccer_") or sport_key.startswith("icehockey_")
+    )
+    if (
+        not is_low_score_sport
+        and progress >= 0.5
+        and home_score is not None
+        and away_score is not None
+        and home_score == 0
+        and away_score == 0
+    ):
+        penalty -= 8
+        reasons.append("scoreless_stalemate")
+
+    # Signal C: Data thinness (source count)
+    if source_count is not None:
+        if source_count == 0:
+            penalty -= 8
+            reasons.append("no_sources")
+        elif source_count == 1:
+            penalty -= 5
+            reasons.append("thin_data")
+        elif source_count >= 4:
+            bonus += 3
+            reasons.append("rich_data")
+
+    # Cap the penalty at -20 (bonus is separate)
+    penalty = max(penalty, -20)
+
+    return penalty + bonus, reasons
+
+
 def compute_base_score(
     highlight_score: int,
     highlight_reasons: list[str],
@@ -44,6 +111,10 @@ def compute_base_score(
     raw_ei: float | None,
     get_season_multiplier_fn=None,
     get_league_tier_fn=None,
+    home_score: int | None = None,
+    away_score: int | None = None,
+    source_count: int | None = None,
+    game_progress: float | None = None,
 ) -> tuple[int, list[str]]:
     """Compute the base interestingness score for a feed event.
 
@@ -96,6 +167,20 @@ def compute_base_score(
         elif ei_score >= 60:
             score += 15
             reasons.append("good_ei")
+
+    # Content richness penalty for live events with thin/flat data
+    richness_adj, richness_reasons = compute_content_richness_penalty(
+        event_status=event_status,
+        raw_ei=raw_ei,
+        home_score=home_score,
+        away_score=away_score,
+        source_count=source_count,
+        game_progress=game_progress,
+        sport_key=sport_key,
+    )
+    if richness_adj != 0:
+        score += richness_adj
+        reasons.extend(richness_reasons)
 
     return score, reasons
 

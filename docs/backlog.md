@@ -150,22 +150,14 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 
 Moved to `docs/completed-features.md`.
 
-### 0q. Feed Ranking: Penalize "Empty" Events
+### ~~0q. Feed Ranking: Penalize "Empty" Events~~ ✅ SHIPPED (April 28)
 
-**Problem:** Events with flat probability lines, no score movement, and no market depth are ranking #1 in the feed. Example: Butler vs Bowling Green (baseball), 0-0 in the 6th inning, dead-flat 56/44 line the entire game, no player props, no prediction markets, no interesting cards below the fold. Clicking into this event shows nothing worth looking at.
-
-**Why it matters:** The feed's job is to surface events where something INTERESTING is happening. A flat-line live game with no action is worse than a scheduled game with big odds movement, and much worse than an NBA playoff game.
-
-**Fix:** Add a "content richness" penalty to `compute_base_score()`. Score should account for:
-1. **Probability movement** — if `win_probability_sources` haven't moved >2pp in the last 30 min, penalize
-2. **Score activity** — 0-0 deep into a game = low interest signal
-3. **Market depth** — events with zero linked prediction markets, no player props, and minimal data sources should score lower
-4. **EI** — raw_ei=0 or null for a live game is a strong "nothing happening" signal
-
-The existing `compute_highlight()` function partially handles this (it rewards "close game", "lead change", etc.) but it doesn't penalize the ABSENCE of all interesting signals. A live game with none of those triggers should get a negative modifier, not a neutral one.
-
-**Files:** `backend/app/utils/feed_scoring.py` (`compute_base_score`, `compute_highlight`), `backend/app/routes/feed.py` (_score_events loop)
-**Parallel Safety:** Yellow
+Added `compute_content_richness_penalty()` to `feed_scoring.py`. Three signals, live events only:
+- **Flat line** (-10): EI is 0 after 25%+ of game elapsed
+- **Scoreless stalemate** (-8): 0-0 past halftime (exempt soccer/hockey)
+- **Thin data** (-5/-8): only 1 or 0 sources in `win_probability_sources`
+- **Rich data** (+3): 4+ sources = small bonus
+Combined penalty capped at -20. 19 new tests. Applies to web + iOS/Mac (backend feed API).
 
 ### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats)
 

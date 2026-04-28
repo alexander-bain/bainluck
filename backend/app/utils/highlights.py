@@ -191,7 +191,7 @@ SPORT_TOTAL_PERIODS: dict[str, int] = {
 }
 
 
-def _parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> tuple[float, bool]:
+def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> tuple[float, bool]:
     """Parse game progress from ESPN period string.
 
     Returns:
@@ -477,7 +477,7 @@ def compute_highlight(
 
         # Graduated late-game bonus: "Live in overtime" is dramatically more
         # interesting than "Live in Q1". Scale bonus with game progress.
-        game_progress, is_overtime = _parse_game_progress(period, sport_key)
+        game_progress, is_overtime = parse_game_progress(period, sport_key)
         if is_overtime:
             result.score += WEIGHTS["live_late_game"] + WEIGHTS["live_overtime"]
             result.reasons.append("overtime")

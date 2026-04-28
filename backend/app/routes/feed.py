@@ -34,6 +34,7 @@ from app.utils import (
     get_league_tier,
     get_season_multiplier,
 )
+from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
 from app.utils.name_normalization import names_match as _team_name_matches
@@ -597,6 +598,9 @@ async def _score_events(
         sport_key = event.sport.key if event.sport else None
         _event_tags = event.event_tags or []
 
+        _source_count = len(event.win_probability_sources) if event.win_probability_sources else 0
+        _game_progress, _ = parse_game_progress(event.period, sport_key)
+
         base_score, extra_reasons = compute_base_score(
             highlight_score=highlight_result.score,
             highlight_reasons=highlight_result.reasons,
@@ -609,6 +613,10 @@ async def _score_events(
             raw_ei=float(event.raw_ei) if event.raw_ei else None,
             get_season_multiplier_fn=get_season_multiplier,
             get_league_tier_fn=get_league_tier,
+            home_score=event.home_score,
+            away_score=event.away_score,
+            source_count=_source_count,
+            game_progress=_game_progress,
         )
         highlight_result.reasons = extra_reasons
 
