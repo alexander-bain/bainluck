@@ -1458,3 +1458,14 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 
 **Files:** `backend/app/routes/events.py` (game-markets endpoint), `frontend/components/PlayerPropsDashboard.tsx`
 **Parallel Safety:** Green
+
+### 0f-11. Win Probability and Score Differential Charts Have Different X-Axes (April 28)
+
+**Problem:** The Win Probability chart and Score Differential chart show the same game but their x-axes don't align — different time labels, different spacing. This is visually confusing when they're stacked vertically, since the user expects Q1/Q2/HT/Q3/Q4 markers and time labels to line up between the two charts.
+
+**Root cause:** Both charts share `sharedChartDomain` for the time range, but Recharts renders tick labels independently based on each chart's data density. The Score Differential chart has different data points than the Win Probability chart, so the auto-generated tick positions differ.
+
+**Fix:** Force both charts to use identical x-axis tick positions. Compute a shared set of tick timestamps (e.g., every 15 or 30 minutes) in the parent, pass as explicit `ticks` prop to both charts' XAxis components.
+
+**Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
+**Parallel Safety:** Green

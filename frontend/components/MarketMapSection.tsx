@@ -366,20 +366,24 @@ export default function MarketMapSection({
       const maxM = isLowScoring ? 5 : 18;
       const density = buildDensityFromSpreads(parsed, -maxM, maxM, 12);
 
-      const homeSorted = parsed.filter((p) => p.isHome).sort((a, b) => b.threshold - a.threshold);
-      const awaySorted = parsed.filter((p) => !p.isHome).sort((a, b) => b.threshold - a.threshold);
-      const ladder: MarketMapLadderRow[] = [
-        ...awaySorted.map((s) => ({
-          label: `${aAbbr} +${s.threshold}`,
-          probability: Math.round(s.probability * 100),
-          side: "left" as const,
-        })),
-        ...homeSorted.map((s) => ({
-          label: `${hAbbr} +${s.threshold}`,
-          probability: Math.round(s.probability * 100),
-          side: "right" as const,
-        })),
-      ].sort((a, b) => b.probability - a.probability);
+      // Ladder: sort sequentially along number line (away big → tie → home big)
+      const allSorted = [...parsed].sort((a, b) => {
+        const marginA = a.isHome ? a.threshold : -a.threshold;
+        const marginB = b.isHome ? b.threshold : -b.threshold;
+        return marginA - marginB;
+      });
+      const ladder: MarketMapLadderRow[] = allSorted.map((s) => ({
+        label: `${s.isHome ? hAbbr : aAbbr} +${s.threshold}`,
+        probability: Math.round(s.probability * 100),
+        side: (s.isHome ? "right" : "left") as "left" | "right",
+      }));
+
+      // Find the closest-to-50% spread as the projection marker
+      const closest50 = parsed.reduce((best, s) =>
+        Math.abs(s.probability - 0.5) < Math.abs(best.probability - 0.5) ? s : best
+      );
+      const projMargin = closest50.isHome ? closest50.threshold : -closest50.threshold;
+      const projTeam = projMargin > 0 ? hAbbr : projMargin < 0 ? aAbbr : "TIE";
 
       const label = half === "1H" ? "1st half" : "2nd half";
       maps.push({
@@ -395,7 +399,15 @@ export default function MarketMapSection({
           accentRgb: "37,99,235",
           axisLabels: { left: `${aAbbr} by ${maxM}+`, mid: "Tie", right: `${hAbbr} by ${maxM}+` },
           zeroPosition: 0,
-          markers: [],
+          markers: [{
+            key: "proj",
+            value: projMargin,
+            type: "proj" as const,
+            label: "Projection",
+            displayValue: `${projTeam} +${Math.abs(closest50.threshold)}`,
+            logoFallback: projTeam,
+            hideTile: true,
+          }],
           ladder,
           status,
         },
