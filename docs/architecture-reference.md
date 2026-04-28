@@ -131,3 +131,37 @@ Key admin API endpoints (all require `?secret=$ADMIN_SECRET`):
 - `POST /api/admin/cleanup/purge-orphan-pm-events` — delete pm_ events with no snapshot data
 - `POST /api/admin/ei/recalculate` — force EI recalculation
 - `GET /api/admin/source-coverage` — per-sport source matching percentages
+
+---
+
+## League-Scoped Futures (`routes/league_futures.py`)
+
+`GET /api/leagues/{sport_key}` returns all open, non-game-level futures for a specific league, grouped by display section.
+
+### Filtering Strategy
+
+Three layers narrow from sport to league:
+1. **`llm_sport_category`** — broad sport match (e.g., `basketball`)
+2. **Kalshi ticker prefix** — `KXNBA%` via `LEAGUE_TICKER_PREFIXES` map
+3. **Market name patterns** — `NBA%`, `%National Basketball%` via `LEAGUE_NAME_PATTERNS` map
+4. **`llm_league`** — direct league match when available (e.g., `nba`)
+
+Any of these matching is sufficient (OR logic).
+
+### Section Assignment (`_assign_section()`)
+
+Markets are assigned to one of 5 sections based on `market_tier`, `category`, and name keywords:
+
+| Section | Criteria | Example |
+|---------|----------|---------|
+| `series` | Name contains "series" or "vs" at tier 5 | "Celtics vs Cavaliers: Series Winner" |
+| `awards` | Tier 3, or category "award"/"mvp" | "NBA MVP Winner" |
+| `playoff_props` | Keywords: sweep, game 7, elimination | "Number of Series Sweeps" |
+| `season_stats` | Category "season_stat" or stat keywords | "PPG Leader", "Win Total" |
+| `novelty` | Everything else | "Luka Doncic back before May 7" |
+
+Championship (tier 1), conference (tier 2), and division (tier 4) markets are **skipped** — they're already on the championship grid.
+
+### Cross-Source Dedup
+
+Uses `canonical_market_key`. When two markets share the same key, keeps the one with more outcomes.

@@ -271,6 +271,7 @@ When fixing ANY data quality, matching, or display issue:
 | Admin dashboard | https://bainluck.com/admin |
 | Weather page | https://bainluck.com/weather |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
+| League markets API | `GET /api/leagues/{sport_key}` (series, awards, props by league) |
 | Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_TOKEN` |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` |
 | API docs | https://api.bainluck.com/docs |

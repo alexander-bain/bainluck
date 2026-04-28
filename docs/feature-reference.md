@@ -813,6 +813,21 @@ StatPal creates Event records ~1 week ahead with `statpal_fixture_id` (indexed).
 - Model: `TeamIdentityMapping` in `backend/app/models/models.py`
 - Tests: `backend/tests/test_sport_keys.py`, `backend/tests/test_team_identity.py`
 
+### League Page — Today's Games + Market Sections
+
+The league page (`/sport/[sport]/[league]`) is a one-stop destination for everything happening in a league.
+
+**Today's Games**: Fetches from `/api/feed` with `sport={sport_key}`, `include_futures=false`, limit 30. Events sorted live → scheduled → completed, rendered via `FeedCard` in a 2-column grid. Section hidden when no events. Header adapts: "Live & Today's Games" when any game is live.
+
+**Market Sections**: Fetches from `/api/leagues/{sport_key}`. Returns open futures grouped into 5 sections (series, awards, playoff_props, season_stats, novelty). Rendered via `LeagueMarketCard` in a 3-column grid with top-3 outcomes per market, probability bars for series markets, and 24h movement indicators. Championship/conference/division markets are excluded (already on the grid).
+
+**Page layout order**: Header → Hero Tournament (golf only) → Today's Games → Evolution Chart → Championship Grid → Market Sections → Upcoming/Completed Tournaments (golf only).
+
+**Files:**
+- Backend: `backend/app/routes/league_futures.py`
+- Frontend: `frontend/app/sport/[sport]/[league]/page.tsx`
+- API client: `fetchLeagueMarkets()` in `frontend/lib/api.ts`
+
 **Admin endpoints:**
 ```bash
 # Check identity mapping status (total mappings, per-source counts)
