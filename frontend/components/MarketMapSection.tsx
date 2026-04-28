@@ -30,6 +30,41 @@ interface MarketMapSectionProps {
   homeSpread?: number | null;
   overUnder?: number | null;
   sportKey?: string;
+  espnHistory?: Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>;
+}
+
+interface HalfScores {
+  h1Home: number;
+  h1Away: number;
+  h2Home: number;
+  h2Away: number;
+}
+
+function deriveHalfScores(
+  espnHistory: MarketMapSectionProps["espnHistory"],
+  finalHome: number | null,
+  finalAway: number | null
+): HalfScores | null {
+  if (!espnHistory || espnHistory.length === 0) return null;
+  if (finalHome == null || finalAway == null) return null;
+
+  const htEntry = espnHistory.find(
+    (e) => e.period && /half|^ht$/i.test(e.period) && e.home_score != null
+  );
+  if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
+
+  return {
+    h1Home: htEntry.home_score,
+    h1Away: htEntry.away_score,
+    h2Home: finalHome - htEntry.home_score,
+    h2Away: finalAway - htEntry.away_score,
+  };
+}
+
+function formatMarginLabel(margin: number, teamAbbr: string, threshold: number): string {
+  if (margin === 0) return "Tied";
+  const val = threshold % 1 === 0 ? Math.abs(threshold) : Math.abs(threshold).toFixed(1);
+  return `${teamAbbr} +${val}`;
 }
 
 function deriveAbbr(team: string, provided?: string): string {
@@ -54,6 +89,7 @@ export default function MarketMapSection({
   homeSpread,
   overUnder,
   sportKey,
+  espnHistory,
 }: MarketMapSectionProps) {
   const hAbbr = deriveAbbr(homeTeam, homeAbbr);
   const aAbbr = deriveAbbr(awayTeam, awayAbbr);
@@ -65,6 +101,11 @@ export default function MarketMapSection({
 
   const homeScore = gameMarkets.home_score;
   const awayScore = gameMarkets.away_score;
+
+  const halfScores = useMemo(
+    () => deriveHalfScores(espnHistory, homeScore, awayScore),
+    [espnHistory, homeScore, awayScore]
+  );
 
   // ── Margin Map ──
   const marginData = useMemo(() => {
@@ -196,7 +237,7 @@ export default function MarketMapSection({
     }
 
     return {
-      title: vocab.marginTitle,
+      title: `Full game ${vocab.marginTitle.toLowerCase()}`,
       subtitle: `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
       headline,
       rangeMin,
@@ -325,7 +366,7 @@ export default function MarketMapSection({
     const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
 
     return {
-      title: vocab.totalTitle,
+      title: `Full game ${vocab.totalTitle.toLowerCase()}`,
       subtitle: `Final ${vocab.unit} distribution`,
       headline: headlineValue,
       rangeMin,
@@ -405,6 +446,35 @@ export default function MarketMapSection({
       const projTeam = projMargin > 0 ? hAbbr : projMargin < 0 ? aAbbr : "TIE";
 
       const label = half === "1H" ? "1st half" : "2nd half";
+
+      const halfMarkers: MarketMapMarker[] = [];
+
+      // Pre-game projection
+      halfMarkers.push({
+        key: "proj",
+        value: projMargin,
+        type: isDone ? "pre" : "proj",
+        label: isDone ? "Pre-game" : "Projection",
+        displayValue: formatMarginLabel(projMargin, projTeam, closest50.threshold),
+        logoFallback: projTeam,
+      });
+
+      // Final actual for completed games
+      if (isDone && halfScores) {
+        const hs = half === "1H"
+          ? { home: halfScores.h1Home, away: halfScores.h1Away }
+          : { home: halfScores.h2Home, away: halfScores.h2Away };
+        const margin = hs.home - hs.away;
+        const team = margin > 0 ? hAbbr : margin < 0 ? aAbbr : "TIE";
+        halfMarkers.push({
+          key: "final",
+          value: margin,
+          type: "final",
+          label: "Final",
+          displayValue: margin === 0 ? "Tied" : `${team} +${Math.abs(margin)}`,
+        });
+      }
+
       maps.push({
         key: `margin-${half}`,
         data: {
@@ -418,22 +488,14 @@ export default function MarketMapSection({
           accentRgb: "37,99,235",
           axisLabels: { left: `${aAbbr} by ${maxM}+`, mid: "Tie", right: `${hAbbr} by ${maxM}+` },
           zeroPosition: 0,
-          markers: [{
-            key: "proj",
-            value: projMargin,
-            type: "proj" as const,
-            label: "Projection",
-            displayValue: `${projTeam} +${Math.abs(closest50.threshold)}`,
-            logoFallback: projTeam,
-            hideTile: true,
-          }],
+          markers: halfMarkers,
           ladder,
           status,
         },
       });
     }
     return maps;
-  }, [gameMarkets.spreads, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey]);
+  }, [gameMarkets.spreads, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, halfScores, homeLogo, awayLogo]);
 
   // ── Period Total Maps (half totals) ──
   const halfTotalMaps = useMemo(() => {
@@ -483,26 +545,66 @@ export default function MarketMapSection({
       const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
       const label = halfKey === "1H" ? "1st half" : "2nd half";
 
+      const halfTotalMarkers: MarketMapMarker[] = [];
+
+      // Pre-game O/U
+      halfTotalMarkers.push({
+        key: "pre",
+        value: ouLine.threshold,
+        type: "pre",
+        label: "Pre-game",
+        displayValue: String(Math.round(ouLine.threshold)),
+      });
+
+      // Final actual for completed games
+      if (isDone && halfScores) {
+        const ht = halfKey === "1H"
+          ? halfScores.h1Home + halfScores.h1Away
+          : halfScores.h2Home + halfScores.h2Away;
+        halfTotalMarkers.push({
+          key: "final",
+          value: ht,
+          type: "final",
+          label: "Final",
+          displayValue: `${ht} ${vocab.unit}`,
+        });
+
+        // Expand range to include actual if needed
+        if (ht < rangeMin) {
+          const newPad = rangeMin - ht + 3;
+          // Range already computed above, we'll adjust via marker clamping
+        }
+      }
+
+      // Compute range that includes all marker values
+      const allVals = halfTotalMarkers.map((m) => m.value);
+      const effectiveMin = Math.max(0, Math.floor(Math.min(dataMin, ...allVals) - Math.max(span * 0.15, 3)));
+      const effectiveMax = Math.ceil(Math.max(dataMax, ...allVals) + Math.max(span * 0.15, 3));
+      const effectiveDensity = buildDensityFromThresholds(cleaned, effectiveMin, effectiveMax, 12);
+      const effectiveMid = String(Math.round((effectiveMin + effectiveMax) / 2));
+
+      const headlineVal = isDone ? "" : `O/U ${Math.round(ouLine.threshold)}`;
+
       maps.push({
         key: `total-${halfKey}`,
         data: {
           variant: "total" as const,
           title: `${label} ${vocab.totalTitle.toLowerCase()}`,
           subtitle: `${label} ${vocab.unit} distribution`,
-          headline: `O/U ${Math.round(ouLine.threshold)}`,
-          rangeMin,
-          rangeMax,
-          density,
+          headline: headlineVal,
+          rangeMin: effectiveMin,
+          rangeMax: effectiveMax,
+          density: effectiveDensity,
           accentRgb: "124,58,237",
-          axisLabels: { left: String(rangeMin), mid: midLabel, right: `${rangeMax}+` },
-          markers: [{ key: "ou", value: ouLine.threshold, type: "pre" as const, label: "O/U", displayValue: String(Math.round(ouLine.threshold)), hideTile: true }],
+          axisLabels: { left: String(effectiveMin), mid: effectiveMid, right: `${effectiveMax}+` },
+          markers: halfTotalMarkers,
           ladder,
           status,
         },
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, vocab]);
+  }, [gameMarkets.period_markets, status, vocab, isDone, halfScores]);
 
   const hasMargin = marginData || halfMarginMaps.length > 0;
   const hasTotal = totalData || halfTotalMaps.length > 0;

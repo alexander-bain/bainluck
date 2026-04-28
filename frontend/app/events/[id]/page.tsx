@@ -1505,6 +1505,7 @@ export default function EventPage({ params }: EventPageProps) {
           homeSpread={event.current_odds?.home_spread ?? null}
           overUnder={event.current_odds?.over_under ?? null}
           sportKey={event.sport || undefined}
+          espnHistory={historyData?.espn_history}
         />
       )}
 

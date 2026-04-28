@@ -126,8 +126,15 @@ export function buildDensityFromThresholds(
     density[i] = d;
   }
 
-  const peak = Math.max(...density, 0.001);
-  return density.map((d) => Math.round((d / peak) * 96));
+  // Smooth: simple 3-point moving average to reduce choppiness
+  const smoothed = density.map((_, i) => {
+    const prev = i > 0 ? density[i - 1] : density[i];
+    const next = i < density.length - 1 ? density[i + 1] : density[i];
+    return (prev + density[i] * 2 + next) / 4;
+  });
+
+  const peak = Math.max(...smoothed, 0.001);
+  return smoothed.map((d) => Math.round((d / peak) * 96));
 }
 
 export function sportVocab(sportKey: string | undefined): {
