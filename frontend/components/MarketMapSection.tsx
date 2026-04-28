@@ -356,9 +356,28 @@ export default function MarketMapSection({
       const spreads = halfGroups[half];
       if (!spreads || spreads.length === 0) continue;
 
-      const parsed = spreads
+      const rawParsed = spreads
         .map((s) => parseSpreadOutcome(s.outcome_name, s.probability ?? 0, s.source, homeTeam, awayTeam))
         .filter((p): p is NonNullable<typeof p> => p != null);
+      if (rawParsed.length === 0) continue;
+
+      // Enforce monotonicity per team: P(team wins by X) >= P(team wins by X+Y)
+      const enforceMonotonic = (items: typeof rawParsed): typeof rawParsed => {
+        const sorted = [...items].sort((a, b) => a.threshold - b.threshold);
+        const clean: typeof rawParsed = [];
+        let lastProb = 1.0;
+        for (const s of sorted) {
+          if (s.probability <= lastProb) {
+            clean.push(s);
+            lastProb = s.probability;
+          }
+        }
+        return clean;
+      };
+
+      const homeClean = enforceMonotonic(rawParsed.filter((p) => p.isHome));
+      const awayClean = enforceMonotonic(rawParsed.filter((p) => !p.isHome));
+      const parsed = [...homeClean, ...awayClean];
       if (parsed.length === 0) continue;
 
       const sportKey_ = (sportKey || "").toLowerCase();

@@ -1463,3 +1463,19 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 
 **Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
 **Parallel Safety:** Green
+
+### 0f-12. Kalshi Half-Period Spread/Total Prices Are Non-Monotonic — DATA QUALITY (April 28)
+
+**Problem:** Half-period spread and total market probabilities from Kalshi are frequently non-monotonic (e.g., ORL +11.5 at 24%, ORL +14.5 at 4%, ORL +17.5 at 17%). This makes the distribution visualization misleading and the data untrustworthy.
+
+**Root cause:** Kalshi half-period markets are thinly traded. Each threshold's `yes_bid` reflects the last trade or last resting order, which may be from different points in the game. Unlike full-game moneylines (which trade actively), half spreads at +11.5 vs +17.5 may not have traded since different quarters.
+
+**Impact:** Market Map cards for half margins/totals show nonsensical distributions. The density rail has random hot spots instead of a coherent bell curve.
+
+**Fix options:**
+1. **Client-side:** Enforce monotonicity by dropping non-monotonic points (already done for half totals). For spreads, enforce that P(team wins by X) ≥ P(team wins by X+Y) for each team separately.
+2. **Backend:** Track `last_trade_time` per market and exclude markets that haven't traded in >30 min from the game-markets response. More correct but harder.
+3. **Both:** Client-side cleanup as a stopgap, backend fix for real solution.
+
+**Files:** `frontend/components/MarketMapSection.tsx` (client enforcement), `backend/app/routes/events.py` (backend filtering)
+**Parallel Safety:** Yellow (touches same half-period data as market maps)
