@@ -155,6 +155,140 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 **Files:** `frontend/app/sport/[sport]/[league]/page.tsx`
 **Parallel Safety:** Yellow (frontend only, one file)
 
+### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats)
+
+**Problem:** The league page (`/sport/basketball/nba`) is a single-purpose page — it shows the championship grid and nothing else. Meanwhile we're ingesting thousands of markets from Kalshi and Polymarket that are clearly sport-specific (NBA series winners, MVP, DPOY, playoff win totals, sweeps, Game 7 counts, player return dates) and NOT showing them anywhere at the league level. Users have to stumble onto these via individual event detail pages or the generic futures browser.
+
+Kalshi's own NBA page organizes into 5 tabs: **Games, Series, Futures, Playoff Props, Awards**. We have the data for all 5 — we just don't surface it.
+
+**What we have in the DB (examples for NBA, April 2026):**
+
+| Market Type | Example | DB Classification | Currently Shown On League Page? |
+|-------------|---------|-------------------|-------------------------------|
+| Championship | "NBA Championship Winner" | tier 1, `playoff_path` | ✅ Grid |
+| Conference | "Eastern/Western Conference Winner" | tier 2, `conference` | ✅ Grid |
+| Division | "Atlantic Division Winner" | tier 4, `division` | ✅ Grid |
+| Make Playoffs | "Team to Make Playoffs" | tier 4, `playoff_path` | ✅ Grid |
+| **Series Winner** | "Celtics vs Cavaliers: Series Winner" | tier 5 or `game_prop` | ❌ **Not shown** |
+| **MVP** | "NBA MVP Winner" | tier 3, `award` | ❌ **Not shown** |
+| **DPOY/6MOY/MIP/ROY** | "Defensive Player of the Year" | tier 3, `award` | ❌ **Not shown** |
+| **Finals MVP** | "Finals MVP Winner" | tier 3, `award` | ❌ **Not shown** |
+| **Conference Finals MVP** | "Eastern/Western Conference Finals MVP" | tier 3, `award` | ❌ **Not shown** |
+| **All-Pro/All-NBA** | "All-Pro Basketball 3rd Team Selections" | tier 3, `award` | ❌ **Not shown** |
+| **Playoff Win Totals** | "Playoff Win Total: Boston 12+" | tier 4-5, `season_stat` | ❌ **Not shown** |
+| **Series Sweeps** | "Number of Series Sweeps in 1st Round" | tier 5, `novelty`/`prop` | ❌ **Not shown** |
+| **Game 7 Count** | "Number of Series that go to a Game 7" | tier 5, `novelty`/`prop` | ❌ **Not shown** |
+| **Player Return** | "Luka Doncic: Next Game Played Before May 7" | tier 5, `prop` | ❌ **Not shown** |
+| **Stat Leaders** | "PPG Leader", "RPG Leader" | tier 3-4, `season_stat` | ❌ **Not shown** |
+| **Win Totals** | "Regular Season Win Total: OKC 65.5" | tier 4, `season_stat` | ❌ **Not shown** |
+
+**Design direction:**
+
+The league page should become a **one-stop destination** for everything happening in that sport, organized into clear sections. Inspired by Kalshi's tab structure but translated into Bain Luck's probability-first visual language (NO American odds, NO gambling terminology, probability bars everywhere).
+
+**Proposed league page layout:**
+
+```
+┌─────────────────────────────────────────────────────┐
+│  NBA  [Games] [Futures] [Awards] [Props]            │
+│                                                      │
+│  ── Today's Games (from 0p) ──────────────────────  │
+│  [Live event cards — same as feed, filtered by sport]│
+│                                                      │
+│  ── Championship Race ────────────────────────────  │
+│  [Existing championship grid — Make PO → Champ]     │
+│  [Evolution chart below]                             │
+│                                                      │
+│  ── Playoff Series ───────────────────────────────  │
+│  ┌──────────────────┐ ┌──────────────────┐          │
+│  │ MIN vs DEN (6)   │ │ HOU vs LAL (5)   │          │
+│  │ MIN 62% ████████░│ │ HOU 78% █████████│          │
+│  │ DEN 38% █████░░░░│ │ LAL 22% ███░░░░░░│          │
+│  │ Game 5: Apr 27   │ │ Game 6: Apr 28   │          │
+│  └──────────────────┘ └──────────────────┘          │
+│  ┌──────────────────┐ ┌──────────────────┐          │
+│  │ NYK vs ATL (2-2) │ │ BOS vs PHI (3-1) │          │
+│  │ ...              │ │ ...              │          │
+│  └──────────────────┘ └──────────────────┘          │
+│                                                      │
+│  ── Awards ───────────────────────────────────────  │
+│  MVP                    Finals MVP                   │
+│  ┌────────────────┐    ┌────────────────┐           │
+│  │ 🏀 SGA    89%  │    │ 🏀 SGA    35%  │           │
+│  │ 🏀 Jokic   8%  │    │ 🏀 Wemby  28%  │           │
+│  │ 🏀 Giannis 2%  │    │ 🏀 Jokic  15%  │           │
+│  └────────────────┘    └────────────────┘           │
+│  DPOY        6MOY        MIP        ROY             │
+│  [compact cards with top 2-3 candidates each]       │
+│                                                      │
+│  ── Playoff Props ────────────────────────────────  │
+│  Series Sweeps (1st Rd)     Game 7 Count            │
+│  At least 1: 91%            3+ series: 23%          │
+│  At least 2: 32%            4+ series: 5%           │
+│                                                      │
+│  Playoff Win Totals                                  │
+│  BOS 12+: 55%  |  SAS 10+: 62%  |  OKC 14+: 28%   │
+│                                                      │
+│  Player Watch                                        │
+│  Luka Doncic back before May 7: 55%                 │
+│  Luka Doncic back before Jun 20: 83%                │
+│                                                      │
+│  ── Season Stats ─────────────────────────────────  │
+│  [Win totals, stat leaders — if season is ongoing]   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Implementation plan:**
+
+#### Phase 1: Backend — League-scoped futures endpoint (NEW)
+Create `GET /api/futures/league/{league_slug}` that returns all open markets for a league, grouped by `display_category`:
+
+```python
+{
+  "series": [...],      # Series winner markets (current playoff matchups)
+  "awards": [...],      # MVP, DPOY, 6MOY, MIP, ROY, Finals MVP, etc.
+  "playoff_props": [...], # Sweeps, Game 7 count, playoff win totals
+  "season_stats": [...],  # Win totals, stat leaders (if season ongoing)
+  "novelty": [...],     # Player returns, records, streaks
+}
+```
+
+Each group: markets sorted by interestingness (decisive probability + recent movement). Top 3 outcomes per market. Cross-source dedup via `canonical_market_key`.
+
+**Key challenge:** Filtering by league, not just sport. `llm_sport_category='basketball'` includes WNBA, NCAAB, international leagues. Need to filter using ticker prefixes (`KXNBA` for Kalshi) and/or `canonical_market_key` patterns for Polymarket.
+
+**Files:** New file `backend/app/routes/league_futures.py`, or add to `routes/futures.py`
+**Depends on:** Existing `market_label_normalization.py` classification system
+
+#### Phase 2: Frontend — Tabbed/sectioned league page
+Add sections below the championship grid. Could be tabs (Games / Futures / Awards / Props) or a single scrollable page with sections (simpler, more discoverable).
+
+Reusable components needed:
+- `SeriesCard` — matchup with series score dots, probabilities, next game date
+- `AwardCard` — award name, top 3 candidates with headshots + probability bars
+- `PropGroupCard` — group of threshold outcomes (sweeps, Game 7s, win totals)
+- `PlayerWatchCard` — player name, event description, probability bar, date
+
+**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`, new components in `frontend/components/`
+**Parallel Safety:** Yellow (touches league page + new components)
+
+#### Phase 3: Cross-sport generalization
+Same pattern for NHL (series, Conn Smythe, playoff props), MLB (pennant races, awards, World Series props), NFL (division winners, MVP, draft props). Each sport gets the same sectioned layout, populated by the same league-scoped endpoint.
+
+#### Phase 4: iOS parity
+Port the new sections to `LeagueView.swift`. Reuse existing card components where possible.
+
+**Scope for first iteration:** NBA only, single scrollable page (not tabs). Awards + Series + a couple playoff props. ~1 day backend, ~1 day frontend.
+
+**What this does NOT include:**
+- Deep-dive pages for individual awards (click MVP → see all 30 candidates). That's the existing `/futures/{id}` page.
+- Historical trend charts per market (existing evolution chart covers championship; extending to awards is a separate item).
+- Live game scores integration (that's item 0p, do it in parallel).
+
+**Why this matters:** The league page is the most natural destination for a fan checking "what's happening in the NBA right now." Right now it answers only one question (who wins the championship). With this change, it answers a dozen: who's MVP, which series are competitive, will there be sweeps, when is Luka back, etc. It transforms the page from a reference table into a living dashboard.
+
+**Parallel Safety:** Yellow (backend new endpoint is Green; frontend touches existing league page)
+
 ### 0q. Feed "Top Markets" Stale Data (BUG — user-facing)
 
 Multiple stale/nonsensical markets showing in the feed's "Top Markets" section:
@@ -969,6 +1103,26 @@ iOS-side reclassification: expanded `isDivisionOrPlayoff` regex to catch "NL Eas
 
 Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `player_headshot` + `player_team` on game-markets endpoint. iOS `PlayerPropsCardView` updated to show AsyncImage headshots with initials fallback, plus uses `playerTeam` from API instead of guessing from name.
 
+### iOS-18. Prevent Screen Sleep While App Is Foreground
+
+**Problem:** The phone auto-locks / screen dims while using the app. When you're watching a game and glancing at live probabilities, the phone shouldn't go to sleep.
+
+**Fix:** Set `UIApplication.shared.isIdleTimerDisabled = true` when the app is in the foreground, and re-enable it when backgrounded. In SwiftUI, apply this in the root `App` struct using `.onChange(of: scenePhase)`:
+
+```swift
+@Environment(\.scenePhase) var scenePhase
+
+.onChange(of: scenePhase) { newPhase in
+    UIApplication.shared.isIdleTimerDisabled = (newPhase == .active)
+}
+```
+
+This keeps the screen on while the app is visible and restores normal sleep behavior when the user switches away.
+
+**Files:** `ios/Bain Luck/Bain Luck/Bain_LuckApp.swift`
+**Parallel Safety:** Green (one line, no conflicts)
+**Effort:** 5 minutes
+
 ### iOS-4. Dead/Stale Views Cleanup
 
 **Problem:** Several views reference features that are seasonal, deprecated, or no longer maintained:
@@ -1099,9 +1253,120 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 
 ## Tier 4 — Someday / Maybe
 
+### 21. Rage Shake — In-App Bug Reporting (iOS + Web)
+
+**Goal:** Let anyone using Bain Luck shake their phone (or trigger a gesture on web) to instantly report a bug with full context — screenshot, current page, device info, app state — without leaving the app.
+
+**Why:** Alex and friends are the primary testers. Right now, reporting a bug means texting/screenshotting/describing manually. Rage shake makes it one gesture → structured report → lands in a queue for the next coding session.
+
+**iOS Implementation:**
+- SwiftUI has no built-in shake gesture, but UIKit's `motionEnded(.motionShake, ...)` works via a thin UIWindow subclass or `UIViewControllerRepresentable` wrapper.
+- On shake: capture screenshot (`UIGraphicsImageRenderer` from the current window), collect context (current route/view, `EventDetailViewModel` state, API errors in last 60s, app version, device model, iOS version).
+- Present a modal: screenshot preview + text field ("What went wrong?") + severity picker (broken / ugly / idea) + submit button.
+- **Where reports go:** Options ranked by simplicity:
+  1. **GitHub Issues** — `POST /repos/alexander-bain/bainluck/issues` via GitHub API. Auto-labeled `bug/rageshake`. Screenshot uploaded as issue attachment. Zero new infrastructure.
+  2. **Google Sheet** — append row via Google Sheets API. Lower friction but less structured.
+  3. **Backend endpoint** — `POST /api/feedback` stores in DB. Most work, most control.
+- Recommendation: Start with GitHub Issues. It's where the backlog lives, screenshots render inline, and it's free.
+
+**macOS Implementation:**
+- No shake gesture on Mac. Use keyboard shortcut: `Cmd+Shift+F` ("Feedback") or a menu bar item.
+- Same modal, same data capture.
+
+**Web Implementation:**
+- **Device shake API** (`DeviceMotionEvent`) works on mobile browsers but requires HTTPS + user permission. Unreliable.
+- Better: **floating feedback button** (small `?` or flag icon, bottom-right corner). Click → same modal as iOS.
+- Alternative: **keyboard shortcut** (`Ctrl+Shift+F` / `Cmd+Shift+F`) for desktop web.
+- Screenshot capture: `html2canvas` library or `dom-to-image` for client-side screenshot. Or just capture the current URL + viewport dimensions and let the developer reproduce.
+- Same destination (GitHub Issues or backend endpoint).
+
+**Data captured per report:**
+```
+{
+  "screenshot": "<base64 or URL>",
+  "page": "/sport/basketball/nba",
+  "event_id": 14595395,           // if on event detail
+  "description": "user typed text",
+  "severity": "broken|ugly|idea",
+  "platform": "ios|macos|web",
+  "app_version": "1.2.3",
+  "device": "iPhone 15 Pro / Chrome 120 / macOS 15.1",
+  "timestamp": "2026-04-28T10:30:00Z",
+  "recent_errors": ["API timeout on /api/feed", ...]
+}
+```
+
+**Files:** New `ios/.../Utils/RageShake.swift`, new `frontend/components/FeedbackButton.tsx`, optionally new `backend/app/routes/feedback.py`
+**Parallel Safety:** Green (all new files)
+**Effort:** iOS: 2-3h. Web: 2-3h. Backend (if not GitHub): 1h.
+
+### 22. Interestingness-Powered Discovery Feed (LLM Blurbs + Images)
+
+**Goal:** Use the interestingness scorer (Item 20) across the ENTIRE `futures_markets` table — not just the `/explore` page — and generate an engaging, social-media-style feed where each card has: a compelling image, a one-line LLM-written blurb, and the probability bar. Think "Instagram for prediction markets."
+
+**Why:** The current feed is sports-game-centric. Futures markets like "Foldable iPhone in 2026 — 12%" or "3+ NBA Series Sweeps — 32%" are inherently interesting but we present them as sterile data tables. An image + blurb transforms them into content people actually want to scroll through and share.
+
+**What a card looks like:**
+
+```
+┌─────────────────────────────────────────┐
+│  [Image: iPhone folding concept art]    │
+│                                         │
+│  Will Apple release a foldable iPhone   │
+│  before 2027?                           │
+│                                         │
+│  "Samsung's had 5 generations of folds  │
+│   while Apple watches from the          │
+│   sidelines. The market says they're    │
+│   still not ready."                     │
+│                                         │
+│  12% ████░░░░░░░░░░░░░░  Kalshi        │
+│  14% ████░░░░░░░░░░░░░░  Polymarket    │
+│                                         │
+│  Resolves: Dec 31, 2026                 │
+└─────────────────────────────────────────┘
+```
+
+**Implementation plan:**
+
+#### Phase 1: Score everything
+Run `compute_interestingness()` (Item 20) across all open `futures_markets` rows. Store the score as a column (`interestingness_score FLOAT`) on the model. Re-score hourly via Celery task. This gives us a ranked list of the ~500 most interesting markets across all categories.
+
+#### Phase 2: LLM blurb generation
+For the top N markets (start with top 100), generate a 1-2 sentence blurb via GPT-4o-mini:
+
+```
+Prompt: "Write a 1-2 sentence hook for this prediction market.
+Be conversational, slightly opinionated, give context a casual
+reader needs. No gambling language. No hedging.
+Market: {name}, Current probability: {prob}%, Source: {source}"
+```
+
+Store as `llm_blurb TEXT` on the model. Regenerate weekly or on significant probability movement (>10pp). Cost: ~100 markets × $0.01 = $1/week.
+
+#### Phase 3: Image generation/selection
+Three tiers of image sourcing (cheapest to richest):
+1. **Stock/icon mapping** — Map `llm_sport_category` to a curated set of Unsplash/Pexels images. "Tech" → circuit board, "Politics" → Capitol dome, "Weather" → storm clouds. Free, instant.
+2. **Entity image lookup** — For markets mentioning known entities (teams, players, companies), pull logos/headshots we already have (ESPN CDN for sports, company logos via Clearbit). Free, already in DB for sports.
+3. **AI-generated** — For truly novel markets ("Taylor Swift meets Pope"), generate via DALL-E or Midjourney. $0.04/image. Only for top 20 featured markets.
+
+Start with tier 1+2 only. Tier 3 is a stretch goal.
+
+#### Phase 4: Feed integration
+New feed mode: "Discover" tab alongside the existing sports feed. Or interleave discovery cards into the main feed (every 5th card is a non-sport market from the interestingness ranking).
+
+**Relationship to existing items:**
+- **Item 19** ("What Are The Odds?" page) — This feed IS the content engine behind that page. Item 19 is the container; this item is the content.
+- **Item 20** (Interestingness Scoring) — This item depends on Item 20 for the ranking. Build 20 first.
+- **Item 0s** (League page markets) — Sports markets use the same interestingness score for ordering within league page sections.
+
+**Files:** `backend/app/utils/market_interestingness.py` (from Item 20), new `backend/app/tasks/blurb_generation.py`, new migration for `interestingness_score` + `llm_blurb` columns, `frontend/components/DiscoveryCard.tsx` (new)
+**Parallel Safety:** Green (new files, new columns, no conflicts)
+**Effort:** Phase 1: 2h (scoring + column + task). Phase 2: 3h (LLM integration + caching). Phase 3: 2h (image mapping). Phase 4: 4h (feed UI).
+
 - Entity pages (`/[sport]/[league]/[team]`) — SEO upside, depends on B1
 - Win totals column in championship grid
-- Awards/props cards on league pages (MVP, DPOY, ROY)
+- ~~Awards/props cards on league pages~~ → Promoted to Tier 1 as item 0s
 - TV Mode v2 — Design complete, prototype exists
 - "The Market Was Wrong" v2 — AI narrative generation
 - Related Futures Phase 5 — Bidirectional
