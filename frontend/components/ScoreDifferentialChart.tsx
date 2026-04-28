@@ -634,6 +634,7 @@ export default function ScoreDifferentialChart({
                 if (!ticks.includes(0)) ticks.push(0);
                 return ticks.sort((a, b) => a - b);
               })()}
+              width={42}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
