@@ -370,14 +370,15 @@ function EventFeedCard({
       `}>
         {/* Top row: league + badges + game time/score */}
         <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center flex-wrap gap-1.5 min-w-0">
             {isLive && (
-              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                {/* Show period/clock if available */}
+              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0 max-w-[140px]">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse flex-shrink-0" />
+                <span className="truncate">
                 {data.espn?.period || data.espn?.game_clock
-                  ? `${data.espn.period || ""}${data.espn.period && data.espn.game_clock ? " " : ""}${data.espn.game_clock || ""}`
+                  ? `${data.espn.period && data.espn.period.length <= 10 ? data.espn.period : ""}${data.espn.period && data.espn.period.length <= 10 && data.espn.game_clock ? " " : ""}${data.espn.game_clock || ""}`.trim() || "LIVE"
                   : "LIVE"}
+                </span>
               </span>
             )}
             {isFinished && (
