@@ -26,6 +26,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
+import { espnTeamLogoByName } from "@/lib/images";
 import {
   useAnalytics,
   usePageTracking,
@@ -1018,29 +1019,29 @@ export default function EventPage({ params }: EventPageProps) {
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
               >
-                {event.home_team_data?.logo_large ? (
+                {(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? (
                   <img
-                    src={event.home_team_data.logo_large}
+                    src={event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)!}
                     alt=""
                     width={48}
                     height={48}
                     loading="lazy"
                     className="w-12 h-12 object-contain"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden"); }}
                   />
-                ) : (
-                  <span
-                    className="text-sm font-extrabold"
-                    style={{ color: event.home_team_data?.primary_color || "#94A3B8" }}
-                  >
-                    {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
-                  </span>
-                )}
+                ) : null}
+                <span
+                  className={`text-sm font-extrabold ${(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? "hidden" : ""}`}
+                  style={{ color: event.home_team_data?.primary_color || "#94A3B8" }}
+                >
+                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                </span>
               </div>
               <span className="text-xs font-semibold text-text-primary">
                 {event.home_team.split(" ").pop()}
               </span>
               {(event.standings_context?.home || event.home_team_data?.record) && (
-                <span className="text-[10px] text-text-muted">
+                <span className="text-[11px] text-text-muted">
                   {event.standings_context?.home || event.home_team_data?.record}
                 </span>
               )}
@@ -1112,7 +1113,7 @@ export default function EventPage({ params }: EventPageProps) {
               {/* Opening odds (faint) */}
               {openingHomeProb !== null && (
                 <div className="mt-1.5">
-                  <span className="text-[10px] text-text-muted">
+                  <span className="text-[11px] text-text-muted">
                     Opened {formatProbability(openingHomeProb)} {"–"} {formatProbability(openingAwayProb)}
                   </span>
                 </div>
@@ -1121,7 +1122,7 @@ export default function EventPage({ params }: EventPageProps) {
               {/* Source label */}
               {probSourceLabel && (
                 <div className="mt-1">
-                  <span className="text-[10px] text-text-muted">
+                  <span className="text-[11px] text-text-muted">
                     {probSourceLabel}
                   </span>
                 </div>
@@ -1130,7 +1131,7 @@ export default function EventPage({ params }: EventPageProps) {
               {/* Projected final score — derived from spread + total, no gambling jargon */}
               {historyData?.pm_spread_data?.projected_final && (
                 <div className="mt-1.5">
-                  <span className="text-[10px] text-text-muted">
+                  <span className="text-[11px] text-text-muted">
                     Projected final: {Math.round(historyData.pm_spread_data.projected_final.home_score)}{"\u2009\u2013\u2009"}{Math.round(historyData.pm_spread_data.projected_final.away_score)}
                   </span>
                 </div>
@@ -1143,29 +1144,29 @@ export default function EventPage({ params }: EventPageProps) {
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
               >
-                {event.away_team_data?.logo_large ? (
+                {(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? (
                   <img
-                    src={event.away_team_data.logo_large}
+                    src={event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)!}
                     alt=""
                     width={48}
                     height={48}
                     loading="lazy"
                     className="w-12 h-12 object-contain"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden"); }}
                   />
-                ) : (
-                  <span
-                    className="text-sm font-extrabold"
-                    style={{ color: event.away_team_data?.primary_color || "#64748B" }}
-                  >
-                    {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
-                  </span>
-                )}
+                ) : null}
+                <span
+                  className={`text-sm font-extrabold ${(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? "hidden" : ""}`}
+                  style={{ color: event.away_team_data?.primary_color || "#64748B" }}
+                >
+                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                </span>
               </div>
               <span className="text-xs font-semibold text-text-primary">
                 {event.away_team.split(" ").pop()}
               </span>
               {(event.standings_context?.away || event.away_team_data?.record) && (
-                <span className="text-[10px] text-text-muted">
+                <span className="text-[11px] text-text-muted">
                   {event.standings_context?.away || event.away_team_data?.record}
                 </span>
               )}

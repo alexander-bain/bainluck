@@ -90,7 +90,7 @@ function SourceBreakdown({ team, stageKeys, stageLabels }: { team: PlayoffTeam; 
 
   if (!allSources.length) {
     return (
-      <div className="px-3 py-2 text-[10px]" style={{ color: "var(--text-muted)" }}>
+      <div className="px-3 py-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
         No source data available
       </div>
     );
@@ -98,7 +98,7 @@ function SourceBreakdown({ team, stageKeys, stageLabels }: { team: PlayoffTeam; 
 
   return (
     <div className="px-3 py-2">
-      <table className="w-full text-[10px]">
+      <table className="w-full text-[11px]">
         <thead>
           <tr>
             <th className="text-left font-medium pb-1" style={{ color: "var(--text-muted)", width: "30%" }}>
@@ -169,7 +169,7 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
         <td className="py-2 pl-2 pr-1">
           <div className="flex items-center gap-1.5">
             <span
-              className="text-[10px] font-mono w-4 text-right flex-shrink-0"
+              className="text-[11px] font-mono w-4 text-right flex-shrink-0"
               style={{ color: "var(--text-muted)" }}
             >
               {rank}
@@ -193,7 +193,7 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
                 {team.short}
               </div>
               <div
-                className="text-[9px] font-mono leading-tight"
+                className="text-[10px] font-mono leading-tight"
                 style={{ color: "var(--text-muted)" }}
               >
                 {team.record}
@@ -234,7 +234,7 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
                 />
                 {/* Number underneath */}
                 <span
-                  className="text-[9px] font-mono leading-none"
+                  className="text-[10px] font-mono leading-none"
                   style={{
                     color: isSort ? "var(--text-primary)" : "var(--text-muted)",
                     fontWeight: isSort ? 600 : 400,
@@ -245,7 +245,7 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
                 {/* Trend indicator (only if significant) */}
                 {Math.abs(change) >= 0.005 && (
                   <span
-                    className="text-[7px] font-mono leading-none"
+                    className="text-[9px] font-mono leading-none"
                     style={{ color: change > 0 ? "#22C55E" : "#EF4444" }}
                   >
                     {change > 0 ? "+" : ""}{Math.round(change * 100)}
@@ -320,8 +320,9 @@ function GridTable({
   onExpandTeam,
 }: GridTableProps) {
   return (
+    <div className="relative">
     <div
-      className="rounded-xl border overflow-hidden"
+      className="rounded-xl border overflow-x-auto scrollbar-hide"
       style={{ borderColor: "var(--surface-border)", backgroundColor: "var(--surface-card)" }}
     >
       <table className="w-full text-sm border-collapse table-fixed">
@@ -339,7 +340,7 @@ function GridTable({
         <thead>
           <tr style={{ backgroundColor: "var(--surface-elevated)" }}>
             <th
-              className="py-2 pl-2 pr-1 text-left text-[9px] font-semibold uppercase tracking-wider"
+              className="py-2 pl-2 pr-1 text-left text-[10px] font-semibold uppercase tracking-wider"
               style={{ color: "var(--text-muted)" }}
             >
               Team
@@ -351,7 +352,7 @@ function GridTable({
                 <th
                   key={key}
                   onClick={() => onSortKey(key)}
-                  className="py-2 px-0.5 text-center text-[9px] font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors duration-100"
+                  className="py-2 px-0.5 text-center text-[10px] font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors duration-100"
                   style={{
                     color: isSort ? "#10B981" : "var(--text-muted)",
                     backgroundColor: isSort ? "rgba(16,185,129,0.06)" : undefined,
@@ -380,6 +381,12 @@ function GridTable({
           ))}
         </tbody>
       </table>
+    </div>
+    {/* Right-edge fade hint — shows there's more to scroll */}
+    <div
+      className="absolute top-0 right-0 w-6 h-full pointer-events-none rounded-r-xl sm:hidden"
+      style={{ background: "linear-gradient(to right, transparent, var(--surface-card))" }}
+    />
     </div>
   );
 }
@@ -476,7 +483,7 @@ export default function ChampionshipGrid({
           {data.league}
         </h2>
         <span
-          className="text-[10px] font-mono ml-auto"
+          className="text-[11px] font-mono ml-auto"
           style={{ color: "var(--text-muted)" }}
         >
           {data.season}
@@ -497,7 +504,7 @@ export default function ChampionshipGrid({
               <button
                 key={opt}
                 onClick={() => setConferenceFilter(opt)}
-                className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-150"
+                className="px-2 py-0.5 rounded-full text-[11px] font-medium transition-all duration-150"
                 style={{
                   backgroundColor: active ? "rgba(16,185,129,0.15)" : "transparent",
                   color: active ? "#10B981" : "var(--text-muted)",
@@ -508,7 +515,7 @@ export default function ChampionshipGrid({
             );
           })}
         </div>
-        <span className="text-[9px] ml-auto" style={{ color: "var(--text-muted)" }}>
+        <span className="text-[10px] ml-auto" style={{ color: "var(--text-muted)" }}>
           Tap header to sort · Tap row for sources
         </span>
       </div>
@@ -526,7 +533,7 @@ export default function ChampionshipGrid({
 
       {/* Legend */}
       <div
-        className="mt-2 flex items-center justify-center gap-3 text-[9px]"
+        className="mt-2 flex items-center justify-center gap-3 text-[10px]"
         style={{ color: "var(--text-muted)" }}
       >
         <span>R1 = Round 1</span>

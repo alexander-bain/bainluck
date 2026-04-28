@@ -514,7 +514,7 @@ function EventFeedCard({
                 <ReasonBadge text={item.reason} truncate={!isFinished} />
               )}
               {openedContext && (
-                <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>
+                <span className="text-[11px] text-text-muted flex-shrink-0">{openedContext}</span>
               )}
             </div>
             <ThumbButtons
@@ -599,12 +599,12 @@ function FuturesFeedCard({
 
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {resolvesText && (
-              <span className="text-[10px] text-text-muted">
+              <span className="text-[11px] text-text-muted">
                 {resolvesText}
               </span>
             )}
             {data.source_count > 1 && (
-              <span className="text-[10px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
+              <span className="text-[11px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
                 {data.source_count} sources
               </span>
             )}
@@ -652,7 +652,7 @@ function FuturesFeedCard({
                 {leader.name}
               </div>
               {leader.movement !== null && leader.movement !== undefined && leader.movement !== 0 && (
-                <div className={`text-[10px] font-medium ${
+                <div className={`text-[11px] font-medium ${
                   leader.movement > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}>
                   {leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}%
