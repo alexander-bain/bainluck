@@ -146,14 +146,9 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 **Files:** `frontend/components/DesktopNav.tsx`, `frontend/components/BottomNav.tsx`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, new `/categories` routing
 **Parallel Safety:** Red (touches navigation on all platforms)
 
-### 0p. Sport/League Pages: Add Live Events
+### ~~0p. Sport/League Pages: Add Live Events~~ ✅ SHIPPED (April 28)
 
-`/sport/basketball/nba` shows only the championship grid — no live game cards. During playoffs, visiting the NBA page should show tonight's games prominently.
-
-**Fix:** Add a "Today's Games" section above the championship grid. Query the feed API filtered by sport, show live events first, then scheduled, then recently completed. Same event cards as the feed.
-
-**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`
-**Parallel Safety:** Yellow (frontend only, one file)
+Moved to `docs/completed-features.md`.
 
 ### 0q. Feed Ranking: Penalize "Empty" Events
 
@@ -209,7 +204,7 @@ The league page should become a **one-stop destination** for everything happenin
 ┌─────────────────────────────────────────────────────┐
 │  NBA  [Games] [Futures] [Awards] [Props]            │
 │                                                      │
-│  ── Today's Games (from 0p) ──────────────────────  │
+│  ── Today's Games (from 0p — ✅ SHIPPED) ─────────  │
 │  [Live event cards — same as feed, filtered by sport]│
 │                                                      │
 │  ── Championship Race ────────────────────────────  │

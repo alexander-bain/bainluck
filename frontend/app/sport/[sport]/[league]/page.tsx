@@ -8,6 +8,7 @@ import {
   fetchGolfData,
   fetchChampionshipGrid,
   fetchGolfLeaderboard,
+  fetchFeed,
 } from "@/lib/api";
 import type {
   SportHierarchy,
@@ -20,10 +21,13 @@ import type {
   ProgressionResponse,
   ProgressionStage,
   ProgressionParticipant,
+  FeedItem,
+  FeedEventData,
 } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import { EvolutionView, type PositionOption } from "@/components/EvolutionView";
+import FeedCard from "@/components/FeedCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -119,6 +123,7 @@ export default function LeagueShowcasePage() {
   const [golfData, setGolfData] = useState<GolfResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<GolfLeaderboardPlayer[]>([]);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
+  const [todayEvents, setTodayEvents] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -158,16 +163,30 @@ export default function LeagueShowcasePage() {
           if (results[1].status === "fulfilled") setLeaderboard(results[1].value.players || []);
         }
 
-        // Championship grid (works for any sport)
-        try {
-          const sportKey = l.sport_keys[0];
-          if (sportKey) {
-            const gridSlug = sportKey.split("_").slice(1).join("_") || sportKey;
-            const gridData = await fetchChampionshipGrid(gridSlug);
-            if (!cancelled) setGrid(gridData);
+        // Championship grid + today's events (parallel, both supplementary)
+        const sportKey = l.sport_keys[0];
+        if (sportKey) {
+          const gridSlug = sportKey.split("_").slice(1).join("_") || sportKey;
+          const [gridResult, feedResult] = await Promise.allSettled([
+            fetchChampionshipGrid(gridSlug),
+            fetchFeed({ sport: sportKey, include_futures: false, limit: 30 }),
+          ]);
+          if (cancelled) return;
+          if (gridResult.status === "fulfilled") setGrid(gridResult.value);
+          if (feedResult.status === "fulfilled") {
+            const events = feedResult.value.items
+              .filter((item): item is FeedItem & { data: FeedEventData } => item.type === "event")
+              .sort((a, b) => {
+                const statusOrder = { live: 0, scheduled: 1, completed: 2, closed: 2 };
+                const da = (a.data as FeedEventData).status;
+                const db = (b.data as FeedEventData).status;
+                const orderA = statusOrder[da] ?? 3;
+                const orderB = statusOrder[db] ?? 3;
+                if (orderA !== orderB) return orderA - orderB;
+                return b.score - a.score;
+              });
+            setTodayEvents(events);
           }
-        } catch {
-          // Grid is supplementary
         }
       } catch {
         if (!cancelled) setError("Failed to load league data");
@@ -312,6 +331,22 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
+        {/* Today's Games */}
+        {todayEvents.length > 0 && (
+          <section>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+              {todayEvents.some((e) => (e.data as FeedEventData).status === "live")
+                ? "Live & Today's Games"
+                : "Today's Games"}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {todayEvents.map((item) => (
+                <FeedCard key={(item.data as FeedEventData).id} item={item} />
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Evolution Chart */}
         {evolutionMarketId && (
           <section>
@@ -374,7 +409,7 @@ export default function LeagueShowcasePage() {
         )}
 
         {/* Empty state for non-golf sports */}
-        {sportSlug !== "golf" && !grid && (
+        {sportSlug !== "golf" && !grid && todayEvents.length === 0 && (
           <div className="text-center py-16">
             <p className="text-text-secondary text-lg">
               {league.name} page coming soon

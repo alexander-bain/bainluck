@@ -2,6 +2,7 @@
 
 ## April 28, 2026
 
+- ✅ **0p: Today's Games on league pages**: `/sport/[sport]/[league]` pages now show a "Today's Games" section above the championship grid. Fetches from the feed API filtered by sport key (e.g., `basketball_nba`), events only (no futures), limit 30. Sorted: live → scheduled → completed, with feed score as tiebreaker. Uses existing `FeedCard` component in a 2-column responsive grid. Section header adapts ("Live & Today's Games" vs "Today's Games"). Hidden when no events. Empty state suppressed when events exist but grid is absent.
 - ✅ **MS-1: Small text audit**: Bumped sub-11px text to readable sizes across FeedCard (opened context, resolve dates, source counts, movement), ChampionshipGrid (records, probabilities, headers, legend, trend indicators 7→9px), OddsChart (team labels 9→11px), and event detail page.
 - ✅ **MS-3: Team logo fallback**: Event detail team logos now fall back to ESPN CDN lookup when `team_data.logo_large` is missing, with `onError` handler showing initials if image fails to load.
 - ✅ **MS-7: Grid scroll hint**: Championship grid changed from `overflow-hidden` to `overflow-x-auto` with right-edge gradient fade on mobile.
