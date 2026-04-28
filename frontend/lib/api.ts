@@ -1191,6 +1191,42 @@ export async function fetchChampionshipGrid(
 }
 
 /**
+ * Fetch all open futures markets for a league, grouped by section.
+ */
+export interface LeagueMarketOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  opening_probability: number | null;
+  rank: number | null;
+  movement_24h: number | null;
+  team_id: number | null;
+}
+
+export interface LeagueMarket {
+  id: number;
+  name: string;
+  source: string;
+  market_tier: number | null;
+  category: string;
+  resolution_date: string | null;
+  outcome_count: number;
+  top_outcomes: LeagueMarketOutcome[];
+  canonical_market_key: string | null;
+  section: string;
+}
+
+export interface LeagueFuturesResponse {
+  sport_key: string;
+  sections: Record<string, LeagueMarket[]>;
+  total_markets: number;
+}
+
+export async function fetchLeagueMarkets(sportKey: string): Promise<LeagueFuturesResponse> {
+  return apiFetch<LeagueFuturesResponse>(`/api/leagues/${sportKey}`);
+}
+
+/**
  * Fetch golf season schedule from DataGolf across all tours.
  */
 export async function fetchGolfSchedule(): Promise<GolfScheduleResponse> {

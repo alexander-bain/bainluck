@@ -13,7 +13,7 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics
+from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, league_futures
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -140,6 +140,7 @@ app.include_router(march_madness.router, prefix="/api/march-madness", tags=["Mar
 app.include_router(playoffs.router, prefix="/api/playoffs", tags=["Playoffs"])
 app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 app.include_router(economics.router, prefix="/api/economics", tags=["Economics"])
+app.include_router(league_futures.router, prefix="/api/leagues", tags=["Leagues"])
 
 
 @app.get("/")

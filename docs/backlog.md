@@ -159,7 +159,7 @@ Added `compute_content_richness_penalty()` to `feed_scoring.py`. Three signals, 
 - **Rich data** (+3): 4+ sources = small bonus
 Combined penalty capped at -20. 19 new tests. Applies to web + iOS/Mac (backend feed API).
 
-### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats)
+### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats) — Phase 1 SHIPPED
 
 **Problem:** The league page (`/sport/basketball/nba`) is a single-purpose page — it shows the championship grid and nothing else. Meanwhile we're ingesting thousands of markets from Kalshi and Polymarket that are clearly sport-specific (NBA series winners, MVP, DPOY, playoff win totals, sweeps, Game 7 counts, player return dates) and NOT showing them anywhere at the league level. Users have to stumble onto these via individual event detail pages or the generic futures browser.
 
@@ -244,8 +244,8 @@ The league page should become a **one-stop destination** for everything happenin
 
 **Implementation plan:**
 
-#### Phase 1: Backend — League-scoped futures endpoint (NEW)
-Create `GET /api/futures/league/{league_slug}` that returns all open markets for a league, grouped by `display_category`:
+#### ~~Phase 1: Backend — League-scoped futures endpoint~~ ✅ SHIPPED (April 28)
+`GET /api/leagues/{sport_key}` returns all open markets for a league, grouped by section (series, awards, playoff_props, season_stats, novelty). Frontend `LeagueMarketCard` component renders 3-column grid with probability bars for series. Cross-source dedup via canonical_market_key. Created `routes/league_futures.py`.
 
 ```python
 {
@@ -319,11 +319,8 @@ Multiple stale/nonsensical markets showing in the feed's "Top Markets" section:
 **0r-1. Tiger Woods British Open odds** — showing meaningful chance when he won't compete. The `_NON_WINNER_MARKET_RE` filter may not cover all cases.
 **Fix:** Check if British Open winner market outcomes include Tiger from "compete in" markets leaking through.
 
-**0r-2. Dead category links in golf** — "Rory McIlroy Golf Majors In 2026" and "Zurich Classic of New Orleans" link to `/categories/` pages which look bad. Should link to sport hierarchy or tournament pages.
-**Fix:** Golf feed cards should link to `/sport/golf/pga` or tournament detail pages, not `/categories/`.
-
-**Files:** `backend/app/routes/golf.py`, golf frontend components
-**Parallel Safety:** Yellow
+**~~0r-2. Dead category links in golf~~ ✅ SHIPPED (April 28)**
+TournamentCard default href changed from `/categories/golf/tournaments/` to `/sport/golf/{tour}/{slug}`. Tour slug mapping handles dp_world→dpworld, korn_ferry→kft.
 
 ---
 
@@ -413,14 +410,9 @@ Two fixes:
 **Files:** `backend/app/tasks/live_prediction_markets.py` (or wherever Kalshi live prices write to event), `backend/app/tasks/kalshi.py` (market-to-team mapping)
 **Parallel Safety:** Yellow
 
-### 0f-8. Win Probability Chart Mobile Readability (April 25)
+### ~~0f-8. Win Probability Chart Mobile Readability~~ ✅ SHIPPED (April 28)
 
-**Problem:** Y-axis labels (50%, 60%, 70%, etc.) are too small/light on mobile. Hard to read the scale when watching a game on phone.
-
-**Fix:** Increase y-axis tick label font size on mobile (currently inherits Recharts default ~11px). Use `fontSize: 12` with `fill: "#6B7280"` (text-secondary) instead of text-muted. Consider slightly bolder weight.
-
-**Files:** `frontend/components/OddsChart.tsx` (YAxis tick props)
-**Parallel Safety:** Green
+Y-axis bumped 12→13px with darker fill (#4B5563), width 42→44. X-axis bumped 11→12px.
 
 ### Manus Site Sweep Findings (April 25) — NEW
 

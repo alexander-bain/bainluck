@@ -21,7 +21,9 @@ interface TournamentCardProps {
 
 export default function TournamentCard({ tournament, leaderboard, href: hrefOverride }: TournamentCardProps) {
   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
-  const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
+  const tour = tournament.tour?.toLowerCase() || "pga";
+  const tourSlug = tour === "dp_world" ? "dpworld" : tour === "korn_ferry" ? "kft" : tour;
+  const href = hrefOverride || `/sport/golf/${tourSlug}/${slug}`;
 
   // Cup events (Ryder Cup, Presidents Cup, etc.) with exactly 2 teams
   // get a head-to-head layout instead of leader + chasers

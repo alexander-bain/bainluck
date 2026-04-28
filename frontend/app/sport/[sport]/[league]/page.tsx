@@ -9,6 +9,7 @@ import {
   fetchChampionshipGrid,
   fetchGolfLeaderboard,
   fetchFeed,
+  fetchLeagueMarkets,
 } from "@/lib/api";
 import type {
   SportHierarchy,
@@ -24,11 +25,79 @@ import type {
   FeedItem,
   FeedEventData,
 } from "@/lib/types";
+import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import { EvolutionView, type PositionOption } from "@/components/EvolutionView";
 import FeedCard from "@/components/FeedCard";
+import { formatProbability } from "@/lib/api";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+
+// ============================================================================
+// League Market Card — compact futures card for league page sections
+// ============================================================================
+
+const SECTION_META: Record<string, { label: string; order: number }> = {
+  series: { label: "Playoff Series", order: 0 },
+  awards: { label: "Awards", order: 1 },
+  playoff_props: { label: "Playoff Props", order: 2 },
+  season_stats: { label: "Season Stats", order: 3 },
+  novelty: { label: "More Markets", order: 4 },
+};
+
+function LeagueMarketCard({ market }: { market: LeagueMarket }) {
+  const leader = market.top_outcomes[0];
+  const isSeries = market.section === "series";
+
+  return (
+    <Link href={`/futures/${market.id}`}>
+      <div className="rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated transition-all cursor-pointer h-full">
+        <div className="text-sm font-medium text-text-primary mb-2 line-clamp-2">
+          {market.name}
+        </div>
+        <div className="space-y-1">
+          {market.top_outcomes.slice(0, isSeries ? 2 : 3).map((o, i) => (
+            <div key={o.id} className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] text-text-muted/50 w-4 flex-shrink-0">#{i + 1}</span>
+                <span className="text-xs text-text-secondary truncate">{o.name}</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {o.probability !== null && (
+                  <span className={`text-xs font-mono font-semibold ${
+                    i === 0 ? "text-text-primary" : "text-text-muted"
+                  }`}>
+                    {formatProbability(o.probability)}
+                  </span>
+                )}
+                {o.movement_24h !== null && o.movement_24h !== 0 && (
+                  <span className={`text-[10px] font-medium ${
+                    o.movement_24h > 0 ? "text-accent-live" : "text-accent-danger"
+                  }`}>
+                    {o.movement_24h > 0 ? "+" : ""}{(o.movement_24h * 100).toFixed(1)}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {market.outcome_count > 3 && (
+          <div className="text-[10px] text-text-muted mt-1.5">
+            +{market.outcome_count - 3} more
+          </div>
+        )}
+        {isSeries && leader && leader.probability !== null && (
+          <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex bg-surface-elevated">
+            <div
+              className="h-full rounded-full bg-accent-brand/60 transition-all"
+              style={{ width: `${Math.round(leader.probability * 100)}%` }}
+            />
+          </div>
+        )}
+      </div>
+    </Link>
+  );
+}
 
 // ============================================================================
 // Adapters
@@ -124,6 +193,7 @@ export default function LeagueShowcasePage() {
   const [leaderboard, setLeaderboard] = useState<GolfLeaderboardPlayer[]>([]);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
   const [todayEvents, setTodayEvents] = useState<FeedItem[]>([]);
+  const [leagueMarkets, setLeagueMarkets] = useState<LeagueFuturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -163,16 +233,20 @@ export default function LeagueShowcasePage() {
           if (results[1].status === "fulfilled") setLeaderboard(results[1].value.players || []);
         }
 
-        // Championship grid + today's events (parallel, both supplementary)
+        // Championship grid + today's events + league markets (parallel, all supplementary)
         const sportKey = l.sport_keys[0];
         if (sportKey) {
           const gridSlug = sportKey.split("_").slice(1).join("_") || sportKey;
-          const [gridResult, feedResult] = await Promise.allSettled([
+          const [gridResult, feedResult, marketsResult] = await Promise.allSettled([
             fetchChampionshipGrid(gridSlug),
             fetchFeed({ sport: sportKey, include_futures: false, limit: 30 }),
+            fetchLeagueMarkets(sportKey),
           ]);
           if (cancelled) return;
           if (gridResult.status === "fulfilled") setGrid(gridResult.value);
+          if (marketsResult.status === "fulfilled" && marketsResult.value.total_markets > 0) {
+            setLeagueMarkets(marketsResult.value);
+          }
           if (feedResult.status === "fulfilled") {
             const events = feedResult.value.items
               .filter((item): item is FeedItem & { data: FeedEventData } => item.type === "event")
@@ -373,6 +447,23 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
+        {/* League Market Sections (Awards, Series, Props, etc.) */}
+        {leagueMarkets && Object.entries(leagueMarkets.sections)
+          .sort(([a], [b]) => (SECTION_META[a]?.order ?? 99) - (SECTION_META[b]?.order ?? 99))
+          .map(([sectionKey, markets]) => (
+            <section key={sectionKey}>
+              <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+                {SECTION_META[sectionKey]?.label ?? sectionKey}
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {(markets as LeagueMarket[]).map((m) => (
+                  <LeagueMarketCard key={m.id} market={m} />
+                ))}
+              </div>
+            </section>
+          ))
+        }
+
         {/* Upcoming Tournaments */}
         {upcomingTournaments.length > (heroTournament && tournamentStatus(heroTournament) === "upcoming" ? 1 : 0) && (
           <section>
@@ -409,7 +500,7 @@ export default function LeagueShowcasePage() {
         )}
 
         {/* Empty state for non-golf sports */}
-        {sportSlug !== "golf" && !grid && todayEvents.length === 0 && (
+        {sportSlug !== "golf" && !grid && todayEvents.length === 0 && !leagueMarkets && (
           <div className="text-center py-16">
             <p className="text-text-secondary text-lg">
               {league.name} page coming soon
