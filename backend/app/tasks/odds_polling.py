@@ -347,7 +347,8 @@ async def _create_or_update_snapshot(
     session,
     event_id: int,
     bookmaker: dict,
-    event_data: dict
+    event_data: dict,
+    snapshot_cache: dict = None,
 ) -> tuple[OddsSnapshot, bool]:
     """
     Create a new snapshot or update existing if values unchanged.
@@ -363,16 +364,19 @@ async def _create_or_update_snapshot(
     new_values = _parse_snapshot_values(bookmaker, event_data)
 
     # Find the most recent snapshot for this event+bookmaker
-    result = await session.execute(
-        select(OddsSnapshot)
-        .where(
-            OddsSnapshot.event_id == event_id,
-            OddsSnapshot.bookmaker == bookmaker_key
+    cache_key = (event_id, bookmaker_key)
+    existing = snapshot_cache.get(cache_key) if snapshot_cache is not None else None
+    if existing is None:
+        result = await session.execute(
+            select(OddsSnapshot)
+            .where(
+                OddsSnapshot.event_id == event_id,
+                OddsSnapshot.bookmaker == bookmaker_key
+            )
+            .order_by(OddsSnapshot.captured_at.desc())
+            .limit(1)
         )
-        .order_by(OddsSnapshot.captured_at.desc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
 
     # If no existing snapshot or values changed, create new one
     if existing is None or not _snapshots_are_equal(existing, new_values):
@@ -388,6 +392,8 @@ async def _create_or_update_snapshot(
             reading_count=1,
             **new_values
         )
+        if snapshot_cache is not None:
+            snapshot_cache[cache_key] = snapshot
         return snapshot, True
     else:
         # Values are the same - just update the existing snapshot
@@ -661,6 +667,10 @@ async def _poll_all_odds():
                         except Exception:
                             pass
 
+                    # Snapshot cache to avoid N+1 queries in _create_or_update_snapshot.
+                    # Accumulates across events within this sport batch.
+                    snapshot_cache = {}
+
                     for event_data in events_data:
                         commence_time = datetime.fromisoformat(
                             event_data["commence_time"].replace("Z", "+00:00")
@@ -714,7 +724,8 @@ async def _poll_all_odds():
                                 session,
                                 event_id,
                                 bookmaker,
-                                event_data
+                                event_data,
+                                snapshot_cache=snapshot_cache,
                             )
                             if is_new:
                                 session.add(snapshot)

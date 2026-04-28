@@ -189,20 +189,22 @@ async def _sync_espn_live_events():
     def names_match(our_names: list, espn_name: str) -> bool:
         return _espn_names_match_any(our_names, espn_name)
 
-    async def upsert_team(session, team_name, espn_team, sport_id):
+    async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None):
         """Create or update a Team record with ESPN enrichment data.
 
         Returns the Team record (for linking back to events), or None.
         """
         if not espn_team:
             return None
-        team_result = await session.execute(
-            select(Team).where(
-                Team.name == team_name,
-                Team.sport_id == sport_id,
+        team = team_cache.get((team_name, sport_id)) if team_cache is not None else None
+        if team is None:
+            team_result = await session.execute(
+                select(Team).where(
+                    Team.name == team_name,
+                    Team.sport_id == sport_id,
+                )
             )
-        )
-        team = team_result.scalar_one_or_none()
+            team = team_result.scalar_one_or_none()
 
         if not team:
             team = Team(
@@ -211,6 +213,8 @@ async def _sync_espn_live_events():
             )
             session.add(team)
             await session.flush()  # Assign team.id for FK linking
+            if team_cache is not None:
+                team_cache[(team_name, sport_id)] = team
 
         # Update ESPN fields — but guard against overwriting correct data
         # with mismatched ESPN data (e.g., from a wrong event-level match).
@@ -379,6 +383,16 @@ async def _sync_espn_live_events():
                     )
                     our_events = events_result.scalars().all()
 
+                    # Batch-load teams for this sport to avoid N+1 queries in upsert_team
+                    sport_obj = our_events[0].sport if our_events else None
+                    if sport_obj:
+                        _team_result = await session.execute(
+                            select(Team).where(Team.sport_id == sport_obj.id)
+                        )
+                        team_cache = {(t.name, t.sport_id): t for t in _team_result.scalars().all()}
+                    else:
+                        team_cache = {}
+
                     # Build ESPN ID lookup for fast matching
                     espn_by_id = {}
                     for ee in espn_events:
@@ -434,8 +448,8 @@ async def _sync_espn_live_events():
 
                         # Upsert team records with ESPN data (colors, logos)
                         # and link team_ids on the event for personalization filtering
-                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, team_cache)
+                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, team_cache)
                         if home_team and event.home_team_id != home_team.id:
                             event.home_team_id = home_team.id
                             changed = True
@@ -750,6 +764,16 @@ async def _sync_espn_live_events():
                     )
                     scheduled_events = events_result.scalars().all()
 
+                    # Batch-load teams for this sport to avoid N+1 queries
+                    sched_sport_obj = scheduled_events[0].sport if scheduled_events else None
+                    if sched_sport_obj:
+                        _sched_team_result = await session.execute(
+                            select(Team).where(Team.sport_id == sched_sport_obj.id)
+                        )
+                        sched_team_cache = {(t.name, t.sport_id): t for t in _sched_team_result.scalars().all()}
+                    else:
+                        sched_team_cache = {}
+
                     # Build ESPN ID lookup for scheduled pass too
                     espn_by_id_sched = {}
                     for ee in espn_events:
@@ -792,8 +816,8 @@ async def _sync_espn_live_events():
                             continue
 
                         ee = matched_espn
-                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache)
+                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache)
                         if home_team and event.home_team_id != home_team.id:
                             event.home_team_id = home_team.id
                         if away_team and event.away_team_id != away_team.id:
@@ -985,6 +1009,16 @@ async def _sync_espn_live_events():
                         events_by_sport.setdefault(sk, []).append(ev)
 
                 if events_by_sport:
+                    # Batch-load teams for score backfill to avoid N+1
+                    backfill_team_cache = {}
+                    for _sk, _evts in events_by_sport.items():
+                        if _evts and _evts[0].sport:
+                            _bt_result = await session.execute(
+                                select(Team).where(Team.sport_id == _evts[0].sport.id)
+                            )
+                            for t in _bt_result.scalars().all():
+                                backfill_team_cache[(t.name, t.sport_id)] = t
+
                     score_espn = ESPNAPIService()
                     try:
                         for sport_key, events_list in events_by_sport.items():
@@ -1018,8 +1052,8 @@ async def _sync_espn_live_events():
                                                     if ee.espn_id and not ev.espn_id:
                                                         ev.espn_id = ee.espn_id
                                                     # Upsert teams for colors/logos
-                                                    home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id)
-                                                    away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id)
+                                                    home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id, backfill_team_cache)
+                                                    away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id, backfill_team_cache)
                                                     if home_team and ev.home_team_id != home_team.id:
                                                         ev.home_team_id = home_team.id
                                                     if away_team and ev.away_team_id != away_team.id:

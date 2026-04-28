@@ -1310,6 +1310,19 @@ async def _poll_live_prediction_market_prices():
         stats["live_events"] = len(live_event_ids)
         stats["linked_markets"] = len(rows)
 
+        # Batch-load all outcomes for linked markets to avoid N+1
+        all_market_ids = [market.id for market, event in rows]
+        outcome_lookup = {}
+        outcomes_by_market = {}
+        if all_market_ids:
+            outcomes_result = await session.execute(
+                select(FuturesOutcome).where(FuturesOutcome.market_id.in_(all_market_ids))
+            )
+            for o in outcomes_result.scalars().all():
+                if o.external_id:
+                    outcome_lookup[(o.market_id, o.external_id)] = o
+                outcomes_by_market.setdefault(o.market_id, []).append(o)
+
         # ── Fetch Kalshi prices ────────────────────────────────────────
         if kalshi_markets:
             from app.services.kalshi_api import KalshiAPIService
@@ -1354,27 +1367,14 @@ async def _poll_live_prediction_market_prices():
                             if prob <= 0 or prob >= 1:
                                 continue
 
-                            # Find matching outcome by ticker
+                            # Find matching outcome by ticker (batch-loaded)
                             ticker = mkt_data.get("ticker", "")
-                            outcome_result = await session.execute(
-                                select(FuturesOutcome)
-                                .where(
-                                    FuturesOutcome.market_id == market.id,
-                                    FuturesOutcome.external_id == ticker,
-                                )
-                            )
-                            outcome = outcome_result.scalar_one_or_none()
+                            outcome = outcome_lookup.get((market.id, ticker))
 
                             if not outcome:
-                                # Try matching by market_id alone if only one outcome
-                                outcome_result = await session.execute(
-                                    select(FuturesOutcome)
-                                    .where(FuturesOutcome.market_id == market.id)
-                                    .limit(2)
-                                )
-                                outcomes = outcome_result.scalars().all()
-                                if len(outcomes) == 1:
-                                    outcome = outcomes[0]
+                                market_outcomes = outcomes_by_market.get(market.id, [])
+                                if len(market_outcomes) == 1:
+                                    outcome = market_outcomes[0]
                                 else:
                                     continue
 
@@ -1436,15 +1436,8 @@ async def _poll_live_prediction_market_prices():
                             if not prices:
                                 continue
 
-                            # Find matching outcome by condition_id
-                            outcome_result = await session.execute(
-                                select(FuturesOutcome)
-                                .where(
-                                    FuturesOutcome.market_id == market.id,
-                                    FuturesOutcome.external_id == condition_id,
-                                )
-                            )
-                            outcome = outcome_result.scalar_one_or_none()
+                            # Find matching outcome by condition_id (batch-loaded)
+                            outcome = outcome_lookup.get((market.id, condition_id))
                             if not outcome:
                                 continue
 
