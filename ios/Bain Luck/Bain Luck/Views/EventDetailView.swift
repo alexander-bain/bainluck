@@ -221,7 +221,8 @@ struct EventDetailView: View {
                                 lastPoint: lastPlayPoint(event: event)
                             )
                         }
-                        // Sources toggle removed (GD6) — non-functional, wastes space
+                        // Bookmaker table (collapsible Sources panel)
+                        sourcesToggle(event)
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -240,6 +241,20 @@ struct EventDetailView: View {
                             forcedDomain: sharedChartDomain
                         )
                     }
+                    // Market Maps (margin + total density curves)
+                    if let gm = vm.gameMarkets {
+                        MarketMapView(
+                            gameMarkets: gm,
+                            eventStatus: event.status,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeAbbr: event.homeTeamData?.abbreviation,
+                            awayAbbr: event.awayTeamData?.abbreviation,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            sportKey: event.sport
+                        )
+                    }
                     // Player Props (from game-markets endpoint)
                     if let gm = vm.gameMarkets, let pp = gm.playerProps, !pp.isEmpty {
                         PlayerPropsCardView(
@@ -249,6 +264,28 @@ struct EventDetailView: View {
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
                             eventStatus: event.status
+                        )
+                    }
+                    // Special Event Markets (game props, novelty, MVP)
+                    if let gm = vm.gameMarkets, let other = gm.other, other.count >= 3 {
+                        SpecialEventMarketsView(
+                            markets: other,
+                            eventStatus: event.status
+                        )
+                    }
+                    // Series Probability (playoff series context)
+                    if let tags = event.eventTags,
+                       (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
+                       let homeProb = event.currentOdds?.homeProbability {
+                        SeriesProbabilityView(
+                            homeWinProb: homeProb,
+                            homeSeriesWins: event.espn?.seriesHomeWins ?? 0,
+                            awaySeriesWins: event.espn?.seriesAwayWins ?? 0,
+                            gamesToWin: tags.contains("competitive_structure:best_of_7") ? 4 : 4,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away
                         )
                     }
                     if let context = event.standingsContext { standingsSection(context) }
@@ -268,6 +305,17 @@ struct EventDetailView: View {
                         sportKey: event.sport,
                         preloadedData: vm.relatedFutures
                     )
+                    // League page link
+                    leaguePageLink(event)
+                    // Related by sport tag — cross-content discovery
+                    if let sport = event.sport, let cat = sportCategoryForKey(sport) {
+                        RelatedByTagView(
+                            tags: ["sport:\(cat.key)"],
+                            excludeEventId: event.id,
+                            title: "More \(cat.name)",
+                            limit: 4
+                        )
+                    }
                     espnSection(event)
                 }
                 .padding(.horizontal)
@@ -350,6 +398,9 @@ struct EventDetailView: View {
                 }
             }
 
+            // Tag chips (inline in hero, matching web)
+            heroTagChips(event)
+
             // Center: logos flanking giant probabilities
             HStack(spacing: 0) {
                 // Away team logo + score
@@ -414,6 +465,14 @@ struct EventDetailView: View {
                                 .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.home)
                         }
+                        // Trend indicator (change since opening)
+                        if let opening = event.openingOdds?.homeProbability, abs(home - opening) > 0.02 {
+                            let delta = home - opening
+                            let sign = delta > 0 ? "+" : ""
+                            Text("\(sign)\(Int((delta * 100).rounded()))% since open")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(delta > 0 ? .green : .red)
+                        }
                         Text("Win Probability")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -422,6 +481,13 @@ struct EventDetailView: View {
                             .font(.title2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
+                    }
+                    // Projected final score
+                    if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
+                       !isFinished {
+                        Text("Proj. \(Int(pas.rounded()))-\(Int(phs.rounded()))")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
                     if let ct = countdownText, !isLive, !isFinished {
                         Text("In \(ct)")
@@ -475,6 +541,20 @@ struct EventDetailView: View {
             if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
+
+            // Source divergence warnings
+            heroDivergenceWarnings(event)
+
+            // Stakes context from standings
+            if let stakes = event.standingsContext?.stakes {
+                Text(stakes)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(Capsule())
+            }
         }
         .padding()
         .background(
@@ -489,6 +569,80 @@ struct EventDetailView: View {
             )
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: - Hero Tag Chips (inline in hero, matching web)
+
+    @ViewBuilder
+    private func heroTagChips(_ event: EventDetail) -> some View {
+        let displayTags = (event.eventTags ?? []).filter { tag in
+            let ns = tag.components(separatedBy: ":").first ?? ""
+            let allowed: Set<String> = ["importance", "signal", "timing", "tier", "ei",
+                                         "stakes", "narrative", "audience", "competitive_structure"]
+            guard allowed.contains(ns) else { return false }
+            let hidden: Set<String> = ["competitive_structure:head_to_head",
+                                        "audience:local_interest", "stakes:meaningless"]
+            return !hidden.contains(tag)
+        }
+        if !displayTags.isEmpty {
+            FlowLayout(spacing: 4) {
+                ForEach(displayTags, id: \.self) { tag in
+                    Text(Self.tagLabel(tag))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Self.tagForeground(tag))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Self.tagBackground(tag))
+                        .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    // MARK: - Hero Divergence Warnings
+
+    @ViewBuilder
+    private func heroDivergenceWarnings(_ event: EventDetail) -> some View {
+        // Sportsbook divergence (max vs min spread > 15%)
+        if let bookmakers = event.bookmakerOdds, bookmakers.count >= 3 {
+            let probs = bookmakers.compactMap(\.homeProbability)
+            if let maxP = probs.max(), let minP = probs.min(), (maxP - minP) > 0.15 {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 9))
+                    Text("Sportsbooks diverge by \(Int(((maxP - minP) * 100).rounded()))%")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.orange.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        }
+
+        // Prediction market vs sportsbook divergence
+        if let sources = event.winProbabilitySources,
+           let consensus = event.currentOdds?.homeProbability {
+            let marketSources = sources.filter { $0.key == "kalshi" || $0.key == "polymarket" }
+            if let (sourceName, source) = marketSources.first, let marketProb = source.value?.doubleValue {
+                let gap = abs(marketProb - consensus)
+                if gap > 0.05 {
+                    let isPurple = gap > 0.10
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 9))
+                        Text("\(sourceName.capitalized) \(Int((gap * 100).rounded()))% from sportsbooks")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(isPurple ? .purple : .blue)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background((isPurple ? Color.purple : Color.blue).opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+        }
     }
 
     // MARK: - Hero Status Badge
@@ -844,6 +998,65 @@ struct EventDetailView: View {
             }
         }
         .padding(.vertical, 8)
+    }
+
+    // MARK: - League Page Link
+
+    private static let sportKeyToLeague: [String: (slug: String, label: String)] = [
+        "basketball_nba": ("nba", "NBA"),
+        "americanfootball_nfl": ("nfl", "NFL"),
+        "baseball_mlb": ("mlb", "MLB"),
+        "icehockey_nhl": ("nhl", "NHL"),
+        "basketball_ncaab": ("ncaab", "NCAA Basketball"),
+        "americanfootball_ncaaf": ("ncaaf", "NCAA Football"),
+        "basketball_wnba": ("wnba", "WNBA"),
+        "soccer_usa_mls": ("mls", "MLS"),
+        "soccer_epl": ("epl", "EPL"),
+    ]
+
+    @ViewBuilder
+    private func leaguePageLink(_ event: EventDetail) -> some View {
+        if let sport = event.sport, let league = Self.sportKeyToLeague[sport] {
+            NavigationLink(value: Route.leagueGrid(slug: league.slug)) {
+                HStack {
+                    HStack(spacing: 6) {
+                        Text("🏆")
+                            .font(.subheadline)
+                        Text("\(league.label) Championship Grid")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding()
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Sport Category Mapping
+
+    private struct SportCategory {
+        let key: String
+        let name: String
+    }
+
+    private func sportCategoryForKey(_ sportKey: String) -> SportCategory? {
+        let key = sportKey.lowercased()
+        if key.hasPrefix("basketball_") { return SportCategory(key: "basketball", name: "Basketball") }
+        if key.hasPrefix("americanfootball_") { return SportCategory(key: "football", name: "Football") }
+        if key.hasPrefix("baseball_") { return SportCategory(key: "baseball", name: "Baseball") }
+        if key.hasPrefix("icehockey_") { return SportCategory(key: "hockey", name: "Hockey") }
+        if key.hasPrefix("soccer_") { return SportCategory(key: "soccer", name: "Soccer") }
+        if key.hasPrefix("mma_") { return SportCategory(key: "mma", name: "MMA") }
+        if key.hasPrefix("golf_") { return SportCategory(key: "golf", name: "Golf") }
+        return nil
     }
 
     // MARK: - Helpers

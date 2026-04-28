@@ -32,6 +32,7 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
 nonisolated struct StandingsContext: Decodable, Sendable {
     let home: String?
     let away: String?
+    let stakes: String?
 }
 
 // MARK: - EI Rankings

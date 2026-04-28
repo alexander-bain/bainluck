@@ -37,6 +37,23 @@ nonisolated struct GameMarketsResponse: Decodable, Sendable {
     let spreads: [GameMarketOutcome]?
     let totals: [GameMarketOutcome]?
     let teamTotals: [GameMarketOutcome]?
+    let other: [GameMarketOther]?
+    let pace: GameMarketPace?
+}
+
+nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let probability: Double?
+    let source: String?
+}
+
+nonisolated struct GameMarketPace: Decodable, Sendable {
+    let totalScored: Int?
+    let projectedTotal: Double?
+    let fractionElapsed: Double?
+    let timeRemainingDisplay: String?
 }
 
 nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {

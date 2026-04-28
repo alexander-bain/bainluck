@@ -17,7 +17,6 @@ const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: f
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
-const GameSegments = dynamic(() => import("@/components/GameSegments"), { ssr: false });
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -115,11 +114,6 @@ function formatStartTime(commenceTime: string): string {
   }
 }
 
-// Check if odds suggest a blowout (one team >85%)
-function isBlowout(homeProb: number | null | undefined): boolean {
-  if (homeProb === null || homeProb === undefined) return false;
-  return homeProb > 0.85 || homeProb < 0.15;
-}
 
 // Pick key season stats to display based on sport
 function getKeyStats(
@@ -751,7 +745,6 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
-  const gameIsBlowout = isLive && isBlowout(homeProb);
 
   // Analyze sources from history data
   const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
@@ -1187,14 +1180,6 @@ export default function EventPage({ params }: EventPageProps) {
             </div>
           )}
 
-          {/* Blowout warning */}
-          {gameIsBlowout && (
-            <div className="text-center mt-2">
-              <span className="text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full text-[10px]">
-                Blowout — odds less frequent
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Excitement Index (EI) - compact dark-mode strip */}
@@ -1511,72 +1496,9 @@ export default function EventPage({ params }: EventPageProps) {
         />
       )}
 
-      {/* Game Markets — Segments, Period Markets, Player Props */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.period_markets?.length ?? 0) > 0) && (
+      {/* Game Markets — Player Props + Special Markets */}
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
         <div className="space-y-3">
-
-          {/* Game Segments (1st half, 2nd half) */}
-          {(gameMarkets.period_markets?.length ?? 0) > 0 && (
-            <GameSegments
-              data={gameMarkets}
-              eventStatus={event.status}
-              homeTeam={event.home_team}
-              awayTeam={event.away_team}
-              homeColor={event.home_team_data?.primary_color || undefined}
-              awayColor={event.away_team_data?.primary_color || undefined}
-            />
-          )}
-
-          {/* Period Markets (half/quarter totals, spreads, winners) */}
-          {(gameMarkets.period_markets?.length ?? 0) > 0 && (() => {
-            const grouped: Record<string, typeof gameMarkets.period_markets> = {};
-            for (const m of gameMarkets.period_markets) {
-              const key = m.market_name;
-              if (!grouped[key]) grouped[key] = [];
-              grouped[key].push(m);
-            }
-            return (
-              <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-text-primary">Period Markets</span>
-                  <span className="text-micro text-text-muted">
-                    {Object.keys(grouped).length} markets
-                  </span>
-                </div>
-                <div className="space-y-4">
-                  {Object.entries(grouped).map(([marketName, outcomes]) => {
-                    const shortName = marketName.includes(':')
-                      ? marketName.split(':').pop()!.trim()
-                      : marketName;
-                    return (
-                      <div key={marketName}>
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1.5">{shortName}</div>
-                        <div className="space-y-1.5">
-                          {outcomes.map((o, i) => {
-                            const pct = Math.round((o.over_probability ?? o.probability ?? 0) * 100);
-                            return (
-                              <div key={i} className="flex items-center gap-2">
-                                <span className="text-xs text-text-secondary flex-1 min-w-0 truncate">{o.outcome_name}</span>
-                                <div className="w-24 h-2 rounded-full bg-surface-border overflow-hidden shrink-0">
-                                  <div
-                                    className="h-full rounded-full bg-purple-500/40 transition-all"
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
-                                <span className="text-xs font-semibold text-text-primary tabular-nums w-8 text-right shrink-0">
-                                  {pct > 0 ? `${pct}%` : '—'}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
 
           {gameMarkets.player_props.length > 0 && (
             <PlayerPropsDashboard
