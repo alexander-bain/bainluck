@@ -703,6 +703,10 @@ Commit `eb32ace`. Kalshi uses 7-day window in broad fallback, 48h when ticker ga
 #### ~~1b. Ticker-Based Team Name Fallback~~ ✅ SHIPPED (April 27)
 Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching fails, falls back to `extract_teams_from_ticker()` which uses reliable 3-letter Kalshi ticker codes. 2 new tests.
 
+#### 1b-monitor. Hockey Kalshi Link Rate — MONITOR (April 28)
+**Context:** Health check (April 27) found Hockey Kalshi at 59%, Polymarket at 23.8% — both well below 80% target. The ticker-based fallback (1b) shipped April 27; check if it moved the needle. Also investigate whether 1d (non-NHL leagues in denominator) is inflating the gap.
+**Action:** Re-check `/api/admin/prediction-markets/link-rate` hockey rates. If 1b didn't help, prioritize 1c (sport key validation) and 1d (denominator filtering) next.
+
 #### 1c. Sport Key Extraction Validation
 **Root cause:** When sport key extraction fails from a Kalshi market, the code falls back to generic time-based matching with NO sport filtering. This can cause cross-sport mismatches (basketball market matching a hockey event).
 **Fix:** Always extract sport key from ticker in Pass 1. Add sport filtering to the generic fallback in `_find_event_by_sport_and_time()`. Add stats counter `sport_key_extraction_failed`.
@@ -726,12 +730,24 @@ Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching 
 
 ---
 
-## Active Sentry Issues (April 22, 2026)
+## Active Sentry Issues (April 28, 2026)
+
+### PREQ-7. N+1 Query Audit — HIGH PRIORITY
+
+**Problem:** All top 5 Sentry issues are N+1 query warnings (1,920+ total events). BAINLUCK-GA alone has 1,524 events. This is the loudest Sentry noise source and the last remaining PREQ sprint item.
+
+**Impact:** Not crashing, but masks real errors in Sentry. Every N+1 hit is also a DB performance penalty.
+
+**Fix:** Identify the top 3 N+1 query paths (likely feed endpoint, event detail, championship grid). Add `joinedload()` / `selectinload()` to the SQLAlchemy queries. Test with `--log-sql` to confirm N+1 is eliminated.
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/routes/events.py`, `backend/app/routes/playoffs.py` (most likely)
+**Effort:** 2-3 hours
+**Parallel Safety:** Yellow
 
 **Monitor / low priority:**
 | ID | Events | Status |
 |----|--------|--------|
-| N+1 Query warnings (GA, HN, FY, 5, 3, J1, JD, G7) | various | Sentry performance warnings, not errors. Address during deeper god function refactoring. |
+| N+1 Query warnings (GA, H0, G7, K8, KE) | 1,920+ | **See PREQ-7 above.** |
 | Redis ConnectionError (E, JJ, M, EQ) | various | Transient Redis connection drops. Heroku Redis recovers automatically. |
 | WorkerLost/SIGTERM (1, 2) | 1,868 | Normal Celery worker recycling (max-memory-per-child). Not a bug. |
 | TimeLimitExceeded (J, K) | 917 | Polymarket poll exceeds 300s occasionally. Increase time limit or optimize. |
@@ -1420,3 +1436,25 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 - Clean up ~90 remote git branches
 - Code review reference: `.claude/plans/mutable-cooking-ember.md`
+
+### 0f-9. Kalshi Win Probability Mismatched Market — DATA BUG (April 28)
+
+**Problem:** DET @ ORL (event 14598003) shows Kalshi at ORL 93.5% while betting/ESPN/stat_model show ~37%. A ~55pp discrepancy. Visible as wild green dashed line on win probability chart.
+
+**Root cause (suspected):** A spread or prop market is being matched as this game's moneyline. Different from 0f-7 (oscillation) — this is a wrong market entirely feeding the probability.
+
+**Fix:** Trace which Kalshi market_id is writing to `win_probability_sources["kalshi"]` for this event. Verify it's the correct moneyline market, not a spread/prop. May need tighter market-type filtering in the live polling task.
+
+**Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/prediction_market_matching.py`
+**Parallel Safety:** Yellow
+
+### 0f-10. Player Props All Showing "0 so far" and "—" Probabilities (April 28)
+
+**Problem:** DET @ ORL (event 14598003, completed game) player props show "0 so far" for all players and "—" for all probabilities. The thresholds exist (10+, 15+, 20+) but no probability values are displayed.
+
+**Root cause (suspected):** Either the game-markets API is returning null probabilities for completed game player props, or the frontend is not handling completed-game prop data correctly. Need to check if the API even returns probabilities for completed games' player props.
+
+**Fix:** Investigate API response for completed game player props. If probabilities aren't returned post-game, consider showing pre-game probabilities with "pre-game" label + actual stat line from box score.
+
+**Files:** `backend/app/routes/events.py` (game-markets endpoint), `frontend/components/PlayerPropsDashboard.tsx`
+**Parallel Safety:** Green

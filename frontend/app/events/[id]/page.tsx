@@ -19,6 +19,7 @@ const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectr
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
 const GameSegments = dynamic(() => import("@/components/GameSegments"), { ssr: false });
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
+const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -1485,30 +1486,30 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
 
-      {/* Game Markets — Total Points Spectrum + Player Props (v5 Level 3) */}
-      {gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.spreads?.length ?? 0) > 0 || (gameMarkets.period_markets?.length ?? 0) > 0) && (
+      {/* Market Map cards — Margin Map + Total Map */}
+      {gameMarkets && ((gameMarkets.spreads?.length ?? 0) > 0 || gameMarkets.totals.length > 0) && (
+        <MarketMapSection
+          gameMarkets={gameMarkets}
+          eventStatus={event.status}
+          homeTeam={event.home_team}
+          awayTeam={event.away_team}
+          homeAbbr={event.home_team_data?.abbreviation || undefined}
+          awayAbbr={event.away_team_data?.abbreviation || undefined}
+          homeColor={event.home_team_data?.primary_color || undefined}
+          awayColor={event.away_team_data?.primary_color || undefined}
+          homeLogo={event.home_team_data?.logo_small || undefined}
+          awayLogo={event.away_team_data?.logo_small || undefined}
+          homeWinProb={event.current_odds?.home_probability ?? undefined}
+          awayWinProb={event.current_odds?.away_probability ?? undefined}
+          homeSpread={event.current_odds?.home_spread ?? null}
+          overUnder={event.current_odds?.over_under ?? null}
+          sportKey={event.sport || undefined}
+        />
+      )}
+
+      {/* Game Markets — Segments, Period Markets, Player Props */}
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.period_markets?.length ?? 0) > 0) && (
         <div className="space-y-3">
-          {gameMarkets.totals.length >= 2 && (
-            <TotalPointsSpectrum data={gameMarkets} eventStatus={event.status} />
-          )}
-          {/* Standalone pace pill when spectrum has too few thresholds */}
-          {gameMarkets.totals.length < 2 && gameMarkets.pace && gameMarkets.pace.projected_total && (
-            <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-text-primary">{event.sport?.startsWith('baseball') ? 'Total Runs' : event.sport?.startsWith('icehockey') || event.sport?.startsWith('soccer') ? 'Total Goals' : 'Total Points'} Pace</span>
-                <span className="text-base font-extrabold text-blue-500 tracking-tight">
-                  {gameMarkets.pace.projected_total}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-1 text-text-secondary text-micro">
-                <span>{gameMarkets.pace.total_scored} scored</span>
-                <span className="text-text-muted">&middot;</span>
-                <span>{gameMarkets.pace.time_remaining_display}</span>
-                <span className="text-text-muted">&middot;</span>
-                <span>{Math.round(gameMarkets.pace.fraction_elapsed * 100)}% elapsed</span>
-              </div>
-            </div>
-          )}
 
           {/* Game Segments (1st half, 2nd half) */}
           {(gameMarkets.period_markets?.length ?? 0) > 0 && (
@@ -1521,85 +1522,6 @@ export default function EventPage({ params }: EventPageProps) {
               awayColor={event.away_team_data?.primary_color || undefined}
             />
           )}
-
-          {/* Spreads section — grouped by market, sorted by threshold */}
-          {(gameMarkets.spreads?.length ?? 0) > 0 && (() => {
-            const grouped: Record<string, typeof gameMarkets.spreads> = {};
-            for (const s of gameMarkets.spreads) {
-              const key = s.market_name || "Spread";
-              if (!grouped[key]) grouped[key] = [];
-              grouped[key].push(s);
-            }
-            // Sort outcomes within each group by threshold (ascending)
-            for (const outcomes of Object.values(grouped)) {
-              outcomes.sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
-            }
-            // Sort groups: full game first, then 1H, then 2H
-            const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
-              const order = (name: string) => {
-                const lower = name.toLowerCase();
-                if (lower.includes("1st half") || lower.includes("first half") || lower.includes("1h")) return 1;
-                if (lower.includes("2nd half") || lower.includes("second half") || lower.includes("2h")) return 2;
-                return 0; // full game
-              };
-              return order(a) - order(b);
-            });
-            return (
-              <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-text-primary">Spread</span>
-                  <span className="text-micro text-text-muted">
-                    {[...new Set(gameMarkets.spreads.map(s => s.source))].map(s => s === 'kalshi' ? 'Kalshi' : s === 'polymarket' ? 'Polymarket' : s).join(' · ')}
-                  </span>
-                </div>
-                <div className="space-y-4">
-                  {sortedGroups.map(([marketName, outcomes]) => {
-                    const groupLabel = marketName.toLowerCase().includes("first half") || marketName.toLowerCase().includes("1st half") || marketName.toLowerCase().includes("1h")
-                      ? "First Half"
-                      : marketName.toLowerCase().includes("second half") || marketName.toLowerCase().includes("2nd half") || marketName.toLowerCase().includes("2h")
-                      ? "Second Half"
-                      : "Full Game";
-                    return (
-                      <div key={marketName}>
-                        {sortedGroups.length > 1 && (
-                          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">
-                            {groupLabel}
-                          </div>
-                        )}
-                        <div className="space-y-1.5">
-                          {outcomes.map((s, i) => {
-                            const pct = s.probability != null ? Math.round(s.probability * 100) : 0;
-                            // Determine team color based on outcome name
-                            const nameL = (s.outcome_name || "").toLowerCase();
-                            const homeL = event.home_team.toLowerCase();
-                            const awayL = event.away_team.toLowerCase();
-                            const isHome = homeL.split(" ").some(w => w.length >= 3 && nameL.includes(w));
-                            const barColor = isHome
-                              ? (event.home_team_data?.primary_color || "#6366f1") + "99"
-                              : (event.away_team_data?.primary_color || "#10b981") + "99";
-                            return (
-                              <div key={i} className="flex items-center gap-2">
-                                <span className="text-xs text-text-secondary flex-1 min-w-0 truncate">{s.outcome_name}</span>
-                                <div className="w-24 h-2 rounded-full bg-surface-border overflow-hidden shrink-0">
-                                  <div
-                                    className="h-full rounded-full transition-all"
-                                    style={{ width: `${pct}%`, backgroundColor: barColor }}
-                                  />
-                                </div>
-                                <span className="text-xs font-semibold text-text-primary tabular-nums w-8 text-right shrink-0">
-                                  {pct > 0 ? `${pct}%` : '—'}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
 
           {/* Period Markets (half/quarter totals, spreads, winners) */}
           {(gameMarkets.period_markets?.length ?? 0) > 0 && (() => {

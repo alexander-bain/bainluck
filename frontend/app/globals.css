@@ -44,7 +44,7 @@
   --color-amber: #F59E0B;
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, 'Inter', "Segoe UI", Roboto, sans-serif;
   --font-mono: var(--font-jetbrains-mono), monospace;
 
   /* Spacing */
