@@ -726,22 +726,14 @@ Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching 
 
 ## Active Sentry Issues (April 28, 2026)
 
-### PREQ-7. N+1 Query Audit — HIGH PRIORITY
+### ~~PREQ-7. N+1 Query Audit~~ ✅ SHIPPED (April 28)
 
-**Problem:** All top 5 Sentry issues are N+1 query warnings (1,920+ total events). BAINLUCK-GA alone has 1,524 events. This is the loudest Sentry noise source and the last remaining PREQ sprint item.
-
-**Impact:** Not crashing, but masks real errors in Sentry. Every N+1 hit is also a DB performance penalty.
-
-**Fix:** Identify the top 3 N+1 query paths (likely feed endpoint, event detail, championship grid). Add `joinedload()` / `selectinload()` to the SQLAlchemy queries. Test with `--log-sql` to confirm N+1 is eliminated.
-
-**Files:** `backend/app/routes/feed.py`, `backend/app/routes/events.py`, `backend/app/routes/playoffs.py` (most likely)
-**Effort:** 2-3 hours
-**Parallel Safety:** Yellow
+Fixed all 5 top Sentry N+1 issues (4,350+ events total). Root cause was Celery tasks, not API routes (routes already had correct `selectinload()`). Three batch-loading fixes: ESPN team cache, PM outcome batch-load, odds snapshot cache. Monitor Sentry over 24h to confirm drop to zero.
 
 **Monitor / low priority:**
 | ID | Events | Status |
 |----|--------|--------|
-| N+1 Query warnings (GA, H0, G7, K8, KE) | 1,920+ | **See PREQ-7 above.** |
+| N+1 Query warnings (GA, H0, G7, K8, KE) | 4,350+ | **PREQ-7 shipped April 28. Monitoring for drop.** |
 | Redis ConnectionError (E, JJ, M, EQ) | various | Transient Redis connection drops. Heroku Redis recovers automatically. |
 | WorkerLost/SIGTERM (1, 2) | 1,868 | Normal Celery worker recycling (max-memory-per-child). Not a bug. |
 | TimeLimitExceeded (J, K) | 917 | Polymarket poll exceeds 300s occasionally. Increase time limit or optimize. |
@@ -879,19 +871,15 @@ Dedicated pass to make everything faster, more reliable, and higher quality.
 | ~~PREQ-4~~ | ~~Connection pool 10→20~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-5~~ | ~~SWR interval tuning (My Stuff 15s→60s, grouped 60s→120s)~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-6~~ | ~~Redis feed caching (15s TTL, anon only)~~ | ✅ Shipped Apr 25 |
-| **PREQ-7** | **N+1 query audit** | Deferred — needs production latency data from PREQ-1 |
+| ~~PREQ-7~~ | ~~N+1 query audit~~ | ✅ Shipped Apr 28 |
 | ~~PREQ-8~~ | ~~Dynamic imports~~ | ✅ Already done |
 | ~~PREQ-9~~ | ~~Image optimization~~ | ✅ Already optimized |
 | ~~PREQ-10~~ | ~~Health endpoint (Redis + poll timestamps)~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-11~~ | ~~Source degradation (try/except in feed)~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-12~~ | ~~Sentry noise cleanup (before_send filter)~~ | ✅ Shipped Apr 25 |
 
-### PREQ-7. N+1 Query Audit — REMAINING
-**What:** Resolve top Sentry N+1 warnings. Search for `await db.execute(select(` inside loops. Replace with `selectinload()` eager loading or batch queries.
-**Files:** `routes/feed.py`, `routes/events.py`, `routes/playoffs.py`
-**Risk:** Eager loading can fetch too much data if relationships are large.
-**Mitigation:** Use `selectinload()` not `joinedload()`. Profile before/after with PREQ-1 timing middleware. Only fix patterns Sentry flags as high-frequency.
-**Parallel Safety:** Yellow (one file at a time)
+### ~~PREQ-7. N+1 Query Audit~~ ✅ SHIPPED (April 28)
+Batch-loading fixes in 3 Celery tasks: `espn_sync.py`, `prediction_market_matching.py`, `odds_polling.py`. PREQ sprint now 12/12 complete.
 
 ---
 

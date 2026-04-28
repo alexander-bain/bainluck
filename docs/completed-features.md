@@ -6,6 +6,8 @@
 - ✅ **MS-3: Team logo fallback**: Event detail team logos now fall back to ESPN CDN lookup when `team_data.logo_large` is missing, with `onError` handler showing initials if image fails to load.
 - ✅ **MS-7: Grid scroll hint**: Championship grid changed from `overflow-hidden` to `overflow-x-auto` with right-edge gradient fade on mobile.
 - ✅ **MS-8: Chart y-axis readability**: OddsChart vertical team labels bumped from 9px to 11px with wider label column.
+- ✅ **PREQ-7: N+1 query audit (PREQ sprint complete — 12/12)**: Fixed all 5 top Sentry N+1 issues (4,350+ events). Root cause: Celery tasks doing per-item DB queries in hot loops. Three batch-loading fixes: (1) ESPN sync team cache eliminates 40-60 individual `SELECT teams` per poll, (2) live PM poll batch-loads all outcomes upfront instead of per-market queries, (3) odds polling snapshot cache eliminates per-bookmaker×event `SELECT odds_snapshots`. API routes were already correct.
+- ✅ **Doc cleanup**: CLAUDE.md test count updated (3,331), L4 matching status updated to verified. completed-features.md date ordering fixed. MEMORY.md trimmed from 237→97 lines (was truncating). Backlog: added PREQ-7 + hockey monitoring items.
 
 ## April 27, 2026
 
