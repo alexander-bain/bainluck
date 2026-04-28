@@ -61,6 +61,54 @@ function deriveHalfScores(
   };
 }
 
+/**
+ * Determine which half the game is currently in from ESPN history.
+ * Returns "1H" or "2H" (null if unknown).
+ */
+function detectCurrentHalf(
+  espnHistory: MarketMapSectionProps["espnHistory"]
+): "1H" | "2H" | null {
+  if (!espnHistory || espnHistory.length === 0) return null;
+  const latest = espnHistory[espnHistory.length - 1];
+  if (!latest.period) return null;
+  const p = latest.period.toLowerCase();
+  if (/1st quarter|1st half|first half|^q1\b|^q2\b|2nd quarter/i.test(p)) return "1H";
+  if (/halftime|^ht$/i.test(p)) return "1H";
+  return "2H";
+}
+
+/**
+ * Derive live half scores for in-progress games.
+ * - In the 1st half: h1 = current game scores, h2 = null
+ * - In the 2nd half: h1 = halftime scores, h2 = current - halftime
+ */
+function deriveLiveHalfScores(
+  espnHistory: MarketMapSectionProps["espnHistory"],
+  currentHome: number | null,
+  currentAway: number | null,
+  currentHalf: "1H" | "2H" | null
+): { h1Home: number; h1Away: number; h2Home: number | null; h2Away: number | null } | null {
+  if (currentHome == null || currentAway == null || !currentHalf) return null;
+
+  if (currentHalf === "1H") {
+    return { h1Home: currentHome, h1Away: currentAway, h2Home: null, h2Away: null };
+  }
+
+  // 2nd half: need halftime scores
+  if (!espnHistory || espnHistory.length === 0) return null;
+  const htEntry = espnHistory.find(
+    (e) => e.period && /halftime|^ht$/i.test(e.period) && e.home_score != null
+  );
+  if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
+
+  return {
+    h1Home: htEntry.home_score,
+    h1Away: htEntry.away_score,
+    h2Home: currentHome - htEntry.home_score,
+    h2Away: currentAway - htEntry.away_score,
+  };
+}
+
 function formatMarginLabel(margin: number, teamAbbr: string, threshold: number): string {
   if (margin === 0) return "Tied";
   const val = threshold % 1 === 0 ? Math.abs(threshold) : Math.abs(threshold).toFixed(1);
@@ -105,6 +153,16 @@ export default function MarketMapSection({
   const halfScores = useMemo(
     () => deriveHalfScores(espnHistory, homeScore, awayScore),
     [espnHistory, homeScore, awayScore]
+  );
+
+  const currentHalf = useMemo(
+    () => (isLive ? detectCurrentHalf(espnHistory) : null),
+    [isLive, espnHistory]
+  );
+
+  const liveHalfScores = useMemo(
+    () => (isLive ? deriveLiveHalfScores(espnHistory, homeScore, awayScore, currentHalf) : null),
+    [isLive, espnHistory, homeScore, awayScore, currentHalf]
   );
 
   // ── Margin Map ──
@@ -449,7 +507,27 @@ export default function MarketMapSection({
 
       const halfMarkers: MarketMapMarker[] = [];
 
-      // Pre-game projection
+      // Live actual for in-progress games (first, matching full game order)
+      if (isLive && liveHalfScores) {
+        const hs = half === "1H"
+          ? { home: liveHalfScores.h1Home, away: liveHalfScores.h1Away }
+          : liveHalfScores.h2Home != null && liveHalfScores.h2Away != null
+            ? { home: liveHalfScores.h2Home, away: liveHalfScores.h2Away }
+            : null;
+        if (hs) {
+          const margin = hs.home - hs.away;
+          const team = margin > 0 ? hAbbr : margin < 0 ? aAbbr : "TIE";
+          halfMarkers.push({
+            key: "actual",
+            value: margin,
+            type: "actual",
+            label: "Actual",
+            displayValue: margin === 0 ? "Tied" : `${team} +${Math.abs(margin)}`,
+          });
+        }
+      }
+
+      // Projection / Pre-game spread
       halfMarkers.push({
         key: "proj",
         value: projMargin,
@@ -495,7 +573,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.spreads, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, halfScores, homeLogo, awayLogo]);
+  }, [gameMarkets.spreads, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
 
   // ── Period Total Maps (half totals) ──
   const halfTotalMaps = useMemo(() => {
@@ -547,6 +625,24 @@ export default function MarketMapSection({
 
       const halfTotalMarkers: MarketMapMarker[] = [];
 
+      // Live actual for in-progress games (first, matching full game order)
+      if (isLive && liveHalfScores) {
+        const ht = halfKey === "1H"
+          ? liveHalfScores.h1Home + liveHalfScores.h1Away
+          : liveHalfScores.h2Home != null && liveHalfScores.h2Away != null
+            ? liveHalfScores.h2Home + liveHalfScores.h2Away
+            : null;
+        if (ht != null) {
+          halfTotalMarkers.push({
+            key: "actual",
+            value: ht,
+            type: "actual",
+            label: "Actual",
+            displayValue: `${ht} ${vocab.unit}`,
+          });
+        }
+      }
+
       // Pre-game O/U
       halfTotalMarkers.push({
         key: "pre",
@@ -568,12 +664,6 @@ export default function MarketMapSection({
           label: "Final",
           displayValue: `${ht} ${vocab.unit}`,
         });
-
-        // Expand range to include actual if needed
-        if (ht < rangeMin) {
-          const newPad = rangeMin - ht + 3;
-          // Range already computed above, we'll adjust via marker clamping
-        }
       }
 
       // Compute range that includes all marker values
@@ -604,7 +694,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, vocab, isDone, halfScores]);
+  }, [gameMarkets.period_markets, status, vocab, isDone, isLive, halfScores, liveHalfScores]);
 
   const hasMargin = marginData || halfMarginMaps.length > 0;
   const hasTotal = totalData || halfTotalMaps.length > 0;
