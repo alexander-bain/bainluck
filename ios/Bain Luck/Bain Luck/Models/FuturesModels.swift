@@ -47,6 +47,8 @@ nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
     let overProbability: Double?
     let source: String?
     let movement: Double?
+    let playerHeadshot: String?
+    let playerTeam: String?
 }
 
 nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {

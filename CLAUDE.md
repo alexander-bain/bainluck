@@ -23,7 +23,7 @@ There are 4 layers of matching, measured by `scripts/audit_event_matching.py`:
 | **L1: Event Existence** | Every game exists with all sources | `--self-check` | ✅ 100% |
 | **L2: Market → Event** | Game markets linked via event_id | `--self-check` | ✅ 100% |
 | **L3: Futures Surfacing** | Season futures on event detail pages | `--self-check` | ✅ 100% (MLB/NBA/NHL) |
-| **L4: Market Completeness** | Every market type showing per game | `--l4-deep` | Needs live verification |
+| **L4: Market Completeness** | Every market type showing per game | `--l4-deep` | ✅ Verified live (April 24) |
 
 Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,321 tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,331 tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -75,7 +75,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,321 tests as of April 23)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,331 tests as of April 28)
 - **Frontend tests**: `cd frontend && npx jest`
 
 ### Key Admin URLs
@@ -101,7 +101,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (23 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,315 pytest items
+│   └── tests/                   # 3,331 pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /weather)
 │   ├── components/              # React components (RelatedFutures, OddsChart, etc.)

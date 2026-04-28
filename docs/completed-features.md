@@ -1,12 +1,5 @@
 # Completed Features (Shipped)
 
-## April 24, 2026
-
-- ✅ **Link rate dashboard fix**: Admin dashboard now shows open-market-only link rates instead of all-time (which included 50K+ resolved/closed markets in the denominator, making the metric useless). Backend already calculated both — frontend was just reading the wrong field.
-- ✅ **Design system doc**: Added `docs/design-system.md` — comprehensive visual design reference extracted by Claude Design (colors, typography, motion, voice, component specs). Linked in CLAUDE.md.
-- ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
-- ✅ **PREQ-1: Request timing middleware**: Every API response now includes `X-Response-Time` header (visible in DevTools). Requests >500ms logged as warnings (excludes admin). CORS `expose_headers` updated so frontend JS can read the header.
-
 ## April 27, 2026
 
 - ✅ **Polymarket stale pricing fix**: Two-layer defense against misleading Polymarket prices during blowouts: (1) skip outcomes with zero trading activity (no lastTradePrice AND no bids), (2) use lastTradePrice instead of midpoint when bid/ask spread >15pp. Fixes "Polymarket has 76ers at 38% vs sportsbooks at 6%" divergence badge during 94-120 blowout.
@@ -42,6 +35,12 @@
 - ✅ **PREQ-10: Health endpoint**: `/health/ready` now checks Redis connectivity and reports last poll timestamps per source.
 - ✅ **PREQ-11: Source degradation**: Feed endpoint wraps event/futures/golf scoring in try/except — partial feed returned on source failure instead of 500.
 - ✅ **PREQ-12: Sentry cleanup**: `before_send` filter drops WorkerLost, TimeLimitExceeded, and transient Redis ConnectionError noise.
+
+## April 24, 2026
+
+- ✅ **Link rate dashboard fix**: Admin dashboard now shows open-market-only link rates instead of all-time (which included 50K+ resolved/closed markets in the denominator, making the metric useless). Backend already calculated both — frontend was just reading the wrong field.
+- ✅ **Design system doc**: Added `docs/design-system.md` — comprehensive visual design reference extracted by Claude Design (colors, typography, motion, voice, component specs). Linked in CLAUDE.md.
+- ✅ **Admin dashboard improvements**: (1) Unclassified markets now show regex-guessed category tags (game prop, esports, matchup, etc.). (2) "Copy backlog prompt" buttons on both Data Quality and Grid Health cards — generates a structured prompt with findings ready to paste into Claude Code. (3) Grid Health refresh now shows timestamp and pulses green while auditing.
 
 ## April 22, 2026 (Evening — iOS Parity Session)
 

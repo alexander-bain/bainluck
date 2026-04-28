@@ -12,6 +12,7 @@ struct PlayerPropsCardView: View {
         let id: String
         let name: String
         let initials: String
+        let headshotURL: URL?
         let team: String
         let color: Color
         let statGroups: [StatGroup]
@@ -30,7 +31,6 @@ struct PlayerPropsCardView: View {
     }
 
     private var playerCards: [PlayerCard] {
-        // Group by player name
         var byPlayer: [String: [(prop: GameMarketPlayerProp, statType: String)]] = [:]
         for prop in playerProps {
             let parts = prop.outcomeName.split(separator: ":", maxSplits: 1)
@@ -51,10 +51,10 @@ struct PlayerPropsCardView: View {
                 .prefix(2)
                 .joined()
 
-            let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
-            let isHome = props.first?.prop.outcomeName.localizedCaseInsensitiveContains(homeShort) ?? false
-            let team = isHome ? "home" : "away"
-            let color = isHome ? homeColor : awayColor
+            let headshotURL = props.first?.prop.playerHeadshot.flatMap { URL(string: $0) }
+            let apiTeam = props.first?.prop.playerTeam
+            let team = apiTeam ?? "away"
+            let color = team == "home" ? homeColor : awayColor
 
             // Group by stat type
             var statGroups: [String: [Rung]] = [:]
@@ -72,7 +72,6 @@ struct PlayerPropsCardView: View {
                     id: "\(player)-\(type)",
                     type: type,
                     rungs: rungs
-                        .filter { $0.probability > 0.05 && $0.probability < 0.95 }
                         .sorted { $0.threshold < $1.threshold }
                 )
             }
@@ -85,6 +84,7 @@ struct PlayerPropsCardView: View {
                 id: player,
                 name: player,
                 initials: initials,
+                headshotURL: headshotURL,
                 team: team,
                 color: color,
                 statGroups: groups
@@ -126,12 +126,28 @@ struct PlayerPropsCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: initials + name
             HStack(spacing: 6) {
-                Text(card.initials)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 24, height: 24)
-                    .background(card.color)
+                if let url = card.headshotURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        default:
+                            Text(card.initials)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 28, height: 28)
+                    .background(card.color.opacity(0.2))
                     .clipShape(Circle())
+                } else {
+                    Text(card.initials)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(card.color)
+                        .clipShape(Circle())
+                }
 
                 Text(card.name.split(separator: " ").last.map(String.init) ?? card.name)
                     .font(.caption)
