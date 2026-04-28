@@ -155,6 +155,23 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 **Files:** `frontend/app/sport/[sport]/[league]/page.tsx`
 **Parallel Safety:** Yellow (frontend only, one file)
 
+### 0q. Feed Ranking: Penalize "Empty" Events
+
+**Problem:** Events with flat probability lines, no score movement, and no market depth are ranking #1 in the feed. Example: Butler vs Bowling Green (baseball), 0-0 in the 6th inning, dead-flat 56/44 line the entire game, no player props, no prediction markets, no interesting cards below the fold. Clicking into this event shows nothing worth looking at.
+
+**Why it matters:** The feed's job is to surface events where something INTERESTING is happening. A flat-line live game with no action is worse than a scheduled game with big odds movement, and much worse than an NBA playoff game.
+
+**Fix:** Add a "content richness" penalty to `compute_base_score()`. Score should account for:
+1. **Probability movement** — if `win_probability_sources` haven't moved >2pp in the last 30 min, penalize
+2. **Score activity** — 0-0 deep into a game = low interest signal
+3. **Market depth** — events with zero linked prediction markets, no player props, and minimal data sources should score lower
+4. **EI** — raw_ei=0 or null for a live game is a strong "nothing happening" signal
+
+The existing `compute_highlight()` function partially handles this (it rewards "close game", "lead change", etc.) but it doesn't penalize the ABSENCE of all interesting signals. A live game with none of those triggers should get a negative modifier, not a neutral one.
+
+**Files:** `backend/app/utils/feed_scoring.py` (`compute_base_score`, `compute_highlight`), `backend/app/routes/feed.py` (_score_events loop)
+**Parallel Safety:** Yellow
+
 ### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats)
 
 **Problem:** The league page (`/sport/basketball/nba`) is a single-purpose page — it shows the championship grid and nothing else. Meanwhile we're ingesting thousands of markets from Kalshi and Polymarket that are clearly sport-specific (NBA series winners, MVP, DPOY, playoff win totals, sweeps, Game 7 counts, player return dates) and NOT showing them anywhere at the league level. Users have to stumble onto these via individual event detail pages or the generic futures browser.
@@ -1452,14 +1469,8 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 **Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
 **Parallel Safety:** Green
 
-### 0f-13. Score Differential y-axis labels should match Win Probability style (April 28)
-
-**Problem:** Win Probability chart has rotated team abbreviations with logos on the y-axis (e.g., "ORL" at top, "DET" at bottom). Score Differential chart just has raw numbers (+11, +1, -9) with no team context. They're stacked vertically and should look the same.
-
-**Fix:** Add the same vertical team label column to ScoreDifferentialChart — rotated team abbreviation + logo on the left side, mirroring OddsChart's layout. Top label = home team (positive = home leading), bottom = away team. May need to increase chart height slightly to accommodate.
-
-**Files:** `frontend/components/ScoreDifferentialChart.tsx`, `frontend/app/events/[id]/page.tsx` (pass team props)
-**Parallel Safety:** Green
+### ~~0f-13. Score Differential y-axis labels should match Win Probability style~~ ✅ SHIPPED (April 28)
+Replaced horizontal "leading" labels with vertical rotated team abbreviation + logo matching OddsChart. Chart height h-40→h-48.
 
 ### 0f-12. Kalshi Half-Period Spread/Total Prices Are Non-Monotonic — DATA QUALITY (April 28)
 
