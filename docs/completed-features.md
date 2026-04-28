@@ -1,5 +1,12 @@
 # Completed Features (Shipped)
 
+## April 28, 2026
+
+- ✅ **MS-1: Small text audit**: Bumped sub-11px text to readable sizes across FeedCard (opened context, resolve dates, source counts, movement), ChampionshipGrid (records, probabilities, headers, legend, trend indicators 7→9px), OddsChart (team labels 9→11px), and event detail page.
+- ✅ **MS-3: Team logo fallback**: Event detail team logos now fall back to ESPN CDN lookup when `team_data.logo_large` is missing, with `onError` handler showing initials if image fails to load.
+- ✅ **MS-7: Grid scroll hint**: Championship grid changed from `overflow-hidden` to `overflow-x-auto` with right-edge gradient fade on mobile.
+- ✅ **MS-8: Chart y-axis readability**: OddsChart vertical team labels bumped from 9px to 11px with wider label column.
+
 ## April 27, 2026
 
 - ✅ **Polymarket stale pricing fix**: Two-layer defense against misleading Polymarket prices during blowouts: (1) skip outcomes with zero trading activity (no lastTradePrice AND no bids), (2) use lastTradePrice instead of midpoint when bid/ask spread >15pp. Fixes "Polymarket has 76ers at 38% vs sportsbooks at 6%" divergence badge during 94-120 blowout.

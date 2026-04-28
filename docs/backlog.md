@@ -422,18 +422,14 @@ Two fixes:
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
 
-#### MS-1. Small text audit — 388 elements <11px across site
-**Problem:** Insight text on feed cards ("New York Knicks odds shifted 19%"), "Opened 46/54" labels, source indicators (B, P, K), and 24h change values are too small to read on mobile.
-**Fix:** Audit all `text-micro` and `text-[10px]` usage. Bump minimum to 11px on mobile. Key files: `FeedCard.tsx`, `ChampionshipGrid.tsx`, `RelatedFutures.tsx`.
-**Parallel Safety:** Green
+#### ~~MS-1. Small text audit — 388 elements <11px across site~~ ✅ SHIPPED (April 28)
+Bumped text-[9px]→10px and text-[10px]→11px across FeedCard, ChampionshipGrid, OddsChart, event detail page. Trend indicators 7→9px.
 
 #### ~~MS-2. Cookie consent banner overlaps bottom nav~~ ✅ SHIPPED (April 27)
 Banner uses `bottom-16` on mobile to sit above the tab bar.
 
-#### MS-3. Missing team logos on event detail (pink/grey placeholders)
-**Problem:** Team logos in event detail header render as colored placeholder circles instead of actual logos. Manus saw this on Hawks vs Knicks.
-**Fix:** Investigate — could be ESPN CDN image loading failure, missing `next.config` image domain, or a race condition. File: `frontend/app/events/[id]/page.tsx` (EntityImage usage).
-**Parallel Safety:** Green
+#### ~~MS-3. Missing team logos on event detail (pink/grey placeholders)~~ ✅ SHIPPED (April 28)
+ESPN CDN fallback when team_data.logo_large missing + onError handler shows initials if image fails.
 
 #### MS-4. Game props missing team names
 **Problem:** Game props section shows "Team 199.5 84%" instead of "Hawks 199.5 84%". Team name not being passed through.
@@ -446,10 +442,8 @@ Monthly rain deduplicates by city name, keeps latest resolution date.
 #### ~~MS-6. Tornado months non-chronological~~ ✅ SHIPPED (April 27)
 Tornado markets sorted by resolution date (chronological).
 
-#### MS-7. Championship grid: no horizontal scroll indicator on mobile
-**Problem:** Conference tables only show Team + Make Playoffs columns. Champion column is off-screen with no visual cue that horizontal scrolling is available.
-**Fix:** Add a subtle gradient fade on the right edge, or a scroll hint arrow. File: `frontend/components/ChampionshipGrid.tsx`.
-**Parallel Safety:** Green
+#### ~~MS-7. Championship grid: no horizontal scroll indicator on mobile~~ ✅ SHIPPED (April 28)
+Changed overflow-hidden → overflow-x-auto with right-edge gradient fade on mobile.
 
 #### MS-8. Kalshi 1.0% minimum tick misleading in grids
 **Problem:** Many teams show exactly "1.0%" for Conference/Champion odds. This is Kalshi's minimum tick, not a real 1% probability — it's misleading when aggregated.
