@@ -1452,6 +1452,15 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 **Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
 **Parallel Safety:** Green
 
+### 0f-13. Score Differential y-axis labels should match Win Probability style (April 28)
+
+**Problem:** Win Probability chart has rotated team abbreviations with logos on the y-axis (e.g., "ORL" at top, "DET" at bottom). Score Differential chart just has raw numbers (+11, +1, -9) with no team context. They're stacked vertically and should look the same.
+
+**Fix:** Add the same vertical team label column to ScoreDifferentialChart — rotated team abbreviation + logo on the left side, mirroring OddsChart's layout. Top label = home team (positive = home leading), bottom = away team. May need to increase chart height slightly to accommodate.
+
+**Files:** `frontend/components/ScoreDifferentialChart.tsx`, `frontend/app/events/[id]/page.tsx` (pass team props)
+**Parallel Safety:** Green
+
 ### 0f-12. Kalshi Half-Period Spread/Total Prices Are Non-Monotonic — DATA QUALITY (April 28)
 
 **Problem:** Half-period spread and total market probabilities from Kalshi are frequently non-monotonic (e.g., ORL +11.5 at 24%, ORL +14.5 at 4%, ORL +17.5 at 17%). This makes the distribution visualization misleading and the data untrustworthy.

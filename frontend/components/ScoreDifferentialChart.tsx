@@ -47,6 +47,10 @@ interface ScoreDifferentialChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
+  /** Home team abbreviation (e.g. "BOS") from ESPN */
+  homeTeamAbbrev?: string;
+  /** Away team abbreviation (e.g. "OKC") from ESPN */
+  awayTeamAbbrev?: string;
   /** Start timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartStartTime?: string;
   /** End timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
@@ -99,6 +103,8 @@ export default function ScoreDifferentialChart({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  homeTeamAbbrev,
+  awayTeamAbbrev,
   chartStartTime,
   chartEndTime,
   externalTimeRange,
@@ -472,8 +478,8 @@ export default function ScoreDifferentialChart({
   const domainMax = Math.max(2, Math.ceil(maxAbs / 2) * 2);
 
   // Short team names for axis labels
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
 
   // Custom tooltip
   const CustomTooltip = ({
@@ -579,24 +585,30 @@ export default function ScoreDifferentialChart({
         ))}
       </div>
 
-      {/* Team labels above chart (which side = which team) */}
-      <div className="flex items-center justify-between text-sm font-semibold px-8 shrink-0">
-        <span className="flex items-center gap-1" style={{ color: homeTeamColor || "#16a34a" }}>
-          {homeTeamLogo && (
-            <img src={homeTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
-          )}
-          + {homeShort} leading
-        </span>
-        <span className="flex items-center gap-1" style={{ color: awayTeamColor || "#2563eb" }}>
-          {awayTeamLogo && (
-            <img src={awayTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
-          )}
-          − {awayShort} leading
-        </span>
-      </div>
+      {/* Chart with vertical team labels */}
+      <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-48"}`}>
+        {/* Vertical team labels on left side — matches OddsChart layout */}
+        <div className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
+          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+            {homeTeamLogo && (
+              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+            )}
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: homeTeamColor || "#16a34a" }}>
+              {homeShort}
+            </span>
+          </div>
+          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+            {awayTeamLogo && (
+              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+            )}
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: awayTeamColor || "#2563eb" }}>
+              {awayShort}
+            </span>
+          </div>
+        </div>
 
-      {/* Chart */}
-      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-40"}>
+        {/* Chart area */}
+        <div className="flex-1 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
@@ -760,6 +772,7 @@ export default function ScoreDifferentialChart({
             )}
           </ComposedChart>
         </ResponsiveContainer>
+        </div>
       </div>
 
       {bookmakers.length > 0 && (

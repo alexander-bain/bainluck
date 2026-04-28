@@ -1478,6 +1478,8 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
+            awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
             chartStartTime={sharedChartDomain?.start}
             chartEndTime={sharedChartDomain?.end}
             externalTimeRange={chartTimeRange}
