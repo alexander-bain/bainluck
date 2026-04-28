@@ -186,7 +186,7 @@ Kalshi's own NBA page organizes into 5 tabs: **Games, Series, Futures, Playoff P
 | Conference | "Eastern/Western Conference Winner" | tier 2, `conference` | ✅ Grid |
 | Division | "Atlantic Division Winner" | tier 4, `division` | ✅ Grid |
 | Make Playoffs | "Team to Make Playoffs" | tier 4, `playoff_path` | ✅ Grid |
-| **Series Winner** | "Celtics vs Cavaliers: Series Winner" | tier 5 or `game_prop` | ❌ **Not shown** |
+| **Series Winner** | "Celtics vs Cavaliers: Series Winner" | tier 5 or `game_prop` | ❌ **Not shown** (see also 0f-3d Issue 4) |
 | **MVP** | "NBA MVP Winner" | tier 3, `award` | ❌ **Not shown** |
 | **DPOY/6MOY/MIP/ROY** | "Defensive Player of the Year" | tier 3, `award` | ❌ **Not shown** |
 | **Finals MVP** | "Finals MVP Winner" | tier 3, `award` | ❌ **Not shown** |
@@ -601,11 +601,19 @@ Two NBA markets (`KXNBA2D-26APR09BOSNYK`, `KXNBA1HSPREAD-26APR09BOSNYK`) are lin
 **Fix:** Extract game date from Kalshi ticker (e.g., `KXMLBHIT-26APR23NYYBOS` → April 23) and compare to event `commence_time` date. Reject if dates differ by >1 day.
 **Files:** `tasks/prediction_market_matching.py`, `utils/prediction_market_matching.py` (`extract_game_date_from_ticker`)
 
-#### Issue 4: Series Winner market unlinked (ticker parsing bug)
-Market `KXMLBSERIES-26APR21NYYBOS` ("Yankees vs Red Sox: Series Winner") exists but isn't linked. The ticker team extraction returned `["Yankees", "Celtics"]` instead of `["Yankees", "Red Sox"]` — a parsing bug.
+#### Issue 4: Series markets not surfaced on event detail pages
+Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series. Example: Bruins vs Sabres NHL playoff game (April 28) — Kalshi has "BUF wins 4-1 62%", series spread -2.5, series total games — none of this appears on bainluck.com for any game in that series.
 
-**Fix:** Debug ticker team extraction for `KXMLBSERIES` prefix. The Celtics/Red Sox confusion suggests the city-to-team mapping defaults to the wrong sport.
-**Files:** `utils/prediction_market_matching.py` (ticker team extraction)
+**Two sub-problems:**
+1. **Linking:** Series markets (e.g., `KXMLBSERIES-26APR21NYYBOS`) may not be linked to individual game events via `event_id`. The ticker team extraction had a parsing bug ("Yankees" → "Celtics" via city-to-team mapping defaulting to wrong sport). Also, Kalshi series tickers (`KXNHLSERIES`, `KXNBASERIES`) need to be in `KALSHI_TICKER_TO_SPORT_KEY`.
+2. **Display:** Even if linked, series markets need a dedicated "Series" section on the event detail page — separate from player props and game-level markets. Should show series winner probability, exact score outcomes, and series spread/total as grouped cards.
+
+**Fix:** 
+- Debug ticker team extraction for series prefixes (`KXMLBSERIES`, `KXNHLSERIES`, `KXNBASERIES`)
+- Add series market detection to `is_game_prop()` or create `is_series_prop()`
+- Link series markets to ALL games in the series (not just one game)
+- Add "Series Context" section to event detail page between Bigger Picture and Related Futures
+**Files:** `utils/prediction_market_matching.py` (ticker extraction), `tasks/prediction_market_matching.py` (linking), `frontend/app/events/[id]/page.tsx` (display)
 
 #### Issue 5: Game props have market_tier=1 (should be tier 5) — CODE ORDERING BUG
 85/136 outcomes in related-futures are game props with `market_tier=1`. Root cause is a code ordering bug in `kalshi.py`:
