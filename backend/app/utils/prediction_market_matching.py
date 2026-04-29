@@ -822,9 +822,23 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
     if not external_id:
         return None
 
-    m = _TICKER_DATE_RE.match(external_id)
+    # Strip outcome suffix (e.g., "-BOS" from "KXNBAGAME-26APR28BOSPHI-BOS")
+    # Kalshi per-team markets append a team abbreviation after the event ticker.
+    # The event ticker is PREFIX-DATETEAMS; the outcome adds -TEAMABBREV.
+    clean_id = external_id
+    parts = external_id.split("-")
+    if len(parts) >= 3:
+        # Check if the last part is a short team code (2-4 chars, all alpha)
+        last = parts[-1]
+        if 2 <= len(last) <= 4 and last.isalpha():
+            clean_id = "-".join(parts[:-1])
+
+    m = _TICKER_DATE_RE.match(clean_id)
     if not m:
-        return None
+        # Fallback: try original if stripping failed
+        m = _TICKER_DATE_RE.match(external_id)
+        if not m:
+            return None
 
     teams_str = m.group(2).lower()
     # Strip optional time component (e.g., "1910" in KXMLBGAME-26MAR281910CWSMIL)
