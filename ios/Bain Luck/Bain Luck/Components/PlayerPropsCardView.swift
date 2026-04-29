@@ -7,6 +7,18 @@ struct PlayerPropsCardView: View {
     let homeColor: Color
     let awayColor: Color
     let eventStatus: String?
+    var boxScore: [String: [String: Double]]?
+
+    @State private var teamFilter: String = "all"
+
+    private var homeAbbr: String {
+        String(homeTeam.split(separator: " ").last ?? "Home")
+    }
+    private var awayAbbr: String {
+        String(awayTeam.split(separator: " ").last ?? "Away")
+    }
+    private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var isLive: Bool { eventStatus == "live" }
 
     private struct PlayerCard: Identifiable {
         let id: String
@@ -14,6 +26,7 @@ struct PlayerPropsCardView: View {
         let initials: String
         let headshotURL: URL?
         let team: String
+        let teamLabel: String
         let color: Color
         let statGroups: [StatGroup]
     }
@@ -30,7 +43,7 @@ struct PlayerPropsCardView: View {
         let movement: Double?
     }
 
-    private var playerCards: [PlayerCard] {
+    private var allPlayerCards: [PlayerCard] {
         var byPlayer: [String: [(prop: GameMarketPlayerProp, statType: String)]] = [:]
         for prop in playerProps {
             let parts = prop.outcomeName.split(separator: ":", maxSplits: 1)
@@ -52,11 +65,10 @@ struct PlayerPropsCardView: View {
                 .joined()
 
             let headshotURL = props.first?.prop.playerHeadshot.flatMap { URL(string: $0) }
-            let apiTeam = props.first?.prop.playerTeam
-            let team = apiTeam ?? "away"
-            let color = team == "home" ? homeColor : awayColor
+            let apiTeam = props.first?.prop.playerTeam ?? "away"
+            let teamLabel = apiTeam == "home" ? "Home" : "Away"
+            let color = apiTeam == "home" ? homeColor : awayColor
 
-            // Group by stat type
             var statGroups: [String: [Rung]] = [:]
             for (prop, statType) in props {
                 let rung = Rung(
@@ -71,8 +83,7 @@ struct PlayerPropsCardView: View {
                 StatGroup(
                     id: "\(player)-\(type)",
                     type: type,
-                    rungs: rungs
-                        .sorted { $0.threshold < $1.threshold }
+                    rungs: rungs.sorted { $0.threshold < $1.threshold }
                 )
             }
             .filter { !$0.rungs.isEmpty }
@@ -85,7 +96,8 @@ struct PlayerPropsCardView: View {
                 name: player,
                 initials: initials,
                 headshotURL: headshotURL,
-                team: team,
+                team: apiTeam,
+                teamLabel: teamLabel,
                 color: color,
                 statGroups: groups
             )
@@ -93,27 +105,55 @@ struct PlayerPropsCardView: View {
         .sorted { $0.statGroups.map(\.rungs.count).reduce(0, +) > $1.statGroups.map(\.rungs.count).reduce(0, +) }
     }
 
-    var body: some View {
-        let cards = playerCards
-        if cards.isEmpty { EmptyView() }
-        else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Player Props")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+    private var filteredCards: [PlayerCard] {
+        if teamFilter == "all" { return allPlayerCards }
+        return allPlayerCards.filter { $0.team == teamFilter }
+    }
 
-                let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(cards.prefix(12)) { card in
-                        playerCardView(card)
+    private var sources: [String] {
+        Array(Set(playerProps.compactMap(\.source))).sorted()
+    }
+
+    var body: some View {
+        let cards = filteredCards
+        if allPlayerCards.isEmpty { EmptyView() }
+        else {
+            VStack(alignment: .leading, spacing: 10) {
+                // Header: title + source badge + team filter
+                HStack {
+                    Text("Player Props")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    // Source badge
+                    if let src = sources.first {
+                        Text(src.uppercased())
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.1))
+                            .clipShape(Capsule())
                     }
+
+                    Spacer()
+
+                    // Team filter
+                    HStack(spacing: 0) {
+                        filterButton("All", value: "all")
+                        filterButton(homeAbbr, value: "home")
+                        filterButton(awayAbbr, value: "away")
+                    }
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
-                if cards.count > 12 {
-                    Text("+\(cards.count - 12) more players")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
+                // Player grid — responsive columns
+                let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(cards) { card in
+                        playerCardView(card)
+                    }
                 }
             }
             .padding()
@@ -122,10 +162,25 @@ struct PlayerPropsCardView: View {
         }
     }
 
+    private func filterButton(_ label: String, value: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { teamFilter = value }
+        } label: {
+            Text(label)
+                .font(.system(size: 11, weight: teamFilter == value ? .bold : .medium))
+                .foregroundStyle(teamFilter == value ? .white : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(teamFilter == value ? Color.blue : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+
     private func playerCardView(_ card: PlayerCard) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Header: initials + name
-            HStack(spacing: 6) {
+            // Header: headshot + name + team label
+            HStack(spacing: 8) {
                 if let url = card.headshotURL {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -133,58 +188,51 @@ struct PlayerPropsCardView: View {
                             image.resizable().scaledToFill()
                         default:
                             Text(card.initials)
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(.white)
                         }
                     }
-                    .frame(width: 28, height: 28)
+                    .frame(width: 36, height: 36)
                     .background(card.color.opacity(0.2))
                     .clipShape(Circle())
                 } else {
                     Text(card.initials)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 36, height: 36)
                         .background(card.color)
                         .clipShape(Circle())
                 }
 
-                Text(card.name.split(separator: " ").last.map(String.init) ?? card.name)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(card.name)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                    Text(card.teamLabel)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
 
                 Spacer()
             }
 
-            // Stat groups
-            ForEach(card.statGroups.prefix(3)) { group in
+            // All stat groups (no truncation)
+            ForEach(card.statGroups) { group in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(group.type.uppercased())
-                        .font(.system(size: 8, weight: .bold))
-                        .tracking(0.5)
-                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 4) {
+                        Text(group.type.uppercased())
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(0.5)
+                            .foregroundStyle(.tertiary)
+                        Text("chance of hitting")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.quaternary)
+                    }
 
-                    ForEach(Array(group.rungs.prefix(4).enumerated()), id: \.offset) { _, rung in
-                        HStack(spacing: 4) {
-                            Text("\(Int(rung.threshold))+")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 22, alignment: .trailing)
-
-                            GeometryReader { geo in
-                                Capsule()
-                                    .fill(card.color.opacity(0.3))
-                                    .frame(width: max(4, geo.size.width * rung.probability))
-                            }
-                            .frame(height: 6)
-
-                            Text("\(Int((rung.probability * 100).rounded()))%")
-                                .font(.system(size: 10, weight: .semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(.primary)
-                                .frame(width: 28, alignment: .trailing)
-                        }
+                    // All rungs (no truncation)
+                    ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
+                        rungRow(rung, card: card, statType: group.type)
                     }
                 }
             }
@@ -198,5 +246,71 @@ struct PlayerPropsCardView: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
         )
+    }
+
+    private func rungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
+        let actualValue = lookupActualValue(player: card.name, stat: statType)
+        let isHit = actualValue.map { $0 >= rung.threshold } ?? false
+        let showActual = (isDone || isLive) && actualValue != nil
+
+        return HStack(spacing: 4) {
+            Text("\(Int(rung.threshold))+")
+                .font(.system(size: 10))
+                .foregroundStyle(showActual && isHit ? card.color : .secondary)
+                .fontWeight(showActual && isHit ? .bold : .regular)
+                .frame(width: 22, alignment: .trailing)
+
+            GeometryReader { geo in
+                Capsule()
+                    .fill(Color.secondary.opacity(0.08))
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(isDone
+                                ? (isHit ? card.color.opacity(0.5) : Color.secondary.opacity(0.15))
+                                : card.color.opacity(0.3))
+                            .frame(width: max(4, geo.size.width * rung.probability))
+                    }
+            }
+            .frame(height: 8)
+
+            if isDone, actualValue != nil {
+                Image(systemName: isHit ? "checkmark" : "minus")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(isHit ? .green : .secondary)
+                    .frame(width: 10)
+            }
+
+            Text("\(Int((rung.probability * 100).rounded()))%")
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+                .frame(width: 28, alignment: .trailing)
+        }
+    }
+
+    private func lookupActualValue(player: String, stat: String) -> Double? {
+        guard let box = boxScore else { return nil }
+        let playerKey = player.lowercased()
+        for (key, stats) in box {
+            if key.lowercased() == playerKey || key.lowercased().contains(playerKey.split(separator: " ").last ?? "") {
+                let statKey = stat.lowercased()
+                if let val = stats[statKey] { return val }
+                let mapping: [String: [String]] = [
+                    "points": ["points", "pts"],
+                    "rebounds": ["rebounds", "reb", "totalRebounds"],
+                    "assists": ["assists", "ast"],
+                    "steals": ["steals", "stl"],
+                    "three pointers": ["threePointersMade", "3pm", "threePointers"],
+                ]
+                for (statName, aliases) in mapping {
+                    if statKey.contains(statName) || statName.contains(statKey) {
+                        for alias in aliases {
+                            if let val = stats[alias] { return val }
+                        }
+                    }
+                }
+            }
+        }
+        return nil
     }
 }

@@ -269,7 +269,13 @@ struct EventDetailView: View {
                             awayAbbr: event.awayTeamData?.abbreviation,
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
-                            sportKey: event.sport
+                            sportKey: event.sport,
+                            homeWinProb: event.currentOdds?.homeProbability,
+                            awayWinProb: event.currentOdds?.awayProbability,
+                            homeSpread: event.currentOdds?.spread,
+                            overUnder: event.currentOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
                         )
                     }
                     // Player Props (from game-markets endpoint)
@@ -280,7 +286,8 @@ struct EventDetailView: View {
                             awayTeam: event.awayTeam,
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
-                            eventStatus: event.status
+                            eventStatus: event.status,
+                            boxScore: vm.relatedFutures?.boxScore
                         )
                     }
                     // Special Event Markets (game props, novelty, MVP)
