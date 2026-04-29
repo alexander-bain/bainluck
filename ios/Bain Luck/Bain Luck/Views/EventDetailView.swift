@@ -110,7 +110,7 @@ struct EventDetailView: View {
         }
 
         if let ca = vm.history?.completedAt, let end = ca.asDate {
-            let buffered = end.addingTimeInterval(120)
+            let buffered = end.addingTimeInterval(30)
             return actualStart...buffered
         }
         if event.status == "live" {
@@ -272,7 +272,7 @@ struct EventDetailView: View {
                             sportKey: event.sport,
                             homeWinProb: event.currentOdds?.homeProbability,
                             awayWinProb: event.currentOdds?.awayProbability,
-                            homeSpread: event.currentOdds?.spread,
+                            homeSpread: event.currentOdds?.homeSpread ?? event.currentOdds?.spread,
                             overUnder: event.currentOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore
@@ -634,7 +634,7 @@ struct EventDetailView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 9))
-                    Text("Sportsbooks diverge by \(Int(((maxP - minP) * 100).rounded()))%")
+                    Text("Sportsbooks spread \(Int(((maxP - minP) * 100).rounded()))% (\(Int((minP * 100).rounded()))%–\(Int((maxP * 100).rounded()))%)")
                         .font(.system(size: 10))
                 }
                 .foregroundStyle(.orange)
@@ -656,7 +656,8 @@ struct EventDetailView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 9))
-                        Text("\(sourceName.capitalized) \(Int((gap * 100).rounded()))% from sportsbooks")
+                        let homeTeamShort = String(event.homeTeam.split(separator: " ").last ?? "")
+                        Text("\(sourceName.capitalized) has \(homeTeamShort) at \(Int((marketProb * 100).rounded()))% vs sportsbooks at \(Int((consensus * 100).rounded()))% (\(Int((gap * 100).rounded()))% gap)")
                             .font(.system(size: 10))
                     }
                     .foregroundStyle(isPurple ? .purple : .blue)
@@ -842,6 +843,11 @@ struct EventDetailView: View {
             "competitive_structure:group_stage": "Group Stage",
             "competitive_structure:single_elimination": "Single Elimination",
             "competitive_structure:round_robin": "Round Robin",
+            "tier:1": "Major",
+            "tier:2": "Tier 2",
+            "tier:3": "Tier 3",
+            "ei:high": "High Excitement",
+            "ei:very_high": "Must Watch",
             "competitive_structure:field": "Field",
         ]
         if let label = labels[tag] { return label }
@@ -860,6 +866,8 @@ struct EventDetailView: View {
         case "narrative": return Color(hex: "#f59e0b")
         case "audience": return Color(hex: "#06b6d4")
         case "competitive_structure": return Color(hex: "#818cf8")
+        case "tier": return Color(hex: "#3b82f6")
+        case "ei": return Color(hex: "#f59e0b")
         default: return .secondary
         }
     }

@@ -617,10 +617,10 @@ export default function ScoreDifferentialChart({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 12, fill: "#6B7280" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
-              interval="preserveStartEnd"
+              interval={chartData.length <= 10 ? 0 : "preserveStartEnd"}
               minTickGap={50}
             />
             <YAxis

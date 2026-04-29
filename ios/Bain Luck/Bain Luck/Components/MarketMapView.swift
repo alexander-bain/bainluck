@@ -244,22 +244,29 @@ struct MarketMapView: View {
 
     @ViewBuilder
     private var halfMarginMaps: some View {
+        // Try period_markets first, fall back to filtering spreads by name
         let periodMarkets = gameMarkets.periodMarkets ?? []
-        let halfSpreads = periodMarkets.filter { ($0.marketType ?? "").contains("spread") || $0.marketName.lowercased().contains("spread") }
+        let spreads = gameMarkets.spreads ?? []
+        let halfSpreads = periodMarkets.filter { isSpreadMarket($0) } +
+            spreads.filter { !isFullGameSpread($0.marketName) }
+
         let h1 = halfSpreads.filter { isFirstHalf($0.outcomeName) || isFirstHalf($0.marketName) }
-        if !h1.isEmpty {
-            halfMarginCard(outcomes: h1, label: "1st half margin")
-        }
+        let h2 = halfSpreads.filter { isSecondHalf($0.outcomeName) || isSecondHalf($0.marketName) }
+        if !h1.isEmpty { halfMarginCard(outcomes: h1, label: "1st half margin") }
+        if !h2.isEmpty { halfMarginCard(outcomes: h2, label: "2nd half margin") }
     }
 
     @ViewBuilder
     private var halfTotalMaps: some View {
         let periodMarkets = gameMarkets.periodMarkets ?? []
-        let halfTotals = periodMarkets.filter { ($0.marketType ?? "").contains("total") || $0.marketName.lowercased().contains("total") }
+        let totals = gameMarkets.totals ?? []
+        let halfTotals = periodMarkets.filter { isTotalMarket($0) } +
+            totals.filter { $0.outcomeName.contains(":") }
+
         let h1 = halfTotals.filter { isFirstHalf($0.outcomeName) || isFirstHalf($0.marketName) }
-        if !h1.isEmpty {
-            halfTotalCard(outcomes: h1, label: "1st half total map")
-        }
+        let h2 = halfTotals.filter { isSecondHalf($0.outcomeName) || isSecondHalf($0.marketName) }
+        if !h1.isEmpty { halfTotalCard(outcomes: h1, label: "1st half total map") }
+        if !h2.isEmpty { halfTotalCard(outcomes: h2, label: "2nd half total map") }
     }
 
     private func halfMarginCard(outcomes: [GameMarketOutcome], label: String) -> some View {
@@ -417,7 +424,7 @@ struct MarketMapView: View {
                         let frac = Double(i) / Double(segmentCount)
                         let isLeft = zeroFrac.map { frac < $0 } ?? true
                         let rgb = isLeft ? leftRgb : rightRgb
-                        let alpha = 0.10 + (density[i] / 100.0) * 0.78
+                        let alpha = 0.15 + (density[i] / 100.0) * 0.75
                         Rectangle()
                             .fill(Color(red: rgb.r / 255, green: rgb.g / 255, blue: rgb.b / 255).opacity(alpha))
                     }
@@ -426,11 +433,12 @@ struct MarketMapView: View {
                 .overlay(Capsule().stroke(Color.barTrack, lineWidth: 1))
                 .overlay(
                     LinearGradient(
-                        colors: [.white.opacity(0.25), .clear, .black.opacity(0.04)],
+                        colors: [.white.opacity(0.30), .clear, .black.opacity(0.08)],
                         startPoint: .top, endPoint: .bottom
                     )
                     .clipShape(Capsule())
                 )
+                .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
 
                 // Zero line
                 if let zeroPct = zeroPosition {
@@ -459,7 +467,7 @@ struct MarketMapView: View {
                 }
             }
         }
-        .frame(height: 30)
+        .frame(height: 36)
     }
 
     // MARK: - Probability Ladder
@@ -514,7 +522,24 @@ struct MarketMapView: View {
 
     private func isFirstHalf(_ s: String) -> Bool {
         let lower = s.lowercased()
-        return lower.contains("1h") || lower.contains("1st half") || lower.contains("first half")
+        return lower.contains("1h") || lower.contains("1st half") || lower.contains("first half") || lower.contains("first 5")
+    }
+
+    private func isSecondHalf(_ s: String) -> Bool {
+        let lower = s.lowercased()
+        return lower.contains("2h") || lower.contains("2nd half") || lower.contains("second half")
+    }
+
+    private func isSpreadMarket(_ o: GameMarketOutcome) -> Bool {
+        let mt = (o.marketType ?? "").lowercased()
+        let mn = o.marketName.lowercased()
+        return mt.contains("spread") || mn.contains("spread") || mn.contains("handicap")
+    }
+
+    private func isTotalMarket(_ o: GameMarketOutcome) -> Bool {
+        let mt = (o.marketType ?? "").lowercased()
+        let mn = o.marketName.lowercased()
+        return mt.contains("total") || mn.contains("total")
     }
 
     private func isFullGameSpread(_ name: String) -> Bool {

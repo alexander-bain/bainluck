@@ -217,22 +217,20 @@ struct PlayerPropsCardView: View {
                 Spacer()
             }
 
-            // All stat groups (no truncation)
-            ForEach(card.statGroups) { group in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(group.type.uppercased())
-                            .font(.system(size: 8, weight: .bold))
-                            .tracking(0.5)
-                            .foregroundStyle(.tertiary)
-                        Text("chance of hitting")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.quaternary)
-                    }
-
-                    // All rungs (no truncation)
-                    ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
-                        rungRow(rung, card: card, statType: group.type)
+            // Stat groups in 2-column layout (matching web)
+            let pairs = stride(from: 0, to: card.statGroups.count, by: 2).map { i in
+                (card.statGroups[i], i + 1 < card.statGroups.count ? card.statGroups[i + 1] : nil)
+            }
+            ForEach(pairs.indices, id: \.self) { idx in
+                let pair = pairs[idx]
+                HStack(alignment: .top, spacing: 10) {
+                    statGroupView(pair.0, card: card)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let second = pair.1 {
+                        statGroupView(second, card: card)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Spacer().frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -246,6 +244,23 @@ struct PlayerPropsCardView: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
         )
+    }
+
+    private func statGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(group.type.uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(.tertiary)
+                Text("chance of hitting")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.quaternary)
+            }
+            ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
+                rungRow(rung, card: card, statType: group.type)
+            }
+        }
     }
 
     private func rungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {

@@ -34,6 +34,7 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
     let spread: Double?
+    let homeSpread: Double?
     let overUnder: Double?
     let projectedHomeScore: Double?
     let projectedAwayScore: Double?
