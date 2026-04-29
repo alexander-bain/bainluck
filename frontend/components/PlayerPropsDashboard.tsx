@@ -270,9 +270,11 @@ function StatBox({
 }
 
 function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; gameState: "pre" | "live" | "done"; showAllStats: boolean }) {
-  const visibleStats = showAllStats
-    ? player.stats
-    : player.stats.filter((s) => s.type.toLowerCase().includes("point") || s.type.toLowerCase().includes("pts"));
+  const [expanded, setExpanded] = useState(false);
+  const isExpanded = showAllStats || expanded;
+  const pointsStats = player.stats.filter((s) => /^points?$/i.test(s.type));
+  const otherStats = player.stats.filter((s) => !/^points?$/i.test(s.type));
+  const visibleStats = isExpanded ? player.stats : pointsStats;
   const statsToShow = visibleStats.length > 0 ? visibleStats : player.stats.slice(0, 1);
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-4 flex flex-col">
@@ -308,6 +310,22 @@ function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; g
           <StatBox key={s.type} stat={s} gameState={gameState} teamColor={player.color} />
         ))}
       </div>
+      {!isExpanded && otherStats.length > 0 && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="mt-2 text-[11px] font-medium text-blue-600 hover:text-blue-700 transition-colors text-left"
+        >
+          +{otherStats.length} more stat{otherStats.length > 1 ? "s" : ""} (rebounds, assists, 3PT...)
+        </button>
+      )}
+      {expanded && !showAllStats && otherStats.length > 0 && (
+        <button
+          onClick={() => setExpanded(false)}
+          className="mt-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors text-left"
+        >
+          Show less
+        </button>
+      )}
     </div>
   );
 }

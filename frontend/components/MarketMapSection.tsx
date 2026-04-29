@@ -48,8 +48,8 @@ function deriveHalfScores(
   if (!espnHistory || espnHistory.length === 0) return null;
   if (finalHome == null || finalAway == null) return null;
 
-  const htEntry = espnHistory.find(
-    (e) => e.period && /half|^ht$/i.test(e.period) && e.home_score != null
+  const htEntry = [...espnHistory].reverse().find(
+    (e) => e.period && /halftime|^ht$|end of 2nd/i.test(e.period) && e.home_score != null
   );
   if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
 
@@ -442,8 +442,8 @@ export default function MarketMapSection({
     const halfSpreads = (gameMarkets.spreads || []).filter((s) => !isFullGameSpread(s.market_name || ""));
     const halfGroups: Record<string, typeof halfSpreads> = {};
     for (const s of halfSpreads) {
-      const on = s.outcome_name.toLowerCase();
-      const key = on.includes("1h") || on.includes("1st") || on.includes("first") ? "1H" : "2H";
+      const text = `${s.outcome_name} ${s.market_name || ""}`.toLowerCase();
+      const key = text.includes("1h") || text.includes("1st") || text.includes("first") ? "1H" : "2H";
       if (!halfGroups[key]) halfGroups[key] = [];
       halfGroups[key].push(s);
     }
@@ -582,9 +582,9 @@ export default function MarketMapSection({
     const maps: Array<{ key: string; data: MapData }> = [];
 
     for (const halfKey of ["1H", "2H"] as const) {
-      const pattern = halfKey === "1H" ? /1h/i : /2h/i;
+      const pattern = halfKey === "1H" ? /1h|1st|first/i : /2h|2nd|second/i;
       const halfItems = allPeriod.filter(
-        (p) => p.market_type === "half_total" && pattern.test(p.outcome_name) && isGameTotal(p.outcome_name)
+        (p) => p.market_type === "half_total" && (pattern.test(p.outcome_name) || pattern.test(p.market_name || "")) && isGameTotal(p.outcome_name)
       );
       if (halfItems.length < 2) continue;
 
