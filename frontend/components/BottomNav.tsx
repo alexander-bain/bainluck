@@ -20,10 +20,10 @@ export default function BottomNav() {
       isActive: pathname === "/" || pathname === "",
     },
     {
-      label: "Search",
-      href: "/search",
-      icon: SearchIcon,
-      isActive: pathname === "/search",
+      label: "Discover",
+      href: "/discover",
+      icon: DiscoverIcon,
+      isActive: pathname === "/discover",
     },
     {
       label: "My Stuff",
@@ -86,7 +86,7 @@ function FeedIcon({ active }: { active: boolean }) {
   );
 }
 
-function SearchIcon({ active }: { active: boolean }) {
+function DiscoverIcon({ active }: { active: boolean }) {
   return (
     <svg
       width="22"
@@ -98,8 +98,8 @@ function SearchIcon({ active }: { active: boolean }) {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill={active ? "currentColor" : "none"} />
     </svg>
   );
 }

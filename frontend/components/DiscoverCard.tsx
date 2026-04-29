@@ -35,16 +35,15 @@ interface DiscoverCardProps {
 
 export default function DiscoverCard({ item, onDismiss }: DiscoverCardProps) {
   const [liked, setLiked] = useState(false);
-  const [fired, setFired] = useState(false);
 
   if (item.type === "event") {
-    return <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} onDismiss={onDismiss} />;
+    return <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
   }
   if (item.type === "futures") {
-    return <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} onDismiss={onDismiss} />;
+    return <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
   }
   if (item.type === "tournament") {
-    return <TournamentCard item={item} data={item.data as FeedTournamentData} liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} onDismiss={onDismiss} />;
+    return <TournamentCard item={item} data={item.data as FeedTournamentData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
   }
   return null;
 }
@@ -52,11 +51,10 @@ export default function DiscoverCard({ item, onDismiss }: DiscoverCardProps) {
 // ── Event Card ──
 
 function EventCard({
-  item, data, liked, setLiked, fired, setFired, onDismiss,
+  item, data, liked, setLiked, onDismiss,
 }: {
   item: FeedItem; data: FeedEventData;
   liked: boolean; setLiked: (v: boolean) => void;
-  fired: boolean; setFired: (v: boolean) => void;
   onDismiss?: () => void;
 }) {
   const homeColor = data.home_team_data?.primary_color || "#374151";
@@ -161,7 +159,7 @@ function EventCard({
         <p className="text-sm text-text-secondary mt-3">{headline}</p>
 
         {/* Action bar */}
-        <ActionBar liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} shareUrl={`https://bainluck.com/events/${data.id}`} shareTitle={`${data.away_team} vs ${data.home_team}`} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/events/${data.id}`} shareTitle={`${data.away_team} vs ${data.home_team}`} />
       </div>
     </div>
   );
@@ -170,11 +168,10 @@ function EventCard({
 // ── Futures Card ──
 
 function FuturesCard({
-  item, data, liked, setLiked, fired, setFired, onDismiss,
+  item, data, liked, setLiked, onDismiss,
 }: {
   item: FeedItem; data: FeedFuturesData;
   liked: boolean; setLiked: (v: boolean) => void;
-  fired: boolean; setFired: (v: boolean) => void;
   onDismiss?: () => void;
 }) {
   const catStyle = getCategoryStyle(data.llm_sport_category);
@@ -256,7 +253,7 @@ function FuturesCard({
           {resolveLabel && <span>{resolveLabel}</span>}
         </div>
 
-        <ActionBar liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
       </div>
     </div>
   );
@@ -265,11 +262,10 @@ function FuturesCard({
 // ── Tournament Card ──
 
 function TournamentCard({
-  item, data, liked, setLiked, fired, setFired, onDismiss,
+  item, data, liked, setLiked, onDismiss,
 }: {
   item: FeedItem; data: FeedTournamentData;
   liked: boolean; setLiked: (v: boolean) => void;
-  fired: boolean; setFired: (v: boolean) => void;
   onDismiss?: () => void;
 }) {
   const catStyle = getCategoryStyle("golf");
@@ -298,7 +294,7 @@ function TournamentCard({
       <div className="p-4">
         <h3 className="font-bold text-lg leading-tight mb-1">{data.name}</h3>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
-        <ActionBar liked={liked} setLiked={setLiked} fired={fired} setFired={setFired} shareUrl={`https://bainluck.com/sport/golf`} shareTitle={data.name} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/sport/golf`} shareTitle={data.name} />
       </div>
     </div>
   );
@@ -307,10 +303,9 @@ function TournamentCard({
 // ── Action Bar ──
 
 function ActionBar({
-  liked, setLiked, fired, setFired, shareUrl, shareTitle,
+  liked, setLiked, shareUrl, shareTitle,
 }: {
   liked: boolean; setLiked: (v: boolean) => void;
-  fired: boolean; setFired: (v: boolean) => void;
   shareUrl: string; shareTitle: string;
 }) {
   const handleShare = async () => {
@@ -331,13 +326,6 @@ function ActionBar({
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
         </svg>
         {liked ? "Liked" : "Like"}
-      </button>
-
-      <button
-        onClick={() => setFired(!fired)}
-        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors text-sm ${fired ? "bg-orange-500/10 text-orange-500" : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"}`}
-      >
-        🔥
       </button>
 
       <div className="flex-1" />
