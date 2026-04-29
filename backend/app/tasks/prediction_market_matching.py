@@ -302,6 +302,16 @@ async def _match_prediction_markets(limit: int = 500):
                 await _register_market_team_identities(
                     session, matched_event["event_id"], matchup, market,
                 )
+                # Propagate event_id to Polymarket sub-markets in the same group
+                if market.group_id and market.source == "polymarket":
+                    from sqlalchemy import text as _text
+                    await session.execute(_text("""
+                        UPDATE futures_markets
+                        SET event_id = :eid
+                        WHERE group_id = :gid
+                          AND group_type = 'polymarket_sub_market'
+                          AND (event_id IS NULL OR event_id != :eid)
+                    """), {"eid": matched_event["event_id"], "gid": market.group_id})
             else:
                 # No existing event found — try auto-creating one.
                 # This handles sports The Odds API doesn't cover (e.g., Olympics).
@@ -464,6 +474,16 @@ async def _match_prediction_markets(limit: int = 500):
                 await _register_market_team_identities(
                     session, matched_event["event_id"], matchup, market,
                 )
+                # Propagate event_id to Polymarket sub-markets in the same group
+                if market.group_id and market.source == "polymarket":
+                    from sqlalchemy import text as _text
+                    await session.execute(_text("""
+                        UPDATE futures_markets
+                        SET event_id = :eid
+                        WHERE group_id = :gid
+                          AND group_type = 'polymarket_sub_market'
+                          AND (event_id IS NULL OR event_id != :eid)
+                    """), {"eid": matched_event["event_id"], "gid": market.group_id})
                 # Queue Polymarket markets for price history backfill
                 if market.source == "polymarket":
                     polymarket_backfill_queue.append(
@@ -633,6 +653,15 @@ async def _match_prediction_markets(limit: int = 500):
                         stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = better_match["event_id"]
                     _set_market_sport_fields(market, better_match)
+                    if market.group_id and market.source == "polymarket":
+                        from sqlalchemy import text as _text
+                        await session.execute(_text("""
+                            UPDATE futures_markets
+                            SET event_id = :eid
+                            WHERE group_id = :gid
+                              AND group_type = 'polymarket_sub_market'
+                              AND (event_id IS NULL OR event_id != :eid)
+                        """), {"eid": better_match["event_id"], "gid": market.group_id})
                     if is_auto_created:
                         stats["funnel"].setdefault("auto_created_relinked", 0)
                         stats["funnel"]["auto_created_relinked"] += 1
