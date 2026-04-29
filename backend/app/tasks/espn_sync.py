@@ -472,8 +472,15 @@ async def _sync_espn_live_events():
                                 source_name=ee.away_team.display_name or ee.away_team.name,
                             )
 
-                        # Update ESPN ID
+                        # Update ESPN ID via Core SQL (not ORM) to ensure persistence.
+                        # ORM attribute assignment was silently lost when mixed with
+                        # Core updates on win_probability_sources in the same session.
                         if ee.espn_id and event.espn_id != ee.espn_id:
+                            await session.execute(
+                                _sql_update(Event)
+                                .where(Event.id == event.id)
+                                .values(espn_id=ee.espn_id)
+                            )
                             event.espn_id = ee.espn_id
                             changed = True
 
@@ -531,20 +538,26 @@ async def _sync_espn_live_events():
 
                         # Update ESPN win probability and save snapshot
                         if ee.home_win_probability is not None:
-                            # Write both espn_win_prob_home AND win_probability_sources
-                            # in one atomic update to keep them in sync
+                            # Write espn_win_prob_home, win_probability_sources, AND espn_id
+                            # in one atomic Core update. espn_id was previously set via ORM
+                            # attribute assignment which could fail to flush when mixed with
+                            # Core updates on the same row.
                             _wps_r = await session.execute(
                                 select(Event.win_probability_sources).where(Event.id == event.id)
                             )
                             _wps = _wps_r.scalar_one_or_none() or {}
                             _wps["espn"] = round(ee.home_win_probability, 4)
+                            _update_vals: dict = {
+                                "win_probability_sources": _wps,
+                                "espn_win_prob_home": ee.home_win_probability,
+                            }
+                            if ee.espn_id and event.espn_id != ee.espn_id:
+                                _update_vals["espn_id"] = ee.espn_id
+                                event.espn_id = ee.espn_id
                             await session.execute(
                                 _sql_update(Event)
                                 .where(Event.id == event.id)
-                                .values(
-                                    win_probability_sources=_wps,
-                                    espn_win_prob_home=ee.home_win_probability,
-                                )
+                                .values(**_update_vals)
                             )
                             changed = True
 
