@@ -17,6 +17,8 @@ struct ScoreDifferentialChartView: View {
     var awayTeamAbbrev: String?
     var forcedDomain: ClosedRange<Date>?
 
+    @State private var selectedDate: Date?
+
     private var homeShort: String {
         homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
     }
@@ -206,6 +208,13 @@ struct ScoreDifferentialChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
+            // Selection indicator
+            if let selectedDate {
+                RuleMark(x: .value("Selected", selectedDate))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0))
+                    .foregroundStyle(.primary.opacity(0.4))
+            }
+
             // Period markers — matching Win Probability chart's clean floating chip style
             ForEach(periodMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
@@ -269,6 +278,7 @@ struct ScoreDifferentialChartView: View {
                     .font(.caption2)
             }
         }
+        .chartXSelection(value: $selectedDate)
     }
 
     private func chartXDomain(dataPoints: [DiffPoint]) -> ClosedRange<Date> {

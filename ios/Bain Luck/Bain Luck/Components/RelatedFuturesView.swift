@@ -447,7 +447,8 @@ struct RelatedFuturesView: View {
 
             let mergedAwards = awayCats.awards + homeCats.awards
             let mergedStatLeaders = awayCats.statLeaders + homeCats.statLeaders
-            let mergedNovelty = awayCats.novelty + homeCats.novelty
+            let mergedNovelty = (awayCats.novelty + homeCats.novelty)
+                .filter { ($0.probability ?? 0) >= 0.05 }
             let hasSections = !mergedAwards.isEmpty || !mergedStatLeaders.isEmpty
                 || !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty
                 || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty

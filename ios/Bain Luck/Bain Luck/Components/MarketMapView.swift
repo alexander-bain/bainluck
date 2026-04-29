@@ -58,48 +58,91 @@ struct MarketMapView: View {
         let segments = 14
         let step = (rangeMax - rangeMin) / Double(segments)
 
-        return VStack(alignment: .leading, spacing: 8) {
+        // Build probability ladder from spreads
+        let awayParsed = parsed.filter { !$0.isHome }.sorted { $0.margin < $1.margin }
+        let homeParsed = parsed.filter(\.isHome).sorted { $0.margin < $1.margin }
+        let ladderEntries: [(label: String, prob: Double, isHome: Bool)] =
+            awayParsed.prefix(4).map { (label: "\(awayAbbr ?? "Away") +\(Int(abs($0.margin)))", prob: $0.probability, isHome: false) } +
+            homeParsed.prefix(4).map { (label: "\(homeAbbr ?? "Home") +\(Int($0.margin))", prob: $0.probability, isHome: true) }
+
+        return VStack(alignment: .leading, spacing: 10) {
             Text(vocab.marginTitle)
                 .font(.subheadline)
                 .fontWeight(.semibold)
 
             Chart {
+                // Away side (negative margins)
                 ForEach(0..<segments, id: \.self) { i in
                     let x = rangeMin + (Double(i) + 0.5) * step
-                    let h = density[i]
-                    AreaMark(
-                        x: .value("Margin", x),
-                        y: .value("Density", h)
-                    )
-                    .foregroundStyle(
-                        x < 0 ? awayColor.opacity(0.3) : homeColor.opacity(0.3)
-                    )
-                    .interpolationMethod(.catmullRom)
-                    LineMark(
-                        x: .value("Margin", x),
-                        y: .value("Density", h)
-                    )
-                    .foregroundStyle(x < 0 ? awayColor : homeColor)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+                    if x < 0 {
+                        AreaMark(x: .value("Margin", x), y: .value("Density", density[i]))
+                            .foregroundStyle(awayColor.opacity(0.25))
+                            .interpolationMethod(.catmullRom)
+                        LineMark(x: .value("Margin", x), y: .value("Density", density[i]))
+                            .foregroundStyle(awayColor.opacity(0.6))
+                            .interpolationMethod(.catmullRom)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                // Home side (positive margins)
+                ForEach(0..<segments, id: \.self) { i in
+                    let x = rangeMin + (Double(i) + 0.5) * step
+                    if x >= 0 {
+                        AreaMark(x: .value("Margin", x), y: .value("Density", density[i]))
+                            .foregroundStyle(homeColor.opacity(0.25))
+                            .interpolationMethod(.catmullRom)
+                        LineMark(x: .value("Margin", x), y: .value("Density", density[i]))
+                            .foregroundStyle(homeColor.opacity(0.6))
+                            .interpolationMethod(.catmullRom)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
                 }
                 RuleMark(x: .value("Even", 0))
-                    .foregroundStyle(.secondary.opacity(0.5))
+                    .foregroundStyle(.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .annotation(position: .top) {
+                        Text("Even")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.secondary)
+                    }
             }
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 7)) { value in
                     AxisValueLabel {
                         if let v = value.as(Double.self) {
                             Text(v > 0 ? "+\(Int(v))" : "\(Int(v))")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                         }
                     }
-                    AxisGridLine()
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 }
             }
             .chartYAxis(.hidden)
-            .frame(height: 120)
+            .frame(height: 160)
+
+            // Probability ladder
+            if !ladderEntries.isEmpty {
+                VStack(spacing: 3) {
+                    ForEach(ladderEntries.indices, id: \.self) { i in
+                        let entry = ladderEntries[i]
+                        HStack(spacing: 6) {
+                            Text(entry.label)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 70, alignment: .leading)
+                            GeometryReader { geo in
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(entry.isHome ? homeColor.opacity(0.3) : awayColor.opacity(0.3))
+                                    .frame(width: geo.size.width * min(entry.prob, 1.0))
+                            }
+                            .frame(height: 8)
+                            Text("\(Int((entry.prob * 100).rounded()))%")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
 
             HStack(spacing: 16) {
                 HStack(spacing: 4) {
@@ -141,7 +184,12 @@ struct MarketMapView: View {
         let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: segments)
         let step = (rangeMax - rangeMin) / Double(segments)
 
-        return VStack(alignment: .leading, spacing: 8) {
+        // Build O/U probability ladder
+        let ladderEntries: [(label: String, prob: Double)] = thresholds.prefix(6).map { t in
+            (label: "Over \(t.threshold.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(t.threshold)) : String(format: "%.1f", t.threshold))", prob: t.overProb)
+        }
+
+        return VStack(alignment: .leading, spacing: 10) {
             Text(vocab.totalTitle)
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -150,19 +198,18 @@ struct MarketMapView: View {
                 ForEach(0..<segments, id: \.self) { i in
                     let x = rangeMin + (Double(i) + 0.5) * step
                     let h = density[i]
-                    AreaMark(
-                        x: .value("Total", x),
-                        y: .value("Density", h)
-                    )
-                    .foregroundStyle(Color.blue.opacity(0.2))
-                    .interpolationMethod(.catmullRom)
-                    LineMark(
-                        x: .value("Total", x),
-                        y: .value("Density", h)
-                    )
-                    .foregroundStyle(.blue)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+                    AreaMark(x: .value("Total", x), y: .value("Density", h))
+                        .foregroundStyle(
+                            .linearGradient(
+                                colors: [Color.blue.opacity(0.3), Color.blue.opacity(0.08)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .interpolationMethod(.catmullRom)
+                    LineMark(x: .value("Total", x), y: .value("Density", h))
+                        .foregroundStyle(Color.blue.opacity(0.7))
+                        .interpolationMethod(.catmullRom)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
                 }
             }
             .chartXAxis {
@@ -170,14 +217,38 @@ struct MarketMapView: View {
                     AxisValueLabel {
                         if let v = value.as(Double.self) {
                             Text("\(Int(v))")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                         }
                     }
-                    AxisGridLine()
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 }
             }
             .chartYAxis(.hidden)
-            .frame(height: 120)
+            .frame(height: 160)
+
+            // Probability ladder
+            if !ladderEntries.isEmpty {
+                VStack(spacing: 3) {
+                    ForEach(ladderEntries.indices, id: \.self) { i in
+                        let entry = ladderEntries[i]
+                        HStack(spacing: 6) {
+                            Text(entry.label)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 70, alignment: .leading)
+                            GeometryReader { geo in
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.blue.opacity(0.25))
+                                    .frame(width: geo.size.width * min(entry.prob, 1.0))
+                            }
+                            .frame(height: 8)
+                            Text("\(Int((entry.prob * 100).rounded()))%")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
 
             Text("Distribution of projected total \(vocab.unit)")
                 .font(.system(size: 10))

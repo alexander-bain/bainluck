@@ -95,15 +95,26 @@ struct EventDetailView: View {
     @State private var lastRefreshDate: Date = Date()
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
-              let ct = event.commenceTime, let start = ct.asDate else { return nil }
-        // End: use completedAt if available, fallback to last ESPN/stat_model data
+              let ct = event.commenceTime, let scheduledStart = ct.asDate else { return nil }
+
+        // Use actual game start (first ESPN data point) instead of scheduled time
+        let actualStart: Date
+        if let espn = vm.history?.espnHistory,
+           let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
+           let espnDate = firstEspn.timestamp.asDate {
+            // Use whichever is later: scheduled or first ESPN data
+            // (ESPN data before game start has no period)
+            actualStart = min(scheduledStart, espnDate.addingTimeInterval(-60))
+        } else {
+            actualStart = scheduledStart
+        }
+
         if let ca = vm.history?.completedAt, let end = ca.asDate {
             let buffered = end.addingTimeInterval(120)
-            return start...buffered
+            return actualStart...buffered
         }
-        // Fallback for live games: now + small buffer
         if event.status == "live" {
-            return start...Date().addingTimeInterval(60)
+            return actualStart...Date().addingTimeInterval(60)
         }
         return nil
     }

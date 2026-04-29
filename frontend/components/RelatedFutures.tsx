@@ -2352,10 +2352,10 @@ export default function RelatedFutures({
     })),
   ].sort((a, b) => (b.future.probability || 0) - (a.future.probability || 0));
 
-  // Merge novelty across teams
-  const mergedNovelty = [...homeCats.novelty, ...awayCats.novelty].sort(
-    (a, b) => (b.probability || 0) - (a.probability || 0),
-  );
+  // Merge novelty across teams, filter out stale low-probability markets
+  const mergedNovelty = [...homeCats.novelty, ...awayCats.novelty]
+    .filter((f) => (f.probability || 0) >= 0.05)
+    .sort((a, b) => (b.probability || 0) - (a.probability || 0));
 
   // Playoff path: prefer LeagueContextService data (merged multi-source, volume-weighted)
   // over raw ILIKE-matched futures entries
