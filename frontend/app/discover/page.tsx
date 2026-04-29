@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
+import type { FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
@@ -52,7 +53,27 @@ export default function DiscoverPage() {
       : item.type === "futures"
       ? `futures-${(item.data as any).id}`
       : `tournament-${(item.data as any).key}`;
-    return !dismissed.has(id);
+    if (dismissed.has(id)) return false;
+
+    // Filter out effectively resolved futures (leader ≥ 95%)
+    if (item.type === "futures") {
+      const fd = item.data as FeedFuturesData;
+      const leader = fd.top_outcomes?.[0];
+      if (leader && (leader.probability ?? 0) >= 0.95) return false;
+      if (fd.status === "closed" || fd.status === "resolved") return false;
+    }
+
+    // Filter out old completed events (> 6 hours ago)
+    if (item.type === "event") {
+      const ed = item.data as FeedEventData;
+      if (ed.status === "completed" || ed.status === "closed") {
+        const ct = new Date(ed.commence_time);
+        const hoursAgo = (Date.now() - ct.getTime()) / (1000 * 60 * 60);
+        if (hoursAgo > 12) return false;
+      }
+    }
+
+    return true;
   });
 
   return (
