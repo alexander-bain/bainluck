@@ -338,6 +338,23 @@ Full report: `Manus/mystery_shopper.md`.
 ### ~~0e. Wire Manus audit results into /health skill~~ ✅ ALREADY DONE
 Section H of `/health` (`.claude/commands/health.md`) already reads `Manus/audit_results/latest/manifest.json`, scans `*.md` reports for findings, flags staleness >7 days, and suggests running the suite. Verified working April 29.
 
+### ~~0e-2. GA4 Analytics Overhaul Phases 1-3~~ ✅ SHIPPED (April 29)
+
+Phase 1: Wired 16 dead-code events, fixed consent bug (none→denied), fixed FeedCard/SearchBar tagging, added iOS platform/login_status user properties, wired onboarding + futures tracking on iOS.
+Phase 2: Added onboarding_start/skip, search_result_click, return_visit (web + iOS), app_version + days_since_install user properties (iOS).
+Phase 3: Added navigation_click on BottomNav + DesktopNav, type definitions for grid_cell_click, player_prop_click, market_map_interact, share, feed_refresh.
+
+### 0e-3. GA4 Console Configuration — TODO (Phase 4)
+
+Not code — configuration in the GA4 property (analytics.google.com):
+1. **Custom definitions**: Register `sport`, `league`, `event_id`, `event_status`, `source_section`, `position_index`, `is_live`, `is_close_game` as custom dimensions
+2. **Key events (conversions)**: Mark `sign_up`, `onboarding_complete`, `event_detail_view` as key events
+3. **Audiences**: Create "Sports Enthusiasts" (3+ event_detail_view / 7d), "NBA Fans" (sport=basketball_nba 5+), "Power Users" (5+ sessions / 7d)
+4. **Funnels** (Explore): Acquisition (first_visit → page_view → event_card_click → event_detail_view), Onboarding (start → steps → complete), Retention (return_visit by days_since_last)
+5. **Dashboards**: DAU by platform, top sports by engagement time, feed CTR, onboarding completion rate
+
+**Parallel Safety:** Green (no code changes)
+
 ### 0f. Polymarket CLOB V2 migration — MONITOR (April 28, 2026)
 Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs still working with current field names. We use NO SDK — all raw httpx. CLOB is only used for price history backfill (not critical path). Real risk is if **Gamma API** (`gamma-api.polymarket.com`) changes field names or pagination. Monitor around April 28.
 **Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
