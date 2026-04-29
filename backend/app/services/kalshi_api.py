@@ -469,6 +469,8 @@ class KalshiAPIService(BaseAPIClient):
             "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL",
             "KXNFL1HSPREAD", "KXNFL1HTOTAL", "KXNFL2HSPREAD", "KXNFL2HTOTAL",
             "KXNFLSERIES",
+            # Announcer/broadcast mention props
+            "KXNBAMENTION", "KXNHLMENTION", "KXMLBMENTION", "KXNFLMENTION",
         ]
         supplemented = 0
         for st in _SPORTS_SERIES_TICKERS:

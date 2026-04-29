@@ -294,6 +294,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnba2d": "basketball_nba",              # Double-double
     "kxnba3d": "basketball_nba",              # Triple-double
     "kxnbafirstbasket": "basketball_nba",     # First basket scorer
+    "kxnbamention": "basketball_nba",         # Announcer mention props
     # NFL game-level props (spread, total, halves, quarters, player props)
     "kxnflspread": "americanfootball_nfl",           # Game spread
     "kxnfltotal": "americanfootball_nfl",            # Game total points
@@ -350,6 +351,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnfl4downconv": "americanfootball_nfl",        # 4th down conversions (alt)
     "kxnflcombo": "americanfootball_nfl",            # Combo props
     "kxnflprepack": "americanfootball_nfl",          # Pre-pack bundles
+    "kxnflmention": "americanfootball_nfl",          # Announcer mention props
     # NHL game-level props
     "kxnhlspread": "icehockey_nhl",                  # Game spread (puck line)
     "kxnhltotal": "icehockey_nhl",                   # Game goal total
@@ -359,6 +361,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnhlpts": "icehockey_nhl",                     # Player points props
     "kxnhlast": "icehockey_nhl",                     # Player assists props
     "kxnhlsaves": "icehockey_nhl",                   # Goalie saves props
+    "kxnhlmention": "icehockey_nhl",                  # Announcer mention props
     # MLB game-level props
     "kxmlbspread": "baseball_mlb",                   # Game spread (run line)
     "kxmlbtotal": "baseball_mlb",                    # Game total runs
@@ -373,6 +376,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxmlbhrr": "baseball_mlb",                      # Hits + Runs + RBIs combo
     "kxmlbrfi": "baseball_mlb",                      # Run in first inning
     "kxmlbstgame": "baseball_mlb",                   # Spring training game
+    "kxmlbmention": "baseball_mlb",                   # Announcer mention props
     # College sports — men's
     "kxncaabgame": "basketball_ncaab",
     "kxncaambgame": "basketball_ncaab",       # Men's college basketball game

@@ -562,7 +562,6 @@ struct RelatedFuturesView: View {
 
     private func awardsByPlayer(_ awards: [RelatedFuture], hColor: Color, aColor: Color) -> some View {
         // Group awards by player name
-        var byPlayer: [(name: String, awards: [(label: String, prob: Double, future: RelatedFuture)])] = []
         var playerOrder: [String] = []
         var playerMap: [String: [(label: String, prob: Double, future: RelatedFuture)]] = [:]
 
