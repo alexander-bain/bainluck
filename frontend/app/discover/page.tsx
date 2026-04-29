@@ -25,9 +25,9 @@ function addDismissed(id: string) {
 }
 
 export default function DiscoverPage() {
-  usePageTracking("discover", { page_type: "discover" });
-  useScrollDepth();
-  useEngagementTime();
+  usePageTracking({ pageType: "discover", pageTitle: "Discover" });
+  useScrollDepth({ pageType: "discover" });
+  useEngagementTime({ pageType: "discover" });
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
