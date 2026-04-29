@@ -1417,6 +1417,29 @@ New feed mode: "Discover" tab alongside the existing sports feed. Or interleave 
 **Web gap (iOS has, web doesn't):** EI Rankings standalone page (iOS has `EIRankingsView.swift` with sport filters)
 - Apple Watch / Apple TV apps
 - Weather visualization — prediction market weather maps
+
+### 23. Prediction Market Game / Social Picks
+
+**The idea:** Turn the probability content into something people play, not just read. The sheer variety of markets — "OPEC Crude Oil production above __ in May?", "Ferrari Shipments above __ in Q1?", "Airbnb Nights and Seats Booked above ___?", "What Trump-named things will Trump mention in May?", "Which European finishes highest?", "Number of Series Sweeps", "Luka Doncic back before May 7?" — is inherently compelling as a prediction game.
+
+**Possible formats (not mutually exclusive):**
+
+| Format | Description | Vibe |
+|--------|------------|------|
+| **Feed-as-game** | The main feed IS the game — each card has a "Higher/Lower" button. Track prediction accuracy over time. Leaderboard. | Lowest friction, existing UI |
+| **Daily picks** | "5 markets to call today" — curated by interestingness score. Binary over/under on each. Results resolve automatically. | Wordle-style daily ritual |
+| **Head-to-head** | Challenge a friend: both pick 5 markets, see who's more calibrated. Share link. | Social + competitive |
+| **Ambient screensaver** | Slowly cycling probability cards on Apple TV / Mac screensaver / web idle. "Did you know OPEC production is 83% likely to exceed 28M barrels in May?" Random fascinating facts from our market data. | Discovery + delight |
+| **Portfolio mode** | Pick a portfolio of outcomes at current prices. Track "returns" as probabilities shift. No real money. | Fantasy-sports energy |
+
+**Why this could work:** We already have the hardest part — 111K+ markets with live probabilities across sports, economics, politics, weather, entertainment, tech. The content is fascinating. We just need a game layer on top.
+
+**Depends on:** Item 22 (interestingness scoring), authentication (already shipped), user preferences (already shipped).
+
+**Key design question:** Is the game separate from the feed, or IS the feed? Starting with "Higher/Lower" buttons on feed cards is zero new infrastructure.
+
+**Files:** TBD — could be as simple as adding a button to FeedCard + a new `user_predictions` table, or as complex as a standalone game mode.
+**Parallel Safety:** Green (new feature, new files)
 - **Self-Evolving Website** — closed-loop autonomous improvement cycle:
   - (A) User browsing → events captured (clicks, scrolls, dwell time) → `events.jsonl`
   - (B) Coding sessions → MyClaw indexes sessions, extracts patterns & insights → facts
