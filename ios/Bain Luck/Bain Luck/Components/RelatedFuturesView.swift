@@ -481,14 +481,21 @@ struct RelatedFuturesView: View {
                             )
                     }
 
-                    // Awards
+                    // Awards — grouped by team with mini card grid (matching web)
                     if !mergedAwards.isEmpty {
                         sectionHeader(icon: "star.fill", label: "AWARDS")
-                        ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(12)) { future in
-                            AwardCompactRowView(
-                                future: future,
-                                teamColor: teamColorForFuture(future, hColor: hColor, aColor: aColor)
-                            )
+                        let homeAwards = mergedAwards.filter { teamColorForFuture($0, hColor: hColor, aColor: aColor) == hColor }
+                            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+                        let awayAwards = mergedAwards.filter { teamColorForFuture($0, hColor: hColor, aColor: aColor) == aColor }
+                            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+
+                        HStack(alignment: .top, spacing: 10) {
+                            if !homeAwards.isEmpty {
+                                awardTeamGrid(awards: homeAwards.prefix(4).map { $0 }, teamColor: hColor, teamName: homeTeam)
+                            }
+                            if !awayAwards.isEmpty {
+                                awardTeamGrid(awards: awayAwards.prefix(4).map { $0 }, teamColor: aColor, teamName: awayTeam)
+                            }
                         }
                     }
 
@@ -563,6 +570,84 @@ struct RelatedFuturesView: View {
     private func teamColorForFuture(_ future: RelatedFuture, hColor: Color, aColor: Color) -> Color {
         let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
         return future.outcomeName.localizedCaseInsensitiveContains(homeShort) ? hColor : aColor
+    }
+
+    private func awardTeamGrid(awards: [RelatedFuture], teamColor: Color, teamName: String) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 130), spacing: 8)]
+        return VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(awards) { future in
+                    NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel).uppercased())
+                                .font(.system(size: 10, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .tracking(0.5)
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                let initials = future.outcomeName.split(separator: " ")
+                                    .compactMap { $0.first.map(String.init) }
+                                    .prefix(2).joined()
+                                if let player = future.matchedPlayer, let hs = player.headshot, let url = URL(string: hs) {
+                                    AsyncImage(url: url) { phase in
+                                        switch phase {
+                                        case .success(let img): img.resizable().scaledToFill()
+                                        default:
+                                            Text(initials)
+                                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    .frame(width: 28, height: 28)
+                                    .background(teamColor)
+                                    .clipShape(Circle())
+                                } else {
+                                    Text(initials)
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 28, height: 28)
+                                        .background(teamColor)
+                                        .clipShape(Circle())
+                                }
+
+                                Text(future.outcomeName)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .foregroundStyle(.primary)
+                            }
+
+                            HStack(spacing: 6) {
+                                GeometryReader { geo in
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.08))
+                                        .overlay(alignment: .leading) {
+                                            Capsule()
+                                                .fill(teamColor)
+                                                .frame(width: max(2, geo.size.width * (future.probability ?? 0)))
+                                        }
+                                }
+                                .frame(height: 6)
+
+                                Text("\(Int(((future.probability ?? 0) * 100).rounded()))%")
+                                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                                    .frame(width: 32, alignment: .trailing)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.barTrack.opacity(0.5), lineWidth: 0.5)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
