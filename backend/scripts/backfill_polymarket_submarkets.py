@@ -80,6 +80,11 @@ async def run(dry_run: bool = False, cleanup_crypto: bool = False):
             WHERE fm.source = 'polymarket'
               AND fm.group_type = 'polymarket_event'
               AND fm.status = 'open'
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_markets sub
+                  WHERE sub.group_id = fm.group_id
+                    AND sub.group_type = 'polymarket_sub_market'
+              )
             GROUP BY fm.id
             HAVING COUNT(fo.id) > 2
             ORDER BY fm.commence_time DESC NULLS LAST
@@ -259,6 +264,40 @@ async def run(dry_run: bool = False, cleanup_crypto: bool = False):
                 await api.close()
 
             print(f"\nDone: decomposed={decomposed}, sub_markets={sub_markets_created}, errors={errors}")
+
+        # ── Step 3b: Propagate event_id from parents to sub-markets ──
+        print(f"\n{'=' * 60}")
+        print("PROPAGATING event_id FROM PARENTS TO SUB-MARKETS")
+        print("=" * 60)
+        prop_result = await session.execute(text("""
+            UPDATE futures_markets sub
+            SET event_id = parent.event_id
+            FROM futures_markets parent
+            WHERE sub.group_type = 'polymarket_sub_market'
+              AND sub.event_id IS NULL
+              AND sub.group_id IS NOT NULL
+              AND parent.source = 'polymarket'
+              AND parent.group_type = 'polymarket_event'
+              AND parent.group_id = sub.group_id
+              AND parent.event_id IS NOT NULL
+        """))
+        print(f"  Sub-markets linked: {prop_result.rowcount}")
+
+        # Also skip re-decomposing events that already have sub-markets
+        # by counting how many sub-markets now exist
+        sub_count_r = await session.execute(text("""
+            SELECT COUNT(*) FROM futures_markets
+            WHERE source = 'polymarket' AND group_type = 'polymarket_sub_market'
+        """))
+        print(f"  Total sub-markets now: {sub_count_r.scalar()}")
+
+        linked_sub_r = await session.execute(text("""
+            SELECT COUNT(*) FROM futures_markets
+            WHERE source = 'polymarket'
+              AND group_type = 'polymarket_sub_market'
+              AND event_id IS NOT NULL
+        """))
+        print(f"  Sub-markets with event_id: {linked_sub_r.scalar()}")
 
         # ── Step 4: Crypto cleanup ──
         if cleanup_crypto and crypto_count > 0:
