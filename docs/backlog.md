@@ -396,18 +396,9 @@ Two fixes:
 1. **iOS Score Diff chart noise**: X-axis `AxisMarks` had no count limit, creating grid lines at every data point (hundreds). Fixed to `desiredCount: 5`.
 2. **Web + iOS chart axis alignment**: Win Probability and Score Differential charts now share a single computed domain (`sharedChartDomain`) from ALL data sources. Both charts fill every minute in the range, ensuring identical x-axes, linear time, and aligned period markers. Previously OddsChart computed its own domain and reported it async — now both use the same parent-computed domain.
 
-### 0f-7. Kalshi Win Probability Spikes — DATA BUG (April 25)
+### ~~0f-7. Kalshi Win Probability Spikes~~ ✅ SHIPPED (April 29)
 
-**Problem:** Win probability chart shows wild Kalshi spikes (80% → 5% → 80%) during live NBA games. Visible on Celtics vs 76ers (April 24). The spikes are clearly not real probability movement — they look like a data bug.
-
-**Root cause (investigated):** Kalshi creates **separate binary markets per team outcome** for each game (e.g., "Celtics win?" YES=0.80 AND "76ers win?" YES=0.80). The live polling task iterates through all linked markets and writes `yes_bid` from each. If it alternates between reading the "Celtics win" market (80% home) and the "76ers win" market (80% = 20% home probability), it writes oscillating values to `win_probability_sources["kalshi"]`.
-
-**NOT a fix:** Don't clamp or smooth the spikes — that masks the real issue. The data itself is wrong.
-
-**Fix:** When writing Kalshi probability to `win_probability_sources`, determine which market corresponds to the HOME team and always use that one. If the market is for the AWAY team, flip the probability (1 - yes_bid). Key: match the Kalshi market outcome name to the event's `home_team` / `away_team`.
-
-**Files:** `backend/app/tasks/live_prediction_markets.py` (or wherever Kalshi live prices write to event), `backend/app/tasks/kalshi.py` (market-to-team mapping)
-**Parallel Safety:** Yellow
+Deduplicate markets by `(event_id, source)` before writing snapshots. Picks one market per event per source (most outcomes = primary matchup market). Eliminates oscillation from dual "Team A win?" / "Team B win?" markets.
 
 ### ~~0f-8. Win Probability Chart Mobile Readability~~ ✅ SHIPPED (April 28)
 
