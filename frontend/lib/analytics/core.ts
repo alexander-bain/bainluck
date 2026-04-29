@@ -131,7 +131,12 @@ export function updateConsent(level: 'all' | 'analytics' | 'none'): void {
       break;
     case 'none':
     default:
-      consent = GA_CONFIG.DEFAULT_CONSENT;
+      consent = {
+        analytics_storage: 'denied' as const,
+        ad_storage: 'denied' as const,
+        ad_user_data: 'denied' as const,
+        ad_personalization: 'denied' as const,
+      };
       break;
   }
 

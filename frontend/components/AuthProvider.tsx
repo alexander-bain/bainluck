@@ -8,7 +8,7 @@
 
 "use client";
 
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useAuth, type AuthUser } from "@/hooks/useAuth";
 import { useAnalyticsContext } from "@/components/Analytics/AnalyticsProvider";
 import { setAuthTokenGetter } from "@/lib/api";
@@ -49,15 +49,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Sync auth state with analytics
+  // Sync auth state with analytics and track login/logout
+  const prevUserRef = useRef<string | null>(null);
   useEffect(() => {
     if (auth.isLoading) return;
 
+    const prevUid = prevUserRef.current;
+    const currentUid = auth.user?.uid ?? null;
+
     if (auth.user) {
       analytics.setUser(auth.user.uid);
+      if (prevUid === null && currentUid !== null) {
+        analytics.track('login', { method: 'firebase' });
+      }
     } else {
       analytics.setUser(undefined);
+      if (prevUid !== null && currentUid === null) {
+        analytics.track('logout', {});
+      }
     }
+
+    prevUserRef.current = currentUid;
   }, [auth.user, auth.isLoading, analytics]);
 
   return (

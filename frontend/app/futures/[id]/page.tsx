@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import {
@@ -17,6 +17,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentChart from "@/components/TournamentChart";
@@ -91,6 +92,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   });
   useScrollDepth({ pageType: 'futures_detail' });
   useEngagementTime({ pageType: 'futures_detail' });
+  const { track } = useAnalyticsContext();
 
   const [sortField, setSortField] = useState<SortField>("probability");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -121,6 +123,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     market ? ["futures-history", marketId] : null,
     () => fetchFuturesHistory(marketId, 168)
   );
+
+  // Track futures detail view once data loads
+  const hasTrackedFutures = useRef(false);
+  useEffect(() => {
+    if (market && !hasTrackedFutures.current) {
+      hasTrackedFutures.current = true;
+      track('futures_detail_view', {
+        market_id: marketId,
+        category: market.display_category || market.category || 'unknown',
+        source_count: market.source_count ?? 1,
+      });
+    }
+  }, [market, marketId, track]);
 
   // Related events (upcoming/recent games featuring contender teams)
   const { data: relatedEventsData } = useSWR(

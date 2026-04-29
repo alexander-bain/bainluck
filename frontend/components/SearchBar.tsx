@@ -93,7 +93,7 @@ export default function SearchBar({
     setQuery("");
 
     track('navigation_click', {
-      click_type: 'footer_link' as const,
+      click_type: 'search_typeahead' as const,
       from_page: 'search',
       to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
         : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`

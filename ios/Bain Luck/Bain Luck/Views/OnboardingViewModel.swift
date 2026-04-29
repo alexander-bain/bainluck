@@ -254,9 +254,13 @@ final class OnboardingViewModel: ObservableObject {
 
     // MARK: - Navigation
 
+    private static let stepNames = ["location", "follow", "alma_maters", "interests", "rivals"]
+
     func goNext() {
         if currentStep < totalSteps {
             currentStep += 1
+            let name = currentStep <= Self.stepNames.count ? Self.stepNames[currentStep - 1] : "unknown"
+            AnalyticsService.trackOnboardingStep(step: currentStep, stepName: name)
         }
     }
 
@@ -290,6 +294,9 @@ final class OnboardingViewModel: ObservableObject {
             let response = try await APIClient.shared.submitOnboarding(submission)
             submitting = false
             logger.info("Onboarding submitted: \(response.status)")
+            let teamsCount = submission.followTeams.count + submission.localTeams.count + submission.almaMaterTeams.count
+            AnalyticsService.trackOnboardingComplete(teamsCount: teamsCount)
+            AnalyticsService.setUserProperty("true", forName: "onboarding_completed")
             return response.onboardingCompleted
         } catch {
             self.error = "Failed to save. Please try again."

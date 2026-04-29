@@ -350,7 +350,7 @@ function EventFeedCard({
         event_id: data.id,
         sport: data.sport || 'unknown',
         league: data.sport || 'unknown',
-        league_tier: 3,
+        league_tier: 0,
         home_team: data.home_team,
         away_team: data.away_team,
         status: data.status,
@@ -358,7 +358,7 @@ function EventFeedCard({
         away_probability: awayProb,
         is_close_game: homeProb !== null && awayProb !== null && Math.abs(homeProb - awayProb) < 0.1,
         is_live: isLive,
-        source_section: 'featured' as const,
+        source_section: 'feed' as const,
         position_index: 0,
         minutes_to_start: Math.round((new Date(data.commence_time).getTime() - Date.now()) / 60000),
       });
@@ -571,8 +571,17 @@ function FuturesFeedCard({
   // Resolution date
   const resolvesText = formatResolutionDate(data.resolution_date);
 
+  const { track } = useAnalyticsContext();
+
   return (
-    <Link href={`/futures/${data.id}`}>
+    <Link href={`/futures/${data.id}`} onClick={() => {
+      track('futures_card_click', {
+        market_id: data.id,
+        category: data.llm_sport_category || 'unknown',
+        position_index: 0,
+        source_section: 'feed',
+      });
+    }}>
       <div className="rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated transition-all cursor-pointer">
         {/* Top row */}
         <div className="flex items-center justify-between gap-2 mb-2">

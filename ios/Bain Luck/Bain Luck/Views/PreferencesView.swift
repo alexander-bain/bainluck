@@ -27,6 +27,7 @@ struct PreferencesView: View {
         #endif
         .task {
             await vm.load()
+            AnalyticsService.trackScreen(name: "preferences", type: "preferences")
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {

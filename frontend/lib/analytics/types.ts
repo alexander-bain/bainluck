@@ -70,7 +70,7 @@ export interface PageViewParams {
 }
 
 export interface NavigationClickParams {
-  click_type: 'logo' | 'back' | 'footer_link';
+  click_type: 'logo' | 'back' | 'footer_link' | 'search_typeahead' | 'nav_tab';
   from_page: string;
   to_page: string;
 }
@@ -126,7 +126,7 @@ export interface EventCardClickParams {
   /** Is this game currently live? */
   is_live: boolean;
   /** Where on the page was this card? */
-  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
+  source_section: 'featured' | 'feed' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
   /** Position in the list (0-indexed) */
   position_index: number;
   /** Time until game starts (minutes, negative if started) */
@@ -315,12 +315,25 @@ export interface SignUpParams {
 }
 
 export interface LoginParams {
-  method: 'google' | 'apple' | 'email';
-  is_returning_user: boolean;
+  method: string;
+  is_returning_user?: boolean;
 }
 
 export interface LogoutParams {
-  session_duration_seconds: number;
+  session_duration_seconds?: number;
+}
+
+export interface FuturesCardClickParams {
+  market_id: number;
+  category: string;
+  position_index: number;
+  source_section: string;
+}
+
+export interface FuturesDetailViewParams {
+  market_id: number;
+  category: string;
+  source_count: number;
 }
 
 // ============================================================================
@@ -432,10 +445,14 @@ export interface AnalyticsEventMap {
   progression_sort: ProgressionSortParams;
   progression_stage_click: ProgressionStageClickParams;
 
-  // Account (future)
+  // Account
   sign_up: SignUpParams;
   login: LoginParams;
   logout: LogoutParams;
+
+  // Futures
+  futures_card_click: FuturesCardClickParams;
+  futures_detail_view: FuturesDetailViewParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

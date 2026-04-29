@@ -30,7 +30,10 @@ struct GolfCategoryView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            AnalyticsService.trackScreen(name: "golf_category", type: "category")
+        }
     }
 
     // MARK: - Loaded View

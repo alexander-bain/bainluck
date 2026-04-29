@@ -42,6 +42,10 @@ struct OnboardingView: View {
             } message: {
                 Text(vm.error ?? "")
             }
+            .onAppear {
+                AnalyticsService.trackScreen(name: "onboarding", type: "onboarding")
+                AnalyticsService.trackOnboardingStep(step: 1, stepName: "location")
+            }
         }
     }
 

@@ -47,6 +47,7 @@ final class AuthManager: ObservableObject {
             let profile: AuthUser = try await APIClient.shared.fetchProfile()
             self.user = profile
             AnalyticsService.setUserId(String(profile.id))
+            AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Session restored for user \(profile.id)")
         } catch let apiError as APIError {
             switch apiError {
@@ -104,6 +105,7 @@ final class AuthManager: ObservableObject {
         error = nil
         AnalyticsService.trackLogout()
         AnalyticsService.setUserId(nil)
+        AnalyticsService.setUserProperty("anonymous", forName: "login_status")
         logger.info("User signed out")
     }
 
@@ -176,6 +178,7 @@ final class AuthManager: ObservableObject {
             self.user = response.user
             self.error = nil
             AnalyticsService.setUserId(String(response.user.id))
+            AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Silent Google restore successful: user \(response.user.id)")
             return true
         } catch {
@@ -228,6 +231,7 @@ final class AuthManager: ObservableObject {
             self.error = nil
             AnalyticsService.trackLogin(method: "apple")
             AnalyticsService.setUserId(String(response.user.id))
+            AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Apple sign-in successful: user \(response.user.id)")
         } catch {
             self.error = "Sign-in failed. Please try again."
@@ -277,6 +281,7 @@ final class AuthManager: ObservableObject {
             self.error = nil
             AnalyticsService.trackLogin(method: "google")
             AnalyticsService.setUserId(String(response.user.id))
+            AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Google sign-in successful: user \(response.user.id)")
         } catch {
             // Silently ignore user cancellation (GIDSignInError code -5)

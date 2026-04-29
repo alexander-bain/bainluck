@@ -22,6 +22,11 @@ struct Bain_LuckApp: App {
 
     init() {
         FirebaseApp.configure()
+        #if os(macOS)
+        AnalyticsService.setUserProperty("macos", forName: "platform")
+        #else
+        AnalyticsService.setUserProperty("ios", forName: "platform")
+        #endif
     }
 
     var body: some Scene {

@@ -73,6 +73,7 @@ struct EIRankingsView: View {
         #endif
         .task {
             await vm.load()
+            AnalyticsService.trackScreen(name: "ei_rankings", type: "ei_rankings")
         }
     }
 
