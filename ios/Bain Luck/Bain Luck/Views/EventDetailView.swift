@@ -121,7 +121,13 @@ struct EventDetailView: View {
     private var isIPad: Bool { sizeClass == .regular }
     private var logoSize: CGFloat { isIPad ? 80 : 56 }
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
-    private var contentMaxWidth: CGFloat { isIPad ? 900 : 700 }
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 1200
+        #else
+        return isIPad ? 900 : 700
+        #endif
+    }
 
     private var dynamicTitle: String {
         guard let event = vm.event else { return "Game Details" }

@@ -44,13 +44,23 @@ struct SpecialEventMarketsView: View {
         return ("Other Markets", "additional markets")
     }
 
+    private static func isRedundantWithMarketMaps(_ m: GameMarketOther) -> Bool {
+        let lower = m.marketName.lowercased()
+        let outLower = m.outcomeName.lowercased()
+        if lower.contains("spread") || lower.contains("handicap") { return true }
+        if lower.contains("total") && (outLower.contains("over") || outLower.contains("under")) { return true }
+        if lower.contains("moneyline") || lower.contains("winner") || lower.contains("match result") { return true }
+        return false
+    }
+
     private var categories: [MarketCategory] {
-        guard markets.count >= 3 else { return [] }
+        let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) }
+        guard filtered.count >= 3 else { return [] }
 
         var catMap: [String: MarketCategory] = [:]
         let categoryOrder = ["MVP", "Game Props", "Player Performance", "Novelty Props", "Other Markets"]
 
-        for m in markets {
+        for m in filtered {
             let name = m.marketName
             let (cat, sub) = Self.categorize(name)
 

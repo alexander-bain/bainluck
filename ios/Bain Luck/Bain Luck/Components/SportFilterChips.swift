@@ -95,7 +95,7 @@ struct SportFilterChips: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(isSelected ? Color.blue.opacity(0.15) : Color.cardBackground)
+            .background(isSelected ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.08))
             .foregroundStyle(isSelected ? .blue : .primary)
             .clipShape(Capsule())
         }

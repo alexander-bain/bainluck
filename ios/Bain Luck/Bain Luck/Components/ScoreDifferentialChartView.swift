@@ -206,15 +206,19 @@ struct ScoreDifferentialChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
-            // Period markers — alternate top/bottom to prevent overlap
-            ForEach(Array(periodMarkers.enumerated()), id: \.element.id) { index, marker in
+            // Period markers — matching Win Probability chart's clean floating chip style
+            ForEach(periodMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [4, 4]))
-                    .foregroundStyle(.secondary.opacity(0.5))
-                    .annotation(position: index % 2 == 0 ? .top : .bottom, alignment: .leading) {
+                    .lineStyle(StrokeStyle(lineWidth: 0.5))
+                    .foregroundStyle(.secondary.opacity(0.3))
+                    .annotation(position: .top, alignment: .center) {
                         Text(marker.label)
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.secondary.opacity(0.6))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
             }
 
@@ -331,22 +335,50 @@ struct ScoreDifferentialChartView: View {
     }
 
     private func normalizePeriodLabel(_ raw: String) -> String {
-        let s = raw.trimmingCharacters(in: .whitespaces)
-        let lower = s.lowercased()
-        // Baseball: "Top 3rd" / "Middle 1st" / "Bottom 5th" → "3" / "1" / "5"
-        if lower.hasPrefix("top ") || lower.hasPrefix("middle ") || lower.hasPrefix("bottom ") || lower.hasPrefix("end ") || lower.hasPrefix("mid ") {
-            let digits = s.filter(\.isNumber)
-            if !digits.isEmpty { return digits }
+        var s = raw.trimmingCharacters(in: .whitespaces)
+
+        // Reject pre-game date strings
+        let months = "January|February|March|April|May|June|July|August|September|October|November|December"
+        if s.range(of: months, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
+        if s.range(of: #"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*\bat\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
+
+        // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
+        if let dashRange = s.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
+            s = String(s[dashRange.upperBound...])
         }
-        // Quarters
-        if s.hasPrefix("Q") || s.hasPrefix("P") || s.hasPrefix("OT") { return s }
+
+        // Strip "End of " / "Start of " prefix
+        if let prefixRange = s.range(of: #"^(?:end|start)\s+of\s+"#, options: [.regularExpression, .caseInsensitive]) {
+            s = String(s[prefixRange.upperBound...])
+        }
+
+        let lower = s.lowercased()
+
+        if lower == "halftime" || lower == "half time" || lower == "ht" { return "HT" }
+        if lower == "overtime" || lower == "ot" { return "OT" }
+        if let match = lower.range(of: #"^(\d+)\w*\s+overtime$"#, options: .regularExpression) {
+            return "OT\(s[match].filter(\.isNumber))"
+        }
+        if let match = s.range(of: #"^(\d+)\w*\s+[Qq]uarter$"#, options: .regularExpression) {
+            return "Q\(s[match].filter(\.isNumber))"
+        }
         if lower == "1st" { return "Q1" }
         if lower == "2nd" { return "Q2" }
         if lower == "3rd" { return "Q3" }
         if lower == "4th" { return "Q4" }
-        if s == "1st Half" || s == "1H" { return "1H" }
-        if s == "2nd Half" || s == "2H" { return "2H" }
-        if s == "Halftime" { return "HT" }
+        if let match = s.range(of: #"^(\d+)\w*\s+[Pp]eriod$"#, options: .regularExpression) {
+            return "P\(s[match].filter(\.isNumber))"
+        }
+        if let match = s.range(of: #"^(\d+)\w*\s+[Hh]alf$"#, options: .regularExpression) {
+            return "\(s[match].filter(\.isNumber))H"
+        }
+        if let match = s.range(of: #"^(?:top|bottom|mid|middle|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
+            return s[match].filter(\.isNumber)
+        }
+        if s.range(of: #"^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return s.uppercased()
+        }
+        if lower.contains("intermission") { return "INT" }
         return s
     }
 }

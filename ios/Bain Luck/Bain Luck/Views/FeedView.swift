@@ -434,6 +434,7 @@ struct FeedView: View {
                     headline: item.headline
                 )
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         } else if item.type == "futures", let futures = item.futures {
             Button {
@@ -441,6 +442,7 @@ struct FeedView: View {
             } label: {
                 FuturesCardView(futures: futures)
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }

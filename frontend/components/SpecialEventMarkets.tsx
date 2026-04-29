@@ -67,8 +67,17 @@ function PropMiniCard({ item }: { item: MarketCategory["items"][0] }) {
   );
 }
 
+function isRedundantWithMarketMaps(m: { market_name: string; outcome_name: string }): boolean {
+  const lower = (m.market_name || "").toLowerCase();
+  const outLower = (m.outcome_name || "").toLowerCase();
+  if (lower.includes("spread") || lower.includes("handicap")) return true;
+  if (lower.includes("total") && (outLower.includes("over") || outLower.includes("under"))) return true;
+  if (lower.includes("moneyline") || lower.includes("winner") || lower.includes("match result")) return true;
+  return false;
+}
+
 export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventMarketsProps) {
-  const otherMarkets = data.other ?? [];
+  const otherMarkets = (data.other ?? []).filter((m) => !isRedundantWithMarketMaps(m));
 
   const categories = useMemo(() => {
     if (otherMarkets.length < 3) return [];

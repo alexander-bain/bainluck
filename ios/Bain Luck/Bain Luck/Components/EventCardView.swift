@@ -74,6 +74,7 @@ struct EventCardView: View {
             footer
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Top Bar
