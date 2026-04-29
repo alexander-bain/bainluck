@@ -1521,8 +1521,30 @@ async def _poll_live_prediction_market_prices():
                 await poly_service.close()
 
         # ── Write win_prob_snapshots for all live linked markets ───────
-        # Re-query to pick up freshly-updated probabilities
+        # Re-query to pick up freshly-updated probabilities.
+        #
+        # DEDUP: Kalshi creates separate binary markets per team outcome
+        # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
+        # are linked to the same event, processing both would write conflicting
+        # probabilities to win_probability_sources["kalshi"], causing oscillation
+        # (80% → 20% → 80%) on the chart.  Fix: pick ONE market per (event, source).
+        # Prefer the market whose moneyline outcome maps to yes_is_home=True
+        # (direct probability, no inversion — less error-prone).
+        best_per_event_source: dict[tuple[int, str], tuple] = {}
         for market, event in rows:
+            key = (event.id, market.source)
+            if key not in best_per_event_source:
+                best_per_event_source[key] = (market, event)
+            else:
+                # If we already have one, prefer the market with more outcomes
+                # (more outcomes = more likely to be the primary matchup market)
+                existing_market = best_per_event_source[key][0]
+                existing_count = len(outcomes_by_market.get(existing_market.id, []))
+                new_count = len(outcomes_by_market.get(market.id, []))
+                if new_count > existing_count:
+                    best_per_event_source[key] = (market, event)
+
+        for market, event in best_per_event_source.values():
             try:
                 # Uses ticker fallback for generic-named Kalshi markets
                 matchup = extract_matchup_with_ticker_fallback(
