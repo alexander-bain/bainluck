@@ -581,8 +581,24 @@ async def _process_event_batch(
                             "yes_ask": market.best_ask,
                             "last_price": market.last_trade_price,
                         })
-                else:
-                    # Single-market or non-negRisk event
+                elif not event.neg_risk and len(event.markets) > 1:
+                    # Game-level event: each sub-market (moneyline, spread, O/U,
+                    # player props) becomes its own FuturesMarket row. Without this,
+                    # all 40 sub-markets are flattened into outcomes of a single
+                    # FuturesMarket, making player props invisible to the game-markets
+                    # endpoint (which classifies by market name, not outcome name).
+                    #
+                    # The parent FuturesMarket (created above) serves as the group
+                    # anchor. Each sub-market inherits its event_id, sport category,
+                    # and group_id for linkage.
+                    parent_market_id = futures_market_id
+
+                    # Check if parent is already linked to an event
+                    _parent_eid_r = await session.execute(
+                        select(FuturesMarket.event_id).where(FuturesMarket.id == parent_market_id)
+                    )
+                    parent_event_id = _parent_eid_r.scalar_one_or_none()
+
                     for market in event.markets:
                         prob = market.outcome_prices[0] if market.outcome_prices else None
 
@@ -598,17 +614,150 @@ async def _process_event_batch(
                         if prob is None or prob <= 0:
                             continue
 
-                        if len(event.markets) == 1:
-                            outcome_name = "Yes"
-                        else:
-                            # Prefer groupItemTitle over question parsing
-                            outcome_name = market.group_item_title or _extract_outcome_name(
-                                market.question, event.title
-                            )
+                        sub_name = market.question or event.title
+                        sub_tier = compute_market_tier(sub_name, category, sport_category=llm_sport_category)
 
+                        sub_stmt = pg_insert(FuturesMarket).values(
+                            source="polymarket",
+                            external_id=market.condition_id,
+                            name=sub_name,
+                            category="game_prop",
+                            llm_sport_category=llm_sport_category,
+                            llm_league=league,
+                            market_tier=sub_tier,
+                            mutually_exclusive=True,
+                            commence_time=commence_time,
+                            resolution_date=resolution_date,
+                            status="open" if event.active else "resolved",
+                            group_id=poly_group_id,
+                            group_type="polymarket_sub_market",
+                            event_id=parent_event_id,
+                        ).on_conflict_do_update(
+                            index_elements=["source", "external_id"],
+                            set_={
+                                "name": sub_name,
+                                "market_tier": sub_tier,
+                                "status": "open" if event.active else "resolved",
+                                "event_id": parent_event_id,
+                                "updated_at": func.now(),
+                            },
+                        ).returning(FuturesMarket.id)
+
+                        sub_result = await session.execute(sub_stmt)
+                        sub_market_id = sub_result.scalar_one()
+
+                        # Create Over/Yes outcome
+                        over_name = "Over" if "o/u" in sub_name.lower() else "Yes"
+                        over_american = probability_to_american(prob) if 0 < prob < 1 else None
+
+                        over_stmt = pg_insert(FuturesOutcome).values(
+                            market_id=sub_market_id,
+                            external_id=f"{market.condition_id}_yes",
+                            name=over_name,
+                            current_probability=prob,
+                            current_american_odds=over_american,
+                            current_yes_bid=market.best_bid,
+                            current_yes_ask=market.best_ask,
+                            opening_probability=prob,
+                            opening_american_odds=over_american,
+                            opening_captured_at=now,
+                            rank=1,
+                        ).on_conflict_do_update(
+                            index_elements=["market_id", "external_id"],
+                            set_={
+                                "current_probability": prob,
+                                "current_american_odds": over_american,
+                                "current_yes_bid": market.best_bid,
+                                "current_yes_ask": market.best_ask,
+                                "rank": 1,
+                                "last_updated": func.now(),
+                            },
+                        ).returning(FuturesOutcome.id)
+
+                        over_result = await session.execute(over_stmt)
+                        over_outcome_id = over_result.scalar_one()
+
+                        snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                            outcome_id=over_outcome_id,
+                            bookmaker="polymarket",
+                            probability=prob,
+                            american_odds=over_american,
+                            yes_bid=market.best_bid,
+                            yes_ask=market.best_ask,
+                            last_price=market.last_trade_price,
+                            captured_at=now,
+                        )
+                        await session.execute(snap_stmt)
+
+                        # Create Under/No outcome if available
+                        if len(market.outcome_prices) > 1:
+                            under_prob = market.outcome_prices[1]
+                            under_name = "Under" if "o/u" in sub_name.lower() else "No"
+                            under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
+
+                            under_stmt = pg_insert(FuturesOutcome).values(
+                                market_id=sub_market_id,
+                                external_id=f"{market.condition_id}_no",
+                                name=under_name,
+                                current_probability=under_prob,
+                                current_american_odds=under_american,
+                                opening_probability=under_prob,
+                                opening_american_odds=under_american,
+                                opening_captured_at=now,
+                                rank=2,
+                            ).on_conflict_do_update(
+                                index_elements=["market_id", "external_id"],
+                                set_={
+                                    "current_probability": under_prob,
+                                    "current_american_odds": under_american,
+                                    "rank": 2,
+                                    "last_updated": func.now(),
+                                },
+                            )
+                            await session.execute(under_stmt)
+
+                        stats["markets_processed"] += 1
+                        stats["outcomes_updated"] += 2
+                        stats["snapshots_created"] += 1
+                        stats["sub_markets_created"] = stats.get("sub_markets_created", 0) + 1
+
+                    # Also keep parent market outcomes (for the moneyline matching task)
+                    for market in event.markets:
+                        prob = market.outcome_prices[0] if market.outcome_prices else None
+                        if prob is None or prob <= 0:
+                            continue
+                        outcome_name = market.group_item_title or _extract_outcome_name(
+                            market.question, event.title
+                        )
                         outcome_data.append({
                             "external_id": market.condition_id,
                             "name": outcome_name,
+                            "prob": prob,
+                            "yes_bid": market.best_bid,
+                            "yes_ask": market.best_ask,
+                            "last_price": market.last_trade_price,
+                        })
+
+                else:
+                    # Single-market event
+                    for market in event.markets:
+                        prob = market.outcome_prices[0] if market.outcome_prices else None
+
+                        if prob is None or prob <= 0:
+                            if (market.best_bid is not None and market.best_bid > 0
+                                    and market.best_ask is not None and market.best_ask > 0):
+                                prob = (market.best_bid + market.best_ask) / 2
+                            elif market.last_trade_price is not None and market.last_trade_price > 0:
+                                prob = market.last_trade_price
+                            elif market.best_ask is not None and market.best_ask > 0:
+                                prob = market.best_ask
+
+                        if prob is None or prob <= 0:
+                            continue
+
+                        outcome_data.append({
+                            "external_id": market.condition_id,
+                            "name": "Yes",
                             "prob": prob,
                             "yes_bid": market.best_bid,
                             "yes_ask": market.best_ask,
