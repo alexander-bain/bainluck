@@ -440,6 +440,100 @@ Y-axis bumped 12→13px with darker fill (#4B5563), width 42→44. X-axis bumped
 
 Kalshi has 2nd half spread, 2nd half total, series winner, and other game-level markets that weren't appearing on event detail pages. Root cause: these are neg-risk events (`status=None`) falling outside the 50-page unfiltered pagination window. Added 25 game-level series tickers (NBA/NHL/MLB/NFL) to the supplementary fetch list. Increased per-ticker limit from 10→50. Markets will appear after next Kalshi poll cycle.
 
+---
+
+### 0f-13. Event Detail April 29 Review — 9 OPEN ISSUES
+
+Reviewed BOS-PHI completed game (event 14617909). Screenshots in `/Users/bain/Desktop/Screenshot 2026-04-29 at 4.20*.png`. Issues affect BOTH web and native unless noted.
+
+#### 0f-13a. Win Probability Chart Extends Past Game End (WEB ONLY)
+
+**Problem:** Web chart shows data all the way to 7:16 PM when the game ended ~6:30 PM. Native clips correctly at ~6:30 PM. The `smartEndTime` / `completed_at` clipping isn't working on web.
+
+**Expected:** Chart should end within a few minutes of the final whistle, matching native behavior.
+
+**Files:** `frontend/components/OddsChart.tsx` (`smartEndTime` computation), `frontend/app/events/[id]/page.tsx` (`sharedChartDomain`)
+
+#### 0f-13b. X-Axis Labels STILL Not Identical Between Charts (WEB ONLY)
+
+**Problem:** Win Probability shows "4:00, 4:25, 4:50, 5:14, 5:38, 6:03, 6:28, 7:16" and Score Differential shows "4:00, 4:24, 4:49, 5:13, 5:37, 6:01, 6:25, 7:16" — intermediate ticks differ by 1 minute. The YAxis width fix (42→44) and domain pruning did NOT fix this. Native has identical x-axes.
+
+**Root cause hypothesis:** The two charts still have different category counts (data point arrays of different lengths), causing Recharts `preserveStartEnd` to pick different ticks. Need to debug the actual `chartData.length` in both charts for this event.
+
+**Files:** `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
+
+#### 0f-13c. 2nd Half Margin/Total Maps Not Showing (WEB + NATIVE)
+
+**Problem:** Only 1st half maps show. 2nd half maps don't appear on either platform. The web fix (checking `market_name` for half grouping) either hasn't deployed or the underlying 2H market data still isn't in our DB.
+
+**Investigation needed:**
+1. Check if the Kalshi poll has run since adding 2H tickers to supplementary fetch (April 28)
+2. Check if 2H spread/total markets exist in `futures_markets` with `event_id` set for this event
+3. If they exist, check if `_classify_game_market()` returns `half_spread`/`half_total` for them
+4. If classified correctly, check if the frontend grouping logic picks them up
+
+**Files:** `backend/app/services/kalshi_api.py` (supplementary fetch), `backend/app/routes/events.py` (`_classify_game_market`), `frontend/components/MarketMapSection.tsx` (grouping), `ios/.../Components/MarketMapSection` (if exists)
+
+#### 0f-13d. Double Doubles in Additional Markets, Not Player Props (WEB + NATIVE)
+
+**Problem:** "Philadelphia at Boston: Double Doubles" market appears in Additional Markets / Player Performance section instead of being integrated into the Player Props grid.
+
+**Investigation needed:** Trace the actual Kalshi market name through `_classify_game_market()`. The regex `_PLAYER_PROP_RE` includes `double.?double` but something diverts it earlier (likely "Total" keyword in the market name, or the outcome format is Yes/No without numeric thresholds, causing the player_prop pipeline to drop them).
+
+**Fix options:**
+1. Explicit detection: if market name contains "double double" or "triple double", classify as `player_prop` regardless of other keywords
+2. Handle non-threshold outcomes: Double Double markets use Yes/No outcomes, not "Over 1.5" — the player prop pipeline may silently drop them because `_extract_threshold()` returns None
+
+**Files:** `backend/app/routes/events.py` (`_classify_game_market`, `_extract_threshold`), `frontend/components/PlayerPropsDashboard.tsx`
+
+#### 0f-13e. Hero Bubbles + EI Badge Still Showing on NATIVE
+
+**Problem:** The web fix removed EI badge, sportsbook spread warning, and prediction market divergence bubbles — but the native app has its OWN SwiftUI implementation of these elements that was not touched. Native still shows:
+- EI badge with score "59"
+- "Sportsbooks spread 79% (8%–87%)" warning
+- "Kalshi has Celtics at 18% vs sportsbooks at 7% (10% gap)" warning
+
+**Fix:** Find and remove these elements from the iOS `EventDetailView.swift` hero section.
+
+**Files:** `ios/.../Views/EventDetailView.swift`
+
+#### 0f-13f. Standings Context Still Showing on NATIVE
+
+**Problem:** The "Standings Context" section (showing "45-37, #4 Eastern Conference" and "56-26, #1 Eastern Conference") is redundant with the Championship Path card which already shows record + conference. User asked to remove it.
+
+**Fix:** Remove the Standings Context section from `EventDetailView.swift`.
+
+**Files:** `ios/.../Views/EventDetailView.swift`
+
+#### 0f-13g. Player Prop Cards Not Fixed on NATIVE
+
+**Problem:** Web player props now default to Points only with per-card "+N more stats" expansion. Native still shows both Points AND Three Pointers side by side for every player, with no way to collapse.
+
+**Fix:** Port the web fix to iOS: default to Points stat only, add per-card expansion for other stats.
+
+**Files:** `ios/.../Components/PlayerPropsCardView.swift` (or equivalent)
+
+#### 0f-13h. Player Award Headshots Missing on WEB
+
+**Problem:** Native shows player headshots (from roster data) next to award names in the Season Futures / Awards section. Web shows only colored initials circles.
+
+**Fix:** The web "Bigger Picture" section's award display needs to use the `PlayerHeadshot` component (already exists for player props). Check if the award data from the `team-progression` endpoint includes player image URLs. If not, the backend needs to enrich award outcomes with headshot URLs from roster data.
+
+**Files:** `frontend/app/events/[id]/page.tsx` (Bigger Picture section), `backend/app/routes/events.py` (team-progression endpoint)
+
+#### 0f-13i. Polymarket Not Showing in Any Game Markets Section
+
+**Problem:** Zero Polymarket items in spreads, totals, period_markets, player_props, or other sections for this event. Polymarket has 3,906 basketball markets in our DB (93% linked), but none appear on event detail pages.
+
+**Investigation needed:**
+1. Query DB: do any Polymarket `futures_markets` have `event_id` matching this event?
+2. If yes: what are their market names and categories? Are they being filtered out by the game-markets endpoint?
+3. If no: why aren't they being linked by the matching task? Check if Polymarket basketball markets have `sport_id` and `llm_sport_category` set correctly
+
+**Files:** `backend/app/tasks/prediction_market_matching.py`, `backend/app/routes/events.py` (game-markets endpoint)
+
+---
+
 ### Manus Site Sweep Findings (April 25) — NEW
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
