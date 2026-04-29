@@ -13,6 +13,7 @@ nonisolated struct ChampionshipGridResponse: Decodable, Sendable {
     let teamCount: Int
     let lastUpdated: String?
     let sourcesAvailable: [String]
+    let championshipMarketId: Int?
 }
 
 nonisolated struct GridColumn: Decodable, Sendable {
@@ -20,6 +21,7 @@ nonisolated struct GridColumn: Decodable, Sendable {
     let label: String
     let order: Int
     let sequential: Bool?
+    let marketId: Int?
 }
 
 nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
@@ -34,6 +36,7 @@ nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
     let record: String?
     let conference: String?
     let division: String?
+    let region: String?
     let seed: Int?
     let cells: [String: GridCell]
 }
@@ -47,6 +50,7 @@ nonisolated struct GridCell: Decodable, Sendable {
 nonisolated struct GridCellSource: Decodable, Sendable {
     let source: String
     let probability: Double
+    let marketName: String?
 }
 
 nonisolated struct GridMover: Decodable, Sendable, Identifiable {
