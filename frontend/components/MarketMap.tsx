@@ -142,7 +142,7 @@ export default function MarketMap({
       {/* Header */}
       <div className="flex justify-between gap-3 items-start relative" style={{ zIndex: 6 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: "-0.035em", lineHeight: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: "-0.035em", lineHeight: 1.1 }}>
             {title}
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>{subtitle}</div>
@@ -190,7 +190,7 @@ export default function MarketMap({
                 }}>
                   {m.label}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 950, marginTop: 2 }}>
+                <div style={{ fontSize: 14, fontWeight: 950, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {m.displayValue}
                 </div>
               </div>

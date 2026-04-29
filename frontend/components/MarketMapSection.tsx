@@ -702,7 +702,7 @@ export default function MarketMapSection({
   if (!hasMargin && !hasTotal) return null;
 
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {/* Left column: Margin maps grouped */}
       {hasMargin && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
