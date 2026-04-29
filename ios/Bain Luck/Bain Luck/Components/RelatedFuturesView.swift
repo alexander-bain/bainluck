@@ -491,10 +491,10 @@ struct RelatedFuturesView: View {
 
                         HStack(alignment: .top, spacing: 10) {
                             if !homeAwards.isEmpty {
-                                awardTeamGrid(awards: homeAwards.prefix(4).map { $0 }, teamColor: hColor, teamName: homeTeam)
+                                awardTeamGrid(awards: homeAwards, teamColor: hColor, teamName: homeTeam)
                             }
                             if !awayAwards.isEmpty {
-                                awardTeamGrid(awards: awayAwards.prefix(4).map { $0 }, teamColor: aColor, teamName: awayTeam)
+                                awardTeamGrid(awards: awayAwards, teamColor: aColor, teamName: awayTeam)
                             }
                         }
                     }
