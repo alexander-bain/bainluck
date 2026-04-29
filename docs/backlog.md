@@ -414,6 +414,14 @@ Two fixes:
 
 Y-axis bumped 12→13px with darker fill (#4B5563), width 42→44. X-axis bumped 11→12px.
 
+### ~~0f-10. Half-Game Maps Missing Actual Markers~~ ✅ SHIPPED (April 28)
+
+1st half margin and total maps had no "Actual" tile or bubble during live games — only showed Projection/Pre-game. Fixed: during the 1st half, actual = current game scores (they're the same). During the 2nd half, uses halftime scores from ESPN history to split actuals between halves. Marker order now matches full-game maps (Actual first).
+
+### ~~0f-11. Kalshi 2H Spread/Total Markets Not Ingested~~ ✅ SHIPPED (April 28)
+
+Kalshi has 2nd half spread, 2nd half total, series winner, and other game-level markets that weren't appearing on event detail pages. Root cause: these are neg-risk events (`status=None`) falling outside the 50-page unfiltered pagination window. Added 25 game-level series tickers (NBA/NHL/MLB/NFL) to the supplementary fetch list. Increased per-ticker limit from 10→50. Markets will appear after next Kalshi poll cycle.
+
 ### Manus Site Sweep Findings (April 25) — NEW
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
