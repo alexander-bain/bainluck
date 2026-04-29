@@ -403,6 +403,14 @@ export default function ScoreDifferentialChart({
       }
     }
 
+    // Prune points outside the shared domain so category count matches OddsChart exactly
+    const domainStart = chartStartTime ? parseISO(chartStartTime).getTime() : -Infinity;
+    const domainEnd = chartEndTime ? parseISO(chartEndTime).getTime() : Infinity;
+    for (const [key, pt] of dataMap) {
+      const t = parseISO(pt.timestamp).getTime();
+      if (t < domainStart || t > domainEnd) dataMap.delete(key);
+    }
+
     return Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
@@ -634,7 +642,7 @@ export default function ScoreDifferentialChart({
                 if (!ticks.includes(0)) ticks.push(0);
                 return ticks.sort((a, b) => a - b);
               })()}
-              width={42}
+              width={44}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
