@@ -319,9 +319,10 @@ export default function PlayerPropsDashboard({
 }: PlayerPropsDashboardProps) {
   const [teamFilter, setTeamFilter] = useState<"all" | "home" | "away">("all");
 
+  const hasBoxScore = boxScore?.players != null && boxScore.players.length > 0;
   const gameState: "pre" | "live" | "done" =
     eventStatus === "live" ? "live" :
-    eventStatus === "completed" || eventStatus === "closed" ? "done" : "pre";
+    (eventStatus === "completed" || eventStatus === "closed") && hasBoxScore ? "done" : "pre";
 
   const players = useMemo(() => {
     if (!data.player_props || data.player_props.length === 0) return [];
@@ -382,12 +383,19 @@ export default function PlayerPropsDashboard({
       }
 
       const statEntry = playerEntry.stats.get(statKey)!;
-      statEntry.rungs.push({
-        threshold: p.threshold,
-        overProb: p.over_probability,
-        sources: 1,
-        movement: p.movement,
-      });
+      const existingRung = statEntry.rungs.find((r) => r.threshold === p.threshold);
+      if (existingRung) {
+        if (p.over_probability != null && (existingRung.overProb == null || p.over_probability > existingRung.overProb)) {
+          existingRung.overProb = p.over_probability;
+        }
+      } else {
+        statEntry.rungs.push({
+          threshold: p.threshold,
+          overProb: p.over_probability,
+          sources: 1,
+          movement: p.movement,
+        });
+      }
       statEntry.sources.add(p.source);
       if (p.movement != null && (statEntry.movement == null || Math.abs(p.movement) > Math.abs(statEntry.movement))) {
         statEntry.movement = p.movement;
