@@ -5,6 +5,24 @@ import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 
+const CATEGORY_GRADIENTS: Record<string, string> = {
+  basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
+  football: "linear-gradient(135deg, #14532d, #15803d)",
+  baseball: "linear-gradient(135deg, #7f1d1d, #b91c1c)",
+  hockey: "linear-gradient(135deg, #1e3a5f, #2563eb)",
+  soccer: "linear-gradient(135deg, #064e3b, #059669)",
+  golf: "linear-gradient(135deg, #14532d, #166534)",
+  mma: "linear-gradient(135deg, #450a0a, #991b1b)",
+  boxing: "linear-gradient(135deg, #450a0a, #991b1b)",
+  motorsports: "linear-gradient(135deg, #1c1917, #44403c)",
+  economics: "linear-gradient(135deg, #2e1065, #7c3aed)",
+  culture: "linear-gradient(135deg, #831843, #db2777)",
+  tech: "linear-gradient(135deg, #083344, #0891b2)",
+  politics: "linear-gradient(135deg, #1e1b4b, #4338ca)",
+  olympics: "linear-gradient(135deg, #78350f, #d97706)",
+  cricket: "linear-gradient(135deg, #134e4a, #14b8a6)",
+};
+
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string }> = {
   basketball: { bg: "bg-orange-500/15", text: "text-orange-600", emoji: "🏀" },
   football: { bg: "bg-green-700/15", text: "text-green-700", emoji: "🏈" },
@@ -203,7 +221,7 @@ function FuturesCard({
       <div
         className="relative h-44 flex flex-col items-center justify-center"
         style={{
-          background: `linear-gradient(135deg, #0f172a, #1e293b)`,
+          background: CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
         }}
       >
         <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>
@@ -213,9 +231,9 @@ function FuturesCard({
         {leader && (
           <>
             <div className="text-5xl font-black text-white tabular-nums tracking-tight">
-              {Math.round(prob * 100)}%
+              {Math.round(prob * 100)}<span className="text-3xl">%</span>
             </div>
-            <div className="text-white/60 text-sm mt-1 font-medium">{leader.name}</div>
+            <div className="text-white/60 text-sm mt-1 font-medium max-w-[80%] text-center truncate">{leader.name}</div>
             {movement != null && Math.abs(movement) >= 0.01 && (
               <div className={`mt-2 text-xs font-bold px-2 py-0.5 rounded-full ${movement > 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
                 {movement > 0 ? "↑" : "↓"} {Math.abs(Math.round(movement * 100))}% 24h
