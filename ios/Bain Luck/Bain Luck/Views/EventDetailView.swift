@@ -102,16 +102,23 @@ struct EventDetailView: View {
         if let espn = vm.history?.espnHistory,
            let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
            let espnDate = firstEspn.timestamp.asDate {
-            // Use whichever is later: scheduled or first ESPN data
-            // (ESPN data before game start has no period)
             actualStart = min(scheduledStart, espnDate.addingTimeInterval(-60))
         } else {
             actualStart = scheduledStart
         }
 
-        if let ca = vm.history?.completedAt, let end = ca.asDate {
-            let buffered = end.addingTimeInterval(30)
-            return actualStart...buffered
+        // For completed games: use last game data point, NOT completedAt
+        // (completedAt is a backend processing timestamp, often 30-45 min after game end)
+        if event.status == "completed" || event.status == "closed" {
+            let lastEspn = vm.history?.espnHistory?.last?.timestamp.asDate
+            let lastOdds = vm.history?.history.last?.timestamp.asDate
+            if let gameEnd = [lastEspn, lastOdds].compactMap({ $0 }).max() {
+                return actualStart...gameEnd.addingTimeInterval(30)
+            }
+            // Fallback to completedAt only if no game data
+            if let ca = vm.history?.completedAt, let end = ca.asDate {
+                return actualStart...end.addingTimeInterval(30)
+            }
         }
         if event.status == "live" {
             return actualStart...Date().addingTimeInterval(60)
@@ -272,7 +279,7 @@ struct EventDetailView: View {
                             sportKey: event.sport,
                             homeWinProb: event.currentOdds?.homeProbability,
                             awayWinProb: event.currentOdds?.awayProbability,
-                            homeSpread: event.currentOdds?.homeSpread ?? event.currentOdds?.spread,
+                            homeSpread: event.currentOdds?.homeSpread,
                             overUnder: event.currentOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore

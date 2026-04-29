@@ -16,7 +16,7 @@ private let sourceLabels: [String: String] = [
 final class LeagueGridViewModel: ObservableObject {
     let slug: String
     @Published var grid: ChampionshipGridResponse?
-    @Published var loading = false
+    @Published var loading = true
     @Published var error: String?
     @Published var conferenceFilter: String?
 

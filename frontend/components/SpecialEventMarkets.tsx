@@ -76,8 +76,25 @@ function isRedundantWithMarketMaps(m: { market_name: string; outcome_name: strin
   return false;
 }
 
+function findWinProbMarkets(markets: typeof data.other): Set<string> {
+  const byName = new Map<string, number[]>();
+  for (const m of markets ?? []) {
+    const name = m.market_name || "";
+    if (!byName.has(name)) byName.set(name, []);
+    if (m.probability != null) byName.get(name)!.push(m.probability);
+  }
+  const winProb = new Set<string>();
+  for (const [name, probs] of byName) {
+    if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
+      winProb.add(name);
+    }
+  }
+  return winProb;
+}
+
 export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventMarketsProps) {
-  const otherMarkets = (data.other ?? []).filter((m) => !isRedundantWithMarketMaps(m));
+  const winProbNames = findWinProbMarkets(data.other);
+  const otherMarkets = (data.other ?? []).filter((m) => !isRedundantWithMarketMaps(m) && !winProbNames.has(m.market_name || ""));
 
   const categories = useMemo(() => {
     if (otherMarkets.length < 3) return [];

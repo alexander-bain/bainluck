@@ -2545,31 +2545,40 @@ export default function RelatedFutures({
                   </>
                 )}
 
-                {homeAwards.length > 0 && (
-                  <div className="mt-4">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
-                      {homeAwards.map(({ future }) => {
-                        const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
-                        return (
-                          <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
-                            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">{shortAwardLabel(future.market_name, future.clean_label)}</div>
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <div className="w-7 h-7 rounded-full grid place-items-center font-mono font-bold text-white text-[10px] shrink-0" style={{ background: hColor }}>{initials}</div>
-                              <div className="text-sm font-medium truncate">{future.outcome_name}</div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
-                                <div className="h-full rounded-full" style={{ width: `${(future.probability || 0) * 100}%`, background: hColor }} />
+                {homeAwards.length > 0 && (() => {
+                  const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();
+                  for (const { future: f } of homeAwards) {
+                    const name = f.outcome_name || "";
+                    if (!byPlayer.has(name)) byPlayer.set(name, []);
+                    byPlayer.get(name)!.push({ label: shortAwardLabel(f.market_name, f.clean_label), prob: f.probability || 0 });
+                  }
+                  const sorted = [...byPlayer.entries()]
+                    .map(([name, awards]) => ({ name, awards: awards.sort((a, b) => b.prob - a.prob) }))
+                    .sort((a, b) => (b.awards[0]?.prob ?? 0) - (a.awards[0]?.prob ?? 0));
+                  return (
+                    <div className="mt-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
+                      <div className="space-y-1">
+                        {sorted.map((p) => {
+                          const initials = p.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
+                          return (
+                            <div key={p.name} className="flex items-center gap-2 py-1">
+                              <div className="w-6 h-6 rounded-full grid place-items-center font-mono font-bold text-white text-[9px] shrink-0" style={{ background: hColor }}>{initials}</div>
+                              <span className="text-xs font-semibold w-24 truncate shrink-0">{p.name}</span>
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {p.awards.map((a, i) => (
+                                  <span key={i} className="text-[10px] text-text-secondary">
+                                    {a.label} <span className="font-bold font-mono" style={{ color: hColor }}>{Math.round(a.prob * 100)}%</span>
+                                  </span>
+                                ))}
                               </div>
-                              <span className="font-mono tabular-nums text-xs font-bold w-10 text-right">{Math.round((future.probability || 0) * 100)}%</span>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })()}
@@ -2624,31 +2633,40 @@ export default function RelatedFutures({
                   </>
                 )}
 
-                {awayAwards.length > 0 && (
-                  <div className="mt-4">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
-                      {awayAwards.map(({ future }) => {
-                        const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
-                        return (
-                          <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
-                            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-1">{shortAwardLabel(future.market_name, future.clean_label)}</div>
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <div className="w-7 h-7 rounded-full grid place-items-center font-mono font-bold text-white text-[10px] shrink-0" style={{ background: aColor }}>{initials}</div>
-                              <div className="text-sm font-medium truncate">{future.outcome_name}</div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
-                                <div className="h-full rounded-full" style={{ width: `${(future.probability || 0) * 100}%`, background: aColor }} />
+                {awayAwards.length > 0 && (() => {
+                  const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();
+                  for (const { future: f } of awayAwards) {
+                    const name = f.outcome_name || "";
+                    if (!byPlayer.has(name)) byPlayer.set(name, []);
+                    byPlayer.get(name)!.push({ label: shortAwardLabel(f.market_name, f.clean_label), prob: f.probability || 0 });
+                  }
+                  const sorted = [...byPlayer.entries()]
+                    .map(([name, awards]) => ({ name, awards: awards.sort((a, b) => b.prob - a.prob) }))
+                    .sort((a, b) => (b.awards[0]?.prob ?? 0) - (a.awards[0]?.prob ?? 0));
+                  return (
+                    <div className="mt-4">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
+                      <div className="space-y-1">
+                        {sorted.map((p) => {
+                          const initials = p.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
+                          return (
+                            <div key={p.name} className="flex items-center gap-2 py-1">
+                              <div className="w-6 h-6 rounded-full grid place-items-center font-mono font-bold text-white text-[9px] shrink-0" style={{ background: aColor }}>{initials}</div>
+                              <span className="text-xs font-semibold w-24 truncate shrink-0">{p.name}</span>
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {p.awards.map((a, i) => (
+                                  <span key={i} className="text-[10px] text-text-secondary">
+                                    {a.label} <span className="font-bold font-mono" style={{ color: aColor }}>{Math.round(a.prob * 100)}%</span>
+                                  </span>
+                                ))}
                               </div>
-                              <span className="font-mono tabular-nums text-xs font-bold w-10 text-right">{Math.round((future.probability || 0) * 100)}%</span>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })()}

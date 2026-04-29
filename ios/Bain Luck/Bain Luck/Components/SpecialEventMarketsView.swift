@@ -53,9 +53,24 @@ struct SpecialEventMarketsView: View {
         return false
     }
 
+    private static func isWinProbabilityMarket(_ markets: [GameMarketOther]) -> Set<String> {
+        var winProbMarkets: Set<String> = []
+        let byMarket = Dictionary(grouping: markets) { $0.marketName }
+        for (name, outcomes) in byMarket {
+            if outcomes.count == 2 {
+                let probs = outcomes.compactMap(\.probability)
+                if probs.count == 2, abs(probs[0] + probs[1] - 1.0) < 0.1 {
+                    winProbMarkets.insert(name)
+                }
+            }
+        }
+        return winProbMarkets
+    }
+
     private var categories: [MarketCategory] {
-        let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) }
-        guard filtered.count >= 3 else { return [] }
+        let winProbNames = Self.isWinProbabilityMarket(markets)
+        let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
+        guard !filtered.isEmpty else { return [] }
 
         var catMap: [String: MarketCategory] = [:]
         let categoryOrder = ["MVP", "Game Props", "Player Performance", "Novelty Props", "Other Markets"]

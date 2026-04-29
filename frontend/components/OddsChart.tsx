@@ -224,22 +224,19 @@ export default function OddsChart({
   // use it directly.
 
   // Determine chart end boundary for completed games.
-  // Priority: completedAt (authoritative, from backend) > last ESPN/stat_model signal > null.
+  // Use last game data point (ESPN/odds), NOT completedAt which is a backend
+  // processing timestamp often 30-45 minutes after the game actually ended.
   const smartEndTime = useMemo(() => {
     if (!isClosed) return null;
 
-    // Use authoritative completed_at when available — no guessing.
-    if (completedAt) {
-      return new Date(parseISO(completedAt).getTime() + 2 * 60 * 1000);
-    }
-
-    // Fallback: infer from game-end data sources (ESPN, stat_model only).
     const candidates: Date[] = [];
 
+    // ESPN history — most reliable game-end signal
     if (espnHistory && espnHistory.length > 0) {
       candidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
     }
 
+    // Game-end data sources (not prediction markets — they update late)
     const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb", "betting"]);
     if (winProbHistory) {
       for (const [source, points] of Object.entries(winProbHistory)) {
@@ -249,11 +246,23 @@ export default function OddsChart({
       }
     }
 
-    if (candidates.length === 0) return null;
+    // Odds history as additional signal
+    if (history && history.length > 0) {
+      candidates.push(parseISO(history[history.length - 1].timestamp));
+    }
 
-    const latest = candidates.reduce((a, b) => (a > b ? a : b));
-    return new Date(latest.getTime() + 2 * 60 * 1000);
-  }, [isClosed, completedAt, espnHistory, winProbHistory]);
+    if (candidates.length > 0) {
+      const latest = candidates.reduce((a, b) => (a > b ? a : b));
+      return new Date(latest.getTime() + 30 * 1000); // 30s buffer
+    }
+
+    // Last resort: completedAt (backend timestamp, not ideal)
+    if (completedAt) {
+      return new Date(parseISO(completedAt).getTime() + 30 * 1000);
+    }
+
+    return null;
+  }, [isClosed, completedAt, espnHistory, winProbHistory, history]);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {

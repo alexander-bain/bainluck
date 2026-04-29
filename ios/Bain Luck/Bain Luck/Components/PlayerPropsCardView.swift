@@ -10,6 +10,7 @@ struct PlayerPropsCardView: View {
     var boxScore: [String: [String: Double]]?
 
     @State private var teamFilter: String = "all"
+    @State private var showAllStats: Bool = false
 
     private var homeAbbr: String {
         String(homeTeam.split(separator: " ").last ?? "Home")
@@ -138,6 +139,18 @@ struct PlayerPropsCardView: View {
 
                     Spacer()
 
+                    // Stat toggle
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { showAllStats.toggle() }
+                    } label: {
+                        Text(showAllStats ? "Points" : "All stats")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+
                     // Team filter
                     HStack(spacing: 0) {
                         filterButton("All", value: "all")
@@ -217,9 +230,13 @@ struct PlayerPropsCardView: View {
                 Spacer()
             }
 
-            // Stat groups in 2-column layout (matching web)
-            let pairs = stride(from: 0, to: card.statGroups.count, by: 2).map { i in
-                (card.statGroups[i], i + 1 < card.statGroups.count ? card.statGroups[i + 1] : nil)
+            // Stat groups — filtered by toggle, 2-column layout
+            let visibleGroups = showAllStats ? card.statGroups : card.statGroups.filter {
+                $0.type.lowercased().contains("point") || $0.type.lowercased().contains("pts")
+            }
+            let groupsToShow = visibleGroups.isEmpty ? Array(card.statGroups.prefix(1)) : visibleGroups
+            let pairs = stride(from: 0, to: groupsToShow.count, by: 2).map { i in
+                (groupsToShow[i], i + 1 < groupsToShow.count ? groupsToShow[i + 1] : nil)
             }
             ForEach(pairs.indices, id: \.self) { idx in
                 let pair = pairs[idx]

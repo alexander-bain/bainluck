@@ -481,22 +481,10 @@ struct RelatedFuturesView: View {
                             )
                     }
 
-                    // Awards — grouped by team with mini card grid (matching web)
+                    // Awards — compact rows grouped by player
                     if !mergedAwards.isEmpty {
                         sectionHeader(icon: "star.fill", label: "AWARDS")
-                        let homeAwards = mergedAwards.filter { teamColorForFuture($0, hColor: hColor, aColor: aColor) == hColor }
-                            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
-                        let awayAwards = mergedAwards.filter { teamColorForFuture($0, hColor: hColor, aColor: aColor) == aColor }
-                            .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
-
-                        HStack(alignment: .top, spacing: 10) {
-                            if !homeAwards.isEmpty {
-                                awardTeamGrid(awards: homeAwards, teamColor: hColor, teamName: homeTeam)
-                            }
-                            if !awayAwards.isEmpty {
-                                awardTeamGrid(awards: awayAwards, teamColor: aColor, teamName: awayTeam)
-                            }
-                        }
+                        awardsByPlayer(mergedAwards, hColor: hColor, aColor: aColor)
                     }
 
                     // Season Outlook (win totals, division winners minus stat leaders)
@@ -570,6 +558,64 @@ struct RelatedFuturesView: View {
     private func teamColorForFuture(_ future: RelatedFuture, hColor: Color, aColor: Color) -> Color {
         let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
         return future.outcomeName.localizedCaseInsensitiveContains(homeShort) ? hColor : aColor
+    }
+
+    private func awardsByPlayer(_ awards: [RelatedFuture], hColor: Color, aColor: Color) -> some View {
+        // Group awards by player name
+        var byPlayer: [(name: String, awards: [(label: String, prob: Double, future: RelatedFuture)])] = []
+        var playerOrder: [String] = []
+        var playerMap: [String: [(label: String, prob: Double, future: RelatedFuture)]] = [:]
+
+        for a in awards {
+            let player = a.outcomeName
+            let label = shortAwardLabel(a.marketName, cleanLabel: a.cleanLabel)
+            let entry = (label: label, prob: a.probability ?? 0, future: a)
+            playerMap[player, default: []].append(entry)
+            if !playerOrder.contains(player) { playerOrder.append(player) }
+        }
+
+        // Sort players by max probability (most relevant first)
+        let sorted = playerOrder
+            .map { (name: $0, awards: playerMap[$0]!.sorted { $0.prob > $1.prob }) }
+            .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
+
+        let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
+        return LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(sorted.indices, id: \.self) { idx in
+                let player = sorted[idx]
+                let color = teamColorForFuture(player.awards.first!.future, hColor: hColor, aColor: aColor)
+                HStack(spacing: 8) {
+                    PlayerHeadshotView(
+                        player: player.awards.first?.future.matchedPlayer,
+                        name: player.name,
+                        teamColor: color,
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.name)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                        HStack(spacing: 8) {
+                            ForEach(player.awards.indices, id: \.self) { ai in
+                                let award = player.awards[ai]
+                                HStack(spacing: 3) {
+                                    Text(award.label)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                    Text("\(Int((award.prob * 100).rounded()))%")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(color)
+                                }
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+            }
+        }
     }
 
     private func awardTeamGrid(awards: [RelatedFuture], teamColor: Color, teamName: String) -> some View {

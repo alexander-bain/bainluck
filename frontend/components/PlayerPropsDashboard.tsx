@@ -269,7 +269,11 @@ function StatBox({
   );
 }
 
-function PlayerCard({ player, gameState }: { player: PlayerData; gameState: "pre" | "live" | "done" }) {
+function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; gameState: "pre" | "live" | "done"; showAllStats: boolean }) {
+  const visibleStats = showAllStats
+    ? player.stats
+    : player.stats.filter((s) => s.type.toLowerCase().includes("point") || s.type.toLowerCase().includes("pts"));
+  const statsToShow = visibleStats.length > 0 ? visibleStats : player.stats.slice(0, 1);
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-4 flex flex-col">
       <div className="flex items-center gap-3 mb-3">
@@ -299,8 +303,8 @@ function PlayerCard({ player, gameState }: { player: PlayerData; gameState: "pre
           </span>
         )}
       </div>
-      <div className={`grid gap-2 ${player.stats.length >= 3 ? "grid-cols-2" : "grid-cols-1"}`}>
-        {player.stats.map((s) => (
+      <div className={`grid gap-2 ${statsToShow.length >= 3 ? "grid-cols-2" : "grid-cols-1"}`}>
+        {statsToShow.map((s) => (
           <StatBox key={s.type} stat={s} gameState={gameState} teamColor={player.color} />
         ))}
       </div>
@@ -318,6 +322,7 @@ export default function PlayerPropsDashboard({
   boxScore,
 }: PlayerPropsDashboardProps) {
   const [teamFilter, setTeamFilter] = useState<"all" | "home" | "away">("all");
+  const [showAllStats, setShowAllStats] = useState(false);
 
   const hasBoxScore = boxScore?.players != null && boxScore.players.length > 0;
   const gameState: "pre" | "live" | "done" =
@@ -494,6 +499,12 @@ export default function PlayerPropsDashboard({
           <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAllStats((s) => !s)}
+            className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors"
+          >
+            {showAllStats ? "Points only" : "All stats"}
+          </button>
           <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded bg-blue-500/10 text-blue-600">
             {sourceLabel}
           </span>
@@ -516,7 +527,7 @@ export default function PlayerPropsDashboard({
 
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
         {filtered.map((p) => (
-          <PlayerCard key={p.name} player={p} gameState={gameState} />
+          <PlayerCard key={p.name} player={p} gameState={gameState} showAllStats={showAllStats} />
         ))}
       </div>
     </div>
