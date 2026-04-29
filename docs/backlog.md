@@ -335,9 +335,8 @@ Full report: `Manus/mystery_shopper.md`.
 
 ---
 
-### 0e. Wire Manus audit results into /health skill — IN PROGRESS
-Manus health audit suite built (`Manus/prompts/`, `scripts/manus_health_suite.py`). Next: update the `/health` skill to read `Manus/audit_results/latest/` and surface last audit date + score alongside Sentry/Heroku/CI checks. Flag if last audit is >7 days old.
-**Files:** `/health` skill definition, `scripts/manus_health_suite.py`
+### ~~0e. Wire Manus audit results into /health skill~~ ✅ ALREADY DONE
+Section H of `/health` (`.claude/commands/health.md`) already reads `Manus/audit_results/latest/manifest.json`, scans `*.md` reports for findings, flags staleness >7 days, and suggests running the suite. Verified working April 29.
 
 ### 0f. Polymarket CLOB V2 migration — MONITOR (April 28, 2026)
 Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs still working with current field names. We use NO SDK — all raw httpx. CLOB is only used for price history backfill (not critical path). Real risk is if **Gamma API** (`gamma-api.polymarket.com`) changes field names or pagination. Monitor around April 28.
