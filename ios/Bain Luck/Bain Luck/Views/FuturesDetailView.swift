@@ -105,7 +105,7 @@ struct FuturesDetailView: View {
             await vm.load()
             if let market = vm.market {
                 AnalyticsService.trackScreen(name: "futures_detail", type: "futures_detail")
-                AnalyticsService.trackFuturesDetailView(marketId: marketId, category: market.displayCategory)
+                AnalyticsService.trackFuturesDetailView(marketId: marketId, category: market.category)
             }
         }
         .refreshable {
