@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAnalyticsContext } from "@/components/Analytics";
 
 /**
  * Mobile bottom tab navigation — Feed / Search / My Stuff
@@ -9,6 +10,7 @@ import { usePathname } from "next/navigation";
  */
 export default function BottomNav() {
   const pathname = usePathname();
+  const { track } = useAnalyticsContext();
 
   const tabs = [
     {
@@ -38,6 +40,15 @@ export default function BottomNav() {
           <Link
             key={tab.href}
             href={tab.href}
+            onClick={() => {
+              if (!tab.isActive) {
+                track('navigation_click', {
+                  click_type: 'nav_tab' as const,
+                  from_page: pathname || '/',
+                  to_page: tab.href,
+                });
+              }
+            }}
             className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
               tab.isActive
                 ? "text-accent-brand"

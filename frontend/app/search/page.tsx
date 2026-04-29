@@ -273,16 +273,24 @@ function SearchContent() {
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {results.results.map((event, index) => (
-              <EventCard
-                key={event.id}
-                event={event}
-                showSport={!sportFilter}
-                sourceSection="search_results"
-                positionIndex={index}
-                isPinned={isPinned(event.id)}
-                onPinToggle={togglePin}
-                pinDisabled={isMaxReached}
-              />
+              <div key={event.id} onClick={() => {
+                track('search_result_click', {
+                  query: query,
+                  result_type: 'event',
+                  result_id: event.id,
+                  position: index,
+                });
+              }}>
+                <EventCard
+                  event={event}
+                  showSport={!sportFilter}
+                  sourceSection="search_results"
+                  positionIndex={index}
+                  isPinned={isPinned(event.id)}
+                  onPinToggle={togglePin}
+                  pinDisabled={isMaxReached}
+                />
+              </div>
             ))}
           </div>
         </>
@@ -298,15 +306,23 @@ function SearchContent() {
             </span>
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.futures.map((market) => (
-              <FuturesCard
-                key={market.id}
-                market={market}
-                showSport={!sportFilter}
-                isPinned={isFuturesPinned(market.id)}
-                onPinToggle={toggleFuturesPin}
-                pinDisabled={isFuturesMaxReached}
-              />
+            {results.futures.map((market, index) => (
+              <div key={market.id} onClick={() => {
+                track('search_result_click', {
+                  query: query,
+                  result_type: 'futures',
+                  result_id: market.id,
+                  position: index,
+                });
+              }}>
+                <FuturesCard
+                  market={market}
+                  showSport={!sportFilter}
+                  isPinned={isFuturesPinned(market.id)}
+                  onPinToggle={toggleFuturesPin}
+                  pinDisabled={isFuturesMaxReached}
+                />
+              </div>
             ))}
           </div>
         </div>

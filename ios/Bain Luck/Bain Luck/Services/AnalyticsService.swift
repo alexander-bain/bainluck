@@ -92,6 +92,51 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - Onboarding Lifecycle
+
+    nonisolated static func trackOnboardingStart(entryPoint: String) {
+        Analytics.logEvent("onboarding_start", parameters: [
+            "entry_point": entryPoint,
+        ])
+    }
+
+    nonisolated static func trackOnboardingSkip(lastStep: Int, lastStepName: String) {
+        Analytics.logEvent("onboarding_skip", parameters: [
+            "last_step_completed": lastStep,
+            "last_step_name": lastStepName,
+        ])
+    }
+
+    // MARK: - Search
+
+    nonisolated static func trackSearchResultClick(query: String, resultType: String, resultId: String, position: Int) {
+        Analytics.logEvent("search_result_click", parameters: [
+            "query": query,
+            "result_type": resultType,
+            "result_id": resultId,
+            "position": position,
+        ])
+    }
+
+    // MARK: - Navigation
+
+    nonisolated static func trackNavigation(fromPage: String, toPage: String) {
+        Analytics.logEvent("navigation_click", parameters: [
+            "click_type": "nav_tab",
+            "from_page": fromPage,
+            "to_page": toPage,
+        ])
+    }
+
+    // MARK: - Return Visit
+
+    nonisolated static func trackReturnVisit(daysSinceLast: Int, sessionNumber: Int) {
+        Analytics.logEvent("return_visit", parameters: [
+            "days_since_last": daysSinceLast,
+            "session_number": sessionNumber,
+        ])
+    }
+
     // MARK: - User Identity
 
     nonisolated static func setUserId(_ userId: String?) {

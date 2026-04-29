@@ -337,6 +337,66 @@ export interface FuturesDetailViewParams {
 }
 
 // ============================================================================
+// Phase 2: Funnel & Retention Events
+// ============================================================================
+
+export interface OnboardingStartParams {
+  entry_point: string;
+}
+
+export interface OnboardingSkipParams {
+  last_step_completed: number;
+  last_step_name: string;
+}
+
+export interface SearchResultClickParams {
+  query: string;
+  result_type: 'event' | 'futures' | 'team';
+  result_id: number | string;
+  position: number;
+}
+
+export interface ReturnVisitParams {
+  days_since_last: number;
+  session_number: number;
+}
+
+// ============================================================================
+// Phase 3: Content Interaction Events
+// ============================================================================
+
+export interface GridCellClickParams {
+  sport: string;
+  team: string;
+  column: string;
+  probability: number;
+}
+
+export interface PlayerPropClickParams {
+  event_id: number;
+  player_name: string;
+  prop_type: string;
+  threshold: number;
+}
+
+export interface MarketMapInteractParams {
+  map_type: 'margin' | 'total';
+  segment: 'full' | '1H' | '2H';
+  action: 'ladder_click' | 'marker_hover';
+}
+
+export interface ShareParams {
+  content_type: 'event' | 'futures' | 'grid';
+  item_id: number | string;
+  method: string;
+}
+
+export interface FeedRefreshParams {
+  trigger: 'manual' | 'auto';
+  new_items_count: number;
+}
+
+// ============================================================================
 // Search Events
 // ============================================================================
 
@@ -453,6 +513,19 @@ export interface AnalyticsEventMap {
   // Futures
   futures_card_click: FuturesCardClickParams;
   futures_detail_view: FuturesDetailViewParams;
+
+  // Funnel & Retention (Phase 2)
+  onboarding_start: OnboardingStartParams;
+  onboarding_skip: OnboardingSkipParams;
+  search_result_click: SearchResultClickParams;
+  return_visit: ReturnVisitParams;
+
+  // Content Interaction (Phase 3)
+  grid_cell_click: GridCellClickParams;
+  player_prop_click: PlayerPropClickParams;
+  market_map_interact: MarketMapInteractParams;
+  share: ShareParams;
+  feed_refresh: FeedRefreshParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

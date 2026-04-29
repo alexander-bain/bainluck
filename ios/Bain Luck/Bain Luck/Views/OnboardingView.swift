@@ -44,7 +44,15 @@ struct OnboardingView: View {
             }
             .onAppear {
                 AnalyticsService.trackScreen(name: "onboarding", type: "onboarding")
+                AnalyticsService.trackOnboardingStart(entryPoint: "onboarding_view")
                 AnalyticsService.trackOnboardingStep(step: 1, stepName: "location")
+            }
+            .onDisappear {
+                if !vm.submitting && vm.currentStep < vm.totalSteps {
+                    let stepNames = ["location", "follow", "alma_maters", "interests", "rivals"]
+                    let name = vm.currentStep <= stepNames.count ? stepNames[vm.currentStep - 1] : "unknown"
+                    AnalyticsService.trackOnboardingSkip(lastStep: vm.currentStep, lastStepName: name)
+                }
             }
         }
     }

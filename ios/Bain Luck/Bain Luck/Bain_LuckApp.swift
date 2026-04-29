@@ -27,6 +27,33 @@ struct Bain_LuckApp: App {
         #else
         AnalyticsService.setUserProperty("ios", forName: "platform")
         #endif
+
+        // App version
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            AnalyticsService.setUserProperty(version, forName: "app_version")
+        }
+
+        // Return visit + session count tracking
+        let defaults = UserDefaults.standard
+        let sessionCount = defaults.integer(forKey: "bainluck_session_count") + 1
+        defaults.set(sessionCount, forKey: "bainluck_session_count")
+        let today = Calendar.current.startOfDay(for: Date())
+        if let lastVisit = defaults.object(forKey: "bainluck_last_visit") as? Date {
+            let daysSince = Calendar.current.dateComponents([.day], from: lastVisit, to: today).day ?? 0
+            if daysSince > 0 {
+                AnalyticsService.trackReturnVisit(daysSinceLast: daysSince, sessionNumber: sessionCount)
+            }
+        }
+        defaults.set(today, forKey: "bainluck_last_visit")
+
+        // Days since install
+        if defaults.object(forKey: "bainluck_install_date") == nil {
+            defaults.set(today, forKey: "bainluck_install_date")
+        }
+        if let installDate = defaults.object(forKey: "bainluck_install_date") as? Date {
+            let daysSinceInstall = Calendar.current.dateComponents([.day], from: installDate, to: today).day ?? 0
+            AnalyticsService.setUserProperty(String(daysSinceInstall), forName: "days_since_install")
+        }
     }
 
     var body: some Scene {

@@ -93,6 +93,26 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       return () => clearTimeout(timer);
     }
     setIsInitialized(true);
+
+    // Return visit tracking
+    try {
+      const lastVisit = localStorage.getItem('bainluck_last_visit');
+      const sessionCount = parseInt(localStorage.getItem('bainluck_session_count') || '0', 10) + 1;
+      localStorage.setItem('bainluck_session_count', String(sessionCount));
+      const now = new Date().toISOString().split('T')[0];
+      localStorage.setItem('bainluck_last_visit', now);
+      if (lastVisit && lastVisit !== now) {
+        const daysSince = Math.round(
+          (new Date(now).getTime() - new Date(lastVisit).getTime()) / 86400000
+        );
+        if (daysSince > 0) {
+          trackEvent('return_visit', {
+            days_since_last: daysSince,
+            session_number: sessionCount,
+          }, { immediate: true });
+        }
+      }
+    } catch { /* localStorage unavailable */ }
   }, []);
 
   // Handle consent change

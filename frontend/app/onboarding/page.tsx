@@ -8,6 +8,8 @@ import { SPORT_CATEGORIES, getLeagueDisplay, getEmojiForLeague } from "@/lib/spo
 import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 
+const STEP_NAMES = ['location', 'follow', 'alma_maters', 'interests', 'rivals'] as const;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -86,6 +88,20 @@ export default function OnboardingPage() {
   usePageTracking({ pageType: 'onboarding', pageTitle: 'Get Started' });
   useScrollDepth({ pageType: 'onboarding' });
   useEngagementTime({ pageType: 'onboarding' });
+
+  // Track onboarding start and skip
+  const onboardingCompleted = useRef(false);
+  useEffect(() => {
+    track('onboarding_start', { entry_point: 'onboarding_page' });
+    return () => {
+      if (!onboardingCompleted.current) {
+        track('onboarding_skip', {
+          last_step_completed: step,
+          last_step_name: STEP_NAMES[step - 1] || 'unknown',
+        });
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Step state — 5 steps now
   const [step, setStep] = useState(1);
@@ -471,6 +487,7 @@ export default function OnboardingPage() {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await submitOnboarding(data, token);
+        onboardingCompleted.current = true;
         track('onboarding_complete', {
           total_teams: data.local_teams.length + data.follow_teams.length + data.alma_mater_teams.length,
           total_sports: Object.values(sportAffinities).filter(v => v > 0).length,
@@ -513,10 +530,6 @@ export default function OnboardingPage() {
   // Navigation
   // =========================================================================
 
-  const STEP_NAMES: Record<number, 'location' | 'follow' | 'alma_maters' | 'interests' | 'rivals'> = {
-    1: 'location', 2: 'follow', 3: 'alma_maters', 4: 'interests', 5: 'rivals',
-  };
-
   const getStepSelections = (s: number): number => {
     switch (s) {
       case 1: return locationTeams.filter(t => t.selected).length;
@@ -531,7 +544,7 @@ export default function OnboardingPage() {
   const goNext = () => {
     track('onboarding_step', {
       step,
-      step_name: STEP_NAMES[step],
+      step_name: STEP_NAMES[step - 1],
       selections_count: getStepSelections(step),
     });
     setStep((s) => Math.min(s + 1, TOTAL_STEPS));
