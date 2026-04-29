@@ -415,7 +415,18 @@ Two fixes:
 
 ### ~~0f-7. Kalshi Win Probability Spikes~~ ✅ SHIPPED (April 29)
 
-Deduplicate markets by `(event_id, source)` before writing snapshots. Picks one market per event per source (most outcomes = primary matchup market). Eliminates oscillation from dual "Team A win?" / "Team B win?" markets.
+**Phase 1 (April 29):** Deduplicate markets by `(event_id, source)` before writing snapshots.
+**Phase 2 (April 29):** Fixed ticker team extraction for per-team binary markets (e.g., `KXNBAGAME-26APR28BOSPHI-BOS`). The outcome suffix `-BOS` was polluting `extract_teams_from_ticker()`, causing `teams_str` to be `"bosphi-bos"` instead of `"bosphi"`. Now strips the suffix before parsing. This was the root cause of the Kalshi line showing inverted probabilities.
+
+### ~~0f-12. Event Detail Batch Fix~~ ✅ SHIPPED (April 29)
+
+6 fixes in one batch:
+1. **Hero bubbles removed** — EI badge, sportsbook spread warning, prediction market divergence bubbles all removed (150 lines of dead code cleaned up)
+2. **Player props default to Points only** — fixed `.includes("point")` substring match (caught "Three Pointers") → exact match `^points?$`. Per-card "+N more stats" expansion link replaces global toggle
+3. **2nd half market grouping** — frontend now checks `market_name` (not just `outcome_name`) for half indicators. Kalshi puts "First Half"/"Second Half" in market_name only
+4. **1st half final markers** — expanded halftime detection regex to also match "End of 2nd Quarter". Searches from end of ESPN history array for latest entry
+5. **X-axis label alignment** — YAxis width 42→44 to match OddsChart, plus pruning ScoreDiffChart data points outside shared domain
+6. **iOS league page** — synced LeagueGridModels with current API fields (marketId, region, marketName, championshipMarketId)
 
 ### ~~0f-8. Win Probability Chart Mobile Readability~~ ✅ SHIPPED (April 28)
 
