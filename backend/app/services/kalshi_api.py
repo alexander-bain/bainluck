@@ -452,10 +452,23 @@ class KalshiAPIService(BaseAPIClient):
         # unfiltered listing. Explicitly query key sports series tickers
         # to guarantee we don't miss championship/conference markets.
         _SPORTS_SERIES_TICKERS = [
+            # Championship / conference
             "KXNBA", "KXNBAEAST", "KXNBAWEST",
             "KXNHL", "KXNHLEAST", "KXNHLWEST",
             "KXMLB", "KXMLBAL", "KXMLBNL",
             "KXNFL", "KXNFLNFC", "KXNFLAFC",
+            # Game-level (neg-risk, status=None — missed by unfiltered pagination)
+            "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
+            "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
+            "KXNBA2HSPREAD", "KXNBA2HTOTAL", "KXNBA2HWINNER",
+            "KXNBASERIES",
+            "KXNHLSPREAD", "KXNHLTOTAL", "KXNHLTEAMTOTAL",
+            "KXNHL1HSPREAD", "KXNHL1HTOTAL", "KXNHLSERIES",
+            "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL",
+            "KXMLB1HSPREAD", "KXMLB1HTOTAL", "KXMLBSERIES",
+            "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL",
+            "KXNFL1HSPREAD", "KXNFL1HTOTAL", "KXNFL2HSPREAD", "KXNFL2HTOTAL",
+            "KXNFLSERIES",
         ]
         supplemented = 0
         for st in _SPORTS_SERIES_TICKERS:
@@ -467,7 +480,7 @@ class KalshiAPIService(BaseAPIClient):
                     status=None,
                     series_ticker=st,
                     with_nested_markets=True,
-                    limit=10,
+                    limit=50,
                 )
                 for event_data in events_page:
                     nested = event_data.get("markets", [])
