@@ -2549,7 +2549,7 @@ export default function RelatedFutures({
                   <div className="mt-4">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
                     <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
-                      {homeAwards.slice(0, 4).map(({ future }) => {
+                      {homeAwards.map(({ future }) => {
                         const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
                         return (
                           <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
@@ -2628,7 +2628,7 @@ export default function RelatedFutures({
                   <div className="mt-4">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
                     <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
-                      {awayAwards.slice(0, 4).map(({ future }) => {
+                      {awayAwards.map(({ future }) => {
                         const initials = (future.outcome_name || "").split(" ").map((w) => w[0]).join("").slice(0, 2);
                         return (
                           <div key={`${future.outcome_id}-${future.market_id}`} className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
