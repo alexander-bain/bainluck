@@ -820,6 +820,26 @@ async def _process_event_batch(
                 stats["errors"].append(f"{event.id}: {str(e)}")
                 continue
 
+        # Propagate event_id from parent markets to their sub-markets.
+        # The matching task links parent game markets (e.g., "Magic vs. Pistons")
+        # to events, but sub-markets (player props, spreads) inherit the link
+        # from their parent via group_id.
+        from sqlalchemy import text as _text
+        prop_result = await session.execute(_text("""
+            UPDATE futures_markets sub
+            SET event_id = parent.event_id
+            FROM futures_markets parent
+            WHERE sub.group_type = 'polymarket_sub_market'
+              AND sub.event_id IS NULL
+              AND sub.group_id IS NOT NULL
+              AND parent.source = 'polymarket'
+              AND parent.group_type = 'polymarket_event'
+              AND parent.group_id = sub.group_id
+              AND parent.event_id IS NOT NULL
+        """))
+        if prop_result.rowcount > 0:
+            stats["sub_markets_linked"] = prop_result.rowcount
+
         await session.commit()
 
 
