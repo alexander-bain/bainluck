@@ -10,7 +10,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, cast, Integer, case
-from app.database import get_session
+from app.services import get_db as get_session
 from app.models.models import UserPrediction, FuturesMarket
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])

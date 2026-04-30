@@ -8,7 +8,7 @@ Uses Vercel/Next.js OG image generation or server-side HTML rendering.
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
-from app.database import get_session
+from app.services import get_db as get_session
 from app.models.models import FuturesMarket, FuturesOutcome
 
 router = APIRouter(prefix="/api/og", tags=["og"])
