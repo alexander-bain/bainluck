@@ -670,3 +670,70 @@ export function GuessCard({ item }: { item: FeedItem }) {
     </div>
   );
 }
+
+// ── Daily Challenge Card ──
+
+const DAILY_GOAL = 5;
+
+export function DailyChallengeCard({ guessesToday, onGuessCompleted }: {
+  guessesToday: number;
+  onGuessCompleted: () => void;
+}) {
+  const completed = guessesToday >= DAILY_GOAL;
+  const progress = Math.min(guessesToday / DAILY_GOAL, 1);
+
+  return (
+    <div className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md`}>
+      <div className="px-4 py-3 flex items-center gap-3">
+        <span className="text-2xl">{completed ? "🏆" : "🎯"}</span>
+        <div className="flex-1">
+          <div className="text-sm font-bold">
+            {completed ? "Daily Challenge Complete!" : "Today’s Challenge"}
+          </div>
+          <div className="text-xs text-text-muted">
+            {completed
+              ? "Come back tomorrow for a new challenge"
+              : `Make ${DAILY_GOAL} predictions today · ${guessesToday}/${DAILY_GOAL}`}
+          </div>
+        </div>
+        {!completed && (
+          <div className="w-12 h-12 relative">
+            <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="#e5e7eb" strokeWidth="3" />
+              <circle cx="18" cy="18" r="15" fill="none" stroke="#f59e0b" strokeWidth="3"
+                strokeDasharray={`${progress * 94.25} 94.25`}
+                strokeLinecap="round" className="transition-all duration-500" />
+            </svg>
+            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold">{guessesToday}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Resolution Card ──
+
+export function ResolutionCard({ marketName, guess, threshold, actual, correct }: {
+  marketName: string; guess: string; threshold: number; actual: number; correct: boolean;
+}) {
+  return (
+    <div className="rounded-2xl overflow-hidden border-2 border-purple-400/30 bg-surface-card shadow-md">
+      <div className="px-4 py-2 bg-purple-500/10 flex items-center gap-2">
+        <span className="text-sm">📋</span>
+        <span className="text-xs font-bold uppercase tracking-wider text-purple-700">Market Resolved</span>
+      </div>
+      <div className="p-4 text-center">
+        <h3 className="font-bold text-sm mb-2">{marketName}</h3>
+        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold mb-2 ${
+          correct ? "bg-green-500/15 text-green-700" : "bg-red-500/15 text-red-700"
+        }`}>
+          {correct ? "✓ You got it right!" : "✗ Better luck next time"}
+        </div>
+        <div className="text-xs text-text-muted">
+          You guessed {guess} than {threshold}% — final result: {actual}%
+        </div>
+      </div>
+    </div>
+  );
+}

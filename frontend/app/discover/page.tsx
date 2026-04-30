@@ -5,7 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
-import DiscoverCard, { type DiscoverGroupedItem, GuessCard } from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const DISMISSED_KEY = "discover_dismissed";
@@ -195,9 +195,21 @@ export default function DiscoverPage() {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [dailyGuesses, setDailyGuesses] = useState(0);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setDismissed(getDismissed()); }, []);
+  useEffect(() => {
+    setDismissed(getDismissed());
+    // Show onboarding if first visit
+    if (typeof window !== "undefined" && !localStorage.getItem("discover_onboarded")) {
+      setShowOnboarding(true);
+    }
+    // Load today's guess count
+    const today = new Date().toISOString().slice(0, 10);
+    const stored = localStorage.getItem(`daily_guesses_${today}`);
+    if (stored) setDailyGuesses(parseInt(stored, 10));
+  }, []);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -295,6 +307,15 @@ export default function DiscoverPage() {
         </div>
       </header>
 
+      {/* Onboarding overlay */}
+      {showOnboarding && (
+        <OnboardingFlow onComplete={(cats) => {
+          setShowOnboarding(false);
+          localStorage.setItem("discover_onboarded", "1");
+          if (cats.length > 0 && !SPORTS_CATS.has(cats[0])) setCategoryFilter(cats[0]);
+        }} />
+      )}
+
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
       <main className="max-w-6xl mx-auto px-4 py-4">
         {isLoading && (
@@ -321,6 +342,21 @@ export default function DiscoverPage() {
                 ? <button onClick={() => setCategoryFilter("all")} className="text-blue-600 hover:underline">Show all markets</button>
                 : "Check back later for new markets"}
             </p>
+          </div>
+        )}
+
+        {/* Daily Challenge */}
+        {!isLoading && processedItems.length > 0 && (
+          <div className="mb-4">
+            <DailyChallengeCard
+              guessesToday={dailyGuesses}
+              onGuessCompleted={() => {
+                const today = new Date().toISOString().slice(0, 10);
+                const next = dailyGuesses + 1;
+                setDailyGuesses(next);
+                localStorage.setItem(`daily_guesses_${today}`, next.toString());
+              }}
+            />
           </div>
         )}
 
@@ -356,6 +392,71 @@ export default function DiscoverPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// ── Build Your Feed Onboarding ──
+
+function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: string[]) => void }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const categories = [
+    { key: "basketball", emoji: "🏀", label: "Basketball" },
+    { key: "football", emoji: "🏈", label: "Football" },
+    { key: "baseball", emoji: "⚾", label: "Baseball" },
+    { key: "hockey", emoji: "🏒", label: "Hockey" },
+    { key: "soccer", emoji: "⚽", label: "Soccer" },
+    { key: "golf", emoji: "⛳", label: "Golf" },
+    { key: "politics", emoji: "🏛", label: "Politics" },
+    { key: "economics", emoji: "📈", label: "Economics" },
+    { key: "tech", emoji: "💻", label: "Tech" },
+    { key: "culture", emoji: "🎭", label: "Culture" },
+    { key: "weather", emoji: "🌤", label: "Weather" },
+    { key: "mma", emoji: "🥊", label: "MMA / Boxing" },
+  ];
+
+  const toggle = (key: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl">
+        <div className="text-center mb-6">
+          <div className="text-3xl mb-2">🎯</div>
+          <h2 className="text-xl font-black">Build Your Feed</h2>
+          <p className="text-sm text-text-secondary mt-1">Pick topics you&apos;re interested in. You can change these anytime.</p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mb-6">
+          {categories.map((cat) => (
+            <button
+              key={cat.key}
+              onClick={() => toggle(cat.key)}
+              className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border-2 transition-all ${
+                selected.has(cat.key)
+                  ? "border-blue-500 bg-blue-50 scale-105"
+                  : "border-surface-border bg-surface-card hover:border-text-muted"
+              }`}
+            >
+              <span className="text-xl">{cat.emoji}</span>
+              <span className="text-xs font-medium">{cat.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => onComplete([...selected])}
+          className="w-full py-3 rounded-xl bg-[#111827] text-white font-bold text-sm hover:bg-[#1f2937] transition-colors"
+        >
+          {selected.size === 0 ? "Show me everything" : `Start with ${selected.size} topic${selected.size > 1 ? "s" : ""}`}
+        </button>
+      </div>
     </div>
   );
 }

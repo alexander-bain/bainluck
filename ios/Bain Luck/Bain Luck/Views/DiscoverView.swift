@@ -284,12 +284,35 @@ private struct NativeGuessCard: View {
     let data: FeedFuturesData
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
+    @State private var streak: Int? = nil
 
     private var leader: FeedFuturesOutcome? { data.topOutcomes?.first }
     private var actualPct: Int { Int(((leader?.probability ?? 0) * 100).rounded()) }
     private var correct: Bool {
         guard let g = guess else { return false }
         return g == "higher" ? actualPct > threshold : actualPct < threshold
+    }
+
+    private func submitGuess(_ g: String) {
+        guess = g
+        let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
+        Task {
+            do {
+                let body: [String: Any] = [
+                    "market_id": data.id,
+                    "guess": g,
+                    "threshold": threshold,
+                    "actual_probability": (leader?.probability ?? 0),
+                    "correct": isCorrect,
+                ]
+                guard let url = URL(string: "https://api.bainluck.com/api/predictions") else { return }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (_, _) = try await URLSession.shared.data(for: request)
+            } catch { }
+        }
     }
 
     var body: some View {
@@ -315,7 +338,7 @@ private struct NativeGuessCard: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button { guess = "higher" } label: {
+                    Button { submitGuess("higher") } label: {
                         Text("↑ Higher")
                             .font(.caption.weight(.bold))
                             .frame(maxWidth: .infinity)
@@ -325,7 +348,7 @@ private struct NativeGuessCard: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.green.opacity(0.3)))
                     }
-                    Button { guess = "lower" } label: {
+                    Button { submitGuess("lower") } label: {
                         Text("↓ Lower")
                             .font(.caption.weight(.bold))
                             .frame(maxWidth: .infinity)
