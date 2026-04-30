@@ -920,3 +920,21 @@ class GolfLeaderboardSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("tour", "snapshot_date", "snapshot_type", name="uq_golf_snapshot"),
     )
+
+
+class UserPrediction(Base):
+    """Tracks Higher/Lower guesses from the Discover feed."""
+
+    __tablename__ = "user_predictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer)
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    market_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guess: Mapped[str] = mapped_column(String(10), nullable=False)
+    threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_probability: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

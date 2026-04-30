@@ -1442,6 +1442,24 @@ Full parity achieved. See `docs/completed-features.md`. Added: tag chips, trend 
 
 ---
 
+### D-6. Push Notifications for Market Moves
+
+Alert users when markets they've pinned or categories they follow have significant movement (>10% in 1h). Firebase Cloud Messaging (already have Firebase Auth). New `notification_preferences` table. Celery task checks for moves and fires FCM push.
+
+### D-7. Live Game Companion Mode
+
+Compact full-screen mode for second-screen game watching. Giant win probability number, real-time play-by-play, probability sparkline, key moment alerts. Auto-refresh every 10s. Keep-alive screen on mobile. Reuses existing OddsChartView data + ESPN polling.
+
+### D-8. Daily Digest Email
+
+Morning email: yesterday's biggest movers, today's top markets, resolved predictions. Celery task at 7am user-local-time. Jinja2 HTML template. SendGrid delivery. Uses existing feed scoring to pick content.
+
+### D-9. Friend Predictions & Challenges
+
+"Challenge a friend: Who wins the NBA Finals?" Both pick, odds are locked, winner gets bragging rights. Shareable URL, no account required for friend. `prediction_challenges` table. Emoji reactions on resolution.
+
+---
+
 ### Open Event Detail Parity Items (from April 29 Sweep #3)
 
 Items 2, 4, 5, 6, 8 from the approved plan remain:

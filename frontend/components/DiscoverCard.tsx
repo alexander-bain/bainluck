@@ -5,6 +5,18 @@ import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 
+// ── Session ID for prediction tracking ──
+
+function getSessionId(): string {
+  if (typeof window === "undefined") return "";
+  let id = localStorage.getItem("bainluck_session_id");
+  if (!id) {
+    id = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem("bainluck_session_id", id);
+  }
+  return id;
+}
+
 // ── Types ──
 
 export interface DiscoverGroupedItem {
@@ -525,6 +537,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
   const actualProb = leader?.probability ?? 0;
   const [guess, setGuess] = useState<"higher" | "lower" | null>(null);
   const [threshold] = useState(() => generateThreshold(actualProb));
+  const [streak, setStreak] = useState<number | null>(null);
   const actualPct = Math.round(actualProb * 100);
   const correct = guess === "higher" ? actualPct > threshold : actualPct < threshold;
 
@@ -532,11 +545,38 @@ export function GuessCard({ item }: { item: FeedItem }) {
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const catGradient = CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)";
 
+  const submitGuess = async (g: "higher" | "lower") => {
+    setGuess(g);
+    const isCorrect = g === "higher" ? actualPct > threshold : actualPct < threshold;
+    try {
+      await fetch("/api/predictions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-session-id": getSessionId() },
+        body: JSON.stringify({ market_id: data.id, guess: g, threshold, actual_probability: actualProb, correct: isCorrect }),
+      });
+      const statsRes = await fetch("/api/predictions/stats", { headers: { "x-session-id": getSessionId() } });
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        setStreak(stats.current_streak);
+      }
+    } catch {}
+  };
+
+  const shareUrl = `https://api.bainluck.com/api/og/prediction?market_id=${data.id}&guess=${guess}&correct=${correct}&threshold=${threshold}&actual=${actualPct}`;
+
+  const handleShare = async () => {
+    const text = `${correct ? "I got it right!" : "So close!"} ${data.name} — actual odds: ${actualPct}%. Can you beat me?`;
+    if (navigator.share) {
+      try { await navigator.share({ title: text, url: "https://bainluck.com/discover" }); } catch {}
+    } else {
+      await navigator.clipboard.writeText(`${text}\nhttps://bainluck.com/discover`);
+    }
+  };
+
   if (!leader) return null;
 
   return (
     <div className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
-      {/* Header */}
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
         <span className="text-white text-sm">🎯</span>
         <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
@@ -554,25 +594,17 @@ export function GuessCard({ item }: { item: FeedItem }) {
               {leader.name} — are the odds <span className="font-bold">higher</span> or <span className="font-bold">lower</span> than <span className="text-lg font-black">{threshold}%</span>?
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setGuess("higher")}
-                className="flex-1 py-3 rounded-xl bg-green-500/10 text-green-700 font-bold text-sm hover:bg-green-500/20 transition-colors border border-green-500/20"
-              >
+              <button onClick={() => submitGuess("higher")} className="flex-1 py-3 rounded-xl bg-green-500/10 text-green-700 font-bold text-sm hover:bg-green-500/20 transition-colors border border-green-500/20">
                 ↑ Higher than {threshold}%
               </button>
-              <button
-                onClick={() => setGuess("lower")}
-                className="flex-1 py-3 rounded-xl bg-red-500/10 text-red-700 font-bold text-sm hover:bg-red-500/20 transition-colors border border-red-500/20"
-              >
+              <button onClick={() => submitGuess("lower")} className="flex-1 py-3 rounded-xl bg-red-500/10 text-red-700 font-bold text-sm hover:bg-red-500/20 transition-colors border border-red-500/20">
                 ↓ Lower than {threshold}%
               </button>
             </div>
           </>
         ) : (
           <div className="text-center">
-            <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold mb-3 ${
-              correct ? "bg-green-500/15 text-green-700" : "bg-red-500/15 text-red-700"
-            }`}>
+            <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold mb-3 ${correct ? "bg-green-500/15 text-green-700" : "bg-red-500/15 text-red-700"}`}>
               {correct ? "✓ Correct!" : "✗ Not quite!"}
             </div>
 
@@ -581,20 +613,26 @@ export function GuessCard({ item }: { item: FeedItem }) {
               <div className="text-sm text-text-secondary mt-1">{leader.name}</div>
             </div>
 
+            {streak != null && streak > 1 && (
+              <div className="text-xs font-bold text-amber-600 mb-2">🔥 {streak} correct in a row!</div>
+            )}
+
             <div className="text-xs text-text-muted mb-3">
               You guessed {guess} than {threshold}% — actual is {actualPct}%
             </div>
 
-            {data.hook_description && (
-              <p className="text-xs text-text-secondary italic mb-3">{data.hook_description}</p>
-            )}
-
-            <Link
-              href={`/futures/${data.id}`}
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-            >
-              See full market →
-            </Link>
+            <div className="flex items-center justify-center gap-3">
+              <Link href={`/futures/${data.id}`} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                See full market →
+              </Link>
+              <button onClick={handleShare} className="text-xs text-text-muted hover:text-text-secondary font-medium flex items-center gap-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                </svg>
+                Share result
+              </button>
+            </div>
           </div>
         )}
       </div>
