@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
@@ -259,7 +260,14 @@ export default function DiscoverPage() {
         <div className="max-w-lg mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
-            <span className="text-text-muted text-xs font-medium">{processedItems.length} markets</span>
+            <div className="flex items-center gap-3">
+              <Link href="/discover/stats" className="text-text-muted hover:text-text-primary transition-colors">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20V10" /><path d="M18 20V4" /><path d="M6 20v-4" />
+                </svg>
+              </Link>
+              <span className="text-text-muted text-xs font-medium">{processedItems.length} markets</span>
+            </div>
           </div>
           {/* Category filter chips */}
           <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">

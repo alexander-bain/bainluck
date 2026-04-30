@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
@@ -15,6 +15,37 @@ function getSessionId(): string {
     localStorage.setItem("bainluck_session_id", id);
   }
   return id;
+}
+
+// ── Animated Counter ──
+
+function AnimatedProbability({ value, className }: { value: number; className?: string }) {
+  const [displayed, setDisplayed] = useState(0);
+  const ref = useRef<HTMLSpanElement>(null);
+  const animated = useRef(false);
+
+  useEffect(() => {
+    if (animated.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !animated.current) {
+        animated.current = true;
+        const duration = 800;
+        const start = performance.now();
+        const animate = (now: number) => {
+          const elapsed = now - start;
+          const progress = Math.min(elapsed / duration, 1);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          setDisplayed(Math.round(value * eased));
+          if (progress < 1) requestAnimationFrame(animate);
+        };
+        requestAnimationFrame(animate);
+      }
+    }, { threshold: 0.5 });
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [value]);
+
+  return <span ref={ref} className={className}>{displayed}<span className="text-3xl">%</span></span>;
 }
 
 // ── Types ──
@@ -435,7 +466,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
         <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {category}</div>
         {leader && (
           <>
-            <div className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg">{Math.round(prob * 100)}<span className="text-3xl">%</span></div>
+            <AnimatedProbability value={Math.round(prob * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
             <div className="text-white/70 text-sm mt-1 font-medium max-w-[80%] text-center truncate">{leader.name}</div>
             <div className="mt-2 flex items-center gap-2">
               <MovementBadge m={leader.movement} />
@@ -498,7 +529,7 @@ function TournamentCard({ data, liked, setLiked, onDismiss }: {
         <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
         {leader && (
           <>
-            <div className="text-5xl font-black text-white tabular-nums drop-shadow-lg">{Math.round(leader.probability * 100)}%</div>
+            <AnimatedProbability value={Math.round(leader.probability * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
             <div className="text-white/70 text-sm mt-1">{leader.name}</div>
             <MovementBadge m={leader.movement_24h} />
           </>
