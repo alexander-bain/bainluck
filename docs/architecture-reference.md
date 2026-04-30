@@ -204,3 +204,37 @@ Our DB (after decomposition):
 ### Backfill Script
 
 `scripts/backfill_polymarket_submarkets.py` — decomposes existing game events, propagates event_ids, reports category breakdown, optionally cleans up crypto markets.
+
+---
+
+## ESPN Box Score Pipeline (`tasks/espn_sync.py`)
+
+Box score data (player stats for completed/live games) flows through 4 passes in the ESPN sync task, all in a single session:
+
+```
+Pass 1 (live events):     ESPN scoreboard → win_probability_sources + espn_id (Core SQL)
+Pass 2 (scheduled):       ESPN scheduled → commence_time, broadcast, importance (ORM)
+Pass 3 (completed):       ESPN box score API → box_score_data (raw SQL text, status=completed/closed)
+Pass 4 (live box scores): ESPN box score API → box_score_data (raw SQL text, status=live)
+```
+
+### Critical: Write Patterns
+
+All writes in the ESPN sync MUST use Core SQL or raw text SQL, NOT ORM attribute assignment. The session mixes ORM reads with Core SQL updates, and ORM dirty tracking silently reverts Core SQL changes on flush. Three instances of this bug were found (gotchas #8, #22, #48).
+
+| Field | Write method | Why |
+|-------|-------------|-----|
+| `win_probability_sources` | `_sql_update(Event).values(...)` | JSONB, gotcha #8 |
+| `espn_id` | Piggybacked on win_prob Core SQL | ORM/Core mixing, gotcha #22 |
+| `box_score_data` | `text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid")` | JSONB + ORM/Core mixing |
+
+### Box Score Data Flow to Frontend
+
+```
+Event.box_score_data (DB, JSONB)
+  → GET /api/events/{id} response: box_score_data.players
+    → Frontend: event.box_score_data passed to PlayerPropsDashboard
+      → PlayerPropsDashboard: hasBoxScore check → "done" mode with actual stats
+```
+
+Without `box_score_data`, PlayerPropsDashboard falls back to "pre" mode (shows probabilities instead of results).
