@@ -676,21 +676,6 @@ async def _poll_all_odds():
                             event_data["commence_time"].replace("Z", "+00:00")
                         )
 
-                        # Get or create sport
-                        sport_result = await session.execute(
-                            select(Sport).where(Sport.key == sport_key)
-                        )
-                        sport = sport_result.scalar_one_or_none()
-
-                        if not sport:
-                            sport = Sport(
-                                key=sport_key,
-                                name=sport_key.replace("_", " ").title(),
-                                active=True,
-                            )
-                            session.add(sport)
-                            await session.flush()
-
                         # ── Unified event matching via Event Registry ──
                         event_status = "scheduled" if commence_time > now else "live"
                         from app.services.event_registry import (
