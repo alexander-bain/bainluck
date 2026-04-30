@@ -899,6 +899,8 @@ async def _sync_espn_live_events():
                                 scoring_plays = context.get("scoring_plays", [])
                                 now_str = datetime.now(timezone.utc).isoformat()
 
+                                import json as _json_mod
+                                from sqlalchemy import text as _raw_text
                                 if box_score or scoring_plays:
                                     bsd = {
                                         "source": "espn",
@@ -907,9 +909,8 @@ async def _sync_espn_live_events():
                                         "scoring_plays": scoring_plays,
                                     }
                                     await session.execute(
-                                        _sql_update(Event)
-                                        .where(Event.id == event.id)
-                                        .values(box_score_data=bsd)
+                                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
                                     )
                                     event.box_score_data = bsd
                                     stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
@@ -920,9 +921,8 @@ async def _sync_espn_live_events():
                                         "fetched_at": now_str,
                                     }
                                     await session.execute(
-                                        _sql_update(Event)
-                                        .where(Event.id == event.id)
-                                        .values(box_score_data=err_bsd)
+                                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                                        {"bsd": _json_mod.dumps(err_bsd), "eid": event.id},
                                     )
                                     event.box_score_data = err_bsd
                             except Exception as e:
