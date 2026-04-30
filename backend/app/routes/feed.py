@@ -1016,6 +1016,8 @@ async def _score_futures(
             "top_outcomes": top_outcomes_data,
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
+            "image_url": market.image_url,
+            "hook_description": market.hook_description,
         }
 
         # Compute market_tags on-the-fly

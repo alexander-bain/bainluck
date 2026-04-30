@@ -600,6 +600,10 @@ class FuturesMarket(Base):
     group_type: Mapped[Optional[str]] = mapped_column(String(50))  # championship, conference, division, award, game, prop
     group_position: Mapped[Optional[int]] = mapped_column(Integer)  # Display order within group (e.g., by liquidity)
 
+    # Discover feed enrichment
+    image_url: Mapped[Optional[str]] = mapped_column(String(500))  # Unsplash/Pexels photo URL
+    hook_description: Mapped[Optional[str]] = mapped_column(String(300))  # LLM-generated 1-sentence hook
+
     # Volume/liquidity from prediction markets (internal signal, never user-facing)
     volume: Mapped[Optional[int]] = mapped_column(Integer)  # Lifetime volume in contracts/dollars
     volume_24h: Mapped[Optional[int]] = mapped_column(Integer)  # 24-hour trading volume

@@ -923,6 +923,8 @@ export interface FeedFuturesData {
   top_outcomes: FeedFuturesOutcome[];
   outcome_count: number;
   canonical_market_key: string | null;
+  image_url?: string | null;
+  hook_description?: string | null;
   // Resolved market metadata (leader ≥97% with interesting journey)
   resolved?: boolean;
   winner?: string;

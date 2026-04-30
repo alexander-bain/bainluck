@@ -463,6 +463,20 @@ def sync_statpal_live_plays(self, sport_key: str = None):
     return _tracked_run("statpal_plays", _sync_statpal_live_plays(sport_key))
 
 
+@celery_app.task(bind=True, name="app.tasks.enrich_market_images")
+def enrich_market_images(self, limit: int = 50):
+    """Fetch images from Pexels API for markets missing image_url."""
+    from app.tasks.enrich_markets import enrich_market_images as _enrich
+    return _tracked_run("enrich_images", _enrich(limit))
+
+
+@celery_app.task(bind=True, name="app.tasks.enrich_market_hooks")
+def enrich_market_hooks(self, limit: int = 50):
+    """Generate LLM hook descriptions for markets missing hook_description."""
+    from app.tasks.enrich_markets import enrich_market_hooks as _enrich
+    return _tracked_run("enrich_hooks", _enrich(limit))
+
+
 @celery_app.task(bind=True, name="app.tasks.sync_statpal_livescores")
 def sync_statpal_livescores(self):
     """Poll StatPal livescores for real-time game state (every 30s)."""
@@ -900,6 +914,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.audit_related_futures",
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
+    },
+    # Discover feed enrichment — runs at 3am and 3pm UTC daily
+    "enrich-market-images": {
+        "task": "app.tasks.enrich_market_images",
+        "schedule": crontab(hour="3,15", minute=30),
+        "kwargs": {"limit": 100},
+    },
+    "enrich-market-hooks": {
+        "task": "app.tasks.enrich_market_hooks",
+        "schedule": crontab(hour="3,15", minute=45),
+        "kwargs": {"limit": 100},
     },
     # Note: update_event_tags, enrich_taxonomy_llm, and DataGolf polls are
     # piggybacked on discover_events and poll_all_odds respectively.

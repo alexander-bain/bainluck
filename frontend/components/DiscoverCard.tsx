@@ -199,7 +199,7 @@ function FuturesCard({
   const movement = leader?.movement;
   const prob = leader?.probability ?? 0;
 
-  const headline = item.headline || (
+  const headline = data.hook_description || item.headline || (
     movement && Math.abs(movement) >= 0.02
       ? `${movement > 0 ? "↑" : "↓"} ${Math.abs(Math.round(movement * 100))}% this week`
       : data.source_count > 1 ? `${data.source_count} sources` : ""
@@ -217,11 +217,13 @@ function FuturesCard({
         </button>
       )}
 
-      {/* Hero — gradient with giant probability */}
+      {/* Hero — image or gradient with giant probability */}
       <div
-        className="relative h-44 flex flex-col items-center justify-center"
+        className="relative h-44 flex flex-col items-center justify-center bg-cover bg-center"
         style={{
-          background: CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
+          background: data.image_url
+            ? `linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(${data.image_url}) center/cover`
+            : CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
         }}
       >
         <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>
@@ -245,30 +247,34 @@ function FuturesCard({
 
       {/* Content */}
       <div className="p-4">
-        <Link href={`/futures/${data.id}`} className="block">
-          <h3 className="font-bold text-lg leading-tight mb-1">{data.name}</h3>
+        <Link href={`/futures/${data.id}`} className="block group">
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
 
-        {/* Runner-up */}
-        {runnerUp && (
-          <div className="mt-2 flex items-center gap-2">
-            <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
-              <div className="h-full rounded-full bg-text-muted/40 transition-all" style={{ width: `${(runnerUp.probability ?? 0) * 100}%` }} />
-            </div>
-            <span className="text-xs text-text-secondary shrink-0">
-              {runnerUp.name} {Math.round((runnerUp.probability ?? 0) * 100)}%
-            </span>
+        {headline && <p className="text-sm text-text-secondary mt-2 leading-relaxed">{headline}</p>}
+
+        {/* Top outcomes with bars */}
+        {data.top_outcomes.length > 1 && (
+          <div className="mt-3 space-y-1.5">
+            {data.top_outcomes.slice(0, 3).map((o, i) => (
+              <div key={o.id} className="flex items-center gap-2">
+                <span className={`text-xs w-28 truncate shrink-0 ${i === 0 ? "font-semibold" : "text-text-secondary"}`}>{o.name}</span>
+                <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
+                </div>
+                <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{Math.round((o.probability ?? 0) * 100)}%</span>
+              </div>
+            ))}
           </div>
         )}
 
-        {headline && <p className="text-sm text-text-secondary mt-3">{headline}</p>}
-
         {/* Source + resolution */}
-        <div className="flex items-center gap-2 mt-2 text-[10px] text-text-muted">
+        <div className="flex items-center gap-2 mt-3 text-[10px] text-text-muted">
           {data.source && (
             <span className="font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated">{data.source}</span>
           )}
           {resolveLabel && <span>{resolveLabel}</span>}
+          {data.outcome_count > 3 && <span>· {data.outcome_count} outcomes</span>}
         </div>
 
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
