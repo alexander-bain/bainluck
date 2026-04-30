@@ -794,6 +794,11 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=50),  # Every hour — roster matching is cheap, large backlog to clear
         "kwargs": {"limit": 2000, "use_llm": False},
     },
+    "merge-duplicate-events": {
+        "task": "app.tasks.merge_duplicate_events",
+        "schedule": crontab(minute="*/10"),
+        "kwargs": {"dry_run": False},
+    },
     "sync-rosters-daily": {
         "task": "app.tasks.sync_rosters",
         "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC — moved from 7 AM to avoid contention with snapshot collapse tasks

@@ -185,7 +185,15 @@ async def _find_by_structured_match(
     Queries events with the same sport_id and commence_time within ±4 hours,
     then scores each candidate using names_match(). Requires BOTH teams to
     match (either in normal or swapped home/away orientation).
+
+    Uses a PostgreSQL advisory lock to prevent TOCTOU race conditions when
+    concurrent workers (ESPN sync on realtime, Odds API on background) both
+    call find_or_create_event() for the same game simultaneously.
     """
+    from sqlalchemy import text as _text
+    lock_key = hash((sport_id, commence_time.date().isoformat())) & 0x7FFFFFFF
+    await session.execute(_text(f"SELECT pg_advisory_xact_lock({lock_key})"))
+
     candidates_result = await session.execute(
         select(Event).where(
             Event.sport_id == sport_id,
