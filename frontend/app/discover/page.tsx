@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
-import DiscoverCard from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const DISMISSED_KEY = "discover_dismissed";
@@ -120,6 +120,59 @@ function interleave(items: FeedItem[]): FeedItem[] {
   return result;
 }
 
+/** Group related futures by name prefix (e.g., "Valero Texas Open: ..." → one group card) */
+function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
+  const result: DiscoverGroupedItem[] = [];
+  const futuresGroups = new Map<string, FeedItem[]>();
+  const futuresOrder: string[] = [];
+
+  for (const item of items) {
+    if (item.type === "futures") {
+      const name = (item.data as FeedFuturesData).name;
+      // Group by: text before ":" if present, otherwise first 3 words
+      const colonIdx = name.indexOf(":");
+      const prefix = colonIdx > 0 && colonIdx < 30
+        ? name.slice(0, colonIdx).trim()
+        : name.split(/\s+/).slice(0, 3).join(" ");
+
+      if (!futuresGroups.has(prefix)) {
+        futuresGroups.set(prefix, []);
+        futuresOrder.push(prefix);
+      }
+      futuresGroups.get(prefix)!.push(item);
+    }
+  }
+
+  // Build output: non-futures pass through, futures get grouped
+  let futuresIdx = 0;
+  const usedPrefixes = new Set<string>();
+
+  for (const item of items) {
+    if (item.type !== "futures") {
+      result.push({ type: "single", item });
+      continue;
+    }
+
+    const name = (item.data as FeedFuturesData).name;
+    const colonIdx = name.indexOf(":");
+    const prefix = colonIdx > 0 && colonIdx < 30
+      ? name.slice(0, colonIdx).trim()
+      : name.split(/\s+/).slice(0, 3).join(" ");
+
+    if (usedPrefixes.has(prefix)) continue;
+    usedPrefixes.add(prefix);
+
+    const group = futuresGroups.get(prefix)!;
+    if (group.length >= 2) {
+      result.push({ type: "group", items: group, groupTitle: prefix });
+    } else {
+      result.push({ type: "single", item: group[0] });
+    }
+  }
+
+  return result;
+}
+
 const CATEGORY_FILTERS = [
   { key: "all", label: "All", emoji: "✨" },
   { key: "sports", label: "Sports", emoji: "🏆" },
@@ -168,18 +221,16 @@ export default function DiscoverPage() {
     setDismissed((prev) => new Set([...prev, itemId]));
   }, []);
 
-  const processedItems = useMemo(() => {
+  const processedItems = useMemo((): DiscoverGroupedItem[] => {
     const raw = data?.items ?? [];
-    // 1. Remove dismissed + stale
     const filtered = raw.filter((item) => !dismissed.has(getItemId(item)) && !isStale(item));
-    // 2. Apply category filter
     const catFiltered = categoryFilter === "all"
       ? filtered
       : categoryFilter === "sports"
       ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
       : filtered.filter((i) => getItemCategory(i) === categoryFilter);
-    // 3. Interleave for diversity (only when showing "all")
-    return categoryFilter === "all" ? interleave(catFiltered) : catFiltered;
+    const interleaved = categoryFilter === "all" ? interleave(catFiltered) : catFiltered;
+    return groupRelatedMarkets(interleaved);
   }, [data, dismissed, categoryFilter]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
@@ -266,11 +317,11 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {visibleItems.map((item) => (
+        {visibleItems.map((gi, idx) => (
           <DiscoverCard
-            key={getItemId(item)}
-            item={item}
-            onDismiss={() => handleDismiss(getItemId(item))}
+            key={gi.type === "single" ? getItemId(gi.item) : `group-${gi.groupTitle}-${idx}`}
+            groupedItem={gi}
+            onDismiss={gi.type === "single" ? () => handleDismiss(getItemId(gi.item)) : undefined}
           />
         ))}
 
