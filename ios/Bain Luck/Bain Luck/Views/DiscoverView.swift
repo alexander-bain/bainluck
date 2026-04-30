@@ -4,6 +4,7 @@ import Combine
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var categoryFilter = "all"
+    @State private var visibleCount = 20
     @State private var dismissed: Set<String> = []
 
     private let categories: [(key: String, label: String, emoji: String)] = [
@@ -89,10 +90,11 @@ struct DiscoverView: View {
                     .padding(.vertical, 8)
                 }
 
-                // Cards
+                // Cards (paginated — show `visibleCount` at a time)
+                let pageItems = Array(filteredItems.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
                 LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
+                    ForEach(Array(pageItems.enumerated()), id: \.element.id) { idx, item in
                         let isGuess = (idx + 1) % 5 == 0 && item.type == "futures"
                         if isGuess, let f = item.futures {
                             NativeGuessCard(data: f)
@@ -100,6 +102,11 @@ struct DiscoverView: View {
                             NativeEventDiscoverCard(event: e)
                         } else if item.type == "futures", let f = item.futures {
                             NativeFuturesDiscoverCard(data: f)
+                                .onAppear {
+                                    if idx == pageItems.count - 3 && visibleCount < filteredItems.count {
+                                        visibleCount += 20
+                                    }
+                                }
                         }
                     }
                 }
@@ -207,70 +214,125 @@ private struct NativeEventDiscoverCard: View {
     }
 }
 
+// MARK: - Category Gradients
+
+private let categoryGradients: [String: (Color, Color)] = [
+    "basketball": (Color(red: 0.49, green: 0.18, blue: 0.07), Color(red: 0.76, green: 0.25, blue: 0.05)),
+    "football": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.08, green: 0.50, blue: 0.24)),
+    "baseball": (Color(red: 0.50, green: 0.11, blue: 0.11), Color(red: 0.73, green: 0.11, blue: 0.11)),
+    "hockey": (Color(red: 0.12, green: 0.23, blue: 0.37), Color(red: 0.15, green: 0.39, blue: 0.92)),
+    "soccer": (Color(red: 0.02, green: 0.31, blue: 0.23), Color(red: 0.02, green: 0.60, blue: 0.40)),
+    "golf": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.09, green: 0.40, blue: 0.20)),
+    "mma": (Color(red: 0.27, green: 0.04, blue: 0.04), Color(red: 0.60, green: 0.11, blue: 0.11)),
+    "economics": (Color(red: 0.18, green: 0.06, blue: 0.40), Color(red: 0.49, green: 0.23, blue: 0.93)),
+    "politics": (Color(red: 0.12, green: 0.11, blue: 0.29), Color(red: 0.26, green: 0.22, blue: 0.79)),
+    "tech": (Color(red: 0.03, green: 0.20, blue: 0.27), Color(red: 0.03, green: 0.57, blue: 0.70)),
+    "culture": (Color(red: 0.51, green: 0.09, blue: 0.26), Color(red: 0.86, green: 0.15, blue: 0.47)),
+    "weather": (Color(red: 0.05, green: 0.29, blue: 0.43), Color(red: 0.01, green: 0.52, blue: 0.78)),
+    "entertainment": (Color(red: 0.44, green: 0.10, blue: 0.46), Color(red: 0.75, green: 0.15, blue: 0.83)),
+    "cricket": (Color(red: 0.07, green: 0.31, blue: 0.29), Color(red: 0.08, green: 0.72, blue: 0.65)),
+    "olympics": (Color(red: 0.47, green: 0.21, blue: 0.06), Color(red: 0.85, green: 0.47, blue: 0.02)),
+]
+
+private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 0.16), Color(red: 0.12, green: 0.16, blue: 0.24))
+
 // MARK: - Futures Card
 
 private struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
 
+    private var gradient: (Color, Color) {
+        categoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? defaultGradient
+    }
+
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: data.id)) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Category + probability
-                HStack {
-                    Text(data.llmSportCategory?.uppercased() ?? "MARKET")
-                        .font(.system(size: 10, weight: .heavy))
-                        .foregroundStyle(.secondary)
-                        .tracking(0.5)
-                    Spacer()
-                    if let leader = data.topOutcomes?.first {
-                        Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
-                            .font(.title2.weight(.black).monospacedDigit())
-                    }
-                }
-
-                Text(data.name)
-                    .font(.subheadline.weight(.bold))
-                    .lineLimit(2)
-
-                if let hook = data.hookDescription {
-                    Text(hook)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-
-                // Top outcomes
-                if let outcomes = data.topOutcomes, outcomes.count > 1 {
-                    ForEach(outcomes.prefix(3).indices, id: \.self) { i in
-                        let o = outcomes[i]
-                        HStack(spacing: 4) {
-                            Text(o.name)
-                                .font(.caption2)
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            GeometryReader { geo in
-                                Capsule().fill(i == 0 ? Color.blue : Color.secondary.opacity(0.2))
-                                    .frame(width: max(2, geo.size.width * (o.probability ?? 0)))
+            VStack(alignment: .leading, spacing: 0) {
+                // Hero section with gradient/image
+                ZStack(alignment: .bottomLeading) {
+                    if let imageUrl = data.imageUrl, let url = URL(string: imageUrl) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().scaledToFill()
+                            default:
+                                LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
                             }
-                            .frame(width: 60, height: 6)
-                            Text("\(Int(((o.probability ?? 0) * 100).rounded()))%")
-                                .font(.caption2.weight(.semibold).monospacedDigit())
-                                .frame(width: 28, alignment: .trailing)
+                        }
+                        .frame(height: 140)
+                        .clipped()
+                        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                    } else {
+                        LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            .frame(height: 140)
+                    }
+
+                    // Overlay content
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(data.llmSportCategory?.uppercased() ?? "MARKET")
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.7))
+
+                        if let leader = data.topOutcomes?.first {
+                            Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                                .font(.system(size: 36, weight: .black).monospacedDigit())
+                                .foregroundStyle(.white)
+                            Text(leader.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
                         }
                     }
+                    .padding(12)
                 }
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
 
-                if let src = data.source {
-                    Text(src.uppercased())
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Capsule())
+                // Details section
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(data.name)
+                        .font(.subheadline.weight(.bold))
+                        .lineLimit(2)
+
+                    if let hook = data.hookDescription {
+                        Text(hook)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    if let outcomes = data.topOutcomes, outcomes.count > 1 {
+                        ForEach(outcomes.prefix(3).indices, id: \.self) { i in
+                            let o = outcomes[i]
+                            HStack(spacing: 4) {
+                                Text(o.name)
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                GeometryReader { geo in
+                                    Capsule().fill(i == 0 ? Color.blue : Color.secondary.opacity(0.2))
+                                        .frame(width: max(2, geo.size.width * (o.probability ?? 0)))
+                                }
+                                .frame(width: 60, height: 6)
+                                Text("\(Int(((o.probability ?? 0) * 100).rounded()))%")
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
+                                    .frame(width: 28, alignment: .trailing)
+                            }
+                        }
+                    }
+
+                    if let src = data.source {
+                        Text(src.uppercased())
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
                 }
+                .padding(12)
             }
-            .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack, lineWidth: 0.5))
