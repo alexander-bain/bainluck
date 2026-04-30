@@ -408,7 +408,9 @@ export default function EventPage({ params }: EventPageProps) {
     let end = new Date(Math.max(...timestamps));
     if (historyData.completed_at) {
       const ca = new Date(historyData.completed_at);
-      if (!isNaN(ca.getTime())) end = new Date(Math.max(end.getTime(), ca.getTime()));
+      if (!isNaN(ca.getTime()) && ca.getTime() < end.getTime()) {
+        end = ca;
+      }
     }
 
     // "Since Start" mode: start from commenceTime (game start)
@@ -959,7 +961,10 @@ export default function EventPage({ params }: EventPageProps) {
               )}
 
               {/* Projected final score — derived from spread + total, no gambling jargon */}
-              {historyData?.pm_spread_data?.projected_final && (
+              {historyData?.pm_spread_data?.projected_final &&
+                event.status !== "completed" && event.status !== "closed" &&
+                historyData.pm_spread_data.projected_final.home_score > 0 &&
+                historyData.pm_spread_data.projected_final.away_score > 0 && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
                     Projected final: {Math.round(historyData.pm_spread_data.projected_final.home_score)}{"\u2009\u2013\u2009"}{Math.round(historyData.pm_spread_data.projected_final.away_score)}
