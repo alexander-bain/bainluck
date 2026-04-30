@@ -5,6 +5,8 @@ import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 
+// ── Category Styling ──
+
 const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
   football: "linear-gradient(135deg, #14532d, #15803d)",
@@ -19,8 +21,11 @@ const CATEGORY_GRADIENTS: Record<string, string> = {
   culture: "linear-gradient(135deg, #831843, #db2777)",
   tech: "linear-gradient(135deg, #083344, #0891b2)",
   politics: "linear-gradient(135deg, #1e1b4b, #4338ca)",
+  geopolitics: "linear-gradient(135deg, #1e1b4b, #3730a3)",
   olympics: "linear-gradient(135deg, #78350f, #d97706)",
   cricket: "linear-gradient(135deg, #134e4a, #14b8a6)",
+  weather: "linear-gradient(135deg, #0c4a6e, #0284c7)",
+  entertainment: "linear-gradient(135deg, #701a75, #c026d3)",
 };
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string }> = {
@@ -37,14 +42,88 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string 
   culture: { bg: "bg-pink-500/15", text: "text-pink-600", emoji: "🎭" },
   tech: { bg: "bg-cyan-500/15", text: "text-cyan-600", emoji: "💻" },
   politics: { bg: "bg-indigo-500/15", text: "text-indigo-600", emoji: "🏛" },
+  geopolitics: { bg: "bg-indigo-500/15", text: "text-indigo-600", emoji: "🌍" },
   olympics: { bg: "bg-amber-500/15", text: "text-amber-600", emoji: "🏅" },
   cricket: { bg: "bg-teal-500/15", text: "text-teal-600", emoji: "🏏" },
+  weather: { bg: "bg-sky-500/15", text: "text-sky-600", emoji: "🌤" },
+  entertainment: { bg: "bg-fuchsia-500/15", text: "text-fuchsia-600", emoji: "🎬" },
 };
 
 function getCategoryStyle(cat: string | null | undefined) {
   if (!cat) return { bg: "bg-gray-500/15", text: "text-gray-600", emoji: "📊" };
   return CATEGORY_COLORS[cat.toLowerCase()] ?? { bg: "bg-gray-500/15", text: "text-gray-600", emoji: "📊" };
 }
+
+// ── Time Helpers ──
+
+function relativeTimeLabel(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const diffH = diffMs / (1000 * 60 * 60);
+
+  if (diffMs < 0) {
+    const ago = Math.abs(diffH);
+    if (ago < 1) return "Just ended";
+    if (ago < 24) return `${Math.round(ago)}h ago`;
+    return `${Math.round(ago / 24)}d ago`;
+  }
+  if (diffH < 1) return `${Math.round(diffMs / 60000)}m`;
+  if (diffH < 24) return `${Math.round(diffH)}h`;
+  if (diffH < 48) return "Tomorrow";
+  if (diffH < 168) return `${Math.round(diffH / 24)}d`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function resolvesLabel(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffH = (date.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (diffH < 0) return "Resolved";
+  if (diffH < 3) return `Resolves in ${Math.round(diffH * 60)}m`;
+  if (diffH < 24) return `Resolves in ${Math.round(diffH)}h`;
+  if (diffH < 48) return "Resolves tomorrow";
+  if (diffH < 168) return `Resolves in ${Math.round(diffH / 24)} days`;
+  return `Resolves ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+// ── Trending Detection ──
+
+function isTrending(item: FeedItem): boolean {
+  if (item.type === "futures") {
+    const fd = item.data as FeedFuturesData;
+    const leader = fd.top_outcomes?.[0];
+    if (leader?.movement && Math.abs(leader.movement) >= 0.05) return true;
+  }
+  if (item.type === "event") {
+    const ed = item.data as FeedEventData;
+    if (ed.status === "live") return true;
+    if (ed.ei && ed.ei.score >= 70) return true;
+  }
+  return false;
+}
+
+// ── Movement Sparkline ──
+
+function MovementIndicator({ movement }: { movement: number | null | undefined }) {
+  if (!movement || Math.abs(movement) < 0.01) return null;
+  const up = movement > 0;
+  const pct = Math.abs(Math.round(movement * 100));
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+      up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"
+    }`}>
+      <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
+        {up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}
+      </svg>
+      {pct}%
+    </span>
+  );
+}
+
+// ── Main Component ──
 
 interface DiscoverCardProps {
   item: FeedItem;
@@ -53,12 +132,13 @@ interface DiscoverCardProps {
 
 export default function DiscoverCard({ item, onDismiss }: DiscoverCardProps) {
   const [liked, setLiked] = useState(false);
+  const trending = isTrending(item);
 
   if (item.type === "event") {
-    return <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
+    return <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} trending={trending} />;
   }
   if (item.type === "futures") {
-    return <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
+    return <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} trending={trending} />;
   }
   if (item.type === "tournament") {
     return <TournamentCard item={item} data={item.data as FeedTournamentData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />;
@@ -66,14 +146,35 @@ export default function DiscoverCard({ item, onDismiss }: DiscoverCardProps) {
   return null;
 }
 
+// ── Dismiss Button ──
+
+function DismissButton({ onDismiss }: { onDismiss?: () => void }) {
+  if (!onDismiss) return null;
+  return (
+    <button onClick={onDismiss} className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+    </button>
+  );
+}
+
+// ── Trending Badge ──
+
+function TrendingBadge() {
+  return (
+    <div className="absolute top-3 right-12 z-10 flex items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">
+      🔥 Trending
+    </div>
+  );
+}
+
 // ── Event Card ──
 
 function EventCard({
-  item, data, liked, setLiked, onDismiss,
+  item, data, liked, setLiked, onDismiss, trending,
 }: {
   item: FeedItem; data: FeedEventData;
   liked: boolean; setLiked: (v: boolean) => void;
-  onDismiss?: () => void;
+  onDismiss?: () => void; trending: boolean;
 }) {
   const homeColor = data.home_team_data?.primary_color || "#374151";
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
@@ -83,30 +184,28 @@ function EventCard({
   const isDone = data.status === "completed" || data.status === "closed";
   const homeProb = data.current_odds?.home_probability;
   const awayProb = data.current_odds?.away_probability;
-
   const category = data.sport_name || "Sports";
   const catStyle = getCategoryStyle(data.sport?.split("_")[0]);
+  const sportCat = data.sport?.split("_")[0] || "sports";
 
-  const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "Upcoming");
+  const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
+  const timeLabel = isLive
+    ? data.espn?.period || "Live"
+    : isDone ? "Final" : relativeTimeLabel(data.commence_time);
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg">
-      {/* Dismiss button */}
-      {onDismiss && (
-        <button onClick={onDismiss} className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-        </button>
-      )}
+    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
+      <DismissButton onDismiss={onDismiss} />
+      {trending && <TrendingBadge />}
 
-      {/* Hero visual — team logos on gradient */}
+      {/* Hero — sport-themed gradient with team logos */}
       <div
         className="relative h-44 flex items-center justify-center gap-6"
         style={{
-          background: `linear-gradient(135deg, ${awayColor}22, ${homeColor}22)`,
+          background: CATEGORY_GRADIENTS[sportCat] || `linear-gradient(135deg, ${awayColor}33, ${homeColor}33)`,
         }}
       >
-        {/* Category pill */}
-        <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
+        <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>
           {catStyle.emoji} {category}
         </div>
 
@@ -117,66 +216,60 @@ function EventCard({
           </div>
         )}
 
-        {/* Away team */}
         <div className="flex flex-col items-center gap-2">
           {awayLogo ? (
-            <img src={awayLogo} alt="" className="w-16 h-16 object-contain drop-shadow-md" />
+            <img src={awayLogo} alt="" className="w-16 h-16 object-contain drop-shadow-lg" />
           ) : (
             <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>
               {(data.away_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}
             </div>
           )}
-          {isDone && data.away_score != null && (
-            <span className="text-2xl font-black tabular-nums">{data.away_score}</span>
+          {(isLive || isDone) && data.away_score != null && (
+            <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>
           )}
         </div>
 
-        <span className="text-text-muted text-sm font-medium">
-          {isDone ? "Final" : isLive ? (data.espn?.period || "Live") : "vs"}
-        </span>
+        <div className="flex flex-col items-center">
+          <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
+        </div>
 
-        {/* Home team */}
         <div className="flex flex-col items-center gap-2">
           {homeLogo ? (
-            <img src={homeLogo} alt="" className="w-16 h-16 object-contain drop-shadow-md" />
+            <img src={homeLogo} alt="" className="w-16 h-16 object-contain drop-shadow-lg" />
           ) : (
             <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>
               {(data.home_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}
             </div>
           )}
-          {isDone && data.home_score != null && (
-            <span className="text-2xl font-black tabular-nums">{data.home_score}</span>
+          {(isLive || isDone) && data.home_score != null && (
+            <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>
           )}
         </div>
       </div>
 
-      {/* Content */}
       <div className="p-4">
-        <Link href={`/events/${data.id}`} className="block">
-          <h3 className="font-bold text-lg leading-tight mb-1">
+        <Link href={`/events/${data.id}`} className="block group">
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">
             {data.away_team} {isDone ? "" : "@"} {data.home_team}
           </h3>
         </Link>
 
-        {/* Probability */}
         {homeProb != null && awayProb != null && (
-          <div className="mt-3">
-            <div className="flex items-center justify-between text-sm mb-1.5">
+          <div className="mt-2">
+            <div className="flex items-center justify-between text-sm mb-1">
               <span className="font-bold" style={{ color: awayColor }}>{formatProbability(awayProb)}</span>
-              <span className="text-text-muted text-xs">Win Probability</span>
+              <span className="text-text-muted text-[10px]">Win Probability</span>
               <span className="font-bold" style={{ color: homeColor }}>{formatProbability(homeProb)}</span>
             </div>
-            <div className="h-3 rounded-full overflow-hidden flex">
+            <div className="h-2.5 rounded-full overflow-hidden flex">
               <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: awayColor }} />
               <div className="transition-all duration-500" style={{ width: `${homeProb * 100}%`, backgroundColor: homeColor }} />
             </div>
           </div>
         )}
 
-        {/* Headline / hook */}
-        <p className="text-sm text-text-secondary mt-3">{headline}</p>
+        {headline && <p className="text-sm text-text-secondary mt-2">{headline}</p>}
 
-        {/* Action bar */}
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/events/${data.id}`} shareTitle={`${data.away_team} vs ${data.home_team}`} />
       </div>
     </div>
@@ -186,43 +279,31 @@ function EventCard({
 // ── Futures Card ──
 
 function FuturesCard({
-  item, data, liked, setLiked, onDismiss,
+  item, data, liked, setLiked, onDismiss, trending,
 }: {
   item: FeedItem; data: FeedFuturesData;
   liked: boolean; setLiked: (v: boolean) => void;
-  onDismiss?: () => void;
+  onDismiss?: () => void; trending: boolean;
 }) {
   const catStyle = getCategoryStyle(data.llm_sport_category);
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const leader = data.top_outcomes?.[0];
-  const runnerUp = data.top_outcomes?.[1];
   const movement = leader?.movement;
   const prob = leader?.probability ?? 0;
 
-  const headline = data.hook_description || item.headline || (
-    movement && Math.abs(movement) >= 0.02
-      ? `${movement > 0 ? "↑" : "↓"} ${Math.abs(Math.round(movement * 100))}% this week`
-      : data.source_count > 1 ? `${data.source_count} sources` : ""
-  );
-
-  const resolveLabel = data.resolution_date
-    ? `resolves ${new Date(data.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-    : "";
+  const headline = data.hook_description || item.headline || "";
+  const resolveText = resolvesLabel(data.resolution_date);
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg">
-      {onDismiss && (
-        <button onClick={onDismiss} className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-        </button>
-      )}
+    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
+      <DismissButton onDismiss={onDismiss} />
+      {trending && <TrendingBadge />}
 
-      {/* Hero — image or gradient with giant probability */}
       <div
         className="relative h-44 flex flex-col items-center justify-center bg-cover bg-center"
         style={{
           background: data.image_url
-            ? `linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(${data.image_url}) center/cover`
+            ? `linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(0,0,0,0.75)), url(${data.image_url}) center/cover`
             : CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
         }}
       >
@@ -232,28 +313,27 @@ function FuturesCard({
 
         {leader && (
           <>
-            <div className="text-5xl font-black text-white tabular-nums tracking-tight">
+            <div className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg">
               {Math.round(prob * 100)}<span className="text-3xl">%</span>
             </div>
-            <div className="text-white/60 text-sm mt-1 font-medium max-w-[80%] text-center truncate">{leader.name}</div>
-            {movement != null && Math.abs(movement) >= 0.01 && (
-              <div className={`mt-2 text-xs font-bold px-2 py-0.5 rounded-full ${movement > 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
-                {movement > 0 ? "↑" : "↓"} {Math.abs(Math.round(movement * 100))}% 24h
-              </div>
-            )}
+            <div className="text-white/70 text-sm mt-1 font-medium max-w-[80%] text-center truncate">{leader.name}</div>
+            <div className="mt-2 flex items-center gap-2">
+              <MovementIndicator movement={movement} />
+              {resolveText && (
+                <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>
+              )}
+            </div>
           </>
         )}
       </div>
 
-      {/* Content */}
       <div className="p-4">
         <Link href={`/futures/${data.id}`} className="block group">
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
 
-        {headline && <p className="text-sm text-text-secondary mt-2 leading-relaxed">{headline}</p>}
+        {headline && <p className="text-sm text-text-secondary mt-1 leading-relaxed">{headline}</p>}
 
-        {/* Top outcomes with bars */}
         {data.top_outcomes.length > 1 && (
           <div className="mt-3 space-y-1.5">
             {data.top_outcomes.slice(0, 3).map((o, i) => (
@@ -263,18 +343,17 @@ function FuturesCard({
                   <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
                 </div>
                 <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{Math.round((o.probability ?? 0) * 100)}%</span>
+                {i === 0 && <MovementIndicator movement={o.movement} />}
               </div>
             ))}
           </div>
         )}
 
-        {/* Source + resolution */}
-        <div className="flex items-center gap-2 mt-3 text-[10px] text-text-muted">
+        <div className="flex items-center gap-2 mt-2 text-[10px] text-text-muted">
           {data.source && (
             <span className="font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated">{data.source}</span>
           )}
-          {resolveLabel && <span>{resolveLabel}</span>}
-          {data.outcome_count > 3 && <span>· {data.outcome_count} outcomes</span>}
+          {data.outcome_count > 3 && <span>{data.outcome_count} outcomes</span>}
         </div>
 
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
@@ -292,33 +371,24 @@ function TournamentCard({
   liked: boolean; setLiked: (v: boolean) => void;
   onDismiss?: () => void;
 }) {
-  const catStyle = getCategoryStyle("golf");
   const leader = data.golfers?.[0];
-
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg">
-      {onDismiss && (
-        <button onClick={onDismiss} className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-        </button>
-      )}
-
+    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
+      <DismissButton onDismiss={onDismiss} />
       <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
-        <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
-          ⛳ Golf
-        </div>
+        <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
         {leader && (
           <>
-            <div className="text-5xl font-black text-white tabular-nums">{Math.round(leader.probability * 100)}%</div>
-            <div className="text-white/60 text-sm mt-1">{leader.name}</div>
+            <div className="text-5xl font-black text-white tabular-nums drop-shadow-lg">{Math.round(leader.probability * 100)}%</div>
+            <div className="text-white/70 text-sm mt-1">{leader.name}</div>
+            <MovementIndicator movement={leader.movement_24h} />
           </>
         )}
       </div>
-
       <div className="p-4">
         <h3 className="font-bold text-lg leading-tight mb-1">{data.name}</h3>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/sport/golf`} shareTitle={data.name} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl="https://bainluck.com/sport/golf" shareTitle={data.name} />
       </div>
     </div>
   );
@@ -326,9 +396,7 @@ function TournamentCard({
 
 // ── Action Bar ──
 
-function ActionBar({
-  liked, setLiked, shareUrl, shareTitle,
-}: {
+function ActionBar({ liked, setLiked, shareUrl, shareTitle }: {
   liked: boolean; setLiked: (v: boolean) => void;
   shareUrl: string; shareTitle: string;
 }) {
@@ -341,7 +409,7 @@ function ActionBar({
   };
 
   return (
-    <div className="flex items-center gap-1 mt-4 pt-3 border-t border-surface-border">
+    <div className="flex items-center gap-1 mt-3 pt-3 border-t border-surface-border">
       <button
         onClick={() => setLiked(!liked)}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm ${liked ? "bg-red-500/10 text-red-500" : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"}`}
@@ -351,9 +419,7 @@ function ActionBar({
         </svg>
         {liked ? "Liked" : "Like"}
       </button>
-
       <div className="flex-1" />
-
       <button
         onClick={handleShare}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm"
