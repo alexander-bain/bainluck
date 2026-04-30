@@ -2010,6 +2010,12 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "favorite": event.opening_favorite,
         }
 
+    # Box score data for player props display
+    if event.box_score_data and not event.box_score_data.get("error"):
+        response["box_score_data"] = {
+            "players": event.box_score_data.get("players"),
+        }
+
     return response
 
 
