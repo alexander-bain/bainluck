@@ -472,18 +472,6 @@ async def _sync_espn_live_events():
                                 source_name=ee.away_team.display_name or ee.away_team.name,
                             )
 
-                        # Update ESPN ID via Core SQL (not ORM) to ensure persistence.
-                        # ORM attribute assignment was silently lost when mixed with
-                        # Core updates on win_probability_sources in the same session.
-                        if ee.espn_id and event.espn_id != ee.espn_id:
-                            await session.execute(
-                                _sql_update(Event)
-                                .where(Event.id == event.id)
-                                .values(espn_id=ee.espn_id)
-                            )
-                            event.espn_id = ee.espn_id
-                            changed = True
-
                         # Correct commence_time from ESPN if significantly different
                         # The Odds API occasionally returns local times as UTC
                         # Skip if StatPal set the commence_time (more reliable source)
@@ -551,9 +539,8 @@ async def _sync_espn_live_events():
                                 "win_probability_sources": _wps,
                                 "espn_win_prob_home": ee.home_win_probability,
                             }
-                            if ee.espn_id and event.espn_id != ee.espn_id:
+                            if ee.espn_id:
                                 _update_vals["espn_id"] = ee.espn_id
-                                event.espn_id = ee.espn_id
                             await session.execute(
                                 _sql_update(Event)
                                 .where(Event.id == event.id)
