@@ -10,7 +10,7 @@ async def check():
     async with get_task_session() as s:
         # Check MLB events specifically
         r = await s.execute(text(
-            "SELECT id, espn_id, "
+            "SELECT e.id, espn_id, "
             "box_score_data IS NOT NULL as has_bsd, "
             "CASE WHEN box_score_data IS NOT NULL THEN substring(box_score_data::text, 1, 120) END as preview, "
             "status, home_team_name, away_team_name "
