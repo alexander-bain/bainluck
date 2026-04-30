@@ -24,6 +24,21 @@ struct MainTabView: View {
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
 
+            NavigationStack {
+                DiscoverView()
+                    .navigationDestination(for: Route.self) { route in
+                        switch route {
+                        case .eventDetail(let id): EventDetailView(eventId: id)
+                        case .futuresDetail(let id): FuturesDetailView(marketId: id)
+                        default: EmptyView()
+                        }
+                    }
+            }
+            .tabItem {
+                Label("Discover", systemImage: "safari")
+            }
+            .tag(AppTab.discover)
+
             LeaguesView()
                 .tabItem {
                     Label("Leagues", systemImage: "trophy.fill")
@@ -73,6 +88,9 @@ struct MainTabView: View {
                         }
                     }
                     .tag(AppTab.feed)
+
+                    Label("Discover", systemImage: "safari")
+                        .tag(AppTab.discover)
 
                     Label("Leagues", systemImage: "trophy.fill")
                         .tag(AppTab.leagues)
@@ -126,6 +144,8 @@ struct MainTabView: View {
             switch navCoordinator.selectedTab {
             case .feed:
                 FeedView()
+            case .discover:
+                DiscoverView()
             case .leagues:
                 LeaguesView()
             case .search:

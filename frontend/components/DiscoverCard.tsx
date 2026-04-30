@@ -500,3 +500,104 @@ function TournamentCard({ data, liked, setLiked, onDismiss }: {
     </div>
   );
 }
+
+// ── Higher/Lower Guess Card ──
+
+function generateThreshold(actualProb: number): number {
+  const minGap = 0.10;
+  // Randomly go higher or lower, at least 10% away
+  const goHigher = Math.random() > 0.5;
+  const offset = minGap + Math.random() * 0.15; // 10-25% away
+  let threshold = goHigher ? actualProb + offset : actualProb - offset;
+  // Clamp to 5%-95% range
+  threshold = Math.max(0.05, Math.min(0.95, threshold));
+  // Ensure still at least 10% away after clamping
+  if (Math.abs(threshold - actualProb) < minGap) {
+    threshold = actualProb > 0.5 ? actualProb - offset : actualProb + offset;
+    threshold = Math.max(0.05, Math.min(0.95, threshold));
+  }
+  return Math.round(threshold * 100);
+}
+
+export function GuessCard({ item }: { item: FeedItem }) {
+  const data = item.data as FeedFuturesData;
+  const leader = data.top_outcomes?.[0];
+  const actualProb = leader?.probability ?? 0;
+  const [guess, setGuess] = useState<"higher" | "lower" | null>(null);
+  const [threshold] = useState(() => generateThreshold(actualProb));
+  const actualPct = Math.round(actualProb * 100);
+  const correct = guess === "higher" ? actualPct > threshold : actualPct < threshold;
+
+  const catStyle = getCat(data.llm_sport_category);
+  const category = data.sport_name || data.llm_sport_category || "Markets";
+  const catGradient = CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)";
+
+  if (!leader) return null;
+
+  return (
+    <div className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
+      {/* Header */}
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
+        <span className="text-white text-sm">🎯</span>
+        <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
+        <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ml-auto`}>
+          {catStyle.emoji} {category}
+        </span>
+      </div>
+
+      <div className="p-4">
+        <h3 className="font-bold text-lg leading-tight mb-3">{data.name}</h3>
+
+        {!guess ? (
+          <>
+            <p className="text-sm text-text-secondary mb-4">
+              {leader.name} — are the odds <span className="font-bold">higher</span> or <span className="font-bold">lower</span> than <span className="text-lg font-black">{threshold}%</span>?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setGuess("higher")}
+                className="flex-1 py-3 rounded-xl bg-green-500/10 text-green-700 font-bold text-sm hover:bg-green-500/20 transition-colors border border-green-500/20"
+              >
+                ↑ Higher than {threshold}%
+              </button>
+              <button
+                onClick={() => setGuess("lower")}
+                className="flex-1 py-3 rounded-xl bg-red-500/10 text-red-700 font-bold text-sm hover:bg-red-500/20 transition-colors border border-red-500/20"
+              >
+                ↓ Lower than {threshold}%
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="text-center">
+            <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold mb-3 ${
+              correct ? "bg-green-500/15 text-green-700" : "bg-red-500/15 text-red-700"
+            }`}>
+              {correct ? "✓ Correct!" : "✗ Not quite!"}
+            </div>
+
+            <div className="mb-3">
+              <div className="text-4xl font-black tabular-nums">{actualPct}%</div>
+              <div className="text-sm text-text-secondary mt-1">{leader.name}</div>
+            </div>
+
+            <div className="text-xs text-text-muted mb-3">
+              You guessed {guess} than {threshold}% — actual is {actualPct}%
+            </div>
+
+            {data.hook_description && (
+              <p className="text-xs text-text-secondary italic mb-3">{data.hook_description}</p>
+            )}
+
+            <Link
+              href={`/futures/${data.id}`}
+              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+            >
+              See full market →
+            </Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

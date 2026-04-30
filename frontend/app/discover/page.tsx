@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
-import DiscoverCard, { type DiscoverGroupedItem } from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem, GuessCard } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const DISMISSED_KEY = "discover_dismissed";
@@ -287,17 +287,16 @@ export default function DiscoverPage() {
         </div>
       </header>
 
-      {/* Feed */}
-      <main className="max-w-lg mx-auto px-4 py-4 space-y-4">
+      {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
+      <main className="max-w-6xl mx-auto px-4 py-4">
         {isLoading && (
-          <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="rounded-2xl bg-surface-card border border-surface-border animate-pulse">
+          <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="break-inside-avoid rounded-2xl bg-surface-card border border-surface-border animate-pulse mb-4">
                 <div className="h-44 bg-surface-elevated rounded-t-2xl" />
                 <div className="p-4 space-y-3">
                   <div className="h-5 bg-surface-elevated rounded w-3/4" />
                   <div className="h-3 bg-surface-elevated rounded w-full" />
-                  <div className="h-3 bg-surface-elevated rounded w-2/3" />
                 </div>
               </div>
             ))}
@@ -317,17 +316,28 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {visibleItems.map((gi, idx) => (
-          <DiscoverCard
-            key={gi.type === "single" ? getItemId(gi.item) : `group-${gi.groupTitle}-${idx}`}
-            groupedItem={gi}
-            onDismiss={gi.type === "single" ? () => handleDismiss(getItemId(gi.item)) : undefined}
-          />
-        ))}
+        <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
+          {visibleItems.map((gi, idx) => {
+            const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
+            const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && gi.item!.type === "futures";
 
-        {/* Infinite scroll sentinel */}
+            return (
+              <div key={key} className="break-inside-avoid mb-4">
+                {isGuessSlot ? (
+                  <GuessCard item={gi.item!} />
+                ) : (
+                  <DiscoverCard
+                    groupedItem={gi}
+                    onDismiss={gi.type === "single" ? () => handleDismiss(getItemId(gi.item!)) : undefined}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         {visibleCount < processedItems.length && (
-          <div ref={sentinelRef} className="h-10 flex items-center justify-center">
+          <div ref={sentinelRef} className="h-10 flex items-center justify-center mt-4">
             <div className="w-5 h-5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
           </div>
         )}

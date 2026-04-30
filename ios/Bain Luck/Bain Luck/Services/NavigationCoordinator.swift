@@ -5,9 +5,10 @@ import SwiftUI
 /// Tab identifiers for programmatic tab switching.
 enum AppTab: Int, Hashable {
     case feed = 0
-    case leagues = 1
-    case search = 2
-    case myStuff = 3
+    case discover = 1
+    case leagues = 2
+    case search = 3
+    case myStuff = 4
 }
 
 /// Coordinates deep link and universal link URL handling with tab navigation.

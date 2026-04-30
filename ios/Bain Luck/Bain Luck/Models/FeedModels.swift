@@ -127,6 +127,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let topOutcomes: [FeedFuturesOutcome]?
     let outcomeCount: Int?
     let canonicalMarketKey: String?
+    let imageUrl: String?
+    let hookDescription: String?
 }
 
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
