@@ -1,5 +1,16 @@
 # Completed Features (Shipped)
 
+## April 30, 2026
+
+- ✅ **Prediction Streaks & Stats**: `user_predictions` table tracks every Higher/Lower guess. `POST /api/predictions` records guesses (auth-aware: user_id when logged in, session_id when anonymous). `GET /api/predictions/detailed-stats` returns total, correct, accuracy, current/best streak, category breakdown, 14-day trend, badges (First Guess, Hot Start, On Fire, Unstoppable, Centurion, Sharp Eye), and recent 20 predictions. Stats page at `/discover/stats` with hero stats, badges, category accuracy bars, trend chart, and prediction history.
+- ✅ **Shareable Prediction Cards**: `GET /api/og/prediction` renders HTML card with OG meta tags for social sharing. Shows correct/incorrect badge, actual probability, market name, Bain Luck branding. "Share result" button on revealed guess cards.
+- ✅ **Daily Challenge Card**: Pinned at top of Discover feed — "Make 5 predictions today" with circular progress ring. Trophy badge on completion. Resets daily via localStorage.
+- ✅ **Build Your Feed Onboarding**: First-time visitors see a modal with 12 category tiles to pick interests. Sets initial category filter. "Show me everything" option. Persists via localStorage.
+- ✅ **Animated Probability Counter**: Probabilities count up from 0 on scroll into view. 800ms ease-out cubic via IntersectionObserver + requestAnimationFrame.
+- ✅ **Resolution Card Component**: Purple "Market Resolved" card showing user's guess vs actual result. Ready for backend wiring (needs endpoint to find user's resolved predictions).
+- ✅ **Discover Feed Enhancements (multi-day)**: Pexels API images for market cards (image_url on FuturesMarket), LLM hook descriptions via GPT-4o-mini (hook_description), category interleaving for diversity, staleness filtering (resolution_date past, ≥90% no movement), non-sports quota (20%), infinite scroll, category filter chips, trending badges, swipe gestures (mobile), market grouping (related markets collapsed into expandable cards), multi-column layout (1/2/3 cols responsive), time-context labels, movement indicators. Enrichment tasks run 2x daily via Celery beat.
+- ✅ **Native Discover Tab**: DiscoverView.swift with category chips, adaptive grid, event/futures/guess cards. Added to iPhone tab bar + Mac sidebar. Guess cards POST to /api/predictions.
+
 ## April 29, 2026
 
 - ✅ **Manus sweep fixes (9 modules, April 30)**: Projected final score hidden for completed games + negative values (was showing "3 – -1" from resolved spread/total markets). Chart stale tails fixed — `completed_at` now caps the domain instead of extending it (was adding 42-76 min of flat line). API outage during sweep was transient (dyno restart). NHL 0-0 scores were transient (API outage). 11/15 league page failures were transient. NBA grid missing division column is correct (playoff season, divisions resolved). Monotonicity, cross-game contamination, mobile rendering, and event matching all passed clean.

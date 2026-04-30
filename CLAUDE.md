@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Bain Luck** is a visual-first sports odds experience that translates betting markets into intuitive win probabilities. Users see "60% vs 40%" instead of "-150 / +130".
+**Bain Luck** is a prediction market discovery platform that translates betting and prediction markets into intuitive probabilities. Users see "60% vs 40%" instead of "-150 / +130". Started with sports odds, now covers economics, politics, tech, culture, weather, and more via the Discover feed.
 
-**North Star**: The cleanest odds visualization tool on the internet.
-**Target User**: Casual sports fans watching games who want context, not betting advice.
-**Live Site**: https://bainluck.com
+**North Star**: The most engaging way to explore what the world thinks will happen.
+**Target User**: Casual fans who want probability-first context — not betting advice.
+**Live Site**: https://bainluck.com | **Discover Feed**: https://bainluck.com/discover
 
 ---
 
@@ -52,11 +52,11 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,331 tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,331+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS App | SwiftUI | TestFlight (active development) |
+| iOS/macOS App | SwiftUI (shared codebase, 60+ Swift files) | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -66,7 +66,8 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 - **DataGolf** — Golf predictions, live in-play probabilities, leaderboards (~$30/mo)
 - **MLB Stats API** — Live baseball win probability (free, no key)
 - **ESPN** — Team colors, logos, live game data, win probability (free, undocumented)
-- **OpenAI** — GPT-4o-mini for LLM classification (~$5/mo)
+- **OpenAI** — GPT-4o-mini for LLM classification + market hook descriptions (~$10/mo)
+- **Pexels** — Free stock photos for Discover feed cards (200 req/hr)
 - **Firebase Auth** — Google + Apple Sign-In (free tier)
 
 ---
@@ -103,10 +104,10 @@ bainluck/
 │   ├── alembic/                 # Database migrations
 │   └── tests/                   # 3,331 pytest items
 ├── frontend/
-│   ├── app/                     # Next.js app router (30+ pages, incl. /weather)
-│   ├── components/              # React components (RelatedFutures, OddsChart, etc.)
+│   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
+│   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
 │   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # iOS app (SwiftUI, 54 Swift files)
+├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 60+ Swift files)
 └── docs/                        # Documentation
 ```
 
@@ -132,12 +133,12 @@ bainluck/
 
 ## Product Priorities (ordered)
 
-1. **Best aggregated event probabilities** — Best way to see event probabilities aggregated across sportsbooks
-2. **Odds vs algorithms** — Compare event probabilities to algorithm probabilities (win probability models)
-3. **Cross-source comparison** — Compare across ALL probability sources (DataGolf, FanGraphs, etc.)
-4. **Related futures** — See related futures, both out of curiosity and to understand 2nd-order impact
-5. **Team/league-level odds** — Compare odds for entire teams or leagues
-6. **Discovery & engagement** — Discover and interact with events with interesting odds
+1. **Discover feed** — Social prediction market feed with Higher/Lower games, images, LLM hooks, category filtering, daily challenges, and prediction streaks (`/discover`)
+2. **Best aggregated event probabilities** — Probability-first event detail pages with multi-source charts, market maps, player props, and championship path
+3. **Cross-source comparison** — Compare across ALL probability sources (sportsbooks, Kalshi, Polymarket, ESPN, stat models)
+4. **Related futures** — Season futures, awards, playoff path, and series probability on every event page
+5. **Team/league-level odds** — Championship grids + league market sections (series, awards, props)
+6. **Multi-platform** — Full parity between web, iOS, and macOS (shared SwiftUI codebase)
 
 **All outstanding work items live in `docs/backlog.md`** (SINGLE SOURCE OF TRUTH).
 
@@ -179,13 +180,15 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 events              — Games with teams, scores, EI, win_probability_sources (JSONB)
 odds_snapshots      — Historical odds per bookmaker (write-time dedup)
 win_prob_snapshots  — Multi-source win probability history
-futures_markets     — Championship/award/prop markets (market_tier, event_id, sport_id)
+futures_markets     — Championship/award/prop markets (market_tier, event_id, image_url, hook_description)
 futures_outcomes    — Individual outcomes within markets
 teams               — Team data (ESPN colors/logos, rosters, alternate_names)
 team_identity_mapping — Cross-source team identity index
+user_predictions    — Higher/Lower guesses (session_id, user_id, market_id, guess, correct)
+users               — Firebase Auth users (Google + Apple Sign-In)
 ```
 
-**Key columns**: `Event.win_probability_sources` (JSONB, all 6 sources), `FuturesMarket.market_tier` (1-5), `FuturesMarket.event_id` (nullable FK — game props linked to events), `FuturesMarket.llm_sport_category`.
+**Key columns**: `Event.win_probability_sources` (JSONB, all 6 sources), `FuturesMarket.market_tier` (1-5), `FuturesMarket.event_id` (nullable FK — game props linked to events), `FuturesMarket.llm_sport_category`, `FuturesMarket.image_url` (Pexels), `FuturesMarket.hook_description` (LLM-generated).
 
 ---
 
@@ -219,6 +222,10 @@ team_identity_mapping — Cross-source team identity index
 20. **Polymarket midpoint unreliable during blowouts** — when bid/ask spread >15pp, use `lastTradePrice` instead. Skip entirely if `lastTradePrice` is null and no bids exist (zero trading activity = completely stale).
 21. **Polymarket game events have nested sub-markets** — A single event ("Magic vs Pistons") contains ~40 sub-markets (moneyline + spread + O/U + player props). Each has its own `condition_id`. The polling task decomposes into separate FuturesMarket rows (not outcomes). NegRisk events (championships) are different — each sub-market IS one candidate.
 22. **ORM attribute assignment lost when mixed with Core SQL updates** — Setting `event.field = value` via ORM, then `session.execute(update(Event).where(...).values(...))` via Core SQL can cause the ORM change to silently not persist. Use Core SQL for both. Same class as gotcha #8 but for non-JSONB columns.
+23. **`completed_at` is a backend processing timestamp, NOT game-end time** — Can be 30-45 minutes after the last actual game data. For chart domains, use last ESPN data point instead. Don't use for any time-sensitive display.
+24. **Kalshi dual markets cause probability oscillation** — Kalshi creates separate "Team A win?" and "Team B win?" markets for the same game. Both get linked to the same Event. Deduplicate by `(event_id, source)` before writing snapshots — one market per event per source.
+25. **`CurrentOdds.spread` is unsigned** — The API's `spread` field is just a number (e.g., 8.4) without direction. Use `home_spread` (signed from home team perspective) when available. Fall back to `closestToEvenMargin()` from spreads data, NOT to the unsigned `spread`.
+26. **Pexels rate limit is 200 req/hr** — Enrichment script hits this on large batches. Target feed-visible markets first via `enrich_feed_markets.py`, not random `updated_at` ordering.
 
 ---
 
@@ -270,6 +277,8 @@ When fixing ANY data quality, matching, or display issue:
 
 | What | Where |
 |------|-------|
+| Discover feed | https://bainluck.com/discover |
+| Prediction stats | https://bainluck.com/discover/stats |
 | Admin dashboard | https://bainluck.com/admin |
 | Weather page | https://bainluck.com/weather |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |

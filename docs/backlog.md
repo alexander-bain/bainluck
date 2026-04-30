@@ -1377,68 +1377,32 @@ Full parity achieved. See `docs/completed-features.md`. Added: tag chips, trend 
 
 ## Tier 2.5 — Discover Feed Enhancement (April 29)
 
-### D-1. Market Card Images via Unsplash/Pexels API
+### ~~D-1. Market Card Images~~ ✅ SHIPPED (April 30)
+Pexels API integration. `image_url` column on FuturesMarket. Enrichment task runs 2x daily.
 
-**Problem:** Discover feed cards use category gradients instead of real images. Non-sports cards (economics, culture, tech) especially need visual content to feel engaging.
+### ~~D-2. LLM Hook Descriptions~~ ✅ SHIPPED (April 30)
+GPT-4o-mini generates 1-sentence hooks. `hook_description` column. Enrichment task runs 2x daily.
 
-**Fix:** Integrate Unsplash API (free, 50 req/hr) or Pexels API (free, 200 req/hr).
-1. Add `image_url` column to `FuturesMarket` model
-2. Nightly batch task: for markets with null `image_url`, extract 2-3 keywords from market name, query Unsplash, store best result URL
-3. Feed API returns `image_url` in FeedFuturesData
-4. DiscoverCard renders hero image instead of gradient when available
-5. Cache aggressively — one fetch per market, not per request
+### ~~D-3. Content Ranking~~ PARTIALLY SHIPPED (April 30)
+Staleness filtering, category interleaving, non-sports quota implemented in Discover page. Volume-weighted scoring deferred.
 
-**Files:** `backend/app/models/models.py` (migration), new `backend/app/tasks/image_enrichment.py`, `frontend/components/DiscoverCard.tsx`, `frontend/lib/types.ts`
-**Parallel Safety:** Green
+### ~~D-4. Behavioral Engagement Tracking~~ PARTIALLY SHIPPED (April 30)
+`user_predictions` table tracks Higher/Lower guesses. Full click/view tracking deferred.
 
-### D-2. LLM Hook Descriptions for Markets
+### ~~D-5. Native Discover Feed~~ ✅ SHIPPED (April 30)
+DiscoverView.swift with category chips, event/futures/guess cards, API wiring.
 
-**Problem:** Futures cards show the market name as the title but no context about WHY it's interesting or what's happening.
-
-**Fix:** Nightly GPT-4o-mini batch job generates 1-sentence "hook" descriptions.
-- Input: market name + leader + probability + 24h movement + resolution date
-- Output: "Down from 45% after Vatican denied the visit request" or "SGA locked in the race since January — closest challenger is 30 points back"
-- Store as `hook_description` on FuturesMarket
-- Show below market name on Discover cards
-
-**Estimated cost:** ~$5/mo at current market volume
-**Files:** `backend/app/models/models.py`, new `backend/app/tasks/market_descriptions.py`, feed API
-**Parallel Safety:** Green
-
-### D-3. Content Ranking: Volume + Surprise + Trending
-
-**Problem:** Feed ranking is editorial (hand-tuned weights). Volume data is collected but underused.
-
-**Quick wins (no new infrastructure):**
-- Use `volume_24h` in base event scoring (data already in DB)
-- Volume velocity: compare current volume to 7-day average for spike detection
-- Surprise factor: `abs(current_prob - opening_prob)` as interestingness signal
-- Weight resolution proximity more (markets resolving this week are inherently interesting)
-
+### D-3a. Volume-Weighted Feed Scoring (REMAINING)
+Use `volume_24h` in base event scoring, volume velocity (current vs 7-day avg), surprise factor (`abs(current - opening)`). Data exists, just needs formula changes.
 **Files:** `backend/app/utils/feed_scoring.py`, `backend/app/utils/futures_highlights.py`
-**Parallel Safety:** Green
 
-### D-4. Behavioral Engagement Tracking
+### D-4a. Full Click/View Tracking (REMAINING)
+`user_interactions` table logging event/futures detail views. Backend middleware for zero-frontend-work implicit tracking. View-weighted sport affinities.
+**Files:** New migration, `backend/app/main.py`, `backend/app/utils/personalization.py`
 
-**Problem:** Personalization is static (favorites/preferences only). No implicit feedback loop.
-
-**Fix:**
-1. Add `user_interactions` table: `(user_id, item_type, item_id, action, timestamp)`
-2. Backend middleware: log authenticated requests to event/futures detail endpoints (zero frontend work)
-3. View-weighted sport affinities: recompute from viewing behavior, blended with onboarding
-4. Like/Dismiss actions from Discover feed write to this table
-
-**Files:** New migration, middleware in `backend/app/main.py`, `backend/app/utils/personalization.py`
-**Parallel Safety:** Green
-
-### D-5. Native Discover Feed (iOS/macOS)
-
-**Problem:** Discover feed is web-only. Native apps still use the old feed format.
-
-**Fix:** Port DiscoverCard to SwiftUI. Same card format: hero visual + probability + social actions. Add as a new tab alongside existing Feed.
-
-**Files:** New `ios/.../Views/DiscoverView.swift`, `ios/.../Components/DiscoverCardView.swift`
-**Parallel Safety:** Green
+### D-10. Resolution Notifications Backend
+Wire `ResolutionCard` component to a backend endpoint that finds the user's past predictions on markets that have since resolved. Query `user_predictions` JOIN `futures_markets` WHERE market status changed to resolved.
+**Files:** `backend/app/routes/predictions.py`, `frontend/app/discover/page.tsx`
 
 ---
 
