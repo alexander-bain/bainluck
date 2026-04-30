@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
