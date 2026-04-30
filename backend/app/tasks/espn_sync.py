@@ -983,10 +983,11 @@ async def _sync_espn_live_events():
                                         "scoring_plays": scoring_plays,
                                         "live": True,
                                     }
+                                    import json as _json_mod
+                                    from sqlalchemy import text as _raw_text
                                     await session.execute(
-                                        _sql_update(Event)
-                                        .where(Event.id == ev.id)
-                                        .values(box_score_data=bsd)
+                                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                                        {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
                                     )
                                     ev.box_score_data = bsd
                                     stats["live_box_scores_fetched"] = (
