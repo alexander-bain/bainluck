@@ -70,16 +70,18 @@ For each section below, present:
 - Action: any tier adjustments needed?
 
 **B. Game Prop Link Rate (Market ↔ Event matching)**
-- Per-sport open link rates for Kalshi and Polymarket
-- Compare against targets (>85% for major sports)
-- Which sports improved vs degraded since last check
-- Action: which sport to investigate next?
+- Target is **100%** for Tier 1 leagues (NBA, NHL, MLB, NFL, EPL). Any gap is either (1) a bug to fix, or (2) a link rate math error (e.g., including closed/resolved markets, or markets that can't be linked because they're season-level not game-level).
+- Per-sport open link rates for Kalshi and Polymarket, broken down by **league** within each sport (NBA vs WNBA vs NCAAB, not just "basketball")
+- For any league below 100%: classify each unlinked market as either **(1) urgent fix** (game-level market that SHOULD be linked) or **(2) math fix** (market incorrectly counted as linkable — e.g., season futures, non-game markets). If it's category (2), explain how the link rate calculation should be corrected.
+- Highlight Tier 1 leagues separately from Tier 2+
+- Action: which specific unlinked markets need fixing?
 
 **C. Championship Grid Health**
-- NBA and NHL grid health scores
-- Fill rates by column (championship, conference, division, make_playoffs)
-- Source diversity (Kalshi + Polymarket + Odds API)
-- Action: any columns missing data?
+- Target is **100%** for every grid. Any score below 100 means specific data is missing.
+- For each grid (NBA, NHL, MLB, Golf): list EVERY column, its fill rate, and its source breakdown
+- For any column below 100% fill: name the specific teams missing data and what source should provide it
+- Source diversity per column (Kalshi + Polymarket + Odds API) — single-source columns are fragile
+- Action: for each gap, specify the exact fix (missing market classification, source not ingesting, etc.)
 
 **D. Source Coverage (Event ↔ Source matching)**
 - Average sources per live event

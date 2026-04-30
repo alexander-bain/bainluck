@@ -913,19 +913,27 @@ async def _sync_espn_live_events():
                                 now_str = datetime.now(timezone.utc).isoformat()
 
                                 if box_score or scoring_plays:
-                                    event.box_score_data = {
-                                        "source": "espn",
-                                        "fetched_at": now_str,
-                                        "players": box_score,
-                                        "scoring_plays": scoring_plays,
-                                    }
+                                    await session.execute(
+                                        _sql_update(Event)
+                                        .where(Event.id == event.id)
+                                        .values(box_score_data={
+                                            "source": "espn",
+                                            "fetched_at": now_str,
+                                            "players": box_score,
+                                            "scoring_plays": scoring_plays,
+                                        })
+                                    )
                                     stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
                                 else:
-                                    event.box_score_data = {
-                                        "source": "espn",
-                                        "error": "not_available",
-                                        "fetched_at": now_str,
-                                    }
+                                    await session.execute(
+                                        _sql_update(Event)
+                                        .where(Event.id == event.id)
+                                        .values(box_score_data={
+                                            "source": "espn",
+                                            "error": "not_available",
+                                            "fetched_at": now_str,
+                                        })
+                                    )
                             except Exception as e:
                                 logger.error(f"Box score fetch error for event {event.id}: {e}")
                     finally:
@@ -977,13 +985,17 @@ async def _sync_espn_live_events():
                                 scoring_plays = context.get("scoring_plays", [])
                                 now_str = datetime.now(timezone.utc).isoformat()
                                 if box_data or scoring_plays:
-                                    ev.box_score_data = {
-                                        "source": "espn",
-                                        "fetched_at": now_str,
-                                        "players": box_data,
-                                        "scoring_plays": scoring_plays,
-                                        "live": True,
-                                    }
+                                    await session.execute(
+                                        _sql_update(Event)
+                                        .where(Event.id == ev.id)
+                                        .values(box_score_data={
+                                            "source": "espn",
+                                            "fetched_at": now_str,
+                                            "players": box_data,
+                                            "scoring_plays": scoring_plays,
+                                            "live": True,
+                                        })
+                                    )
                                     stats["live_box_scores_fetched"] = (
                                         stats.get("live_box_scores_fetched", 0) + 1
                                     )
