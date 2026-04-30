@@ -165,3 +165,42 @@ Championship (tier 1), conference (tier 2), and division (tier 4) markets are **
 ### Cross-Source Dedup
 
 Uses `canonical_market_key`. When two markets share the same key, keeps the one with more outcomes.
+
+---
+
+## Polymarket Game Event Decomposition (`tasks/polymarket.py`)
+
+Polymarket game events (e.g., "Magic vs. Pistons") contain ~40 sub-markets: moneyline, spread, O/U, and 20+ player props. These are NOT outcomes of one market — each sub-market has its own `condition_id` and `question`.
+
+### Data Model
+
+```
+Polymarket API Event (neg_risk=False, 40 markets)
+  └─ Market 1: "Magic vs. Pistons" (condition_id=0x56e, moneyline)
+  └─ Market 2: "Spread: Pistons (-9.5)" (condition_id=0x4a0)
+  └─ Market 3: "Cade Cunningham: Points O/U 27.5" (condition_id=0x160)
+  └─ ...37 more
+
+Our DB (after decomposition):
+  FuturesMarket (parent): name="Magic vs. Pistons", group_type="polymarket_event"
+  FuturesMarket (sub): name="Magic vs. Pistons", group_type="polymarket_sub_market", event_id=X
+  FuturesMarket (sub): name="Spread: Pistons (-9.5)", group_type="polymarket_sub_market", event_id=X
+  FuturesMarket (sub): name="Cade Cunningham: Points O/U 27.5", group_type="polymarket_sub_market", event_id=X
+```
+
+### Linking Pipeline
+
+1. **Polymarket poll** (hourly): Creates parent + sub-market FuturesMarket rows. Sub-markets inherit `event_id` from parent if already linked.
+2. **Matching task** (every 15 min): Links parent by "vs." name pattern → sets `event_id` on parent AND propagates to all sub-markets in the same `group_id`.
+3. **Game-markets endpoint**: Finds sub-markets via `event_id` FK, classifies each by name (`_classify_game_market`), routes to player_props/spreads/totals.
+
+### Key Distinction: neg_risk vs game events
+
+| Type | `neg_risk` | Sub-markets are... | Example |
+|------|-----------|-------------------|---------|
+| Championship | `True` | Outcomes (one candidate each) | "NBA Champion" → 30 team outcomes |
+| Game event | `False` | Separate markets (different types) | "Magic vs Pistons" → moneyline + spread + props |
+
+### Backfill Script
+
+`scripts/backfill_polymarket_submarkets.py` — decomposes existing game events, propagates event_ids, reports category breakdown, optionally cleans up crypto markets.

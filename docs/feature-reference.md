@@ -828,6 +828,18 @@ The league page (`/sport/[sport]/[league]`) is a one-stop destination for everyt
 - Frontend: `frontend/app/sport/[sport]/[league]/page.tsx`
 - API client: `fetchLeagueMarkets()` in `frontend/lib/api.ts`
 
+### Polymarket Cross-Source Player Props
+
+Polymarket game events contain player props (Points O/U, Assists O/U, Rebounds O/U) alongside moneylines, spreads, and totals. These are decomposed into per-sub-market FuturesMarket rows during polling, linked to events via `event_id` propagation from parent markets, and classified by the game-markets endpoint alongside Kalshi props.
+
+**Pipeline:** `poll_polymarket_markets` (decomposition) → `match_prediction_markets` (linking + propagation) → `game-markets` endpoint (classification) → `PlayerPropsDashboard` (display).
+
+**Key files:**
+- Decomposition: `backend/app/tasks/polymarket.py` (non-neg_risk multi-market branch)
+- Propagation: `backend/app/tasks/prediction_market_matching.py` (3 linking paths)
+- Backfill: `backend/scripts/backfill_polymarket_submarkets.py`
+- Display: `frontend/components/PlayerPropsDashboard.tsx`
+
 **Admin endpoints:**
 ```bash
 # Check identity mapping status (total mappings, per-source counts)

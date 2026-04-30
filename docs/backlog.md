@@ -75,10 +75,10 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 
 **Layer 4: Market Completeness** — Are we showing EVERY market, none we shouldn't?
 - Status: ✅ **VERIFIED LIVE** (April 24 Celtics game). 15 Kalshi markets, all required types, Polymarket moneyline showing.
-- **Key finding**: We ingest EVERYTHING from Kalshi + Polymarket (minus crypto). No ingestion gap. Kalshi creates game markets 2-3 days before games. Discovery is NOT the bottleneck.
+- **Key finding (updated April 29)**: We ingest everything from Kalshi + Polymarket (minus crypto, confirmed 0 in DB). Polymarket game events now decomposed into per-sub-market rows — player props, spreads, O/U all surfacing alongside Kalshi. 29,785 sub-markets created across all sports. Crypto cleanup complete (26 stale markets deleted).
 - **Root cause (confirmed)**: Kalshi market backfill queried `status=open` but live game markets have `status=active`. This prevented spread/total/F5/moneyline outcomes from being populated during games, even though the FuturesMarket records existed. **Fixed** — backfill now uses `status=None` (no filter).
 - **Kalshi L4**: Required types (player props) ✅ present. Bonus types (spread/total/F5/moneyline) need live game verification — the backfill fix should make them appear when Kalshi has liquidity.
-- **Polymarket L4**: ✅ Game moneylines for NBA playoffs. Season futures for all sports.
+- **Polymarket L4**: ✅ **FIXED (April 29)** — Game moneylines, spreads, O/U, AND player props now surfacing. Root cause: Polymarket game events (40 sub-markets) were stored as 1 FuturesMarket with all sub-markets flattened into outcomes. Decomposition fix creates per-sub-market FuturesMarket rows. Matching task propagates event_id to sub-markets on link. Verified: HOU vs BAL shows 42 Polymarket items (spreads, O/U, player props) alongside 101 Kalshi. Backfill script: `scripts/backfill_polymarket_submarkets.py`.
 - **VERIFY April 24**: During the first live MLB game, check if spread/total/F5 appear on the event page and if Kalshi shows as a source on the win probability chart.
 - **Fixes shipped (April 23, 10 commits):**
   1. `is_game_prop()` detects "Team vs Team Winner?" moneyline format
@@ -1658,15 +1658,17 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 **Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### 0f-10. Player Props All Showing "0 so far" and "—" Probabilities (April 28)
+### ~~0f-10. Player Props All Showing "0 so far" and "—" Probabilities~~ ✅ FIXED (April 29)
 
-**Problem:** DET @ ORL (event 14598003, completed game) player props show "0 so far" for all players and "—" for all probabilities. The thresholds exist (10+, 15+, 20+) but no probability values are displayed.
+**Root cause (confirmed):** Two stacked bugs: (1) `espn_id` was not persisting due to ORM/Core SQL mixing (gotcha #46), so `box_score_data` never populated. (2) When `box_score_data` is null, the frontend's "done" mode assumed `actual=0` for all stats, showing "0 so far" and "—" everywhere. **Fixes:** espn_id now written via Core SQL update. Frontend falls back to "pre" mode (shows probabilities) when box score is unavailable. Threshold dedup added for same-source duplicates.
 
-**Root cause (suspected):** Either the game-markets API is returning null probabilities for completed game player props, or the frontend is not handling completed-game prop data correctly. Need to check if the API even returns probabilities for completed games' player props.
+### 0f-10b. Cross-Source Player Prop Merging (follow-up)
 
-**Fix:** Investigate API response for completed game player props. If probabilities aren't returned post-game, consider showing pre-game probabilities with "pre-game" label + actual stat line from box score.
+**Problem:** Now that both Kalshi and Polymarket player props surface on the same event, duplicate thresholds appear when both sources have the same player+stat. Currently the frontend deduplicates by keeping the higher probability — but the right approach is to merge across sources with weighted averaging, same as `compute_aggregate_probability()` does for win probability.
 
-**Files:** `backend/app/routes/events.py` (game-markets endpoint), `frontend/components/PlayerPropsDashboard.tsx`
+**Fix:** In `PlayerPropsDashboard.tsx`, when the same player+stat+threshold appears from multiple sources, compute a weighted average (Kalshi weight 0.8, Polymarket weight 0.8) instead of just keeping the higher value. Show source count badge.
+
+**Files:** `frontend/components/PlayerPropsDashboard.tsx`
 **Parallel Safety:** Green
 
 ### 0f-11. Win Probability and Score Differential Charts Have Different X-Axes (April 28)

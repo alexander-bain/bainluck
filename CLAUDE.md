@@ -217,6 +217,8 @@ team_identity_mapping — Cross-source team identity index
 18. **Kalshi threshold outcomes ("2+", "Aaron Judge: 1+") are OVER probabilities** — don't invert them. Only invert outcomes that explicitly start with "Under" or equal "No".
 19. **Don't time-window linked markets** — if the matching task set `event_id`, trust it. Kalshi's `commence_time` is the resolution date (gotcha #9), so a time window on the linked query filters out game totals/spreads. Time windows belong on the FALLBACK query only (unlinked markets matched by team name).
 20. **Polymarket midpoint unreliable during blowouts** — when bid/ask spread >15pp, use `lastTradePrice` instead. Skip entirely if `lastTradePrice` is null and no bids exist (zero trading activity = completely stale).
+21. **Polymarket game events have nested sub-markets** — A single event ("Magic vs Pistons") contains ~40 sub-markets (moneyline + spread + O/U + player props). Each has its own `condition_id`. The polling task decomposes into separate FuturesMarket rows (not outcomes). NegRisk events (championships) are different — each sub-market IS one candidate.
+22. **ORM attribute assignment lost when mixed with Core SQL updates** — Setting `event.field = value` via ORM, then `session.execute(update(Event).where(...).values(...))` via Core SQL can cause the ORM change to silently not persist. Use Core SQL for both. Same class as gotcha #8 but for non-JSONB columns.
 
 ---
 
