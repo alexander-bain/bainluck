@@ -670,6 +670,7 @@ async def _process_event_batch(
                                 "current_yes_bid": market.best_bid,
                                 "current_yes_ask": market.best_ask,
                                 "rank": 1,
+                                "probability_change_24h": prob - FuturesOutcome.current_probability,
                                 "last_updated": func.now(),
                             },
                         ).returning(FuturesOutcome.id)
@@ -794,6 +795,8 @@ async def _process_event_batch(
                             "current_yes_bid": od["yes_bid"],
                             "current_yes_ask": od["yes_ask"],
                             "rank": rank,
+                            "probability_change_24h": prob - FuturesOutcome.current_probability,
+                            "rank_change_24h": FuturesOutcome.rank - rank,
                             "last_updated": func.now(),
                         },
                     ).returning(FuturesOutcome.id)

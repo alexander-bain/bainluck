@@ -551,6 +551,8 @@ async def _poll_kalshi_markets():
                                 "current_yes_bid": market.yes_bid,
                                 "current_yes_ask": market.yes_ask,
                                 "rank": rank,
+                                "probability_change_24h": prob - FuturesOutcome.current_probability,
+                                "rank_change_24h": FuturesOutcome.rank - rank,
                                 "last_updated": func.now(),
                             }
                         ).returning(FuturesOutcome.id)

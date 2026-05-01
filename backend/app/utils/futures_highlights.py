@@ -373,6 +373,13 @@ def compute_futures_highlight(
             result.top_mover_name = biggest_mover_name
             result.top_mover_change = biggest_change
 
+        # No movement = stale market, less interesting
+        # Only penalize when we HAVE movement data (probability_change_24h is not None)
+        has_movement_data = any(o.get("probability_change_24h") is not None for o in outcomes)
+        if has_movement_data and biggest_change < 0.005:
+            result.score -= 15
+            result.reasons.append("no_movement")
+
         # Leader change scoring
         if leader_was_different:
             flags.leader_changed = True
