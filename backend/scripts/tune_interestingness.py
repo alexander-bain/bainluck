@@ -47,6 +47,9 @@ class Weights:
     crypto_base: float = 25.0
     sports_base: float = 20.0  # sports already get boosted by existing logic
 
+    # Penalty for low-quality market patterns
+    boring_penalty: float = -25.0
+
     # Signal boosts
     resolving_soon_7d: float = 15.0
     resolving_soon_30d: float = 8.0
@@ -154,7 +157,42 @@ def score_market(market: dict, weights: Weights) -> float:
     if source_count >= 2:
         score += weights.multi_source
 
-    return min(100, score)
+    # Boring market penalty — low-quality patterns that flood the feed
+    name = (market.get("name") or "").lower()
+    import re
+    boring_patterns = [
+        r"# ?(posts|tweets|truths)",     # social media post counts
+        r"photographed every",            # "Trump photographed every day"
+        r"(ted cruz|trump|biden|harris).*(posts|tweets)",  # politician tweet counts
+        r"white house #",                 # White House post counts
+        r"what will .+ say during",       # speech prediction (boring)
+        r"# of (views|likes|comments)",   # engagement metrics
+        r"(savannah|kathy|janet).*(say|drop|announce)",  # obscure politician actions
+        r"reauthorize",                   # procedural politics
+        r"gold cards? will .+ issue",     # trivial Trump props
+    ]
+    if any(re.search(p, name) for p in boring_patterns):
+        score += weights.boring_penalty
+
+    # Quality boost — genuinely compelling patterns
+    compelling_patterns = [
+        r"(invade|invasion|war|strike|military action)",
+        r"(ceasefire|peace deal|treaty)",
+        r"(champion|winner|mvp)\b",
+        r"(fed decision|interest rate|recession)",
+        r"(ipo|acquire|bankrupt|fail)",
+        r"(taylor swift|beyonce|drake|kardashian)",
+        r"(openai|gpt|claude|ai model|deepseek)",
+        r"(world cup|super bowl|olympics|masters)",
+        r"(approval rating|election winner|resign|impeach)",
+        r"(regime|coup|revolution|overthrow|fall)",
+        r"will .+ beat|will .+ win",
+    ]
+    compelling_count = sum(1 for p in compelling_patterns if re.search(p, name))
+    if compelling_count > 0:
+        score += 8.0 * min(compelling_count, 3)
+
+    return min(100, max(0, score))
 
 
 def evaluate(weights: Weights, all_markets: list, gt_ids: set, top_n: int = 50) -> dict:
