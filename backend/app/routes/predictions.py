@@ -213,54 +213,6 @@ async def get_detailed_stats(request: Request):
     }
 
 
-# ============================================================================
-# Seen tracking — suppress already-shown Discover cards for 24h
-# ============================================================================
-
-class SeenBatch(BaseModel):
-    items: list[dict]
-
-@router.post("/seen")
-async def record_seen(
-    body: SeenBatch,
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-):
-    from app.models.models import UserSeenMarket
-    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
-
-    for item in body.items[:100]:
-        seen = UserSeenMarket(
-            session_id=session_id,
-            item_type=item.get("type", "futures"),
-            item_id=item.get("id", 0),
-        )
-        db.add(seen)
-    await db.commit()
-    return {"recorded": len(body.items[:100])}
-
-
-@router.get("/seen-ids")
-async def get_seen_ids(
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-):
-    from app.models.models import UserSeenMarket
-    from datetime import timedelta, timezone
-    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    conditions = [UserSeenMarket.seen_at >= cutoff]
-    if user_id:
-        conditions.append(UserSeenMarket.user_id == user_id)
-    elif session_id:
-        conditions.append(UserSeenMarket.session_id == session_id)
-    else:
-        return {"seen_ids": []}
-
-    result = await session.execute(
-        select(UserSeenMarket.item_type, UserSeenMarket.item_id)
-        .where(*conditions)
-    )
-    seen = [{"type": r[0], "id": r[1]} for r in result.all()]
-    return {"seen_ids": seen}
+# Seen tracking endpoints temporarily disabled — will re-add after
+# migration tree is cleaned up. The user_seen_markets table exists
+# in the DB but the migration file was removed to unblock deploys.
