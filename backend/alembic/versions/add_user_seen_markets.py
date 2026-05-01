@@ -7,7 +7,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "add_user_seen_mkts"
-down_revision = "widen_team_abbrev"
+down_revision = "ba4924b27a0c"
 branch_labels = None
 depends_on = None
 
