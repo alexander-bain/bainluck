@@ -163,16 +163,22 @@ def score_market(market: dict, weights: Weights) -> float:
     boring_patterns = [
         r"# ?(posts|tweets|truths)",     # social media post counts
         r"photographed every",            # "Trump photographed every day"
-        r"(ted cruz|trump|biden|harris).*(posts|tweets)",  # politician tweet counts
+        r"(posts|tweets)\s+(april|may|june|january|february|march)",  # tweet counts by date range
         r"white house #",                 # White House post counts
         r"what will .+ say during",       # speech prediction (boring)
         r"# of (views|likes|comments)",   # engagement metrics
+        r"weekly streams",                # streaming metrics
         r"(savannah|kathy|janet).*(say|drop|announce)",  # obscure politician actions
         r"reauthorize",                   # procedural politics
         r"gold cards? will .+ issue",     # trivial Trump props
+        r"(map \d|bo3|bo5).*(winner|map)", # individual esports map results
+        r"\bvs\b.*(map [12345]|game [12345])\b",  # game-within-series esports
+        r"stage \d.+\d{4}:",              # esports tournament stage results
     ]
-    if any(re.search(p, name) for p in boring_patterns):
+    is_boring = any(re.search(p, name) for p in boring_patterns)
+    if is_boring:
         score += weights.boring_penalty
+        return max(0, score)  # skip compelling boost — boring overrides
 
     # Quality boost — genuinely compelling patterns
     compelling_patterns = [
