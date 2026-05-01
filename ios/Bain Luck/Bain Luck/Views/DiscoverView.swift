@@ -138,8 +138,10 @@ final class DiscoverViewModel: ObservableObject {
     func load() async {
         loading = true
         do {
-            let response = try await APIClient.shared.fetchFeed(limit: 200)
-            items = Self.interleave(response.items)
+            async let eventsResp = APIClient.shared.fetchFeed(limit: 50)
+            async let futuresResp = APIClient.shared.fetchFeed(limit: 200, includeFutures: true, includeEvents: false)
+            let (events, futures) = try await (eventsResp, futuresResp)
+            items = Self.interleave(events.items + futures.items)
         } catch { }
         loading = false
     }

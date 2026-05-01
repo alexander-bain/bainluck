@@ -284,6 +284,8 @@ actor APIClient {
         limit: Int = 50,
         offset: Int = 0,
         myTeamsOnly: Bool = false,
+        includeFutures: Bool = true,
+        includeEvents: Bool = true,
         tags: [String]? = nil
     ) async throws -> FeedResponse {
         var q: [String: String] = [
@@ -292,6 +294,8 @@ actor APIClient {
         ]
         if let sport { q["sport"] = sport }
         if myTeamsOnly { q["my_teams_only"] = "true" }
+        if !includeFutures { q["include_futures"] = "false" }
+        if !includeEvents { q["include_events"] = "false" }
         if let tags, !tags.isEmpty,
            let data = try? JSONSerialization.data(withJSONObject: tags),
            let str = String(data: data, encoding: .utf8) {
