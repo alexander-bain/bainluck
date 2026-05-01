@@ -281,12 +281,12 @@ def compute_futures_highlight(
 
     # === Boring market penalty (overrides compelling) ===
     if _market_name and _BORING_PATTERNS.search(_market_name):
-        result.score += BORING_PENALTY
+        result.score = min(result.score + BORING_PENALTY, 15)
         result.reasons.append("boring_pattern")
 
     # === Obscure election penalty ===
     if _market_name and _OBSCURE_ELECTION_PATTERNS.search(_market_name):
-        result.score += OBSCURE_ELECTION_PENALTY
+        result.score = min(result.score + OBSCURE_ELECTION_PENALTY, 20)
         result.reasons.append("obscure_election")
 
     # === Compelling market boost (skip if boring) ===
