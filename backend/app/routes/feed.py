@@ -277,6 +277,8 @@ async def get_feed(
             )
             if not is_exceptional:
                 item["score"] = min(item["score"], 40)
+        # Re-sort after demotion so demoted events fall below high-scoring futures
+        feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
 
     if not my_teams_only:
         if event_pct is not None and event_pct < 0.2:
