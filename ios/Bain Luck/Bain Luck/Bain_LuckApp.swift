@@ -106,7 +106,7 @@ struct Bain_LuckApp: App {
         .commands {
             CommandGroup(replacing: .newItem) { }
             CommandMenu("Navigate") {
-                Button("Feed") { navCoordinator.selectedTab = .feed }
+                Button("Sports") { navCoordinator.selectedTab = .feed }
                     .keyboardShortcut("1", modifiers: .command)
                 Button("Leagues") { navCoordinator.selectedTab = .leagues }
                     .keyboardShortcut("2", modifiers: .command)

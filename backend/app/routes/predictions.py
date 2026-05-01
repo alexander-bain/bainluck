@@ -7,7 +7,7 @@ Records guesses, returns stats (streak, accuracy, category breakdown, badges, tr
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, cast, Integer, case
 from app.services import get_db as get_session
@@ -211,3 +211,63 @@ async def get_detailed_stats(request: Request):
         "badges": badges,
         "recent": recent,
     }
+
+
+# ============================================================================
+# Seen tracking — suppress already-shown Discover cards for 24h
+# ============================================================================
+
+class SeenBatch(BaseModel):
+    items: list[dict]
+
+@router.post("/seen")
+async def record_seen(
+    body: SeenBatch,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    from app.models.models import UserSeenMarket
+    from app.dependencies.auth import get_optional_user
+    user = await get_optional_user(request, session)
+    user_id = user.id if user else None
+    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
+
+    for item in body.items[:100]:
+        seen = UserSeenMarket(
+            user_id=user_id,
+            session_id=session_id,
+            item_type=item.get("type", "futures"),
+            item_id=item.get("id", 0),
+        )
+        session.add(seen)
+    await session.commit()
+    return {"recorded": len(body.items[:100])}
+
+
+@router.get("/seen-ids")
+async def get_seen_ids(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    from app.models.models import UserSeenMarket
+    from app.dependencies.auth import get_optional_user_from_request
+    from datetime import timedelta, timezone
+    user = await get_optional_user_from_request(request, session)
+    user_id = user.id if user else None
+    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    conditions = [UserSeenMarket.seen_at >= cutoff]
+    if user_id:
+        conditions.append(UserSeenMarket.user_id == user_id)
+    elif session_id:
+        conditions.append(UserSeenMarket.session_id == session_id)
+    else:
+        return {"seen_ids": []}
+
+    result = await session.execute(
+        select(UserSeenMarket.item_type, UserSeenMarket.item_id)
+        .where(*conditions)
+    )
+    seen = [{"type": r[0], "id": r[1]} for r in result.all()]
+    return {"seen_ids": seen}

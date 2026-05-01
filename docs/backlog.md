@@ -1400,6 +1400,14 @@ Use `volume_24h` in base event scoring, volume velocity (current vs 7-day avg), 
 `user_interactions` table logging event/futures detail views. Backend middleware for zero-frontend-work implicit tracking. View-weighted sport affinities.
 **Files:** New migration, `backend/app/main.py`, `backend/app/utils/personalization.py`
 
+### D-10a. Dismiss Persistence (Discover)
+Dismiss actions on Discover cards are currently `@State`/`useState` — they reset on tab switch or page reload. Persist dismissed IDs server-side (extend `user_seen_markets` with a `dismissed` boolean, or separate `user_dismissed_markets` table). Both web and native should check dismissed state on load.
+**Files:** `backend/app/routes/predictions.py`, `frontend/app/discover/page.tsx`, `ios/.../Views/DiscoverView.swift`
+
+### D-10b. Like/Dismiss → Feed Ranking
+Feed thumbs up/down and Discover dismiss signals should feed back into futures scoring. New `user_market_feedback` table with `(user_id, market_id, signal, category)`. `_score_futures()` in `feed.py` applies a personalization multiplier based on category-level feedback (liked categories boosted, dismissed categories suppressed). Same pattern as the existing `compute_futures_multiplier()` for sport affinities.
+**Files:** New migration, `backend/app/routes/feed.py` (`_score_futures`), `backend/app/utils/personalization.py`
+
 ### D-10. Resolution Notifications Backend
 Wire `ResolutionCard` component to a backend endpoint that finds the user's past predictions on markets that have since resolved. Query `user_predictions` JOIN `futures_markets` WHERE market status changed to resolved.
 **Files:** `backend/app/routes/predictions.py`, `frontend/app/discover/page.tsx`

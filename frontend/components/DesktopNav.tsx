@@ -14,7 +14,7 @@ export default function DesktopNav() {
 
   const tabs = [
     {
-      label: "Feed",
+      label: "Sports",
       href: "/",
       isActive: pathname === "/" || pathname === "",
     },

@@ -938,3 +938,18 @@ class UserPrediction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class UserSeenMarket(Base):
+    """Tracks which markets/events a user has seen in the Discover feed."""
+
+    __tablename__ = "user_seen_markets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    item_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    item_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -19,7 +19,7 @@ struct MainTabView: View {
         TabView(selection: $navCoordinator.selectedTab) {
             FeedView()
                 .tabItem {
-                    Label("Feed", systemImage: "rectangle.stack.fill")
+                    Label("Sports", systemImage: "rectangle.stack.fill")
                 }
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
@@ -74,7 +74,7 @@ struct MainTabView: View {
             List(selection: tabSelection) {
                 Section {
                     HStack {
-                        Label("Feed", systemImage: "rectangle.stack.fill")
+                        Label("Sports", systemImage: "rectangle.stack.fill")
                         Spacer()
                         if navCoordinator.liveGameCount > 0 {
                             Text("\(navCoordinator.liveGameCount) live")

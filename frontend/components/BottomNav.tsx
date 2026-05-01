@@ -14,7 +14,7 @@ export default function BottomNav() {
 
   const tabs = [
     {
-      label: "Feed",
+      label: "Sports",
       href: "/",
       icon: FeedIcon,
       isActive: pathname === "/" || pathname === "",
