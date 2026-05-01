@@ -177,12 +177,14 @@ function groupRelatedMarkets(items: FeedItem[]): DiscoverGroupedItem[] {
 const CATEGORY_FILTERS = [
   { key: "all", label: "All", emoji: "✨" },
   { key: "sports", label: "Sports", emoji: "🏆" },
+  { key: "geopolitics", label: "Geopolitics", emoji: "🌍" },
   { key: "politics", label: "Politics", emoji: "🏛" },
   { key: "economics", label: "Economics", emoji: "📈" },
   { key: "tech", label: "Tech", emoji: "💻" },
+  { key: "entertainment", label: "Entertainment", emoji: "🎬" },
   { key: "culture", label: "Culture", emoji: "🎭" },
+  { key: "health", label: "Health", emoji: "🏥" },
   { key: "weather", label: "Weather", emoji: "🌤" },
-  { key: "geopolitics", label: "World", emoji: "🌍" },
 ];
 
 const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "olympics"]);
@@ -197,27 +199,51 @@ export default function DiscoverPage() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [dailyGuesses, setDailyGuesses] = useState(0);
+  const [allItems, setAllItems] = useState<FeedItem[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [pagesLoaded, setPagesLoaded] = useState(0);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDismissed(getDismissed());
-    // Show onboarding if first visit
     if (typeof window !== "undefined" && !localStorage.getItem("discover_onboarded")) {
       setShowOnboarding(true);
     }
-    // Load today's guess count
     const today = new Date().toISOString().slice(0, 10);
     const stored = localStorage.getItem(`daily_guesses_${today}`);
     if (stored) setDailyGuesses(parseInt(stored, 10));
   }, []);
+
+  // Load more pages from the API when client-side items run out
+  const loadNextPage = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextOffset = (pagesLoaded + 1) * 200;
+      const resp = await fetchFeed({ limit: 200, offset: nextOffset, event_pct: 0.15 });
+      if (resp.items.length === 0 || !resp.has_more) {
+        setHasMore(false);
+      }
+      if (resp.items.length > 0) {
+        setAllItems((prev) => [...prev, ...resp.items]);
+        setPagesLoaded((p) => p + 1);
+      }
+    } catch { }
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, pagesLoaded]);
 
   // Infinite scroll observer
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
     const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setVisibleCount((c) => c + PAGE_SIZE); },
-      { rootMargin: "200px" }
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleCount((c) => c + PAGE_SIZE);
+        }
+      },
+      { rootMargin: "400px" }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -235,17 +261,33 @@ export default function DiscoverPage() {
   }, []);
 
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
-    const raw = data?.items ?? [];
-    const filtered = raw.filter((item) => !dismissed.has(getItemId(item)) && !isStale(item));
+    const firstPage = data?.items ?? [];
+    const raw = [...firstPage, ...allItems];
+    // Deduplicate by item ID across pages
+    const seen = new Set<string>();
+    const unique = raw.filter((item) => {
+      const id = getItemId(item);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    const filtered = unique.filter((item) => !dismissed.has(getItemId(item)) && !isStale(item));
     const catFiltered = categoryFilter === "all"
       ? filtered
       : categoryFilter === "sports"
       ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
       : filtered.filter((i) => getItemCategory(i) === categoryFilter);
     return groupRelatedMarkets(catFiltered);
-  }, [data, dismissed, categoryFilter]);
+  }, [data, allItems, dismissed, categoryFilter]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
+
+  // Load more from API when client-side items run out
+  useEffect(() => {
+    if (visibleCount >= processedItems.length - 5 && hasMore && !loadingMore) {
+      loadNextPage();
+    }
+  }, [visibleCount, processedItems.length, hasMore, loadingMore, loadNextPage]);
 
   // Count items per category for chip badges
   const catCountsForChips = useMemo(() => {
@@ -268,7 +310,7 @@ export default function DiscoverPage() {
     <div className="min-h-screen bg-[#fafbfc]">
       {/* Header */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-lg border-b border-surface-border">
-        <div className="max-w-lg mx-auto px-4 py-3">
+        <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
             <div className="flex items-center gap-3">
@@ -316,7 +358,7 @@ export default function DiscoverPage() {
       )}
 
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
-      <main className="max-w-6xl mx-auto px-4 py-4">
+      <main className="max-w-7xl mx-auto px-4 py-4">
         {isLoading && (
           <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -344,20 +386,26 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {/* Daily Challenge */}
-        {!isLoading && processedItems.length > 0 && (
-          <div className="mb-4">
-            <DailyChallengeCard
-              guessesToday={dailyGuesses}
-              onGuessCompleted={() => {
-                const today = new Date().toISOString().slice(0, 10);
-                const next = dailyGuesses + 1;
-                setDailyGuesses(next);
-                localStorage.setItem(`daily_guesses_${today}`, next.toString());
-              }}
-            />
-          </div>
-        )}
+        {/* Daily Challenge — expands to show a guess card inline */}
+        {!isLoading && processedItems.length > 0 && (() => {
+          const guessCandidate = processedItems.find(
+            (gi) => gi.type === "single" && gi.item?.type === "futures"
+          );
+          return (
+            <div className="mb-4">
+              <DailyChallengeCard
+                guessesToday={dailyGuesses}
+                guessItem={guessCandidate?.item ?? undefined}
+                onGuessCompleted={() => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const next = dailyGuesses + 1;
+                  setDailyGuesses(next);
+                  localStorage.setItem(`daily_guesses_${today}`, next.toString());
+                }}
+              />
+            </div>
+          );
+        })()}
 
         <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
           {visibleItems.map((gi, idx) => {
@@ -379,15 +427,15 @@ export default function DiscoverPage() {
           })}
         </div>
 
-        {visibleCount < processedItems.length && (
+        {(visibleCount < processedItems.length || hasMore) && (
           <div ref={sentinelRef} className="h-10 flex items-center justify-center mt-4">
             <div className="w-5 h-5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
           </div>
         )}
 
-        {visibleCount >= processedItems.length && processedItems.length > 0 && (
+        {visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
           <div className="text-center py-8 text-text-muted text-sm">
-            You&apos;ve seen everything · {processedItems.length} markets
+            {processedItems.length} markets explored
           </div>
         )}
       </main>

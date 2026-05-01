@@ -675,23 +675,21 @@ export function GuessCard({ item }: { item: FeedItem }) {
 
 const DAILY_GOAL = 5;
 
-export function DailyChallengeCard({ guessesToday, onGuessCompleted }: {
+export function DailyChallengeCard({ guessesToday, onGuessCompleted, guessItem }: {
   guessesToday: number;
   onGuessCompleted: () => void;
+  guessItem?: FeedItem;
 }) {
   const completed = guessesToday >= DAILY_GOAL;
   const progress = Math.min(guessesToday / DAILY_GOAL, 1);
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div
-      className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md ${completed ? "" : "cursor-pointer hover:border-amber-400/60 transition-colors"}`}
-      onClick={() => {
-        if (completed) return;
-        const guessCard = document.querySelector("[data-guess-card]");
-        if (guessCard) guessCard.scrollIntoView({ behavior: "smooth", block: "center" });
-      }}
-    >
-      <div className="px-4 py-3 flex items-center gap-3">
+    <div className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md`}>
+      <div
+        className={`px-4 py-3 flex items-center gap-3 ${completed ? "" : "cursor-pointer hover:bg-surface-elevated transition-colors"}`}
+        onClick={() => { if (!completed) setExpanded((e) => !e); }}
+      >
         <span className="text-2xl">{completed ? "🏆" : "🎯"}</span>
         <div className="flex-1">
           <div className="text-sm font-bold">
@@ -715,6 +713,11 @@ export function DailyChallengeCard({ guessesToday, onGuessCompleted }: {
           </div>
         )}
       </div>
+      {expanded && guessItem && !completed && (
+        <div className="px-4 pb-4">
+          <GuessCard item={guessItem} />
+        </div>
+      )}
     </div>
   );
 }
