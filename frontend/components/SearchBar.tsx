@@ -214,17 +214,17 @@ export default function SearchBar({
                       className="w-5 h-5 rounded-sm"
                     />
                   ) : (
-                    "&#x1f3c0;"
+                    <span>{"\u{1F3C0}"}</span>
                   )
                 )}
                 {suggestion.type === "event" && (
                   suggestion.status === "live" ? (
-                    <span className="text-red-500">&#x1f534;</span>
+                    <span className="text-red-500">{"\u{1F534}"}</span>
                   ) : (
-                    "&#x1f4c5;"
+                    <span>{"\u{1F4C5}"}</span>
                   )
                 )}
-                {suggestion.type === "futures" && "&#x1f4c8;"}
+                {suggestion.type === "futures" && <span>{"\u{1F4C8}"}</span>}
               </span>
 
               {/* Text */}
@@ -240,8 +240,8 @@ export default function SearchBar({
                       : formatEventTime(suggestion.commence_time)}
                   </div>
                 )}
-                {suggestion.type === "futures" && suggestion.market_tier === 1 && (
-                  <div className="text-xs text-purple-500">Championship</div>
+                {suggestion.type === "futures" && suggestion.market_type_label && (
+                  <div className="text-xs text-accent-brand">{suggestion.market_type_label}</div>
                 )}
               </div>
 

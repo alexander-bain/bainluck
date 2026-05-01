@@ -836,8 +836,12 @@ async def search_events(
                 FuturesMarket.resolution_date >= datetime.now(timezone.utc),
             ),
         )
-        .order_by(FuturesMarket.updated_at.desc())
-        .limit(10)  # Limit futures results
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume.desc().nulls_last(),
+            FuturesMarket.updated_at.desc(),
+        )
+        .limit(20)
     )
 
     # Apply sport filter to futures if specified
@@ -847,9 +851,20 @@ async def search_events(
         )
 
     futures_result = await db.execute(futures_query)
-    futures_markets = futures_result.scalars().unique().all()
+    futures_markets_raw = futures_result.scalars().unique().all()
 
-    # Format futures results
+    # Deduplicate by group_id
+    seen_search_groups: set[str] = set()
+    futures_markets = []
+    for m in futures_markets_raw:
+        gkey = m.group_id or f"id:{m.id}"
+        if gkey in seen_search_groups:
+            continue
+        seen_search_groups.add(gkey)
+        futures_markets.append(m)
+        if len(futures_markets) >= 10:
+            break
+
     formatted_futures = [
         _format_futures_for_search(market)
         for market in futures_markets
@@ -975,7 +990,7 @@ async def typeahead_search(
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         })
 
-    # 3. Find matching futures markets
+    # 3. Find matching futures markets (deduplicated by group_id)
     futures_query = (
         select(FuturesMarket)
         .where(
@@ -986,17 +1001,69 @@ async def typeahead_search(
                 FuturesMarket.resolution_date >= now,
             ),
         )
-        .order_by(FuturesMarket.market_tier.asc().nulls_last())
-        .limit(3)
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume.desc().nulls_last(),
+        )
+        .limit(15)
     )
     futures_result = await db.execute(futures_query)
+    seen_groups: set[str] = set()
+    futures_count = 0
+    _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     for market in futures_result.scalars().all():
+        if futures_count >= 3:
+            break
+        dedup_key = market.group_id or f"name:{market.name}"
+        if dedup_key in seen_groups:
+            continue
+        seen_groups.add(dedup_key)
+        futures_count += 1
         suggestions.append({
             "type": "futures",
             "text": market.name,
             "market_id": market.id,
             "market_tier": market.market_tier,
+            "market_type_label": _TIER_LABELS.get(market.market_tier, market.market_type or "Market"),
         })
+
+    # 4. Find matching non-sports markets (weather, economics, politics, etc.)
+    # Only search if no futures already matched, to avoid crowding
+    if futures_count < 2:
+        nonsport_query = (
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.name.ilike(pattern),
+                FuturesMarket.status == "open",
+                FuturesMarket.sport_id.is_(None),
+                or_(
+                    FuturesMarket.resolution_date.is_(None),
+                    FuturesMarket.resolution_date >= now,
+                ),
+            )
+            .order_by(
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.volume.desc().nulls_last(),
+            )
+            .limit(3)
+        )
+        nonsport_result = await db.execute(nonsport_query)
+        for market in nonsport_result.scalars().all():
+            if futures_count >= 3:
+                break
+            dedup_key = market.group_id or f"name:{market.name}"
+            if dedup_key in seen_groups:
+                continue
+            seen_groups.add(dedup_key)
+            futures_count += 1
+            cat_label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
+            suggestions.append({
+                "type": "futures",
+                "text": market.name,
+                "market_id": market.id,
+                "market_tier": market.market_tier,
+                "market_type_label": cat_label,
+            })
 
     return {"suggestions": suggestions[:8], "query": q}
 
@@ -5234,6 +5301,7 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         for o in sorted_outcomes[:5]
     ]
 
+    _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
         "id": market.id,
         "name": market.name,
@@ -5241,6 +5309,8 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "sport_name": market.sport.name if market.sport else None,
         "category": market.category,
         "llm_sport_category": market.llm_sport_category,
+        "market_tier": market.market_tier,
+        "market_type_label": _TIER_LABELS_SEARCH.get(market.market_tier, market.market_type or "Market"),
         "status": market.status,
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,

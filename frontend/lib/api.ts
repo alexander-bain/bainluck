@@ -245,6 +245,7 @@ export interface TypeaheadSuggestion {
   // Futures fields
   market_id?: number;
   market_tier?: number;
+  market_type_label?: string;
 }
 
 export interface TypeaheadResponse {

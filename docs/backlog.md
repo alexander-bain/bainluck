@@ -911,6 +911,60 @@ Manus visited every major page on bainluck.com as a first-time user. Full report
 
 Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what Kalshi/Polymarket have vs. what bainluck.com actually displays. Results pending at: https://manus.im/app/M2sAukWQRoYsUMLsu5QfaE
 
+### SEARCH. Search Overhaul — IN PROGRESS (May 1, 2026)
+
+**Problem:** Search is broken and embarrassing. Typeahead shows raw HTML entities (`&#x1f4c8;`), futures results are duplicated/truncated, ranking is noisy, non-sports markets (weather, economics, politics) are completely unsearchable, and there's no fuzzy matching or typo tolerance.
+
+**Screenshot:** Searching "celtics" returns Boston Celtics (good), 1 game (good), then 3 near-identical "Celtics vs 76ers" futures with raw HTML entity codes and truncated names. The futures results are indistinguishable and take up all the dropdown space.
+
+**Current architecture:** 3 backend endpoints in `routes/events.py` (typeahead, full search, suggestions). Frontend in `components/SearchBar.tsx` + `app/search/page.tsx`. All matching is `ILIKE '%query%'` — no trigram, no full-text search, no fuzzy matching. No indexes on searched columns.
+
+**Files:** `backend/app/routes/events.py` (lines 577-1219), `frontend/components/SearchBar.tsx`, `frontend/app/search/page.tsx`, `frontend/lib/api.ts`
+
+#### Phase 1: Fix What's Broken (1-2 days) — IN PROGRESS
+
+- [ ] **P1a. HTML entity rendering** — `SearchBar.tsx` lines 217, 224, 227 use `"&#x1f4c8;"` as JS strings (not JSX elements), so they render as literal text instead of emoji. Fix: use Unicode escapes (`"\u{1F4C8}"`) or wrap in `<span>`.
+- [ ] **P1b. Deduplicate futures in typeahead** — Backend returns up to 3 separate futures for the same series (e.g., "Celtics vs 76ers: Second Round", "Celtics vs 76ers: First..."). Group by series/event_id so each series appears once. Show market count as subtitle.
+- [ ] **P1c. Better display names** — Strip redundant prefixes from futures names. Show the meaningful part ("NBA Championship", "Eastern Conference Winner") not the full Kalshi ticker-derived name. Extend `market_tier` subtitle beyond just tier 1 (show "Award", "Series", "Division", etc.).
+- [ ] **P1d. Widen dropdown** — Truncation is partly a layout issue; dropdown inherits the narrow search input width.
+
+#### Phase 2: Better Matching (1 week)
+
+- [ ] **P2a. Search team `alternate_names`** — Currently only searches canonical `name` and `abbreviation`. "Celts", "C's", city-only queries like "Boston" should match via JSONB `alternate_names`.
+- [ ] **P2b. Search player names** — "Tatum" should find Celtics game + player props. Query `team_roster` and `futures_outcomes.name`.
+- [ ] **P2c. Search Discover/non-sports markets** — Weather, economics, politics markets aren't in typeahead or full search. Add as a result type with category badge.
+- [ ] **P2d. Multi-word futures matching** — "celtics championship" should rank NBA Championship #1. Currently multi-word AND only works across event team names, not futures.
+
+#### Phase 3: Smarter Ranking (1 week)
+
+- [ ] **P3a. Relevance scoring** — Today's ranking is status-first, tag-second. Needs: exact match > partial, championship > random prop, higher tier > lower tier, higher liquidity first, game today > game next week.
+- [ ] **P3b. Category-aware grouping** — Full search results page: group by Teams, Games, Futures, Discover/World with clear headers and counts.
+- [ ] **P3c. Smart typeahead slot allocation** — Max 1 team, 2 games, 2 futures (best picks), not whatever ILIKE returns first.
+
+#### Phase 4: Fuzzy & Full-Text Search (1-2 weeks)
+
+- [ ] **P4a. `pg_trgm` extension** — Enable trigram similarity so "celitcs" still finds "Celtics". PostgreSQL native.
+- [ ] **P4b. GIN trigram indexes** — On `events.home_team_name`, `events.away_team_name`, `teams.name`, `futures_markets.name`. Sequential scans → index scans.
+- [ ] **P4c. Weighted `ts_vector` full-text search** — Team names weight A, market names weight B, outcome names weight C. Natural language queries like "who wins the nba finals".
+- [ ] **P4d. Did-you-mean suggestions** — When 0 results, suggest closest trigram match.
+
+#### Phase 5: Search UX Polish (1 week)
+
+- [ ] **P5a. Recent searches** — Last 5-10 in localStorage, shown on focus before typing.
+- [ ] **P5b. Trending/popular searches** — Track queries server-side, surface top 5 as zero-state chips.
+- [ ] **P5c. Search results page redesign** — Group by entity type with headers: "Teams (1)", "Games (2)", "Futures (5)", "Discover (3)".
+- [ ] **P5d. Mobile search** — Full-screen overlay on mobile instead of tiny dropdown.
+- [ ] **P5e. Keyboard shortcut** — `Cmd+K` or `/` to focus search from anywhere.
+
+#### Phase 6: Semantic Search (2-3 weeks, aspirational)
+
+- [ ] **P6a. Embedding-based search** — OpenAI embeddings (already have API key) for queries like "Will the Celtics repeat?" matching championship markets.
+- [ ] **P6b. pgvector extension** — Store embeddings in Postgres, nearest-neighbor search.
+- [ ] **P6c. Query intent classification** — Is the user looking for a team, game, market category, or asking a question? Route to different strategies.
+- [ ] **P6d. Personalized ranking** — Boost results from leagues/teams the user has viewed or predicted on (have `user_predictions` data).
+
+**Priority order:** Phases 1-2 are "stop embarrassing ourselves" (2-3 days). Phase 3 makes it useful. Phase 4 makes it forgiving. Phases 5-6 make it delightful.
+
 ---
 
 ## Tier 2 — Important But Bigger Scope
