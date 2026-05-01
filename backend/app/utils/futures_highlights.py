@@ -129,6 +129,10 @@ _COMPELLING_PATTERNS = [
         r"(elon musk|jeff bezos|mark zuckerberg|sam altman|warren buffett)",
         r"(s&p 500|dow jones|nasdaq|bitcoin|ethereum).*(high|crash|hit)",
         r"(fda|drug).*(approve|psychedelic|cannabis)",
+        r"(pope|vatican|papal|encyclical|conclave)",
+        r"(alien|ufo|uap|extraterrestrial)",
+        r"(royal family|king charles|prince|princess|meghan|harry)",
+        r"(nobel prize|pulitzer|ballon d.or)",
     ]
 ]
 
@@ -246,6 +250,14 @@ def compute_futures_highlight(
     result.score += base
     if base > 0:
         result.reasons.append(f"category_base_{_sport_lower}")
+
+    # === Stale market penalty (resolution date in the past) ===
+    if resolution_date is not None:
+        if resolution_date.tzinfo is None:
+            resolution_date = resolution_date.replace(tzinfo=timezone.utc)
+        if resolution_date < now:
+            result.score -= 30
+            result.reasons.append("stale_past_resolution")
 
     # === Boring market penalty (overrides compelling) ===
     if _market_name and _BORING_PATTERNS.search(_market_name):
