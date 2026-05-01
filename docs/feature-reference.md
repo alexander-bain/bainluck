@@ -828,6 +828,21 @@ The league page (`/sport/[sport]/[league]`) is a one-stop destination for everyt
 - Frontend: `frontend/app/sport/[sport]/[league]/page.tsx`
 - API client: `fetchLeagueMarkets()` in `frontend/lib/api.ts`
 
+### Discover Feed Scoring (Calibrated April 30, 2026)
+
+The Discover feed uses `compute_futures_highlight()` with category baselines calibrated against Polymarket ground truth (146 markets from daily highlight emails).
+
+**Category base scores** (non-sports get a floor so they compete with sports):
+- geopolitics 38, politics 35, economics 34.4, tech 34, entertainment 32, culture 30.2, health 28, weather 26.3, crypto 25.9
+- Sports: 18.5 (already boosted by league tier + market tier)
+
+**Quality filters:**
+- Boring patterns (tweet counts, streaming metrics, obscure elections): -25 penalty, overrides compelling boost
+- Compelling patterns (war, ceasefire, IPO, Fed decision, Taylor Swift, Pope, OpenAI): +8 per match (max 3)
+- Stale markets (resolution_date in the past): -30 penalty
+
+**Ground truth pipeline**: Gmail tag → Apps Script → Google Sheet → GPT-4o-mini enrichment → calibration script. Sheet: `1RztughDfCj1F691yeQWq_67UfCn3LXNpVrejZ35_4_w`. Tuning script: `scripts/tune_interestingness.py`.
+
 ### Polymarket Cross-Source Player Props
 
 Polymarket game events contain player props (Points O/U, Assists O/U, Rebounds O/U) alongside moneylines, spreads, and totals. These are decomposed into per-sub-market FuturesMarket rows during polling, linked to events via `event_id` propagation from parent markets, and classified by the game-markets endpoint alongside Kalshi props.

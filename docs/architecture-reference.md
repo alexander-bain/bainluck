@@ -162,6 +162,31 @@ Markets are assigned to one of 5 sections based on `market_tier`, `category`, an
 
 Championship (tier 1), conference (tier 2), and division (tier 4) markets are **skipped** — they're already on the championship grid.
 
+### Feed Diversity: `_ensure_feed_diversity()` (`routes/feed.py`)
+
+Controls the event-to-futures ratio in the feed. The `event_pct` parameter sets the minimum percentage of slots reserved for events (games).
+
+| Consumer | `event_pct` | Why |
+|----------|------------|-----|
+| Sports feed (anonymous) | 0.6 | Events are the core product |
+| Sports feed (authenticated) | 0.4 | Personalization adds futures relevance |
+| Discover feed | 0.15 | Let scoring decide — interesting content regardless of type |
+| My Stuff | skipped | Shows everything matching |
+
+The `event_pct` can be overridden via the `event_pct` query parameter on `GET /api/feed`.
+
+### Wild-Ending Boost (`utils/feed_scoring.py`)
+
+Completed events with extreme comeback narratives get boosted in the feed via `ei_metadata`:
+
+| Signal | Threshold | Boost | Example |
+|--------|-----------|-------|---------|
+| `comeback_factor` ≤ 0.10 | Miracle comeback | +30 | Winner was at 10% with 2 min left |
+| `comeback_factor` ≤ 0.20 | Big comeback | +20 | Winner was at 20% at halftime |
+| `lead_changes` ≥ 4 | Wild swings | +10 | Lead changed 4+ times |
+
+These stack with the existing EI boost (+25 for EI ≥ 80, +15 for EI ≥ 60). A miracle comeback in a high-EI game could score 65+ additional points, surfacing it prominently in both Sports and Discover feeds.
+
 ### Cross-Source Dedup
 
 Uses `canonical_market_key`. When two markets share the same key, keeps the one with more outcomes.

@@ -2,6 +2,9 @@
 
 ## April 30, 2026
 
+- ✅ **Discover content mix fix**: Feed API `event_pct` param lets Discover request 15% events instead of the default 60%. Non-sports futures (politics 35, geopolitics 38, economics 34, tech 34 base scores) now dominate Discover instead of being crowded out by sports events. Sports feed unchanged.
+- ✅ **Wild-ending boost for completed events**: `compute_base_score()` now reads `ei_metadata` for `comeback_factor` and `lead_changes`. Miracle comebacks (winner was ≤10%) get +30, big comebacks (≤20%) get +20, 4+ lead changes get +10. Wild games surface in Discover alongside interesting futures.
+- ✅ **Crash prevention**: Startup smoke test (`test_startup.py`, 4 tests, <1s) verifies app imports, route modules, task modules, and utility modules. Procfile validates imports before Alembic runs — broken code no longer reaches the web dyno. Catches the exact crash class from April 30 (broken imports in predictions.py, og_image.py).
 - ✅ **ESPN box scores fully working (3-bug chain)**: (1) `espn_id` wasn't persisting due to ORM/Core mixing — fixed by piggybacking onto the existing `win_probability_sources` Core SQL update. (2) `box_score_data` write silently failed — fixed via raw SQL text + ORM sync. (3) `box_score_data` was never in the event detail API response — added 5 lines to `GET /api/events/{id}`. Verified: HOU@BAL shows 28 players with real stats (hits, RBIs, runs, walks, batting average). Player props on completed games now show actual results instead of "0 so far". Accrues to both web and native.
 - ✅ **Site crash fix**: `predictions.py` and `og_image.py` imported `from app.database` (doesn't exist) instead of `from app.services`. Web dyno crash-looped for ~15 min.
 - ✅ **BAINLUCK-FY N+1 fix**: Removed redundant `select(Sport)` from inside the per-event loop in `odds_polling.py`. ~200-400 duplicate queries eliminated per poll cycle.
