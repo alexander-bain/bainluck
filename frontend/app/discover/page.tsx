@@ -242,8 +242,7 @@ export default function DiscoverPage() {
       : categoryFilter === "sports"
       ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
       : filtered.filter((i) => getItemCategory(i) === categoryFilter);
-    const interleaved = categoryFilter === "all" ? interleave(catFiltered) : catFiltered;
-    return groupRelatedMarkets(interleaved);
+    return groupRelatedMarkets(catFiltered);
   }, [data, dismissed, categoryFilter]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
