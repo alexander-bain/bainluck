@@ -78,6 +78,7 @@ async def get_feed(
     include_futures: bool = Query(True, description="Include futures markets in feed"),
     my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
     tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\"])"),
+    event_pct: Optional[float] = Query(None, description="Override event percentage floor (0.0-1.0). Discover uses 0.15."),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -256,8 +257,11 @@ async def get_feed(
     # For anonymous users, enforce a stronger event bias (events are the core product).
     # Skip diversity enforcement for my_teams_only — show everything matching.
     if not my_teams_only:
-        is_anonymous = not ctx.is_authenticated
-        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6 if is_anonymous else 0.4)
+        if event_pct is not None:
+            _epct = max(0.0, min(1.0, event_pct))
+        else:
+            _epct = 0.6 if not ctx.is_authenticated else 0.4
+        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
@@ -617,6 +621,7 @@ async def _score_events(
             away_score=event.away_score,
             source_count=_source_count,
             game_progress=_game_progress,
+            ei_metadata=event.ei_metadata,
         )
         highlight_result.reasons = extra_reasons
 

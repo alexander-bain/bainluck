@@ -717,6 +717,8 @@ export async function fetchFeed(params?: {
   sport?: string;
   my_teams_only?: boolean;
   include_futures?: boolean;
+  include_events?: boolean;
+  event_pct?: number;
   tags?: string[];
 }): Promise<FeedResponse> {
   const searchParams = new URLSearchParams();
@@ -726,6 +728,8 @@ export async function fetchFeed(params?: {
   if (params?.sport) searchParams.set("sport", params.sport);
   if (params?.my_teams_only) searchParams.set("my_teams_only", "true");
   if (params?.include_futures === false) searchParams.set("include_futures", "false");
+  if (params?.include_events === false) searchParams.set("include_events", "false");
+  if (params?.event_pct != null) searchParams.set("event_pct", params.event_pct.toString());
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
 
   const query = searchParams.toString();

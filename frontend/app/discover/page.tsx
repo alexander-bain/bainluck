@@ -225,7 +225,7 @@ export default function DiscoverPage() {
 
   const { data, isLoading } = useSWR(
     "discover-feed",
-    () => fetchFeed({ limit: 200 }),
+    () => fetchFeed({ limit: 200, event_pct: 0.15 }),
     { refreshInterval: 60000 }
   );
 

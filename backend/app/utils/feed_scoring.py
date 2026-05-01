@@ -115,6 +115,7 @@ def compute_base_score(
     away_score: int | None = None,
     source_count: int | None = None,
     game_progress: float | None = None,
+    ei_metadata: str | dict | None = None,
 ) -> tuple[int, list[str]]:
     """Compute the base interestingness score for a feed event.
 
@@ -167,6 +168,22 @@ def compute_base_score(
         elif ei_score >= 60:
             score += 15
             reasons.append("good_ei")
+
+        # Wild-ending boost — miracle comebacks and lead-change fests
+        if ei_metadata:
+            import json as _json
+            meta = _json.loads(ei_metadata) if isinstance(ei_metadata, str) else ei_metadata
+            comeback = meta.get("comeback_factor", 1.0)
+            leads = meta.get("lead_changes", 0)
+            if comeback <= 0.10:
+                score += 30
+                reasons.append("miracle_comeback")
+            elif comeback <= 0.20:
+                score += 20
+                reasons.append("big_comeback")
+            if leads >= 4:
+                score += 10
+                reasons.append("wild_swings")
 
     # Content richness penalty for live events with thin/flat data
     richness_adj, richness_reasons = compute_content_richness_penalty(
