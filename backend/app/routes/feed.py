@@ -1005,7 +1005,7 @@ async def _score_futures(
             continue
 
         # Filter low-signal futures (my_teams_only shows everything)
-        if not my_teams_only and personalized_score < 35:
+        if not my_teams_only and personalized_score < 15:
             continue
 
         # Find the actual biggest mover (with sign) for reason generation
@@ -1108,20 +1108,7 @@ async def _score_futures(
 
         scored_items.append(item)
 
-    # Limit similar markets — max 3 per category to prevent MMA fight
-    # props or golf tournament props from taking 15 feed slots.
-    # Sorted by score desc, so we keep the best ones per category.
-    scored_items.sort(key=lambda x: x["score"], reverse=True)
-    cat_counts: dict[str, int] = {}
-    MAX_PER_CAT = 3
-    deduped: list[dict] = []
-    for item in scored_items:
-        cat = item["data"].get("llm_sport_category") or "other"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-        if cat_counts[cat] <= MAX_PER_CAT:
-            deduped.append(item)
-
-    return deduped
+    return scored_items
 
 
 _canonical_source_counts_cache: Optional[dict[str, int]] = None
