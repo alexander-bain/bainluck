@@ -129,14 +129,42 @@ final class DiscoverViewModel: ObservableObject {
     @Published var items: [FeedItem] = []
     @Published var loading = false
 
+    private static let sportsCategories: Set<String> = [
+        "basketball", "football", "baseball", "hockey", "soccer",
+        "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
+    ]
+
     @MainActor
     func load() async {
         loading = true
         do {
             let response = try await APIClient.shared.fetchFeed(limit: 200)
-            items = response.items
+            items = Self.interleave(response.items)
         } catch { }
         loading = false
+    }
+
+    private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
+        let sports = items.filter { sportsCategories.contains(category(for: $0)) }
+        let nonSports = items.filter { !sportsCategories.contains(category(for: $0)) }
+        if nonSports.isEmpty { return items }
+
+        var result: [FeedItem] = []
+        var si = 0, ni = 0, sportsSince = 0
+        while si < sports.count || ni < nonSports.count {
+            if ni < nonSports.count && (sportsSince >= 4 || si >= sports.count) {
+                result.append(nonSports[ni]); ni += 1; sportsSince = 0
+            } else if si < sports.count {
+                result.append(sports[si]); si += 1; sportsSince += 1
+            } else { break }
+        }
+        return result
+    }
+
+    private static func category(for item: FeedItem) -> String {
+        if let f = item.futures { return f.llmSportCategory?.lowercased() ?? "other" }
+        if let e = item.event { return e.sport?.split(separator: "_").first.map(String.init) ?? "other" }
+        return "other"
     }
 }
 
