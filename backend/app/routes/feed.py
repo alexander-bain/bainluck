@@ -105,7 +105,7 @@ async def get_feed(
         try:
             from app.tasks.redis_state import get_redis_client
             _redis = get_redis_client()
-            _parts = f"feed:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}"
+            _parts = f"feed:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
             cached = _redis.get(_cache_key)
             if cached:
