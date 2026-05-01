@@ -98,7 +98,21 @@ _BORING_PATTERNS = re.compile(
     r"|weekly streams"
     r"|(map \d|bo3|bo5).*(winner|map)"
     r"|\bvs\b.*(map [12345]|game [12345])\b"
-    r"|stage \d.+\d{4}:)",
+    r"|stage \d.+\d{4}:"
+    r"|pro football.*(pick|draft position)"
+    r"|team to draft"
+    r"|overall pick"
+    r"|will trump (say|post) \".+\" (this week|on truth)"
+    r"|trump (say|post) .+ this week"
+    r"|round \d (scores|top \d|leader)"
+    r"|to make the cut"
+    r"|(pitcher|player) of the month"
+    r"|top \d+ finishers"
+    r"|net worth on (april|may|june|january|february|march)"
+    r"|close price on (may|june|april|january|february|march)"
+    r"|compute price (up|down)"
+    r"|runner-up .+ on spotify"
+    r"|what will .+ say during .+ (newsmax|fox|cnn|msnbc))",
     re.IGNORECASE,
 )
 

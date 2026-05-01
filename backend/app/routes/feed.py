@@ -257,13 +257,26 @@ async def get_feed(
     # For anonymous users, enforce a stronger event bias (events are the core product).
     # Skip diversity enforcement for my_teams_only — show everything matching.
     # When event_pct is low (Discover mode), demote ordinary events so
-    # interesting futures can compete. Without this, a routine playoff
-    # game (score 75) outranks "Will China invade Taiwan?" (score 67).
-    # Only boost events that are truly exceptional (high EI, upset, etc.)
+    # interesting futures can compete. A routine playoff game scores 100
+    # from live+close+tier but isn't more interesting than "Will China
+    # invade Taiwan?" for a Discover audience. Only truly exceptional
+    # events (EI 85+, live elimination/buzzer-beater) keep their score.
     if event_pct is not None and event_pct < 0.3:
         for item in feed_items:
-            if item["type"] == "event" and item["score"] < 80:
-                item["score"] = int(item["score"] * 0.5)
+            if item["type"] != "event":
+                continue
+            data = item.get("data", {})
+            ei = data.get("ei") or data.get("pulse")
+            ei_score = ei.get("score", 0) if ei else 0
+            headline = (item.get("headline") or "").lower()
+            is_exceptional = (
+                ei_score >= 85
+                or (data.get("status") == "live" and any(
+                    kw in headline for kw in ["elimination", "buzzer", "walk-off", "historic"]
+                ))
+            )
+            if not is_exceptional:
+                item["score"] = min(item["score"], 40)
 
     if not my_teams_only:
         if event_pct is not None:
