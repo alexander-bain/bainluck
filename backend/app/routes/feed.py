@@ -814,11 +814,15 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
-    # === SINGLE QUERY — pull a large pool, let scoring decide ===
-    # No per-category cap. The scoring (category baselines, boring penalties,
-    # compelling boosts, movement, resolution proximity) determines what's
-    # interesting. Crypto is filtered at ingestion, so the pool is clean.
-    POOL_SIZE = 500
+    # === TWO-POOL QUERY — ensure non-sports markets compete fairly ===
+    # Sports outnumber non-sports ~10:1 in the DB, so a single query
+    # returns ~90% sports. Pull sports and non-sports separately with
+    # generous limits, then score everything together.
+    _SPORTS_CATS = [
+        "basketball", "football", "baseball", "hockey", "soccer",
+        "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
+        "esports", "rugby", "lacrosse",
+    ]
 
     id_filters = list(base_filters)
     if sport_filter:
@@ -829,26 +833,42 @@ async def _score_futures(
             )
         )
 
-    # Push static tags to SQL via GIN containment index (@>)
     if static_tag_filter:
         import json as _json_mod
         id_filters.append(
             FuturesMarket.market_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
 
-    main_query = (
+    # Pool 1: sports futures (capped at 150)
+    sports_query = (
         select(FuturesMarket)
         .options(*base_options)
-        .where(*id_filters)
-        .order_by(
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.resolution_date.asc().nulls_last(),
+        .where(
+            *id_filters,
+            FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
         )
-        .limit(POOL_SIZE)
+        .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(150)
     )
 
-    result = await db.execute(main_query)
-    markets = list(result.scalars().unique().all())
+    # Pool 2: non-sports futures (capped at 200 — generous to surface diverse content)
+    nonsports_query = (
+        select(FuturesMarket)
+        .options(*base_options)
+        .where(
+            *id_filters,
+            or_(
+                ~FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
+                FuturesMarket.llm_sport_category.is_(None),
+            ),
+        )
+        .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(200)
+    )
+
+    sports_result = await db.execute(sports_query)
+    nonsports_result = await db.execute(nonsports_query)
+    markets = list(sports_result.scalars().unique().all()) + list(nonsports_result.scalars().unique().all())
 
     if not markets:
         return []
