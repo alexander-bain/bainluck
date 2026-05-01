@@ -188,6 +188,67 @@ async def calibrate():
             for m in low_volume_high_interest[:10]:
                 print(f"  int={m['gt']['interestingness']} vol={m['db_volume'] or 0:>8.0f} [{m['db_category'] or '?':12s}] {m['db_name'][:50]}")
 
+    # 5. Feed ranking check — where do these markets rank in our actual feed?
+    print("\n--- FEED RANKING CHECK ---")
+    print("Fetching live feed to check where ground truth markets rank...")
+    try:
+        import httpx
+        feed_resp = httpx.get(
+            "https://api.bainluck.com/api/feed?limit=500&include_events=false",
+            timeout=30,
+        )
+        feed_data = feed_resp.json()
+        feed_items = feed_data.get("items", [])
+        feed_market_ids = set()
+        feed_rank = {}
+        for i, item in enumerate(feed_items):
+            if item.get("type") == "futures":
+                mid = item["data"].get("id")
+                feed_market_ids.add(mid)
+                feed_rank[mid] = i + 1
+
+        in_top_50 = 0
+        in_top_100 = 0
+        in_top_200 = 0
+        in_feed = 0
+        not_in_feed = 0
+
+        for m in matched:
+            db_id = m["db_id"]
+            rank = feed_rank.get(db_id)
+            if rank:
+                in_feed += 1
+                if rank <= 50: in_top_50 += 1
+                if rank <= 100: in_top_100 += 1
+                if rank <= 200: in_top_200 += 1
+            else:
+                not_in_feed += 1
+
+        print(f"  Of {len(matched)} matched ground truth markets:")
+        print(f"    In feed top 50:  {in_top_50:3d} ({in_top_50 * 100 // len(matched)}%)")
+        print(f"    In feed top 100: {in_top_100:3d} ({in_top_100 * 100 // len(matched)}%)")
+        print(f"    In feed top 200: {in_top_200:3d} ({in_top_200 * 100 // len(matched)}%)")
+        print(f"    In feed at all:  {in_feed:3d} ({in_feed * 100 // len(matched)}%)")
+        print(f"    NOT in feed:     {not_in_feed:3d} ({not_in_feed * 100 // len(matched)}%)")
+
+        # Show specific high-interest markets NOT in the feed
+        buried = [m for m in matched if m["db_id"] not in feed_market_ids and m["gt"]["interestingness"] >= 8]
+        if buried:
+            print(f"\n  High-interest markets NOT in feed ({len(buried)}):")
+            for m in buried[:10]:
+                print(f"    int={m['gt']['interestingness']} [{m['gt']['llm_category']:12s}] {m['db_name'][:55]}")
+
+        # Show what IS in the feed top 20 for comparison
+        print(f"\n  What's actually in our feed top 20:")
+        for i, item in enumerate(feed_items[:20]):
+            if item.get("type") == "futures":
+                d = item["data"]
+                cat = d.get("llm_sport_category", "?")
+                score = item.get("score", 0)
+                print(f"    #{i+1:2d} score={score:3d} [{cat:12s}] {d.get('name','')[:50]}")
+    except Exception as e:
+        print(f"  Feed check failed: {e}")
+
     # Summary stats
     print("\n--- SUMMARY ---")
     print(f"Ground truth markets: {len(ground_truth)}")
