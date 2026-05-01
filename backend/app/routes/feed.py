@@ -814,20 +814,11 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
-    # === SINGLE QUERY WITH ROW_NUMBER() PARTITION ===
-    # Instead of 29 per-category queries (~90 round-trips with selectinload),
-    # use a single query with ROW_NUMBER() OVER (PARTITION BY category) to
-    # get the top PER_CAT_LIMIT markets per category in one round-trip.
-    PER_CAT_LIMIT = 10
-
-    # Step 1: Subquery to assign row numbers per category
-    category_col = func.coalesce(
-        FuturesMarket.llm_sport_category, "__null__"
-    )
-    row_num = func.row_number().over(
-        partition_by=category_col,
-        order_by=FuturesMarket.resolution_date.asc().nulls_last(),
-    ).label("_rn")
+    # === SINGLE QUERY — pull a large pool, let scoring decide ===
+    # No per-category cap. The scoring (category baselines, boring penalties,
+    # compelling boosts, movement, resolution proximity) determines what's
+    # interesting. Crypto is filtered at ingestion, so the pool is clean.
+    POOL_SIZE = 500
 
     id_filters = list(base_filters)
     if sport_filter:
@@ -845,18 +836,15 @@ async def _score_futures(
             FuturesMarket.market_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
 
-    subq = (
-        select(FuturesMarket.id, row_num)
-        .where(*id_filters)
-        .subquery()
-    )
-
-    # Step 2: Load full market objects (with outcomes + sport) for the top N per category
     main_query = (
         select(FuturesMarket)
         .options(*base_options)
-        .join(subq, FuturesMarket.id == subq.c.id)
-        .where(subq.c._rn <= PER_CAT_LIMIT)
+        .where(*id_filters)
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.resolution_date.asc().nulls_last(),
+        )
+        .limit(POOL_SIZE)
     )
 
     result = await db.execute(main_query)
