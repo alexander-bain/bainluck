@@ -279,11 +279,11 @@ async def get_feed(
                 item["score"] = min(item["score"], 40)
 
     if not my_teams_only:
-        if event_pct is not None:
-            _epct = max(0.0, min(1.0, event_pct))
+        if event_pct is not None and event_pct < 0.2:
+            pass  # Discover mode: let scores decide, no artificial event promotion
         else:
             _epct = 0.6 if not ctx.is_authenticated else 0.4
-        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
+            feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
