@@ -74,15 +74,15 @@ MINOR_LEAGUE_PENALTY = -15
 # sports markets get (league tier, EI, live status). Without these baselines,
 # politics/geopolitics/economics/tech markets score near-zero and never appear.
 CATEGORY_BASE_SCORES: dict[str, float] = {
-    "politics": 35.0,
-    "geopolitics": 38.0,
-    "economics": 34.4,
-    "tech": 34.0,
-    "entertainment": 32.0,
-    "culture": 30.2,
-    "health": 28.0,
-    "weather": 26.3,
-    "crypto": 25.9,
+    "politics": 50.0,
+    "geopolitics": 55.0,
+    "economics": 50.0,
+    "tech": 50.0,
+    "entertainment": 48.0,
+    "culture": 45.0,
+    "health": 42.0,
+    "weather": 38.0,
+    "crypto": 35.0,
 }
 SPORTS_CATEGORY_BASE = 18.5
 
