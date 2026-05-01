@@ -256,6 +256,15 @@ async def get_feed(
     # bonuses that events don't have).
     # For anonymous users, enforce a stronger event bias (events are the core product).
     # Skip diversity enforcement for my_teams_only — show everything matching.
+    # When event_pct is low (Discover mode), demote ordinary events so
+    # interesting futures can compete. Without this, a routine playoff
+    # game (score 75) outranks "Will China invade Taiwan?" (score 67).
+    # Only boost events that are truly exceptional (high EI, upset, etc.)
+    if event_pct is not None and event_pct < 0.3:
+        for item in feed_items:
+            if item["type"] == "event" and item["score"] < 80:
+                item["score"] = int(item["score"] * 0.5)
+
     if not my_teams_only:
         if event_pct is not None:
             _epct = max(0.0, min(1.0, event_pct))

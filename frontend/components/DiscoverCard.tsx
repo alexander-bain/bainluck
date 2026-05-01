@@ -607,7 +607,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
   if (!leader) return null;
 
   return (
-    <div className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
+    <div data-guess-card className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
         <span className="text-white text-sm">🎯</span>
         <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
@@ -683,7 +683,14 @@ export function DailyChallengeCard({ guessesToday, onGuessCompleted }: {
   const progress = Math.min(guessesToday / DAILY_GOAL, 1);
 
   return (
-    <div className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md`}>
+    <div
+      className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md ${completed ? "" : "cursor-pointer hover:border-amber-400/60 transition-colors"}`}
+      onClick={() => {
+        if (completed) return;
+        const guessCard = document.querySelector("[data-guess-card]");
+        if (guessCard) guessCard.scrollIntoView({ behavior: "smooth", block: "center" });
+      }}
+    >
       <div className="px-4 py-3 flex items-center gap-3">
         <span className="text-2xl">{completed ? "🏆" : "🎯"}</span>
         <div className="flex-1">
