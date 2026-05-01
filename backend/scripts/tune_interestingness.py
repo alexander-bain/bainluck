@@ -178,19 +178,34 @@ def score_market(market: dict, weights: Weights) -> float:
     compelling_patterns = [
         r"(invade|invasion|war|strike|military action)",
         r"(ceasefire|peace deal|treaty)",
-        r"(champion|winner|mvp)\b",
-        r"(fed decision|interest rate|recession)",
-        r"(ipo|acquire|bankrupt|fail)",
-        r"(taylor swift|beyonce|drake|kardashian)",
-        r"(openai|gpt|claude|ai model|deepseek)",
-        r"(world cup|super bowl|olympics|masters)",
-        r"(approval rating|election winner|resign|impeach)",
+        r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league).*(champion|winner)",
+        r"(fed decision|interest rate|recession|rate cut)",
+        r"\bipo\b|acquire|bankrupt|fail|earnings",
+        r"(taylor swift|beyonce|drake|kardashian|bieber)",
+        r"(openai|gpt|claude|ai model|deepseek|gemini)",
+        r"(u\.?s\.? president|presidential election).*(winner|2028|2026)",
+        r"(approval rating).*(trump|biden)",
         r"(regime|coup|revolution|overthrow|fall)",
-        r"will .+ beat|will .+ win",
+        r"(china|russia|iran|israel|ukraine|taiwan).*(invade|strike|ceasefire|war|peace)",
+        r"(elon musk|jeff bezos|mark zuckerberg|sam altman|warren buffett)",
+        r"(s&p 500|dow jones|nasdaq|bitcoin|ethereum).*(high|crash|hit)",
+        r"(fda|drug).*(approve|psychedelic|cannabis)",
     ]
     compelling_count = sum(1 for p in compelling_patterns if re.search(p, name))
     if compelling_count > 0:
         score += 8.0 * min(compelling_count, 3)
+
+    # Obscure election penalty — local/regional elections nobody cares about
+    obscure_election_patterns = [
+        r"(mayoral|mayor).*(election|winner)",
+        r"(hackney|newham|lewisham|watford|venice|watford|doncaster|croydon|tower hamlets)",
+        r"(by-election|byelection|terrebone|b\.c\. conservative|chungche)",
+        r"(wales|scotland).*(parliamentary|assembly).*(election|winner)",
+        r"(andalusia|bavaria|saxony|thuringia|hesse).*(election|winner)",
+        r"(yang seung|jorge nieto|fidesz)",
+    ]
+    if any(re.search(p, name) for p in obscure_election_patterns):
+        score += -20.0
 
     return min(100, max(0, score))
 
