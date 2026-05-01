@@ -69,6 +69,73 @@ _MINOR_LEAGUE_PATTERNS = re.compile(
 # Penalty applied to minor league futures (offsets the major_league bonus)
 MINOR_LEAGUE_PENALTY = -15
 
+# Category base scores — calibrated against Polymarket ground truth (April 30, 2026).
+# Non-sports categories need a floor score because they lack the signals
+# sports markets get (league tier, EI, live status). Without these baselines,
+# politics/geopolitics/economics/tech markets score near-zero and never appear.
+CATEGORY_BASE_SCORES: dict[str, float] = {
+    "politics": 35.0,
+    "geopolitics": 38.0,
+    "economics": 34.4,
+    "tech": 34.0,
+    "entertainment": 32.0,
+    "culture": 30.2,
+    "health": 28.0,
+    "weather": 26.3,
+    "crypto": 25.9,
+}
+SPORTS_CATEGORY_BASE = 18.5
+
+# Boring market patterns — penalize low-quality content that floods the feed.
+# These override compelling boosts (early return).
+_BORING_PATTERNS = re.compile(
+    r"(# ?(posts|tweets|truths)"
+    r"|photographed every"
+    r"|(posts|tweets)\s+(april|may|june|january|february|march)"
+    r"|white house #"
+    r"|what will .+ say during"
+    r"|# of (views|likes|comments)"
+    r"|weekly streams"
+    r"|(map \d|bo3|bo5).*(winner|map)"
+    r"|\bvs\b.*(map [12345]|game [12345])\b"
+    r"|stage \d.+\d{4}:)",
+    re.IGNORECASE,
+)
+
+# Obscure election patterns — local races nobody cares about
+_OBSCURE_ELECTION_PATTERNS = re.compile(
+    r"((mayoral|mayor).*(election|winner)"
+    r"|hackney|newham|lewisham|watford|doncaster|croydon|tower hamlets"
+    r"|by-election|byelection"
+    r"|(wales|scotland).*(parliamentary|assembly).*(election|winner)"
+    r"|(andalusia|bavaria|saxony|thuringia|hesse).*(election|winner))",
+    re.IGNORECASE,
+)
+
+# Compelling market patterns — genuinely interesting content
+_COMPELLING_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"(invade|invasion|war|strike|military action)",
+        r"(ceasefire|peace deal|treaty)",
+        r"(nba|nfl|mlb|nhl|fifa|world cup|super bowl|olympics|masters|champions league).*(champion|winner)",
+        r"(fed decision|interest rate|recession|rate cut)",
+        r"\bipo\b|acquire|bankrupt|fail|earnings",
+        r"(taylor swift|beyonce|drake|kardashian|bieber)",
+        r"(openai|gpt|claude|ai model|deepseek|gemini)",
+        r"(u\.?s\.? president|presidential election).*(winner|2028|2026)",
+        r"(approval rating).*(trump|biden)",
+        r"(regime|coup|revolution|overthrow|fall)",
+        r"(china|russia|iran|israel|ukraine|taiwan).*(invade|strike|ceasefire|war|peace)",
+        r"(elon musk|jeff bezos|mark zuckerberg|sam altman|warren buffett)",
+        r"(s&p 500|dow jones|nasdaq|bitcoin|ethereum).*(high|crash|hit)",
+        r"(fda|drug).*(approve|psychedelic|cannabis)",
+    ]
+]
+
+BORING_PENALTY = -25
+OBSCURE_ELECTION_PENALTY = -20
+COMPELLING_BOOST = 8  # per matching pattern, max 3
+
 # Scoring weights
 FUTURES_WEIGHTS = {
     "major_movement_24h": 25,       # Leader moved >5% in 24h
@@ -78,7 +145,7 @@ FUTURES_WEIGHTS = {
     "high_tier_market": 15,         # Championship/conference
     "major_league": 10,             # Major sport/league
     "secondary_league": 5,          # Secondary sport
-    "resolving_soon_7d": 15,        # Resolves within 7 days
+    "resolving_soon_7d": 13.5,      # Resolves within 7 days (tuned)
     "resolving_soon_30d": 8,        # Resolves within 30 days
     "multi_source": 10,             # Available from 2+ sources
     "source_divergence": 20,        # Sources disagree by >5%
@@ -167,6 +234,35 @@ def compute_futures_highlight(
     result = FuturesHighlightResult()
     flags = result.flags
     outcomes = outcomes or []
+
+    # === Category base score (calibrated against Polymarket ground truth) ===
+    _market_name = market_name or ""
+    _name_lower = _market_name.lower()
+    _sport_lower = (sport_category or "").lower()
+
+    base = CATEGORY_BASE_SCORES.get(_sport_lower, 0)
+    if base == 0 and _sport_lower:
+        base = SPORTS_CATEGORY_BASE
+    result.score += base
+    if base > 0:
+        result.reasons.append(f"category_base_{_sport_lower}")
+
+    # === Boring market penalty (overrides compelling) ===
+    if _market_name and _BORING_PATTERNS.search(_market_name):
+        result.score += BORING_PENALTY
+        result.reasons.append("boring_pattern")
+
+    # === Obscure election penalty ===
+    if _market_name and _OBSCURE_ELECTION_PATTERNS.search(_market_name):
+        result.score += OBSCURE_ELECTION_PENALTY
+        result.reasons.append("obscure_election")
+
+    # === Compelling market boost (skip if boring) ===
+    if "boring_pattern" not in result.reasons and _market_name:
+        compelling_hits = sum(1 for p in _COMPELLING_PATTERNS if p.search(_market_name))
+        if compelling_hits > 0:
+            result.score += COMPELLING_BOOST * min(compelling_hits, 3)
+            result.reasons.append(f"compelling_x{min(compelling_hits, 3)}")
 
     # === Market tier scoring ===
     tier = market_tier or 5
