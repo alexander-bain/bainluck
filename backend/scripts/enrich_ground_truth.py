@@ -1,24 +1,11 @@
 """
 Enrich Polymarket Ground Truth sheet rows with LLM classification.
 
-Reads the Google Sheet, finds rows without LLM enrichment, calls GPT-4o-mini
-to classify and describe each market, writes results back to new columns.
-
-Adds columns I-M:
-  I: LLM Category (replaces regex guess)
-  J: Hook (1-sentence blurb)
-  K: Interestingness (1-10)
-  L: Timeliness (this_week / this_month / ongoing / historical)
-  M: Shareability (1-10, "would someone share this on social media?")
+Reads the Google Sheet via service account, finds rows without LLM enrichment,
+calls GPT-4o-mini to classify each market, writes results back.
 
 Usage:
-    # Dry run (show what would be enriched):
-    python3 scripts/enrich_ground_truth.py --dry-run
-
-    # Enrich up to 50 rows:
-    python3 scripts/enrich_ground_truth.py --limit 50
-
-    # Run on Heroku:
+    heroku run --app bainluck -- python3 scripts/enrich_ground_truth.py --dry-run
     heroku run --app bainluck -- python3 scripts/enrich_ground_truth.py --limit 50
 """
 
@@ -31,29 +18,82 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 SHEET_ID = "1RztughDfCj1F691yeQWq_67UfCn3LXNpVrejZ35_4_w"
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Column indices (0-based): A=0, B=1, ... H=7, I=8, J=9, K=10, L=11, M=12
 COL_MARKET_NAME = 2   # C
-COL_CATEGORY = 3      # D
-COL_LLM_CATEGORY = 8  # I (new)
-COL_HOOK = 9           # J (new)
-COL_INTEREST = 10      # K (new)
-COL_TIMELINESS = 11    # L (new)
-COL_SHAREABILITY = 12  # M (new)
+COL_LLM_CATEGORY = 8  # I
 
-ENRICHMENT_PROMPT = """You are classifying prediction markets for a consumer app called Bain Luck.
+ENRICHMENT_PROMPT = """You are classifying prediction markets for a consumer app.
 
-For each market, return a JSON object with these fields:
+For this market, return a JSON object with these fields:
 - "category": one of: basketball, football, baseball, hockey, soccer, golf, mma, tennis, motorsports, esports, cricket, rugby, economics, politics, geopolitics, tech, entertainment, culture, health, weather, other
-- "hook": A single compelling sentence (max 120 chars) that explains WHY this is interesting to a casual person. Be specific, not generic.
-- "interestingness": 1-10 score. 10 = "I need to tell someone about this RIGHT NOW." 1 = "I don't care at all." Score based on: surprise factor, cultural relevance, timeliness, emotional resonance. A market about Taylor Swift meeting the Pope is a 10. "GDP growth in Q3" is a 3.
-- "timeliness": one of: "this_week" (resolves or peaks in interest within 7 days), "this_month", "ongoing" (long-running, checked periodically), "historical" (already resolved or stale)
-- "shareability": 1-10 score. Would someone screenshot this and text it to a friend? 10 = absolutely. 1 = nobody cares.
+- "hook": A single compelling sentence (max 120 chars) explaining WHY this is interesting to a casual person. Be specific.
+- "interestingness": 1-10. 10 = "tell someone RIGHT NOW." 1 = "don't care." Based on: surprise, cultural relevance, timeliness, emotional resonance.
+- "timeliness": one of: "this_week", "this_month", "ongoing", "historical"
+- "shareability": 1-10. Would someone screenshot this and text it to a friend?
 
 Market: {market_name}
 Email subject: {email_subject}
 
-Respond with ONLY the JSON object, no markdown, no explanation."""
+Respond with ONLY valid JSON, no markdown."""
+
+
+def _get_sheets_service():
+    """Build Google Sheets API client from Firebase service account credentials."""
+    import google.auth
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    # Heroku stores Firebase service account as FIREBASE_SERVICE_ACCOUNT_JSON
+    creds_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if not creds_json:
+        creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not creds_json:
+        # Try reading from file
+        creds_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if creds_file and os.path.exists(creds_file):
+            creds_json = open(creds_file).read()
+
+    if not creds_json:
+        raise RuntimeError(
+            "No Google credentials found. Set GOOGLE_APPLICATION_CREDENTIALS_JSON, "
+            "FIREBASE_CONFIG, or GOOGLE_APPLICATION_CREDENTIALS"
+        )
+
+    creds_dict = json.loads(creds_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        creds_dict, scopes=SCOPES
+    )
+    return build("sheets", "v4", credentials=credentials)
+
+
+def _read_sheet(service):
+    """Read all rows from the sheet."""
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID,
+        range="Sheet1!A1:M1000",
+    ).execute()
+    return result.get("values", [])
+
+
+def _write_headers(service):
+    """Write enrichment column headers if not present."""
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range="I1:M1",
+        valueInputOption="RAW",
+        body={"values": [["LLM Category", "Hook", "Interestingness", "Timeliness", "Shareability"]]},
+    ).execute()
+
+
+def _write_row(service, row_num, values):
+    """Write enrichment data to a single row."""
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_ID,
+        range=f"I{row_num}:M{row_num}",
+        valueInputOption="RAW",
+        body={"values": [values]},
+    ).execute()
 
 
 def enrich_rows(limit: int = 50, dry_run: bool = False):
@@ -66,65 +106,30 @@ def enrich_rows(limit: int = 50, dry_run: bool = False):
 
     client = OpenAI(api_key=api_key, timeout=30.0)
 
-    # Read the sheet via Google Sheets API
-    # On Heroku, use the service account. Locally, this needs gspread or similar.
-    # For simplicity, use the meta CLI if available, otherwise httpx
+    print("Connecting to Google Sheets...")
     try:
-        import subprocess
-        result = subprocess.run(
-            ["meta", "google.sheets", "read",
-             f"--id={SHEET_ID}",
-             "--range=Sheet1!A1:M1000",
-             "-o", "json"],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            print(f"Failed to read sheet: {result.stderr[:200]}")
-            return
-        sheet_data = json.loads(result.stdout)
-        rows = sheet_data.get("values", [])
-    except FileNotFoundError:
-        print("meta CLI not available — trying gspread...")
-        try:
-            import gspread
-            gc = gspread.service_account()
-            sh = gc.open_by_key(SHEET_ID)
-            ws = sh.sheet1
-            rows = ws.get_all_values()
-        except Exception as e:
-            print(f"gspread failed: {e}")
-            print("Run this where meta CLI or gspread is available")
-            return
+        service = _get_sheets_service()
+    except Exception as e:
+        print(f"Failed to connect: {e}")
+        return
 
+    rows = _read_sheet(service)
     if not rows:
         print("Sheet is empty")
         return
 
+    print(f"Sheet has {len(rows) - 1} data rows")
+
+    # Check if enrichment headers exist
     headers = rows[0]
-    print(f"Sheet has {len(rows) - 1} data rows, {len(headers)} columns")
-
-    # Ensure enrichment columns exist in headers
-    while len(headers) < 13:
-        headers.append("")
-    if headers[8] != "LLM Category":
-        # Need to write headers for new columns
+    if len(headers) < 9 or headers[8] != "LLM Category":
         if not dry_run:
-            try:
-                subprocess.run(
-                    ["meta", "google.sheets", "write",
-                     f"--id={SHEET_ID}",
-                     "--range=I1:M1",
-                     '--values=[["LLM Category","Hook","Interestingness","Timeliness","Shareability"]]',
-                     "-o", "json"],
-                    capture_output=True, text=True, timeout=15
-                )
-                print("Wrote enrichment column headers (I-M)")
-            except Exception as e:
-                print(f"Failed to write headers: {e}")
+            _write_headers(service)
+            print("Wrote enrichment column headers (I-M)")
 
-    # Find rows needing enrichment (column I is empty)
+    # Find rows needing enrichment
     to_enrich = []
-    for i, row in enumerate(rows[1:], start=2):  # 1-indexed, skip header
+    for i, row in enumerate(rows[1:], start=2):
         market_name = row[COL_MARKET_NAME] if len(row) > COL_MARKET_NAME else ""
         llm_cat = row[COL_LLM_CATEGORY] if len(row) > COL_LLM_CATEGORY else ""
         if market_name and not llm_cat:
@@ -141,7 +146,7 @@ def enrich_rows(limit: int = 50, dry_run: bool = False):
         return
 
     batch = to_enrich[:limit]
-    print(f"Enriching {len(batch)} rows (limit={limit})")
+    print(f"Enriching {len(batch)} rows...")
 
     if dry_run:
         for item in batch[:10]:
@@ -168,7 +173,6 @@ def enrich_rows(limit: int = 50, dry_run: bool = False):
             )
 
             text = response.choices[0].message.content.strip()
-            # Strip markdown fences if present
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
                 if text.endswith("```"):
@@ -179,32 +183,20 @@ def enrich_rows(limit: int = 50, dry_run: bool = False):
 
             category = data.get("category", "other")
             hook = data.get("hook", "")[:150]
-            interestingness = min(10, max(1, int(data.get("interestingness", 5))))
+            interestingness = str(min(10, max(1, int(data.get("interestingness", 5)))))
             timeliness = data.get("timeliness", "ongoing")
-            shareability = min(10, max(1, int(data.get("shareability", 5))))
+            shareability = str(min(10, max(1, int(data.get("shareability", 5)))))
 
-            # Write back to the sheet
-            row_range = f"I{item['row_num']}:M{item['row_num']}"
-            values = json.dumps([[category, hook, interestingness, timeliness, shareability]])
-
-            subprocess.run(
-                ["meta", "google.sheets", "write",
-                 f"--id={SHEET_ID}",
-                 f"--range={row_range}",
-                 f"--values={values}",
-                 "-o", "json"],
-                capture_output=True, text=True, timeout=15
-            )
+            _write_row(service, item["row_num"], [category, hook, interestingness, timeliness, shareability])
 
             enriched += 1
-            if enriched % 10 == 0:
-                print(f"  [{enriched}/{len(batch)}] enriched")
+            print(f"  [{enriched}/{len(batch)}] {item['market_name'][:40]:40s} → {category} (int={interestingness}, share={shareability})")
 
-            time.sleep(0.2)  # Rate limiting
+            time.sleep(0.3)
 
         except json.JSONDecodeError as e:
             errors += 1
-            print(f"  Row {item['row_num']}: JSON parse error — {e}")
+            print(f"  Row {item['row_num']}: JSON parse error — {text[:100]}")
         except Exception as e:
             errors += 1
             print(f"  Row {item['row_num']}: Error — {e}")
