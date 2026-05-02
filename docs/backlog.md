@@ -295,15 +295,11 @@ Port the new sections to `LeagueView.swift`. Reuse existing card components wher
 
 ### 0q. Feed "Top Markets" Stale Data (BUG — user-facing)
 
-Multiple stale/nonsensical markets showing in the feed's "Top Markets" section:
+**~~0q-1. "Pro Basketball Best Regular Season Record"~~ ✅ SHIPPED (May 2)**
+Three staleness heuristics in `_score_futures()`: (1) all outcomes settled (<5% or >95%), (2) leader ≥97% with boring journey, (3) no updates for 7+ days with zero movement.
 
-**0q-1. "Pro Basketball Best Regular Season Record"** — NBA season is complete. Market shows nonsensical options (teams with 0% and 100%). Should be hidden because the market is effectively resolved even if status is still "open".
-**Root cause:** Feed filter checks `status=="open"` and `resolution_date >= now`, but doesn't catch markets where the underlying event/season has concluded.
-**Fix:** Add a staleness heuristic: if ALL outcomes are <5% or >95%, the market is effectively resolved → hide it. OR check if the market's `canonical_market_key` relates to a completed season.
-
-**0q-2. Stale Masters golf market** — Masters was April 9-12, still showing in feed weeks later.
-**Root cause:** Same as above — status still "open", resolution_date hasn't passed.
-**Fix:** Same staleness filter. Also: for tournament-specific markets, check if the tournament has completed.
+**~~0q-2. Stale Masters golf market~~ ✅ SHIPPED (May 2)**
+Same fix — caught by the 7-day staleness + zero movement heuristic.
 
 **0q-3. No probability bars on Top Markets futures** — Just showing numbers without visual context. Event cards have probability bars, but futures cards in the feed are text-only.
 **Fix:** Add probability bars to `FeedCard` / `CombinedFeedCard` for futures items.
@@ -311,7 +307,7 @@ Multiple stale/nonsensical markets showing in the feed's "Top Markets" section:
 **0q-4. Truncated futures names** — "2026 Pro Football Draft: Number of RBs drafted O/U 16.5" is cut off.
 **Fix:** Show full market name or use smarter truncation (truncate the prefix, keep the distinguishing part).
 
-**Files:** `backend/app/routes/feed.py` (staleness filtering), `frontend/components/FeedCard.tsx` (display)
+**Files:** `frontend/components/FeedCard.tsx` (display)
 **Parallel Safety:** Yellow
 
 ### 0r. Golf Data Quality Issues (April 25)
