@@ -2736,7 +2736,13 @@ async def get_game_markets(
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
-                    FuturesMarket.event_id.is_(None),
+                    or_(
+                        FuturesMarket.event_id.is_(None),
+                        and_(
+                            FuturesMarket.source == "polymarket",
+                            FuturesMarket.event_id != event_id,
+                        ),
+                    ),
                     status_filter,
                     or_(*category_or_ticker),
                     sport_filter,
