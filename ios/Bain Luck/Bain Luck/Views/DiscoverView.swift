@@ -5,7 +5,8 @@ struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var categoryFilter = "all"
     @State private var visibleCount = 20
-    @State private var dismissed: Set<String> = []
+    @State private var dismissed: Set<String> = Self.loadDismissed()
+    @State private var scrollTarget: String? = nil
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -93,20 +94,28 @@ struct DiscoverView: View {
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageItems = Array(filteredItems.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(Array(pageItems.enumerated()), id: \.element.id) { idx, item in
-                        let isGuess = (idx + 1) % 5 == 0 && item.type == "futures"
-                        if isGuess, let f = item.futures {
-                            NativeGuessCard(data: f)
-                        } else if item.type == "event", let e = item.event {
-                            NativeEventDiscoverCard(event: e)
-                        } else if item.type == "futures", let f = item.futures {
-                            NativeFuturesDiscoverCard(data: f)
-                                .onAppear {
-                                    if idx == pageItems.count - 3 && visibleCount < filteredItems.count {
-                                        visibleCount += 20
-                                    }
+                ScrollViewReader { proxy in
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(Array(pageItems.enumerated()), id: \.element.id) { idx, item in
+                            let isGuessSlot = (idx + 1) % 2 == 0
+                            let guessId = itemId(item)
+                            Group {
+                                if isGuessSlot, item.type == "futures", let f = item.futures {
+                                    NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) })
+                                } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
+                                    NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) })
+                                } else if item.type == "event", let e = item.event {
+                                    NativeEventDiscoverCard(event: e)
+                                } else if item.type == "futures", let f = item.futures {
+                                    NativeFuturesDiscoverCard(data: f)
                                 }
+                            }
+                            .id(guessId)
+                            .onAppear {
+                                if idx == pageItems.count - 3 && visibleCount < filteredItems.count {
+                                    visibleCount += 20
+                                }
+                            }
                         }
                     }
                 }
@@ -118,8 +127,41 @@ struct DiscoverView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                NavigationLink(value: Route.predictionStats) {
+                    Label("Stats", systemImage: "chart.bar.fill")
+                }
+            }
+        }
         .task { await vm.load() }
         .refreshable { await vm.load() }
+    }
+
+    private func scrollToNextGuess(proxy: ScrollViewProxy, after idx: Int, in items: [FeedItem]) {
+        let nextGuessIdx = stride(from: idx + 1, to: items.count, by: 1).first { i in
+            (i + 1) % 2 == 0
+        }
+        if let next = nextGuessIdx, next < items.count {
+            let targetId = itemId(items[next])
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(targetId, anchor: .top)
+            }
+        }
+    }
+
+    private func dismiss(_ id: String) {
+        dismissed.insert(id)
+        Self.saveDismissed(dismissed)
+    }
+
+    private static func loadDismissed() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: "discover_dismissed") ?? [])
+    }
+
+    private static func saveDismissed(_ ids: Set<String>) {
+        let recent = Array(ids.suffix(500))
+        UserDefaults.standard.set(recent, forKey: "discover_dismissed")
     }
 }
 
@@ -373,6 +415,7 @@ private struct NativeFuturesDiscoverCard: View {
 
 private struct NativeGuessCard: View {
     let data: FeedFuturesData
+    var onNextQuestion: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil
@@ -469,10 +512,20 @@ private struct NativeGuessCard: View {
                             .foregroundStyle(.orange)
                     }
 
-                    NavigationLink(value: Route.futuresDetail(id: data.id)) {
-                        Text("See full market →")
-                            .font(.caption)
-                            .foregroundStyle(.blue)
+                    HStack(spacing: 12) {
+                        NavigationLink(value: Route.futuresDetail(id: data.id)) {
+                            Text("See full market →")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                        if let onNextQuestion {
+                            Button { onNextQuestion() } label: {
+                                Text("Next question →")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -483,6 +536,167 @@ private struct NativeGuessCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.orange.opacity(0.3), lineWidth: 2))
         .onAppear { generateThreshold() }
+    }
+
+    private func generateThreshold() {
+        let actual = Double(actualPct) / 100.0
+        let goHigher = Bool.random()
+        let offset = 0.10 + Double.random(in: 0...0.15)
+        var t = goHigher ? actual + offset : actual - offset
+        t = max(0.05, min(0.95, t))
+        if abs(t - actual) < 0.10 {
+            t = actual > 0.5 ? actual - offset : actual + offset
+            t = max(0.05, min(0.95, t))
+        }
+        threshold = Int((t * 100).rounded())
+    }
+}
+
+// MARK: - Event Guess Card
+
+private struct NativeEventGuessCard: View {
+    let event: FeedEventData
+    var onNextQuestion: (() -> Void)? = nil
+    @State private var guess: String? = nil
+    @State private var threshold: Int = 50
+    @State private var streak: Int? = nil
+
+    private var actualPct: Int { Int(((event.currentOdds?.homeProbability ?? 0.5) * 100).rounded()) }
+    private var correct: Bool {
+        guard let g = guess else { return false }
+        return g == "higher" ? actualPct > threshold : actualPct < threshold
+    }
+
+    private func submitGuess(_ g: String) {
+        guess = g
+        let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
+        Task {
+            do {
+                let request = PredictionRequest(
+                    marketId: event.id,
+                    guess: g,
+                    threshold: threshold,
+                    actualProbability: event.currentOdds?.homeProbability ?? 0.5,
+                    correct: isCorrect,
+                    category: event.sport?.split(separator: "_").first.map(String.init)
+                )
+                _ = try await APIClient.shared.submitPrediction(request)
+                let stats = try await APIClient.shared.fetchPredictionStats()
+                streak = stats.currentStreak
+            } catch { }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("🎯")
+                Text("WHAT ARE THE ODDS?")
+                    .font(.system(size: 11, weight: .heavy))
+                    .tracking(1)
+                    .foregroundStyle(.orange)
+                Spacer()
+            }
+
+            HStack(spacing: 12) {
+                teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
+                         color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"))
+                Text("vs")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
+                         color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"))
+            }
+
+            if guess == nil {
+                Text("\(event.homeTeam.split(separator: " ").last.map(String.init) ?? event.homeTeam) to win — higher or lower than \(threshold)%?")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button { submitGuess("higher") } label: {
+                        Text("↑ Higher")
+                            .font(.caption.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.green.opacity(0.1))
+                            .foregroundStyle(.green)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.green.opacity(0.3)))
+                    }
+                    Button { submitGuess("lower") } label: {
+                        Text("↓ Lower")
+                            .font(.caption.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.1))
+                            .foregroundStyle(.red)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.3)))
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                VStack(spacing: 8) {
+                    Text(correct ? "✓ Correct!" : "✗ Not quite!")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(correct ? .green : .red)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background((correct ? Color.green : Color.red).opacity(0.1))
+                        .clipShape(Capsule())
+
+                    Text("\(actualPct)%")
+                        .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                    Text(event.homeTeam)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let streak, streak > 1 {
+                        Text("🔥 \(streak) streak")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+
+                    HStack(spacing: 12) {
+                        NavigationLink(value: Route.eventDetail(id: event.id)) {
+                            Text("See full game →")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                        if let onNextQuestion {
+                            Button { onNextQuestion() } label: {
+                                Text("Next question →")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding()
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.orange.opacity(0.3), lineWidth: 2))
+        .onAppear { generateThreshold() }
+    }
+
+    private func teamBadge(name: String, logo: String?, color: Color) -> some View {
+        HStack(spacing: 6) {
+            if let logo, let url = URL(string: logo) {
+                AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
+                    .frame(width: 24, height: 24)
+            } else {
+                RoundedRectangle(cornerRadius: 4).fill(color)
+                    .frame(width: 24, height: 24)
+            }
+            Text(name.split(separator: " ").last.map(String.init) ?? name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
     }
 
     private func generateThreshold() {

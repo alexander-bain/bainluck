@@ -12,4 +12,6 @@ enum Route: Hashable {
     case golfLeaderboard
     case golfTournament(slug: String, name: String)
     case futuresList
+    case teamDetail(slug: String)
+    case predictionStats
 }

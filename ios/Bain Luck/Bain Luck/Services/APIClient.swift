@@ -373,6 +373,12 @@ actor APIClient {
         return try await fetch("/api/events/typeahead", query: ["q": query])
     }
 
+    // MARK: - Team Page
+
+    func fetchTeamPage(slug: String) async throws -> TeamPageResponse {
+        return try await fetch("/api/teams/\(slug)")
+    }
+
     // MARK: - Futures Detail
 
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail {
@@ -518,5 +524,9 @@ actor APIClient {
 
     func fetchPredictionStats() async throws -> PredictionStats {
         return try await fetch("/api/predictions/stats")
+    }
+
+    func fetchDetailedPredictionStats() async throws -> DetailedPredictionStats {
+        return try await fetch("/api/predictions/detailed-stats")
     }
 }

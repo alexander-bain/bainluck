@@ -30,6 +30,7 @@ struct MainTabView: View {
                         switch route {
                         case .eventDetail(let id): EventDetailView(eventId: id)
                         case .futuresDetail(let id): FuturesDetailView(marketId: id)
+                        case .predictionStats: PredictionStatsView()
                         default: EmptyView()
                         }
                     }
