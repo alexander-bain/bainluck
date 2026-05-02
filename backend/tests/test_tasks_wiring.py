@@ -196,6 +196,9 @@ class TestBeatScheduleCompleteness:
         "transition-event-statuses",
         "track-statpal-usage",
         "snapshot-golf-leaderboard-daily",
+        "enrich-market-hooks",
+        "enrich-market-images",
+        "merge-duplicate-events",
     }
 
     def test_no_missing_entries(self):

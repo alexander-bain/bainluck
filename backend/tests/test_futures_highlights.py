@@ -264,8 +264,8 @@ class TestMinorLeagueDetection:
         )
         assert "major_league" not in result.reasons
         assert "minor_league" in result.reasons
-        # Score should be quite low: tier_1 weight (15) + minor penalty (-15) = 0
-        assert result.score <= 5
+        # category_base_hockey (18.5) + tier_1 (15) + minor penalty (-15) = 18.5
+        assert result.score <= 20
 
     def test_minor_league_below_anonymous_threshold(self):
         """A minor league championship resolving soon should still score low."""
@@ -278,9 +278,9 @@ class TestMinorLeagueDetection:
             now=now,
             market_name="AHL Calder Cup Winner",
         )
-        # tier 1 (15) + minor penalty (-15) + resolving_soon (15) + multi_source (10) = 25
-        # This is borderline — but much lower than NHL championship (40+)
-        assert result.score <= 30
+        # category_base (18.5) + tier 1 (15) + minor penalty (-15) + resolving_soon (15) + multi_source (10) = 43.5
+        # Still much lower than NHL championship (55+)
+        assert result.score <= 45
 
 
 class TestFeedReasons:
