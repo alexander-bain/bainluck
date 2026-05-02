@@ -389,19 +389,17 @@ private struct NativeGuessCard: View {
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
         Task {
             do {
-                let body: [String: Any] = [
-                    "market_id": data.id,
-                    "guess": g,
-                    "threshold": threshold,
-                    "actual_probability": (leader?.probability ?? 0),
-                    "correct": isCorrect,
-                ]
-                guard let url = URL(string: "https://api.bainluck.com/api/predictions") else { return }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                let (_, _) = try await URLSession.shared.data(for: request)
+                let request = PredictionRequest(
+                    marketId: data.id,
+                    guess: g,
+                    threshold: threshold,
+                    actualProbability: leader?.probability ?? 0,
+                    correct: isCorrect,
+                    category: data.llmSportCategory
+                )
+                _ = try await APIClient.shared.submitPrediction(request)
+                let stats = try await APIClient.shared.fetchPredictionStats()
+                streak = stats.currentStreak
             } catch { }
         }
     }
@@ -464,6 +462,12 @@ private struct NativeGuessCard: View {
                     Text("\(actualPct)%")
                         .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                     if let leader { Text(leader.name).font(.caption).foregroundStyle(.secondary) }
+
+                    if let streak, streak > 1 {
+                        Text("🔥 \(streak) streak")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
 
                     NavigationLink(value: Route.futuresDetail(id: data.id)) {
                         Text("See full market →")

@@ -44,6 +44,17 @@ actor APIClient {
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
+    /// Persistent session ID for anonymous prediction tracking
+    private let sessionId: String = {
+        let key = "bainluck_session_id"
+        if let existing = UserDefaults.standard.string(forKey: key) {
+            return existing
+        }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+
     func setAuthTokenProvider(_ provider: (() async -> String?)?) {
         authTokenProvider = provider
     }
@@ -87,6 +98,7 @@ actor APIClient {
 
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
         if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -127,6 +139,7 @@ actor APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -495,5 +508,15 @@ actor APIClient {
 
     func removePin(type: String, id: Int) async throws -> StatusResponse {
         return try await delete("/api/me/pins/\(type)/\(id)")
+    }
+
+    // MARK: - Predictions
+
+    func submitPrediction(_ body: PredictionRequest) async throws -> StatusResponse {
+        return try await postEncodable("/api/predictions", body: body)
+    }
+
+    func fetchPredictionStats() async throws -> PredictionStats {
+        return try await fetch("/api/predictions/stats")
     }
 }
