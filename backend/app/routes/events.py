@@ -2411,7 +2411,7 @@ _PLAYER_PROP_RE = re.compile(
     r"(?:points|assists|rebounds|steals|blocks|three.?pointers?|3.?pointers?|"
     r"turnovers|strikeouts|hits|runs|home.?runs|goals|saves|sacks|"
     r"passing.?yards|rushing.?yards|receiving.?yards|touchdowns|"
-    r"PRA|PA|PR|RA|double.?double|triple.?double|first.?basket)\b",
+    r"PRA|PA|PR|RA|double.?doubles?|triple.?doubles?|first.?basket)\b",
     re.IGNORECASE,
 )
 _THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
@@ -2443,7 +2443,8 @@ def _is_team_stat_market(name: str) -> bool:
     return bool(re.fullmatch(
         r"(?:points|assists|rebounds|steals|blocks|three.?pointers?|3.?pointers?|"
         r"turnovers|strikeouts|hits|runs|home.?runs|goals|saves|sacks|"
-        r"passing.?yards|rushing.?yards|receiving.?yards|touchdowns|kills)",
+        r"passing.?yards|rushing.?yards|receiving.?yards|touchdowns|kills|"
+        r"double.?doubles?|triple.?doubles?)",
         after_colon,
         re.IGNORECASE,
     ))

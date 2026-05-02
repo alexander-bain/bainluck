@@ -319,7 +319,6 @@ struct EventDetailView: View {
                             awayTeamColor: teamColors(event).away
                         )
                     }
-                    if let context = event.standingsContext { standingsSection(context) }
                     if let prog = vm.teamProgression {
                         ChampionshipPathView(
                             progression: prog,
@@ -568,24 +567,6 @@ struct EventDetailView: View {
                 .frame(maxWidth: .infinity)
             }
 
-            // EI strip (compact, inline)
-            if let ei = event.ei ?? event.pulse {
-                EIBadgeView(ei: ei, size: .sm)
-            }
-
-            // Source divergence warnings
-            heroDivergenceWarnings(event)
-
-            // Stakes context from standings
-            if let stakes = event.standingsContext?.stakes {
-                Text(stakes)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(Capsule())
-            }
         }
         .padding()
         .background(
@@ -630,53 +611,6 @@ struct EventDetailView: View {
         }
     }
 
-    // MARK: - Hero Divergence Warnings
-
-    @ViewBuilder
-    private func heroDivergenceWarnings(_ event: EventDetail) -> some View {
-        // Sportsbook divergence (max vs min spread > 15%)
-        if let bookmakers = event.bookmakerOdds, bookmakers.count >= 3 {
-            let probs = bookmakers.compactMap(\.homeProbability)
-            if let maxP = probs.max(), let minP = probs.min(), (maxP - minP) > 0.15 {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 9))
-                    Text("Sportsbooks spread \(Int(((maxP - minP) * 100).rounded()))% (\(Int((minP * 100).rounded()))%–\(Int((maxP * 100).rounded()))%)")
-                        .font(.system(size: 10))
-                }
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-        }
-
-        // Prediction market vs sportsbook divergence
-        if let sources = event.winProbabilitySources,
-           let consensus = event.currentOdds?.homeProbability {
-            let marketSources = sources.filter { $0.key == "kalshi" || $0.key == "polymarket" }
-            if let (sourceName, source) = marketSources.first, let marketProb = source.value?.doubleValue {
-                let gap = abs(marketProb - consensus)
-                if gap > 0.05 {
-                    let isPurple = gap > 0.10
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 9))
-                        let homeTeamShort = String(event.homeTeam.split(separator: " ").last ?? "")
-                        Text("\(sourceName.capitalized) has \(homeTeamShort) at \(Int((marketProb * 100).rounded()))% vs sportsbooks at \(Int((consensus * 100).rounded()))% (\(Int((gap * 100).rounded()))% gap)")
-                            .font(.system(size: 10))
-                    }
-                    .foregroundStyle(isPurple ? .purple : .blue)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background((isPurple ? Color.purple : Color.blue).opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-            }
-        }
-    }
-
     // MARK: - Hero Status Badge
 
     @ViewBuilder
@@ -689,73 +623,6 @@ struct EventDetailView: View {
         default:
             StatusBadge(status: "scheduled", commenceTime: event.commenceTime)
         }
-    }
-
-    // MARK: - Divergence Badge
-
-    @ViewBuilder
-    private func divergenceBadge(_ event: EventDetail) -> some View {
-        if let sources = event.winProbabilitySources,
-           let consensus = event.currentOdds?.homeProbability {
-            let marketSources = sources.filter { $0.key == "kalshi" || $0.key == "polymarket" }
-            if let (_, source) = marketSources.first, let marketProb = source.value?.doubleValue {
-                let gap = abs(marketProb - consensus)
-                if gap > 0.05 {
-                    let isPurple = gap > 0.10
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 9))
-                        Text("\(Int((gap * 100).rounded()))% divergence")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(isPurple ? .purple : .blue)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background((isPurple ? Color.purple : Color.blue).opacity(0.15))
-                    .clipShape(Capsule())
-                }
-            }
-        }
-    }
-
-
-    // MARK: - Standings
-
-    private func standingsSection(_ context: StandingsContext) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "list.number")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Text("Standings Context")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-            }
-            if let away = context.away {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color(hex: vm.event?.awayTeamData?.primaryColor ?? "#6b7280"))
-                        .frame(width: 6, height: 6)
-                    Text(away)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if let home = context.home {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color(hex: vm.event?.homeTeamData?.primaryColor ?? "#6b7280"))
-                        .frame(width: 6, height: 6)
-                    Text(home)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Event Tags
