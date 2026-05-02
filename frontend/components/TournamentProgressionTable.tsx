@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import type { ProgressionResponse, ProgressionParticipant, ProgressionStage } from "@/lib/types";
+import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
   data: ProgressionResponse;
@@ -313,9 +314,11 @@ export default function TournamentProgressionTable({
                         {participant.seed}
                       </span>
                     )}
-                    <span className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px]">
-                      {participant.name}
-                    </span>
+                    <TeamNameLink
+                      name={participant.name}
+                      sportKey={data.sport}
+                      className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px] hover:underline"
+                    />
                     {participant.record && (
                       <span className="text-[10px] text-text-secondary hidden sm:inline">
                         {participant.record}

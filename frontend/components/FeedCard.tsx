@@ -10,6 +10,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
+import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -440,13 +441,15 @@ function EventFeedCard({
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
               <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} sport={data.sport} />
-              <span className={`text-sm truncate ${
-                isFinished
-                  ? (awayWon ? "font-semibold text-text-primary" : "text-text-muted")
-                  : `font-medium ${displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
-              }`}>
-                {data.away_team}
-              </span>
+              <TeamNameLink
+                name={data.away_team}
+                sportKey={data.sport}
+                className={`text-sm truncate hover:underline ${
+                  isFinished
+                    ? (awayWon ? "font-semibold text-text-primary" : "text-text-muted")
+                    : `font-medium ${displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
+                }`}
+              />
               {isFinished && data.away_score != null && (
                 <span className={`ml-auto font-mono text-sm ${awayWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
                   {data.away_score}
@@ -456,13 +459,15 @@ function EventFeedCard({
             {/* Home team */}
             <div className="flex items-center gap-1.5">
               <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} sport={data.sport} />
-              <span className={`text-sm truncate ${
-                isFinished
-                  ? (homeWon ? "font-semibold text-text-primary" : "text-text-muted")
-                  : `font-medium ${displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
-              }`}>
-                {data.home_team}
-              </span>
+              <TeamNameLink
+                name={data.home_team}
+                sportKey={data.sport}
+                className={`text-sm truncate hover:underline ${
+                  isFinished
+                    ? (homeWon ? "font-semibold text-text-primary" : "text-text-muted")
+                    : `font-medium ${displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
+                }`}
+              />
               {isFinished && data.home_score != null && (
                 <span className={`ml-auto font-mono text-sm ${homeWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
                   {data.home_score}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { buildTeamPageUrl } from "@/lib/teamUrls";
 
 interface SearchBarProps {
   /** Initial query value */
@@ -92,7 +93,9 @@ export default function SearchBar({
     setIsOpen(false);
     setQuery("");
 
-    const teamUrl = buildTeamUrl(suggestion);
+    const teamUrl = suggestion.team_slug
+      ? buildTeamPageUrl(suggestion.text, suggestion.sport_key)
+      : null;
     track('navigation_click', {
       click_type: 'search_typeahead' as const,
       from_page: 'search',
@@ -281,16 +284,6 @@ export default function SearchBar({
   );
 }
 
-function buildTeamUrl(suggestion: TypeaheadSuggestion): string | null {
-  if (!suggestion.team_slug) return null;
-  if (suggestion.sport_key) {
-    const parts = suggestion.sport_key.split("_");
-    const sport = parts[0];
-    const league = parts.slice(1).join("_");
-    return `/sport/${sport}/${league}/team/${suggestion.team_slug}`;
-  }
-  return `/team/${suggestion.team_slug}`;
-}
 
 function formatFuturesName(name: string): string {
   return name

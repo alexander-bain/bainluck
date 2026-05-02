@@ -15,6 +15,7 @@ import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
+import TeamNameLink from "./TeamNameLink";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -298,12 +299,14 @@ export default function EventCard({
                     {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
                   </div>
                 )}
-                <span className={cn(
-                  "text-sm font-medium truncate",
-                  homeFavorite ? "text-text-primary" : "text-text-secondary",
-                )}>
-                  {event.home_team}
-                </span>
+                <TeamNameLink
+                  name={event.home_team}
+                  sportKey={event.sport}
+                  className={cn(
+                    "text-sm font-medium truncate hover:underline",
+                    homeFavorite ? "text-text-primary" : "text-text-secondary",
+                  )}
+                />
                 {/* Inline live score */}
                 {isLive && event.home_score !== null && (
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.home_score}</span>
@@ -364,12 +367,14 @@ export default function EventCard({
                     {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
                   </div>
                 )}
-                <span className={cn(
-                  "text-sm font-medium truncate",
-                  !homeFavorite ? "text-text-primary" : "text-text-secondary",
-                )}>
-                  {event.away_team}
-                </span>
+                <TeamNameLink
+                  name={event.away_team}
+                  sportKey={event.sport}
+                  className={cn(
+                    "text-sm font-medium truncate hover:underline",
+                    !homeFavorite ? "text-text-primary" : "text-text-secondary",
+                  )}
+                />
                 {/* Inline live score */}
                 {isLive && event.away_score !== null && (
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.away_score}</span>

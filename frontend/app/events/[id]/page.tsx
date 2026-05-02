@@ -36,6 +36,7 @@ import {
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import type { ActiveChartPoint } from "@/lib/types";
+import TeamNameLink from "@/components/TeamNameLink";
 
 // Maps Odds API sport keys to sport hierarchy paths
 const SPORT_KEY_TO_LEAGUE_PATH: Record<string, { path: string; label: string }> = {
@@ -869,9 +870,13 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
-              <span className="text-xs font-semibold text-text-primary">
+              <TeamNameLink
+                name={event.home_team}
+                sportKey={event.sport}
+                className="text-xs font-semibold text-text-primary hover:underline"
+              >
                 {event.home_team.split(" ").pop()}
-              </span>
+              </TeamNameLink>
               {(event.standings_context?.home || event.home_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">
                   {event.standings_context?.home || event.home_team_data?.record}
@@ -997,9 +1002,13 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
-              <span className="text-xs font-semibold text-text-primary">
+              <TeamNameLink
+                name={event.away_team}
+                sportKey={event.sport}
+                className="text-xs font-semibold text-text-primary hover:underline"
+              >
                 {event.away_team.split(" ").pop()}
-              </span>
+              </TeamNameLink>
               {(event.standings_context?.away || event.away_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">
                   {event.standings_context?.away || event.away_team_data?.record}

@@ -15,6 +15,7 @@
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import type { ChampionshipGridData, PlayoffTeam, LeagueTab, PlayoffStage } from "@/lib/playoff-types";
+import TeamNameLink from "./TeamNameLink";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,9 +151,10 @@ interface TeamRowProps {
   sortKey: string;
   expanded: boolean;
   onToggle: () => void;
+  sportKey?: string;
 }
 
-function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onToggle }: TeamRowProps) {
+function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onToggle, sportKey }: TeamRowProps) {
   const teamColor = team.color || "#888888";
 
   return (
@@ -186,12 +188,14 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
               className="w-[18px] h-[18px] object-contain flex-shrink-0"
             />
             <div className="min-w-0">
-              <div
-                className="font-semibold text-[12px] leading-tight truncate"
+              <TeamNameLink
+                name={team.name}
+                sportKey={sportKey}
+                className="font-semibold text-[12px] leading-tight truncate block hover:underline"
                 style={{ color: "var(--text-primary)" }}
               >
                 {team.short}
-              </div>
+              </TeamNameLink>
               <div
                 className="text-[10px] font-mono leading-tight"
                 style={{ color: "var(--text-muted)" }}
@@ -377,6 +381,7 @@ function GridTable({
               sortKey={sortKey}
               expanded={expandedTeam === team.short}
               onToggle={() => onExpandTeam(expandedTeam === team.short ? null : team.short)}
+              sportKey={sportKey}
             />
           ))}
         </tbody>
@@ -401,6 +406,7 @@ interface ChampionshipGridProps {
   activeLeagueSlug: string;
   onLeagueChange: (slug: string) => void;
   gridHref?: string;
+  sportKey?: string;
 }
 
 export default function ChampionshipGrid({
@@ -408,6 +414,7 @@ export default function ChampionshipGrid({
   leagueTabs,
   activeLeagueSlug,
   onLeagueChange,
+  sportKey,
 }: ChampionshipGridProps) {
   // Default sortKey to last stage key, or empty string if no data
   const defaultSortKey = data?.stageKeys?.[data.stageKeys.length - 1] ?? "";

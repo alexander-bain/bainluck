@@ -6,6 +6,7 @@ import Link from "next/link";
 import { fetchTeamPage } from "@/lib/api";
 import type { TeamPageResponse, ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import TeamNameLink from "@/components/TeamNameLink";
 
 export default function TeamPage() {
   const params = useParams();
@@ -154,7 +155,7 @@ export default function TeamPage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {upcoming_events.map((event) => (
-              <GameCard key={event.id} event={event} teamName={team.name} />
+              <GameCard key={event.id} event={event} teamName={team.name} sportKey={team.sport_key} />
             ))}
           </div>
         </section>
@@ -168,7 +169,7 @@ export default function TeamPage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {recent_events.map((event) => (
-              <GameCard key={event.id} event={event} teamName={team.name} />
+              <GameCard key={event.id} event={event} teamName={team.name} sportKey={team.sport_key} />
             ))}
           </div>
         </section>
@@ -235,9 +236,11 @@ function ChampionshipCard({
 function GameCard({
   event,
   teamName,
+  sportKey,
 }: {
   event: TeamPageResponse["upcoming_events"][0];
   teamName: string;
+  sportKey?: string | null;
 }) {
   const isHome =
     event.home_team === teamName ||
@@ -277,7 +280,11 @@ function GameCard({
             <span className="text-accent-live font-medium">LIVE</span>
           )}
         </div>
-        <div className="text-sm font-medium text-text-primary">{opponent}</div>
+        <TeamNameLink
+          name={opponent}
+          sportKey={sportKey}
+          className="text-sm font-medium text-text-primary hover:underline"
+        />
         <div className="text-xs text-text-secondary mt-0.5">
           {isCompleted && score
             ? score
