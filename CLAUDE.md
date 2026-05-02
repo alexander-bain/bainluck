@@ -187,6 +187,7 @@ futures_outcomes    — Individual outcomes within markets
 teams               — Team data (ESPN colors/logos, rosters, alternate_names)
 team_identity_mapping — Cross-source team identity index
 user_predictions    — Higher/Lower guesses (session_id, user_id, market_id, guess, correct)
+user_seen_markets   — Tracks which markets a user/session has been shown (dedup in feed)
 users               — Firebase Auth users (Google + Apple Sign-In)
 ```
 
@@ -228,6 +229,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 24. **Kalshi dual markets cause probability oscillation** — Kalshi creates separate "Team A win?" and "Team B win?" markets for the same game. Both get linked to the same Event. Deduplicate by `(event_id, source)` before writing snapshots — one market per event per source.
 25. **`CurrentOdds.spread` is unsigned** — The API's `spread` field is just a number (e.g., 8.4) without direction. Use `home_spread` (signed from home team perspective) when available. Fall back to `closestToEvenMargin()` from spreads data, NOT to the unsigned `spread`.
 26. **Pexels rate limit is 200 req/hr** — Enrichment script hits this on large batches. Target feed-visible markets first via `enrich_feed_markets.py`, not random `updated_at` ordering.
+27. **Never delete a migration file that has already run on Heroku** — The `alembic_version` table stores the current revision ID. If you delete the `.py` file, `alembic upgrade heads` fails with "Can't locate revision," blocking ALL subsequent migrations. The Procfile's `|| echo` makes this silent. Caused a full site outage May 1-2, 2026.
 
 ---
 
