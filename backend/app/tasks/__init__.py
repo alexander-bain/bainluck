@@ -854,6 +854,16 @@ celery_app.conf.beat_schedule = {
     #     "task": "app.tasks.sync_mm_bracket",
     #     "schedule": crontab(minute="*/15", hour="*", day_of_month="15-30", month_of_year="3,4"),
     # },
+    "enrich-market-hooks": {
+        "task": "app.tasks.enrich_market_hooks",
+        "schedule": crontab(minute=40, hour="*/6"),  # 4x daily — generate LLM hooks for unhoooked markets
+        "kwargs": {"limit": 100},
+    },
+    "enrich-market-images": {
+        "task": "app.tasks.enrich_market_images",
+        "schedule": crontab(minute=50, hour="*/6"),  # 4x daily — fetch Pexels images
+        "kwargs": {"limit": 100},
+    },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
         "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC
