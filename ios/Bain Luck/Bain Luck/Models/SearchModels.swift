@@ -185,22 +185,7 @@ nonisolated struct TeamPageTeam: Decodable, Sendable {
     let standings: [String: AnyCodable]?
 }
 
-nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
-    let outcomeId: Int
-    let outcomeName: String
-    let marketId: Int
-    let marketName: String
-    let marketTier: Int?
-    let category: String?
-    let source: String
-    let probability: Double?
-    let probabilityChange24h: Double?
-    let rank: Int?
-    let totalOutcomes: Int?
-    let resolutionDate: String?
-
-    var id: Int { outcomeId }
-}
+// TeamFutureItem defined in FuturesModels.swift (shared with team page + futures browsing)
 
 nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
     let tier: Int

@@ -34,8 +34,6 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     }
 }
 
-private nonisolated struct AnyCodable: Decodable {}
-
 // MARK: - Feed Item (Polymorphic)
 
 nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
