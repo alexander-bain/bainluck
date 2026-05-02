@@ -957,10 +957,10 @@ Canonical team pages at `/sport/[sport]/[league]/team/[slug]` (e.g., `/sport/bas
 
 iOS search (`SearchView.swift`) has typeahead, sport filters, recent searches, quick chips — but is missing:
 
-- [ ] **SN-1. Team results section** — Web shows teams with logos, records, sport labels. iOS has no team results at all. **P0**
-- [ ] **SN-2. Team page navigation** — Web links to `/sport/.../team/slug`. iOS has no team pages. Requires new `TeamDetailView.swift`. **P0**
-- [ ] **SN-3. Enriched typeahead model** — iOS `TypeaheadSuggestion` model is missing `team_id`, `team_slug`, `sport_key`, `status`, `commence_time`, `logo_url`, `market_type_label`. Update model + render logos, live indicators, type differentiation in suggestions. **P1**
-- [ ] **SN-4. "Did you mean" fuzzy correction** — Web shows correction banner when trigram fallback is used. iOS doesn't display `did_you_mean` from API response. **P1**
+- [x] **~~SN-1. Team results section** — Web shows teams with logos, records, sport labels. iOS has no team results at all. **P0**
+- [x] **~~SN-2. Team page navigation** — Web links to `/sport/.../team/slug`. iOS has no team pages. Requires new `TeamDetailView.swift`. **P0**
+- [x] **~~SN-3. Enriched typeahead model** — iOS `TypeaheadSuggestion` model is missing `team_id`, `team_slug`, `sport_key`, `status`, `commence_time`, `logo_url`, `market_type_label`. Update model + render logos, live indicators, type differentiation in suggestions. **P1**
+- [x] **~~SN-4. "Did you mean" fuzzy correction** — Web shows correction banner when trigram fallback is used. iOS doesn't display `did_you_mean` from API response. **P1**
 - [ ] **SN-5. Cmd+K shortcut on macOS** — Web has `Cmd+K` global focus. Missing on macOS build. **P2**
 
 **Files:** `ios/.../SearchView.swift`, `ios/.../Models/SearchModels.swift`, new `ios/.../Views/TeamDetailView.swift`
@@ -1462,16 +1462,16 @@ DiscoverView.swift with category chips, event/futures/guess cards, API wiring.
 iOS Discover (`DiscoverView.swift`) has category chips, event/futures cards, guess cards with Higher/Lower — but has critical gaps:
 
 **P0 — Correctness bugs:**
-- [ ] **DN-1. Prediction POST broken** — `NativeGuessCard` uses raw `URLSession` with no `x-session-id` header and no user auth token. iOS predictions are NOT being tracked at all. **CRITICAL BUG.** Fix: use the app's existing `APIClient` with auth headers.
-- [ ] **DN-2. Prediction stats page** — Web has `/discover/stats` with accuracy, streaks, badges, trend chart, by-category breakdown. iOS has nothing. New `PredictionStatsView.swift` needed.
-- [ ] **DN-3. Prediction streaks** — Web shows current streak + best streak after each guess. iOS `NativeGuessCard` doesn't fetch or display stats after submission.
-- [ ] **DN-4. "Next question" navigation** — Web auto-scrolls to next guess card after answering. iOS stays on the answered card with no forward momentum.
-- [ ] **DN-5. Daily Challenge** — Web has 5/day goal with progress ring on a dedicated challenge card. iOS has no daily challenge concept.
+- [x] **~~DN-1. Prediction POST broken** — `NativeGuessCard` uses raw `URLSession` with no `x-session-id` header and no user auth token. iOS predictions are NOT being tracked at all. **CRITICAL BUG.** Fix: use the app's existing `APIClient` with auth headers.
+- [x] **~~DN-2. Prediction stats page** — Web has `/discover/stats` with accuracy, streaks, badges, trend chart, by-category breakdown. iOS has nothing. New `PredictionStatsView.swift` needed.
+- [x] **~~DN-3. Prediction streaks** — Web shows current streak + best streak after each guess. iOS `NativeGuessCard` doesn't fetch or display stats after submission.
+- [x] **~~DN-4. "Next question" navigation** — Web auto-scrolls to next guess card after answering. iOS stays on the answered card with no forward momentum.
+- [x] **~~DN-5. Daily Challenge** — Web has 5/day goal with progress ring on a dedicated challenge card. iOS has no daily challenge concept.
 
 **P1 — Engagement gaps:**
-- [ ] **DN-6. Events as guessable** — Web (as of May 2) makes events guessable ("Lakers to win — higher or lower than X%?"). iOS only makes futures guessable.
-- [ ] **DN-7. Guess density** — Web shows guess slot every 2nd card. iOS shows every 5th. Lower engagement surface.
-- [ ] **DN-8. Dismiss persistence** — Same as D-10a. iOS uses `@State` — dismissed items reset on tab switch.
+- [x] **~~DN-6. Events as guessable** — Web (as of May 2) makes events guessable ("Lakers to win — higher or lower than X%?"). iOS only makes futures guessable.
+- [x] **~~DN-7. Guess density** — Web shows guess slot every 2nd card. iOS shows every 5th. Lower engagement surface.
+- [x] **~~DN-8. Dismiss persistence** — Same as D-10a. iOS uses `@State` — dismissed items reset on tab switch.
 
 **P2 — Nice to have:**
 - [ ] **DN-9. Swipe to dismiss** — Web has swipe left/right with like/dismiss overlays.
