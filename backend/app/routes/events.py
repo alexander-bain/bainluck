@@ -755,6 +755,42 @@ async def search_events(
     total_result = await db.execute(count_query)
     total_count = total_result.scalar()
 
+    # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
+    fuzzy_corrected: str | None = None
+    if total_count == 0 and len(terms) == 1 and not sport_alias_keys:
+        try:
+            best_team = await db.execute(
+                select(Team.name, func.similarity(Team.name, q).label("sim"))
+                .where(func.similarity(Team.name, q) > 0.25)
+                .order_by(func.similarity(Team.name, q).desc())
+                .limit(1)
+            )
+            best = best_team.first()
+            if best:
+                fuzzy_corrected = best.name
+                fuzzy_pattern = f"%{fuzzy_corrected}%"
+                fuzzy_filter = or_(
+                    Event.home_team_name.ilike(fuzzy_pattern),
+                    Event.away_team_name.ilike(fuzzy_pattern),
+                )
+                query = (
+                    select(Event)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .options(selectinload(Event.sport))
+                    .where(fuzzy_filter, Event.commence_time >= cutoff)
+                )
+                if include_upcoming:
+                    query = query.where(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+                else:
+                    query = query.where(Event.status.in_(["live", "completed", "closed"]))
+                if sport:
+                    query = query.where(Sport.key == sport)
+                query = query.order_by(status_order, Event.commence_time.desc().nulls_last())
+                total_count_r = await db.execute(select(func.count()).select_from(query.subquery()))
+                total_count = total_count_r.scalar()
+        except Exception:
+            pass
+
     # Apply pagination
     offset = (page - 1) * per_page
     query = query.offset(offset).limit(per_page)
@@ -924,6 +960,7 @@ async def search_events(
             "days_back": days_back,
             "include_upcoming": include_upcoming,
         },
+        **({"did_you_mean": fuzzy_corrected} if fuzzy_corrected else {}),
     }
 
 
@@ -1083,6 +1120,70 @@ async def typeahead_search(
             "market_type_label": label or market.market_type or "Market",
         })
 
+    # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
+    did_you_mean: str | None = None
+    if not team_pool and not event_pool and len(futures_pool) < 2:
+        try:
+            from sqlalchemy import text as sql_text
+            fuzzy_teams = await db.execute(
+                select(
+                    Team.id, Team.name, Team.slug, Team.abbreviation,
+                    Team.logo_url_small, Sport.key.label("sport_key"),
+                    func.similarity(Team.name, q).label("sim"),
+                )
+                .join(Sport, Team.sport_id == Sport.id, isouter=True)
+                .where(func.similarity(Team.name, q) > 0.25)
+                .order_by(func.similarity(Team.name, q).desc())
+                .limit(3)
+            )
+            for row in fuzzy_teams.all():
+                if row.name not in teams_seen:
+                    teams_seen.add(row.name)
+                    team_pool.append({
+                        "type": "team",
+                        "text": row.name,
+                        "abbreviation": row.abbreviation,
+                        "logo": row.logo_url_small,
+                        "team_id": row.id,
+                        "team_slug": row.slug,
+                        "sport_key": row.sport_key,
+                    })
+
+            if team_pool and not event_pool:
+                best_team = team_pool[0]["text"]
+                best_pattern = f"%{best_team}%"
+                fuzzy_events = await db.execute(
+                    select(Event)
+                    .join(Sport, Event.sport_id == Sport.id)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        or_(
+                            Event.home_team_name.ilike(best_pattern),
+                            Event.away_team_name.ilike(best_pattern),
+                        ),
+                        Event.status.in_(["live", "scheduled"]),
+                        Event.commence_time >= now - timedelta(hours=1),
+                        Event.commence_time <= now + timedelta(days=7),
+                    )
+                    .order_by(
+                        case((Event.status == "live", 0), else_=1),
+                        Event.commence_time.asc(),
+                    )
+                    .limit(3)
+                )
+                for event in fuzzy_events.scalars().all():
+                    event_pool.append({
+                        "type": "event",
+                        "text": f"{event.away_team_name} at {event.home_team_name}",
+                        "event_id": event.id,
+                        "status": event.status,
+                        "sport": event.sport.key if event.sport else None,
+                        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+                    })
+                did_you_mean = best_team
+        except Exception:
+            pass
+
     # --- Slot-based assembly ---
     # Guarantee: 1 team, up to 2 events, up to 3 futures. Max 7 total.
     # Events get priority for extra slots over futures.
@@ -1097,7 +1198,10 @@ async def typeahead_search(
         extras = event_pool[2:4] + futures_pool[2:3] + team_pool[1:2]
         suggestions.extend(extras[:remaining])
 
-    return {"suggestions": suggestions, "query": q}
+    result: dict = {"suggestions": suggestions, "query": q}
+    if did_you_mean:
+        result["did_you_mean"] = did_you_mean
+    return result
 
 
 @router.get("/search-suggestions")

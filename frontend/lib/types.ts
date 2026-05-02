@@ -691,6 +691,7 @@ export interface SearchResponse {
   pagination: SearchPagination;
   sports: SearchSportFacet[];
   query: string;
+  did_you_mean?: string;
 }
 
 // Search suggestions (zero-state)

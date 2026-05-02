@@ -254,6 +254,7 @@ export interface TypeaheadSuggestion {
 export interface TypeaheadResponse {
   suggestions: TypeaheadSuggestion[];
   query: string;
+  did_you_mean?: string;
 }
 
 export async function fetchTypeahead(q: string): Promise<TypeaheadResponse> {

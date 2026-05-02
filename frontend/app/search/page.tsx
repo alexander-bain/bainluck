@@ -230,6 +230,13 @@ function SearchContent() {
         </p>
       </div>
 
+      {/* Fuzzy correction banner */}
+      {results.did_you_mean && (
+        <div className="mb-4 text-sm text-text-secondary">
+          Showing results for <span className="font-medium text-text-primary">{results.did_you_mean}</span>
+        </div>
+      )}
+
       {/* Sport filters */}
       {results.sports.length > 1 && (
         <div className="mb-6 flex flex-wrap gap-2">

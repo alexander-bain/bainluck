@@ -31,6 +31,7 @@ export default function SearchBar({
   const { track } = useAnalyticsContext();
   const [query, setQuery] = useState(initialQuery);
   const [suggestions, setSuggestions] = useState<TypeaheadSuggestion[]>([]);
+  const [didYouMean, setDidYouMean] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
@@ -51,6 +52,7 @@ export default function SearchBar({
     try {
       const data = await fetchTypeahead(q);
       setSuggestions(data.suggestions);
+      setDidYouMean(data.did_you_mean ?? null);
       setIsOpen(data.suggestions.length > 0);
     } catch {
       setSuggestions([]);
@@ -203,6 +205,17 @@ export default function SearchBar({
           ref={dropdownRef}
           className="absolute z-50 w-full min-w-[360px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
+          {didYouMean && (
+            <button
+              onClick={() => {
+                setQuery(didYouMean);
+                setDidYouMean(null);
+              }}
+              className="w-full text-left px-4 py-2 text-xs text-text-secondary border-b border-surface-border hover:bg-surface-elevated/50"
+            >
+              Showing results for <span className="font-medium text-text-primary">{didYouMean}</span>
+            </button>
+          )}
           {suggestions.map((suggestion, idx) => (
             <button
               key={`${suggestion.type}-${suggestion.text}-${idx}`}
