@@ -956,7 +956,7 @@ async def search_events(
         )
     team_search_q = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation,
-               Team.logo_url_small, Team.record, Sport.key.label("sport_key"))
+               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_search_filter)
         .order_by(Team.name)
@@ -976,7 +976,7 @@ async def search_events(
                 "slug": row.slug,
                 "abbreviation": row.abbreviation,
                 "logo": row.logo_url_small,
-                "record": row.record,
+                "record": row.current_record,
                 "sport_key": row.sport_key,
             })
 
