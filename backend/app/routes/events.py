@@ -2733,16 +2733,43 @@ async def get_game_markets(
             time_lower = event.commence_time - timedelta(hours=12)
             time_upper = event.commence_time + timedelta(hours=12)
 
+            # Also find Polymarket sub-markets via parent group_id.
+            # Polymarket series events (e.g., "Celtics vs. 76ers") contain sub-markets
+            # like "O/U 196.5" that don't include team names. We find the parent by
+            # team name match, then pull all sub-markets from the same group.
+            poly_parent_result = await db.execute(
+                select(FuturesMarket.group_id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.group_id.isnot(None),
+                    FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
+                    or_(*home_conditions),
+                    or_(*away_conditions),
+                )
+                .limit(5)
+            )
+            poly_group_ids = [r[0] for r in poly_parent_result.all() if r[0]]
+
+            if poly_group_ids:
+                existing_ids = {m.id for m in markets}
+                poly_sub_result = await db.execute(
+                    select(FuturesMarket)
+                    .where(
+                        FuturesMarket.source == "polymarket",
+                        FuturesMarket.group_id.in_(poly_group_ids),
+                        FuturesMarket.group_type == "polymarket_sub_market",
+                        status_filter,
+                    )
+                )
+                for sub in poly_sub_result.scalars().all():
+                    if sub.id not in existing_ids:
+                        markets.append(sub)
+                        existing_ids.add(sub.id)
+
             unlinked_result = await db.execute(
                 select(FuturesMarket)
                 .where(
-                    or_(
-                        FuturesMarket.event_id.is_(None),
-                        and_(
-                            FuturesMarket.source == "polymarket",
-                            FuturesMarket.event_id != event_id,
-                        ),
-                    ),
+                    FuturesMarket.event_id.is_(None),
                     status_filter,
                     or_(*category_or_ticker),
                     sport_filter,
