@@ -827,7 +827,7 @@ Fixed all 5 top Sentry N+1 issues (4,350+ events total). Root cause was Celery t
 **Monitor / low priority:**
 | ID | Events | Status |
 |----|--------|--------|
-| N+1 Query warnings (GA, H0, G7, K8, KE) | 4,350+ | **PREQ-7 shipped April 28. Monitoring for drop.** |
+| N+1 Query warnings (GA, H0, G7, K8, KE) | 4,350+ | **PREQ-7 shipped April 28. ESPN sync N+1 fixes May 2 (win_probability_sources re-read × 3 + identity registration × 2). Monitoring.** |
 | Redis ConnectionError (E, JJ, M, EQ) | various | Transient Redis connection drops. Heroku Redis recovers automatically. |
 | WorkerLost/SIGTERM (1, 2) | 1,868 | Normal Celery worker recycling (max-memory-per-child). Not a bug. |
 | TimeLimitExceeded (J, K) | 917 | Polymarket poll exceeds 300s occasionally. Increase time limit or optimize. |
@@ -930,7 +930,7 @@ Canonical team pages at `/sport/[sport]/[league]/team/[slug]` (e.g., `/sport/bas
 
 **Frontend**: Hero (logo, colors, record, standings), championship path cards (Championship/Conference/Division %), game cards (upcoming + recent with W/L scores), season futures list. Breadcrumbs: Home / NBA / Celtics. SEO metadata with league name.
 
-**Search integration**: Typeahead team results link to `/sport/.../team/slug`. `buildTeamUrl()` constructs the full hierarchical path from `sport_key`.
+**Search integration**: Typeahead team results link to `/sport/.../team/slug`. `buildTeamUrl()` constructs the full hierarchical path from `sport_key`. Typeahead enriched (May 2): event suggestions include `sport_key`, `home_logo`, `away_logo`; futures include `sport_key`; all types have consistent field naming for iOS parity.
 
 **~~Phase B~~ ✅ SHIPPED (May 2)**: TeamNameLink component cross-links team names in EventCard, FeedCard, event detail hero, ChampionshipGrid, TournamentProgressionTable, and team page GameCard. Shared `teamUrls.ts` utility with `slugify()` + `buildTeamPageUrl()`. SearchBar refactored to use shared utility. JSON-LD SportsTeam structured data + dynamic document titles on team pages.
 
