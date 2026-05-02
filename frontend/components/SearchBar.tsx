@@ -184,7 +184,7 @@ export default function SearchBar({
           {loading ? (
             <span className="animate-pulse">...</span>
           ) : (
-            <span>&#x1f50d;</span>
+            <span>{"\u{1F50D}"}</span>
           )}
         </div>
       </div>
@@ -193,7 +193,7 @@ export default function SearchBar({
       {isOpen && suggestions.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-full mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
+          className="absolute z-50 w-full min-w-[360px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
           {suggestions.map((suggestion, idx) => (
             <button

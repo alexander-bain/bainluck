@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, func, case, cast, Integer
+from sqlalchemy import select, and_, or_, func, case, cast, Integer, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
@@ -37,6 +37,31 @@ from app.utils.sport_keys import (
 )
 
 router = APIRouter()
+
+_FUTURES_DEDUP_STRIP = re.compile(
+    r"(nba\s+playoffs:\s*)?"
+    r"(who\s+will\s+win\s+series\s*[\-–—]\s*)?"
+    r"(win\s+series\s*[\-–—]\s*)?",
+    re.I,
+)
+
+def _normalize_futures_dedup_key(market) -> str:
+    """Normalize a futures market name for cross-source deduplication.
+    Strips prefixes like "NBA Playoffs: Who Will Win Series? -",
+    sorts team names alphabetically, and lowercases everything.
+    "76ers vs. Celtics" and "Celtics vs 76ers" produce the same key.
+    """
+    if market.group_id:
+        return market.group_id
+    name = (market.name or "").strip()
+    name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
+    name = re.sub(r"\s*[?!]\s*$", "", name)
+    parts = re.split(r"\s+(?:vs\.?|at|@)\s+", name, maxsplit=1)
+    if len(parts) == 2:
+        parts = sorted(p.strip().lower() for p in parts)
+        return f"matchup:{'|'.join(parts)}:{market.market_tier or 0}"
+    return f"name:{name.lower()}:{market.market_tier or 0}"
+
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
 # should match the sport key rather than accidentally matching substrings
@@ -853,14 +878,14 @@ async def search_events(
     futures_result = await db.execute(futures_query)
     futures_markets_raw = futures_result.scalars().unique().all()
 
-    # Deduplicate by group_id
-    seen_search_groups: set[str] = set()
+    # Deduplicate by normalized name
+    seen_search_keys: set[str] = set()
     futures_markets = []
     for m in futures_markets_raw:
-        gkey = m.group_id or f"id:{m.id}"
-        if gkey in seen_search_groups:
+        dkey = _normalize_futures_dedup_key(m)
+        if dkey in seen_search_keys:
             continue
-        seen_search_groups.add(gkey)
+        seen_search_keys.add(dkey)
         futures_markets.append(m)
         if len(futures_markets) >= 10:
             break
@@ -909,19 +934,24 @@ async def typeahead_search(
     # Multi-word query support: "USA Canada" finds events where
     # one team is "USA" and the other is "Canada"
     terms = q.strip().split()
-    if len(terms) > 1:
+    is_multi_word = len(terms) > 1
+    if is_multi_word:
         event_term_conditions = []
         team_term_conditions = []
+        futures_term_conditions = []
         for term in terms:
             tp = f"%{term}%"
             event_term_conditions.append(
                 or_(Event.home_team_name.ilike(tp), Event.away_team_name.ilike(tp))
             )
             team_term_conditions.append(
-                or_(Team.name.ilike(tp), Team.abbreviation.ilike(tp))
+                or_(Team.name.ilike(tp), Team.abbreviation.ilike(tp),
+                    cast(Team.alternate_names, String).ilike(tp))
             )
+            futures_term_conditions.append(FuturesMarket.name.ilike(tp))
         event_team_filter = and_(*event_term_conditions)
         team_filter = and_(*team_term_conditions)
+        futures_name_filter = and_(*futures_term_conditions)
     else:
         # Sport alias matching for short queries like "NBA", "NFL"
         sport_alias_keys = _SPORT_SEARCH_ALIASES.get(q.strip().lower())
@@ -941,7 +971,9 @@ async def typeahead_search(
         team_filter = or_(
             Team.name.ilike(pattern),
             Team.abbreviation.ilike(pattern),
+            cast(Team.alternate_names, String).ilike(pattern),
         )
+        futures_name_filter = FuturesMarket.name.ilike(pattern)
 
     # 1. Find matching teams (deduplicated by name)
     team_query = (
@@ -990,11 +1022,14 @@ async def typeahead_search(
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         })
 
-    # 3. Find matching futures markets (deduplicated by group_id)
+    # 3. Find matching futures markets (by name or outcome name, deduplicated)
     futures_query = (
         select(FuturesMarket)
         .where(
-            FuturesMarket.name.ilike(pattern),
+            or_(
+                futures_name_filter,
+                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(pattern)),
+            ),
             FuturesMarket.status == "open",
             or_(
                 FuturesMarket.resolution_date.is_(None),
@@ -1005,19 +1040,19 @@ async def typeahead_search(
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
         )
-        .limit(15)
+        .limit(20)
     )
     futures_result = await db.execute(futures_query)
-    seen_groups: set[str] = set()
+    seen_futures_keys: set[str] = set()
     futures_count = 0
     _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     for market in futures_result.scalars().all():
         if futures_count >= 3:
             break
-        dedup_key = market.group_id or f"name:{market.name}"
-        if dedup_key in seen_groups:
+        dedup_key = _normalize_futures_dedup_key(market)
+        if dedup_key in seen_futures_keys:
             continue
-        seen_groups.add(dedup_key)
+        seen_futures_keys.add(dedup_key)
         futures_count += 1
         suggestions.append({
             "type": "futures",
@@ -1051,10 +1086,10 @@ async def typeahead_search(
         for market in nonsport_result.scalars().all():
             if futures_count >= 3:
                 break
-            dedup_key = market.group_id or f"name:{market.name}"
-            if dedup_key in seen_groups:
+            dedup_key = _normalize_futures_dedup_key(market)
+            if dedup_key in seen_futures_keys:
                 continue
-            seen_groups.add(dedup_key)
+            seen_futures_keys.add(dedup_key)
             futures_count += 1
             cat_label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
             suggestions.append({

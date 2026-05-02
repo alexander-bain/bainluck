@@ -518,8 +518,10 @@ class TestComputeMarketTier:
     def test_stanley_cup(self):
         assert compute_market_tier("Stanley Cup Winner") == 1
 
-    def test_championship_category_override(self):
-        assert compute_market_tier("Some Market", category="championship") == 1
+    def test_championship_category_no_blind_trust(self):
+        # category="championship" alone doesn't make tier 1 — name must also match
+        # (Polymarket labels everything as "championship")
+        assert compute_market_tier("Some Market", category="championship") == 5
 
     def test_generic_winner_market(self):
         assert compute_market_tier("Premier League Winner") == 1
@@ -674,3 +676,33 @@ class TestMarketTierEdgeCases:
 
     def test_nba_finals_is_championship(self):
         assert compute_market_tier("NBA Finals Winner") == 1
+
+
+class TestMarketTierGameLevel:
+    """Tier 5: Game-level and series-level markets should never be tier 1."""
+
+    def test_first_half_winner(self):
+        assert compute_market_tier("Celtics vs 76ers: First Half Winner") == 5
+
+    def test_second_half_winner(self):
+        assert compute_market_tier("Celtics vs 76ers: Second Half Winner") == 5
+
+    def test_series_winner(self):
+        assert compute_market_tier("NBA Playoffs: Who Will Win Series? - 76ers vs. Celtics") == 5
+
+    def test_total_games_ou(self):
+        assert compute_market_tier("NBA Playoffs: 76ers vs. Celtics Total Games O/U 4.5") == 5
+
+    def test_next_team(self):
+        assert compute_market_tier("NBA: LeBron James Next Team") == 5
+
+    def test_win_by(self):
+        assert compute_market_tier("Will the Celtics win by 10+?") == 5
+
+    def test_bare_matchup_polymarket(self):
+        # Polymarket bare matchup name — no "winner" keyword
+        assert compute_market_tier("76ers vs. Celtics", category="championship") == 5
+
+    def test_championship_name_still_tier_1(self):
+        # Actual championship markets still work
+        assert compute_market_tier("2026 NBA Champion", category="championship") == 1

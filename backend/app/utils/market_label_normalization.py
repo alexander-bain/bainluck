@@ -704,12 +704,13 @@ CATEGORY_LIMITS = {
 # Tier 1: Championship / title winner
 _TIER_1_PATTERNS = [
     re.compile(r"\b(championship|champion|super.bowl|world.series|stanley.cup|nba.finals|title)\b", re.I),
-    re.compile(r"\bwinner\b", re.I),  # Catch-all for "X Winner" markets
+    re.compile(r"\bwinner\b", re.I),
 ]
 
 # Tier 2: Conference winner
 _TIER_2_PATTERNS = [
     re.compile(r"\b(conference|eastern|western|afc|nfc|american.league|national.league)\b", re.I),
+    re.compile(r"\badvance.to.+finals\b", re.I),
 ]
 
 # Tier 3: Awards / MVP / individual honors
@@ -725,10 +726,21 @@ _TIER_4_PATTERNS = [
     re.compile(r"\b(al.east|al.west|al.central|nl.east|nl.west|nl.central)\b", re.I),
     re.compile(r"\b(afc.east|afc.west|afc.north|afc.south|nfc.east|nfc.west|nfc.north|nfc.south)\b", re.I),
     re.compile(r"\b(metropolitan|atlantic.division|pacific.division|central.division)\b", re.I),
-    # Playoff qualification — progression step before championship
     re.compile(r"\bplayoff.qualif", re.I),
     re.compile(r"\bmake.+(?:playoffs|postseason)", re.I),
     re.compile(r"\b(?:playoff|postseason).berth", re.I),
+]
+
+# Tier 5 patterns: game-level, series-level, and prop markets
+_TIER_5_PATTERNS = [
+    re.compile(r"\b(first|second|1st|2nd).half\b", re.I),
+    re.compile(r"\btotal.games\b", re.I),
+    re.compile(r"\b(o/u|over.under)\b", re.I),
+    re.compile(r"\bnext.team\b", re.I),
+    re.compile(r"\bwin.series\b", re.I),
+    re.compile(r"\bseries.winner\b", re.I),
+    re.compile(r"\bwho.will.win.series\b", re.I),
+    re.compile(r"\bwin.by\b", re.I),
 ]
 
 _NON_SPORT_CATEGORIES = {
@@ -759,37 +771,39 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     name_lower = (market_name or "").lower()
     cat_lower = (category or "").lower()
 
-    # Check tier 1-4 name patterns BEFORE the game_prop shortcut.
-    # Kalshi sometimes labels season markets (division winners, playoff qualifiers)
-    # with category="game_prop" — the name is more reliable than the category.
-    # Division check before championship — "Division Winner" contains "winner"
-    # but should be tier 4, not tier 1
+    # Name patterns are more reliable than category (Polymarket uses "championship"
+    # for everything; Kalshi uses "game_prop" for some season markets).
+    # Check most-specific patterns first, then fall back to category.
+
+    # Tier 5 first — game-level and series-level markets are never championships
+    for pattern in _TIER_5_PATTERNS:
+        if pattern.search(name_lower):
+            return 5
+
+    # Division check before championship — "Division Winner" also contains "winner"
     for pattern in _TIER_4_PATTERNS:
         if pattern.search(name_lower):
             return 4
 
-    # Conference check before championship — "Conference Winner" also contains "winner"
+    # Conference check before championship
     for pattern in _TIER_2_PATTERNS:
         if pattern.search(name_lower):
             return 2
 
-    # Awards check before championship — "MVP Award" also might match "winner"
+    # Awards check before championship — "MVP Award" might match "winner"
     for pattern in _TIER_3_PATTERNS:
         if pattern.search(name_lower):
             return 3
 
-    # Check category field for quick classification
     if cat_lower == "mvp":
         return 3
 
-    # Championship / title
-    if cat_lower == "championship":
-        return 1
+    # Championship / title — only if name actually matches championship patterns
     for pattern in _TIER_1_PATTERNS:
         if pattern.search(name_lower):
             return 1
 
-    # Game props that didn't match any tier 1-4 pattern are tier 5
+    # Game props that didn't match any higher pattern
     if cat_lower == "game_prop":
         return 5
 
@@ -798,5 +812,8 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     if effective_category in _NON_SPORT_CATEGORIES:
         return 2
 
+    # category == "championship" but name didn't match any tier 1 pattern
+    # (common with Polymarket — they label everything as championship)
+    # Default to tier 5 instead of trusting the category blindly
     logger.debug("Unclassified market (tier=5): name=%r category=%r", market_name, category)
     return 5

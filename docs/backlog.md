@@ -921,12 +921,12 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 
 **Files:** `backend/app/routes/events.py` (lines 577-1219), `frontend/components/SearchBar.tsx`, `frontend/app/search/page.tsx`, `frontend/lib/api.ts`
 
-#### Phase 1: Fix What's Broken (1-2 days) — IN PROGRESS
+#### ~~Phase 1: Fix What's Broken (1-2 days)~~ ✅ SHIPPED (May 1)
 
-- [ ] **P1a. HTML entity rendering** — `SearchBar.tsx` lines 217, 224, 227 use `"&#x1f4c8;"` as JS strings (not JSX elements), so they render as literal text instead of emoji. Fix: use Unicode escapes (`"\u{1F4C8}"`) or wrap in `<span>`.
-- [ ] **P1b. Deduplicate futures in typeahead** — Backend returns up to 3 separate futures for the same series (e.g., "Celtics vs 76ers: Second Round", "Celtics vs 76ers: First..."). Group by series/event_id so each series appears once. Show market count as subtitle.
-- [ ] **P1c. Better display names** — Strip redundant prefixes from futures names. Show the meaningful part ("NBA Championship", "Eastern Conference Winner") not the full Kalshi ticker-derived name. Extend `market_tier` subtitle beyond just tier 1 (show "Award", "Series", "Division", etc.).
-- [ ] **P1d. Widen dropdown** — Truncation is partly a layout issue; dropdown inherits the narrow search input width.
+- [x] **P1a. HTML entity rendering** — Fixed: Unicode escapes in `<span>` elements instead of JS string HTML entities.
+- [x] **P1b. Deduplicate futures in typeahead** — Fixed: group_id dedup in both typeahead and full search. Fetches 15/20 candidates, deduplicates, returns top 3/10.
+- [x] **P1c. Better display names** — Fixed: `market_type_label` on all futures (Championship/Conference/Award/Division/Prop). Ranking by tier + volume instead of updated_at.
+- [ ] **P1d. Widen dropdown** — TODO: Truncation is partly a layout issue; dropdown inherits the narrow search input width.
 
 #### Phase 2: Better Matching (1 week)
 
