@@ -1,16 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
+import dynamic from "next/dynamic";
 
-/**
- * Mobile bottom tab navigation — Feed / Search / My Stuff
- * Hidden on desktop (md: breakpoint and up)
- */
+const MobileSearchOverlay = dynamic(() => import("./MobileSearchOverlay"), { ssr: false });
+
 export default function BottomNav() {
   const pathname = usePathname();
   const { track } = useAnalyticsContext();
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const tabs = [
     {
@@ -27,7 +28,7 @@ export default function BottomNav() {
     },
     {
       label: "Search",
-      href: "/search",
+      href: null,
       icon: SearchIcon,
       isActive: pathname === "/search",
     },
@@ -40,35 +41,62 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-card/95 backdrop-blur-lg border-t border-surface-border bottom-nav-safe">
-      <div className="flex items-center justify-around h-14 max-w-md mx-auto">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            onClick={() => {
-              if (!tab.isActive) {
-                track('navigation_click', {
-                  click_type: 'nav_tab' as const,
-                  from_page: pathname || '/',
-                  to_page: tab.href,
-                });
-              }
-            }}
-            className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
-              tab.isActive
-                ? "text-accent-brand"
-                : "text-text-muted hover:text-text-secondary"
-            }`}
-          >
-            <tab.icon active={tab.isActive} />
-            <span className="text-[10px] font-medium tracking-wide">
-              {tab.label}
-            </span>
-          </Link>
-        ))}
-      </div>
-    </nav>
+    <>
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-card/95 backdrop-blur-lg border-t border-surface-border bottom-nav-safe">
+        <div className="flex items-center justify-around h-14 max-w-md mx-auto">
+          {tabs.map((tab) =>
+            tab.href ? (
+              <Link
+                key={tab.label}
+                href={tab.href}
+                onClick={() => {
+                  if (!tab.isActive) {
+                    track('navigation_click', {
+                      click_type: 'nav_tab' as const,
+                      from_page: pathname || '/',
+                      to_page: tab.href,
+                    });
+                  }
+                }}
+                className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
+                  tab.isActive
+                    ? "text-accent-brand"
+                    : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                <tab.icon active={tab.isActive} />
+                <span className="text-[10px] font-medium tracking-wide">
+                  {tab.label}
+                </span>
+              </Link>
+            ) : (
+              <button
+                key={tab.label}
+                onClick={() => {
+                  setSearchOpen(true);
+                  track('navigation_click', {
+                    click_type: 'nav_tab' as const,
+                    from_page: pathname || '/',
+                    to_page: '/search',
+                  });
+                }}
+                className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
+                  searchOpen
+                    ? "text-accent-brand"
+                    : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                <tab.icon active={searchOpen} />
+                <span className="text-[10px] font-medium tracking-wide">
+                  {tab.label}
+                </span>
+              </button>
+            )
+          )}
+        </div>
+      </nav>
+      <MobileSearchOverlay isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
+    </>
   );
 }
 
