@@ -148,11 +148,11 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
               {sources.length} sources
             </span>
           </div>
-          <div className="text-sm font-medium text-text-primary truncate">
+          <div className="text-sm font-medium text-text-primary line-clamp-2">
             {primaryData.name}
           </div>
           {reason && (
-            <p className="text-xs text-text-secondary mt-0.5 truncate">
+            <p className="text-xs text-text-secondary mt-0.5 line-clamp-2">
               {reason}
             </p>
           )}

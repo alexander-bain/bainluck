@@ -629,10 +629,10 @@ function FuturesFeedCard({
         {/* Main row */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-text-primary truncate">
+            <div className="text-sm font-medium text-text-primary line-clamp-2">
               {data.name}
             </div>
-            <p className="text-xs text-text-secondary mt-0.5 truncate">{item.reason}</p>
+            <p className="text-xs text-text-secondary mt-0.5 line-clamp-2">{item.reason}</p>
             {data.resolved && data.winner && data.winner_opening_probability != null && (
               <p className="text-[11px] text-accent-live font-medium mt-0.5">
                 {data.winner}: {Math.round(data.winner_opening_probability * 100)}% → Won
@@ -677,15 +677,22 @@ function FuturesFeedCard({
           )}
         </div>
 
-        {/* Top outcomes mini-list */}
+        {/* Top outcomes with probability bars */}
         {data.top_outcomes.length > 1 && (
-          <div className="flex gap-3 mt-2 pt-2 border-t border-surface-border/50">
+          <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
             {data.top_outcomes.slice(0, 3).map((outcome, i) => (
-              <div key={outcome.id} className="text-[11px] text-text-muted">
-                <span className="text-text-muted/50 mr-1">#{i + 1}</span>
-                <span className="font-medium text-text-secondary">{outcome.name.split(" ").pop()}</span>
+              <div key={outcome.id} className="flex items-center gap-2">
+                <span className={`text-[11px] w-20 truncate shrink-0 ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
+                  {outcome.name.split(" ").pop()}
+                </span>
+                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
+                    style={{ width: `${(outcome.probability ?? 0) * 100}%` }}
+                  />
+                </div>
                 {outcome.probability !== null && (
-                  <span className="ml-1 font-mono font-bold text-text-primary">
+                  <span className="font-mono tabular-nums text-[11px] font-bold text-text-primary w-8 text-right">
                     {Math.round(outcome.probability * 100)}%
                   </span>
                 )}

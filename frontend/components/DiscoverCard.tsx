@@ -284,8 +284,8 @@ function FuturesCompactRow({ data }: { data: FeedFuturesData }) {
   return (
     <Link href={`/futures/${data.id}`} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold truncate group-hover:text-accent-brand transition-colors">{data.name}</div>
-        {data.hook_description && <div className="text-xs text-text-muted mt-0.5 truncate">{data.hook_description}</div>}
+        <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
+        {data.hook_description && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{data.hook_description}</div>}
       </div>
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
@@ -467,7 +467,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
         {leader && (
           <>
             <AnimatedProbability value={Math.round(prob * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
-            <div className="text-white/70 text-sm mt-1 font-medium max-w-[80%] text-center truncate">{leader.name}</div>
+            <div className="text-white/70 text-sm mt-1 font-medium max-w-[85%] text-center line-clamp-2">{leader.name}</div>
             <div className="mt-2 flex items-center gap-2">
               <MovementBadge m={leader.movement} />
               {resolveText && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
@@ -489,7 +489,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
             <div className="mt-3 space-y-1.5">
               {data.top_outcomes.slice(0, showContext ? undefined : 3).map((o, i) => (
                 <div key={o.id} className="flex items-center gap-2">
-                  <span className={`text-xs w-28 truncate shrink-0 ${i === 0 ? "font-semibold" : "text-text-secondary"}`}>{o.name}</span>
+                  <span className={`text-xs w-32 truncate shrink-0 ${i === 0 ? "font-semibold" : "text-text-secondary"}`} title={o.name}>{o.name}</span>
                   <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
                     <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
                   </div>
