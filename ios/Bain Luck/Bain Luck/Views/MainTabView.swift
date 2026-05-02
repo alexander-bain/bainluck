@@ -142,7 +142,7 @@ struct MainTabView: View {
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
                     FuturesListView()
-                case .teamDetail:
+                case .teamDetail(_):
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
