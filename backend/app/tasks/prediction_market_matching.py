@@ -1582,13 +1582,11 @@ async def _poll_live_prediction_market_prices():
                 if not matchup:
                     continue
 
-                # Get outcomes for this market
-                outcome_result = await session.execute(
-                    select(FuturesOutcome)
-                    .where(FuturesOutcome.market_id == market.id)
-                    .order_by(FuturesOutcome.rank)
+                # Use batch-loaded outcomes (loaded at line ~1346)
+                all_outcomes = sorted(
+                    outcomes_by_market.get(market.id, []),
+                    key=lambda o: o.rank or 999,
                 )
-                all_outcomes = outcome_result.scalars().all()
                 if not all_outcomes:
                     continue
 

@@ -742,15 +742,12 @@ async def _poll_all_odds():
 
                             # Write betting consensus to win_probability_sources
                             # so the multi-source aggregation system sees it.
-                            # Write betting consensus to win_probability_sources
-                            # using SQLAlchemy ORM update to avoid JSONB cast issues.
+                            # Write betting consensus to win_probability_sources.
+                            # Use the event object already loaded by find_or_create_event
+                            # to avoid an extra SELECT per event (N+1 fix).
                             from sqlalchemy import update as _update
                             betting_val = round(avg_home, 4)
-                            # Read current value, merge, write back
-                            _evt_r = await session.execute(
-                                select(Event.win_probability_sources).where(Event.id == event_id)
-                            )
-                            _current = _evt_r.scalar_one_or_none() or {}
+                            _current = dict(event.win_probability_sources or {})
                             _current["betting"] = betting_val
                             await session.execute(
                                 _update(Event)
@@ -840,6 +837,16 @@ async def _poll_all_odds():
                         except Exception:
                             pass
 
+                    # Pre-load events for score updates to avoid N+1
+                    _score_ext_ids = [s.get("id") for s in scores_data if s.get("id")]
+                    _score_events_by_ext = {}
+                    if _score_ext_ids:
+                        _score_result = await session.execute(
+                            select(Event).where(Event.external_id.in_(_score_ext_ids))
+                        )
+                        for _se in _score_result.scalars().all():
+                            _score_events_by_ext[_se.external_id] = _se
+
                     for score_event in scores_data:
                         try:
                             external_id = score_event.get("id")
@@ -911,11 +918,8 @@ async def _poll_all_odds():
                             if away_score is not None:
                                 update_values["away_score"] = away_score
 
-                            # Get current event to check if score changed
-                            event_result = await session.execute(
-                                select(Event).where(Event.external_id == external_id)
-                            )
-                            event_obj = event_result.scalar_one_or_none()
+                            # Use batch-loaded event to check if score changed
+                            event_obj = _score_events_by_ext.get(external_id)
 
                             # Record score snapshot if scores changed
                             if event_obj and home_score is not None and away_score is not None:
@@ -968,13 +972,10 @@ async def _poll_all_odds():
                                     if stat_wp is not None:
                                         # Update event's win_probability_sources
                                         # Need to re-fetch to get current JSONB
-                                        # Write stat_model to win_probability_sources
-                                        # via select+update to avoid ORM caching
+                                        # Write stat_model to win_probability_sources.
+                                        # Use event object from batch pre-load (N+1 fix).
                                         from sqlalchemy import update as _sql_upd
-                                        _sm_r = await session.execute(
-                                            select(Event.win_probability_sources).where(Event.id == event_obj.id)
-                                        )
-                                        _sm_wps = _sm_r.scalar_one_or_none() or {}
+                                        _sm_wps = dict(event_obj.win_probability_sources or {})
                                         _sm_wps["stat_model"] = round(stat_wp, 4)
                                         await session.execute(
                                             _sql_upd(Event)
