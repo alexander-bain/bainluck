@@ -92,19 +92,19 @@ export default function SearchBar({
     setIsOpen(false);
     setQuery("");
 
+    const teamUrl = buildTeamUrl(suggestion);
     track('navigation_click', {
       click_type: 'search_typeahead' as const,
       from_page: 'search',
       to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
         : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`
-        : suggestion.type === 'team' && suggestion.team_slug ? `/team/${suggestion.team_slug}`
-        : `/search?q=${suggestion.text}`,
+        : teamUrl || `/search?q=${suggestion.text}`,
     });
 
     switch (suggestion.type) {
       case "team":
-        if (suggestion.team_slug) {
-          router.push(`/team/${suggestion.team_slug}`);
+        if (teamUrl) {
+          router.push(teamUrl);
         } else {
           router.push(`/search?q=${encodeURIComponent(suggestion.text)}`);
         }
@@ -279,6 +279,17 @@ export default function SearchBar({
       )}
     </div>
   );
+}
+
+function buildTeamUrl(suggestion: TypeaheadSuggestion): string | null {
+  if (!suggestion.team_slug) return null;
+  if (suggestion.sport_key) {
+    const parts = suggestion.sport_key.split("_");
+    const sport = parts[0];
+    const league = parts.slice(1).join("_");
+    return `/sport/${sport}/${league}/team/${suggestion.team_slug}`;
+  }
+  return `/team/${suggestion.team_slug}`;
 }
 
 function formatFuturesName(name: string): string {

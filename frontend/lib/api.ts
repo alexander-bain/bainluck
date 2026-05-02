@@ -239,6 +239,7 @@ export interface TypeaheadSuggestion {
   logo?: string;
   team_id?: number;
   team_slug?: string;
+  sport_key?: string;
   // Event fields
   event_id?: number;
   status?: string;

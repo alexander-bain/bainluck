@@ -991,7 +991,8 @@ async def typeahead_search(
 
     # 1. Teams
     team_query = (
-        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small)
+        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Sport.key.label("sport_key"))
+        .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
         .order_by(Team.name)
         .limit(3)
@@ -1009,6 +1010,7 @@ async def typeahead_search(
                 "logo": row.logo_url_small,
                 "team_id": row.id,
                 "team_slug": row.slug,
+                "sport_key": row.sport_key,
             })
 
     # 2. Events (live/upcoming)
