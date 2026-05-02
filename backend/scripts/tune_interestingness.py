@@ -253,28 +253,53 @@ async def tune():
     from sqlalchemy import text
     from app.tasks.base import get_task_session
 
-    # 1. Read ground truth
+    # 1. Read ground truth from ALL sources
     print("Reading ground truth...")
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-
-    creds_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        print("No Google credentials"); return
-    creds = service_account.Credentials.from_service_account_info(
-        json.loads(creds_json), scopes=SCOPES
-    )
-    service = build("sheets", "v4", credentials=creds)
-    result = service.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range="Sheet1!A1:M1000"
-    ).execute()
-    rows = result.get("values", [])
     gt_names = []
-    for row in rows[1:]:
-        while len(row) < 13: row.append("")
-        if row[2] and row[10]:
-            gt_names.append(row[2].lower().strip())
-    print(f"Ground truth: {len(gt_names)} markets")
+
+    # Source 1: Kalshi category pages (295 markets)
+    kalshi_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kalshi_ground_truth.json")
+    if os.path.exists(kalshi_path):
+        with open(kalshi_path) as f:
+            kalshi_gt = json.load(f)
+        for m in kalshi_gt:
+            gt_names.append(m["market_name"].lower().strip())
+        print(f"  Kalshi: {len(kalshi_gt)} markets")
+
+    # Source 2: Polymarket browse pages (4,680 markets — use trending only for calibration)
+    pm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polymarket_browse_ground_truth.json")
+    if os.path.exists(pm_path):
+        with open(pm_path) as f:
+            pm_gt = json.load(f)
+        trending = [m for m in pm_gt if m.get("trending")]
+        non_trending_sample = [m for m in pm_gt if not m.get("trending")][:200]
+        for m in trending + non_trending_sample:
+            gt_names.append(m["market_name"].lower().strip())
+        print(f"  Polymarket: {len(trending)} trending + {len(non_trending_sample)} sample = {len(trending) + len(non_trending_sample)}")
+
+    # Source 3: Google Sheet (Polymarket emails, if available)
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        creds_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if creds_json:
+            creds = service_account.Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
+            service = build("sheets", "v4", credentials=creds)
+            result = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Sheet1!A1:M1000").execute()
+            rows = result.get("values", [])
+            sheet_count = 0
+            for row in rows[1:]:
+                while len(row) < 13: row.append("")
+                if row[2]:
+                    gt_names.append(row[2].lower().strip())
+                    sheet_count += 1
+            print(f"  Email sheet: {sheet_count} markets")
+    except Exception as e:
+        print(f"  Email sheet: skipped ({e})")
+
+    # Deduplicate
+    gt_names = list(set(gt_names))
+    print(f"Total ground truth (deduped): {len(gt_names)} markets")
 
     # 2. Load all open futures from DB
     print("Loading futures from DB...")
