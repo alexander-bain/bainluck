@@ -53,8 +53,8 @@ interface ScoreDifferentialChartProps {
   awayTeamAbbrev?: string;
   /** Start timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartStartTime?: string;
-  /** End timestamp (ISO) from the Win Probability chart — constrains domain to match OddsChart */
   chartEndTime?: string;
+  sharedTicks?: string[];
   /** External time range from parent — syncs both charts' All/Since Start toggle */
   externalTimeRange?: "all" | "live";
   onTimeRangeChange?: (range: "all" | "live") => void;
@@ -107,6 +107,7 @@ export default function ScoreDifferentialChart({
   awayTeamAbbrev,
   chartStartTime,
   chartEndTime,
+  sharedTicks,
   externalTimeRange,
   onTimeRangeChange,
   pmSpreadData,
@@ -628,8 +629,10 @@ export default function ScoreDifferentialChart({
               tick={{ fontSize: 12, fill: "#6B7280" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
-              interval={chartData.length <= 10 ? 0 : "preserveStartEnd"}
-              minTickGap={50}
+              {...(sharedTicks
+                ? { ticks: sharedTicks }
+                : { interval: chartData.length <= 10 ? 0 : "preserveStartEnd", minTickGap: 50 }
+              )}
             />
             <YAxis
               domain={[Math.min(0, -domainMax), Math.max(0, domainMax)]}

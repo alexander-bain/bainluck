@@ -89,6 +89,7 @@ interface OddsChartProps {
    *  so OddsChart and ScoreDiffChart have identical x-axes. */
   chartStartTime?: string;
   chartEndTime?: string;
+  sharedTicks?: string[];
   /** External time range from parent — when set, syncs both charts' All/Since Start toggle */
   externalTimeRange?: "all" | "live";
   onTimeRangeChange?: (range: "all" | "live") => void;
@@ -171,6 +172,7 @@ export default function OddsChart({
   onRenderedDomain,
   chartStartTime,
   chartEndTime,
+  sharedTicks,
   externalTimeRange,
   onTimeRangeChange,
   completedAt,
@@ -1164,10 +1166,10 @@ export default function OddsChart({
               tick={{ fontSize: 12, fill: "#6B7280" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
-              interval={
-                chartData.length <= 10 ? 0 : "preserveStartEnd"
-              }
-              minTickGap={50}
+              {...(sharedTicks
+                ? { ticks: sharedTicks }
+                : { interval: chartData.length <= 10 ? 0 : "preserveStartEnd", minTickGap: 50 }
+              )}
             />
             <YAxis
               domain={yDomain}

@@ -41,6 +41,14 @@ export default function TeamPage() {
     };
   }, [teamSlug]);
 
+  // Document title
+  useEffect(() => {
+    if (data?.team) {
+      const label = data.team.sport_name || league.toUpperCase();
+      document.title = `${data.team.name} — ${label} | Bain Luck`;
+    }
+  }, [data, league]);
+
   if (loading) {
     return (
       <div className="max-w-5xl mx-auto px-4 py-12 text-center">
@@ -70,9 +78,28 @@ export default function TeamPage() {
   const { team, upcoming_events, recent_events, futures, championship_path } =
     data;
   const leaguePath = `/sport/${sport}/${league}`;
+  const leagueLabel = team.sport_name || league.toUpperCase();
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "SportsTeam",
+    name: team.name,
+    sport: leagueLabel,
+    ...(team.logo_large && { logo: team.logo_large }),
+    ...(team.abbreviation && { alternateName: team.abbreviation }),
+    memberOf: {
+      "@type": "SportsOrganization",
+      name: leagueLabel,
+    },
+    url: `https://bainluck.com/sport/${sport}/${league}/team/${teamSlug}`,
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       {/* Breadcrumb */}
       <nav className="text-sm text-text-secondary mb-6 flex items-center gap-1.5">
         <Link href="/" className="hover:text-text-primary">

@@ -407,10 +407,25 @@ export default function EventPage({ params }: EventPageProps) {
 
     const allStart = new Date(Math.min(...timestamps));
     let end = new Date(Math.max(...timestamps));
-    if (historyData.completed_at) {
-      const ca = new Date(historyData.completed_at);
-      if (!isNaN(ca.getTime()) && ca.getTime() < end.getTime()) {
-        end = ca;
+
+    // For completed games, clip chart at game end — not at last data point
+    // (polling continues 30-45min after final whistle, producing stale data).
+    // Best signal: last ESPN data point (ESPN stops when the game ends).
+    if (event?.status === "completed" || event?.status === "closed") {
+      const espnTimestamps = (historyData.espn_history ?? [])
+        .map((pt) => new Date(pt.timestamp).getTime())
+        .filter((t) => !isNaN(t));
+      if (espnTimestamps.length > 0) {
+        const lastEspn = new Date(Math.max(...espnTimestamps));
+        lastEspn.setMinutes(lastEspn.getMinutes() + 5);
+        if (lastEspn.getTime() < end.getTime()) {
+          end = lastEspn;
+        }
+      } else if (historyData.completed_at) {
+        const ca = new Date(historyData.completed_at);
+        if (!isNaN(ca.getTime()) && ca.getTime() < end.getTime()) {
+          end = ca;
+        }
       }
     }
 
@@ -421,7 +436,20 @@ export default function EventPage({ params }: EventPageProps) {
     const start = chartTimeRange === "live" ? liveStart : allStart;
     start.setSeconds(0, 0);
     end.setSeconds(0, 0);
-    return { start: start.toISOString(), end: end.toISOString() };
+    // Compute explicit X-axis ticks so both charts use identical labels
+    const durationMin = (end.getTime() - start.getTime()) / 60000;
+    const tickCount = Math.min(8, Math.max(2, Math.floor(durationMin / 15)));
+    const stepMin = durationMin / (tickCount - 1);
+    const ticks: string[] = [];
+    for (let i = 0; i < tickCount; i++) {
+      const t = new Date(start.getTime() + i * stepMin * 60000);
+      t.setSeconds(0, 0);
+      ticks.push(
+        t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+      );
+    }
+
+    return { start: start.toISOString(), end: end.toISOString(), ticks };
   }, [historyData, chartTimeRange, event?.commence_time]);
 
   // Compute the most recent chart point for GamePlayCard default display
@@ -1127,6 +1155,7 @@ export default function EventPage({ params }: EventPageProps) {
               onRenderedDomain={handleRenderedDomain}
               chartStartTime={sharedChartDomain?.start}
               chartEndTime={sharedChartDomain?.end}
+              sharedTicks={sharedChartDomain?.ticks}
               externalTimeRange={chartTimeRange}
               onTimeRangeChange={setChartTimeRange}
             />
@@ -1227,6 +1256,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
             chartStartTime={sharedChartDomain?.start}
             chartEndTime={sharedChartDomain?.end}
+            sharedTicks={sharedChartDomain?.ticks}
             externalTimeRange={chartTimeRange}
             onTimeRangeChange={setChartTimeRange}
             pmSpreadData={historyData?.pm_spread_data}
