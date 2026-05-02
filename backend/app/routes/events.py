@@ -54,7 +54,9 @@ def _normalize_futures_dedup_key(market) -> str:
     "76ers vs. Celtics" and "Celtics vs 76ers" → same key.
     """
     if getattr(market, "canonical_market_key", None):
-        return f"canonical:{market.canonical_market_key}"
+        # Strip trailing season (e.g., ":2025-26") so cross-source keys match
+        key = re.sub(r":\d{4}(-\d{2,4})?$", "", market.canonical_market_key)
+        return f"canonical:{key}"
     name = (market.name or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
