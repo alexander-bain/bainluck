@@ -399,6 +399,10 @@ async def _sync_espn_live_events():
                         if ee.espn_id:
                             espn_by_id[ee.espn_id] = ee
 
+                    # Cache for team identity registration to avoid re-registering
+                    # the same (team_id, source) pair multiple times per poll cycle
+                    identity_cache: set[tuple[int, str]] = set()
+
                     for event in our_events:
                         # Multi-signal matching: ESPN ID first, then name, then time
                         matched_espn = None
@@ -457,20 +461,22 @@ async def _sync_espn_live_events():
                             event.away_team_id = away_team.id
                             changed = True
 
-                        # Register ESPN team identities for indexed lookups
+                        # Register ESPN team identities (cached to avoid re-registering)
                         from app.services.team_identity import team_identity_service
-                        if home_team and ee.home_team:
+                        if home_team and ee.home_team and (home_team.id, "espn") not in identity_cache:
                             await team_identity_service.register_team_identity(
                                 session, home_team.id, "espn", sport_key,
                                 source_id=str(ee.home_team.espn_id) if ee.home_team.espn_id else None,
                                 source_name=ee.home_team.display_name or ee.home_team.name,
                             )
-                        if away_team and ee.away_team:
+                            identity_cache.add((home_team.id, "espn"))
+                        if away_team and ee.away_team and (away_team.id, "espn") not in identity_cache:
                             await team_identity_service.register_team_identity(
                                 session, away_team.id, "espn", sport_key,
                                 source_id=str(ee.away_team.espn_id) if ee.away_team.espn_id else None,
                                 source_name=ee.away_team.display_name or ee.away_team.name,
                             )
+                            identity_cache.add((away_team.id, "espn"))
 
                         # Correct commence_time from ESPN if significantly different
                         # The Odds API occasionally returns local times as UTC
@@ -530,10 +536,7 @@ async def _sync_espn_live_events():
                             # in one atomic Core update. espn_id was previously set via ORM
                             # attribute assignment which could fail to flush when mixed with
                             # Core updates on the same row.
-                            _wps_r = await session.execute(
-                                select(Event.win_probability_sources).where(Event.id == event.id)
-                            )
-                            _wps = _wps_r.scalar_one_or_none() or {}
+                            _wps = dict(event.win_probability_sources or {})
                             _wps["espn"] = round(ee.home_win_probability, 4)
                             _update_vals: dict = {
                                 "win_probability_sources": _wps,
@@ -546,6 +549,7 @@ async def _sync_espn_live_events():
                                 .where(Event.id == event.id)
                                 .values(**_update_vals)
                             )
+                            event.win_probability_sources = _wps
                             changed = True
 
                             snapshot = ESPNSnapshot(
@@ -607,16 +611,14 @@ async def _sync_espn_live_events():
                                     pregame_spread=pregame_spread,
                                 )
                                 if stat_wp is not None:
-                                    _wps_r2 = await session.execute(
-                                        select(Event.win_probability_sources).where(Event.id == event.id)
-                                    )
-                                    _wps2 = _wps_r2.scalar_one_or_none() or {}
+                                    _wps2 = dict(event.win_probability_sources or {})
                                     _wps2["stat_model"] = round(stat_wp, 4)
                                     await session.execute(
                                         _sql_update(Event)
                                         .where(Event.id == event.id)
                                         .values(win_probability_sources=_wps2)
                                     )
+                                    event.win_probability_sources = _wps2
                                     changed = True
 
                                     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
@@ -696,10 +698,7 @@ async def _sync_espn_live_events():
 
                             # Write win probability snapshot
                             if ee.home_win_probability is not None:
-                                _wps_r3 = await session.execute(
-                                    select(Event.win_probability_sources).where(Event.id == event.id)
-                                )
-                                _wps3 = _wps_r3.scalar_one_or_none() or {}
+                                _wps3 = dict(event.win_probability_sources or {})
                                 _wps3["espn"] = round(ee.home_win_probability, 4)
                                 await session.execute(
                                     _sql_update(Event)
@@ -709,6 +708,7 @@ async def _sync_espn_live_events():
                                         espn_win_prob_home=ee.home_win_probability,
                                     )
                                 )
+                                event.win_probability_sources = _wps3
 
                                 snapshot = ESPNSnapshot(
                                     event_id=event.id,
@@ -786,6 +786,7 @@ async def _sync_espn_live_events():
                         "espn_events": len(espn_events),
                     }
 
+                    sched_identity_cache: set[tuple[int, str]] = set()
                     for event in scheduled_events:
                         matched_espn = None
 
@@ -823,20 +824,22 @@ async def _sync_espn_live_events():
                         if away_team and event.away_team_id != away_team.id:
                             event.away_team_id = away_team.id
 
-                        # Register ESPN team identities for indexed lookups
+                        # Register ESPN team identities (cached to avoid re-registering)
                         from app.services.team_identity import team_identity_service
-                        if home_team and ee.home_team:
+                        if home_team and ee.home_team and (home_team.id, "espn") not in sched_identity_cache:
                             await team_identity_service.register_team_identity(
                                 session, home_team.id, "espn", sport_key,
                                 source_id=str(ee.home_team.espn_id) if ee.home_team.espn_id else None,
                                 source_name=ee.home_team.display_name or ee.home_team.name,
                             )
-                        if away_team and ee.away_team:
+                            sched_identity_cache.add((home_team.id, "espn"))
+                        if away_team and ee.away_team and (away_team.id, "espn") not in sched_identity_cache:
                             await team_identity_service.register_team_identity(
                                 session, away_team.id, "espn", sport_key,
                                 source_id=str(ee.away_team.espn_id) if ee.away_team.espn_id else None,
                                 source_name=ee.away_team.display_name or ee.away_team.name,
                             )
+                            sched_identity_cache.add((away_team.id, "espn"))
 
                         # Correct commence_time from ESPN if significantly different
                         # Skip if StatPal set the commence_time (more reliable source)

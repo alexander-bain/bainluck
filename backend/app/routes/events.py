@@ -1089,11 +1089,15 @@ async def typeahead_search(
                 "sport_key": row.sport_key,
             })
 
-    # 2. Events (live/upcoming)
+    # 2. Events (live/upcoming) — with team logos
     event_query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
-        .options(selectinload(Event.sport))
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
         .where(
             event_team_filter,
             Event.status.in_(["live", "scheduled"]),
@@ -1109,13 +1113,17 @@ async def typeahead_search(
     event_result = await db.execute(event_query)
     event_pool = []
     for event in event_result.scalars().all():
+        home = event.home_team
+        away = event.away_team
         event_pool.append({
             "type": "event",
             "text": f"{event.away_team_name} at {event.home_team_name}",
             "event_id": event.id,
             "status": event.status,
-            "sport": event.sport.key if event.sport else None,
+            "sport_key": event.sport.key if event.sport else None,
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+            "home_logo": home.logo_url_small if home else None,
+            "away_logo": away.logo_url_small if away else None,
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
@@ -1157,6 +1165,7 @@ async def typeahead_search(
             "market_id": market.id,
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
+            "sport_key": market.llm_sport_category,
         })
 
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
@@ -1194,7 +1203,11 @@ async def typeahead_search(
                 fuzzy_events = await db.execute(
                     select(Event)
                     .join(Sport, Event.sport_id == Sport.id)
-                    .options(selectinload(Event.sport))
+                    .options(
+                        selectinload(Event.sport),
+                        selectinload(Event.home_team),
+                        selectinload(Event.away_team),
+                    )
                     .where(
                         or_(
                             Event.home_team_name.ilike(best_pattern),
@@ -1211,13 +1224,17 @@ async def typeahead_search(
                     .limit(3)
                 )
                 for event in fuzzy_events.scalars().all():
+                    home = event.home_team
+                    away = event.away_team
                     event_pool.append({
                         "type": "event",
                         "text": f"{event.away_team_name} at {event.home_team_name}",
                         "event_id": event.id,
                         "status": event.status,
-                        "sport": event.sport.key if event.sport else None,
+                        "sport_key": event.sport.key if event.sport else None,
                         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+                        "home_logo": home.logo_url_small if home else None,
+                        "away_logo": away.logo_url_small if away else None,
                     })
                 did_you_mean = best_team
         except Exception:
