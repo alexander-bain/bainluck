@@ -491,16 +491,16 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 **Files:** `frontend/app/events/[id]/page.tsx` (Bigger Picture section), `backend/app/routes/events.py` (team-progression endpoint)
 
-#### 0f-13i. Polymarket Not Showing in Any Game Markets Section — ROOT CAUSE IDENTIFIED (May 2)
+#### ~~0f-13i. Polymarket Not Showing in Any Game Markets Section~~ ✅ SHIPPED (May 2)
 
-**Problem:** Zero Polymarket items in spreads, totals, period_markets, player_props, or other sections for any event. Link rate dashboard shows 3,187 linked basketball sub-markets, but production diagnostic confirmed zero Polymarket markets have `event_id` pointing to Odds API events.
+**Root cause:** Polymarket creates series-level events (e.g., "Celtics vs. 76ers" covers all playoff games). Sub-market names like "O/U 196.5" don't include team names. The matching task linked parents to old completed events instead of current games, and the fallback name-matching query couldn't find sub-markets without team names.
 
-**Root cause (May 2):** The matching task links Polymarket **parent events** (e.g., "Celtics vs. Lakers") to auto-created events via `_create_event_from_prediction_market()`. These auto-created events are DIFFERENT from the Odds API events that the event detail page loads. So the `event_id` FK on Polymarket sub-markets points to the wrong event.
+**Fix (3 commits):**
+1. Game-markets endpoint: find Polymarket parents by team name, then pull all sub-markets via `group_id` — bypasses `event_id` linking entirely
+2. Matching scoring: +8 bonus for Odds API events to prevent matching to wrong game
+3. Phase 1.5: prioritize open markets linked to completed events for re-linking
 
-**Fix needed:** The matching task's `_match_prediction_market()` must use the Event Registry cascade (`find_or_create_event()`) to cross-reference Polymarket parents with existing Odds API events BEFORE auto-creating. The 4-step cascade (exact source ID → cross-source ID → structured match → create) should find the Odds API event if it exists.
-
-**Files:** `backend/app/tasks/prediction_market_matching.py` (`_match_prediction_market`, `_create_event_from_prediction_market`), `backend/app/services/event_registry.py`
-**Parallel Safety:** Red (touches matching task)
+**Remaining polish:** De-duplicate Polymarket spreads that appear multiple times (series has overlapping game markets). Game-specific sub-market routing (Game 1 vs Game 5 within a series).
 
 ---
 
