@@ -407,10 +407,10 @@ export default function DiscoverPage() {
           );
         })()}
 
-        <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
+        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
-            const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && gi.item!.type === "futures";
+            const isGuessSlot = gi.type === "single" && (idx + 1) % 3 === 0 && gi.item!.type === "futures";
 
             return (
               <div key={key} className="break-inside-avoid mb-4">

@@ -607,7 +607,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
   if (!leader) return null;
 
   return (
-    <div data-guess-card className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
+    <div data-guess-card data-market-id={data.id} className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
         <span className="text-white text-sm">🎯</span>
         <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
@@ -652,7 +652,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
               You guessed {guess} than {threshold}% — actual is {actualPct}%
             </div>
 
-            <div className="flex items-center justify-center gap-3">
+            <div className="flex items-center justify-center gap-3 mb-3">
               <Link href={`/futures/${data.id}`} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
                 See full market →
               </Link>
@@ -664,6 +664,22 @@ export function GuessCard({ item }: { item: FeedItem }) {
                 Share result
               </button>
             </div>
+            <button
+              onClick={() => {
+                const allGuessCards = document.querySelectorAll("[data-guess-card]");
+                const currentCard = document.querySelector(`[data-guess-card][data-market-id="${data.id}"]`);
+                let nextCard: Element | null = null;
+                let foundCurrent = false;
+                for (const card of allGuessCards) {
+                  if (card === currentCard) { foundCurrent = true; continue; }
+                  if (foundCurrent) { nextCard = card; break; }
+                }
+                if (nextCard) nextCard.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+              className="w-full py-2.5 rounded-xl bg-amber-500/10 text-amber-700 font-bold text-sm hover:bg-amber-500/20 transition-colors border border-amber-500/20"
+            >
+              Next question →
+            </button>
           </div>
         )}
       </div>
