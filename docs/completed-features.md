@@ -8,6 +8,8 @@
 - ✅ **Chart bug fixes (0f-13a, 0f-13b)**: Chart no longer extends 30-45min past game end — clips at last ESPN data point + 5min buffer instead of stale `completed_at`. Both charts now use identical shared tick labels computed in parent via `sharedTicks` prop.
 - ✅ **Half margin maps fix (0f-13c)**: `halfMarginMaps` was reading from `gameMarkets.spreads` (full-game only) instead of `gameMarkets.period_markets`. Both 1H and 2H margin maps now render.
 - ✅ **Team page SEO**: JSON-LD `SportsTeam` structured data + dynamic `document.title` on team pages.
+- ✅ **Search P5c: entity-grouped results page**: Results organized into Teams / Games / Futures & Markets sections with counts. Backend returns matched teams (name, slug, logo, record, sport_key). New TeamCard component links to team pages. Summary line with per-entity breakdown.
+- ✅ **Polymarket game markets fix (0f-13i)**: Polymarket spreads, totals, and player props now surface on event detail pages for the first time. Root cause: Polymarket series events don't have per-game event_ids matching Odds API events, and sub-market names ("O/U 196.5") lack team names. Fix: game-markets endpoint finds Polymarket parents by team name, then pulls sub-markets via group_id — bypassing event_id linking. Also added +8 scoring bonus for Odds API events and Phase 1.5 re-linking priority for completed events.
 
 ## May 1, 2026
 
