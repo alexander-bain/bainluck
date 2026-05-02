@@ -89,6 +89,8 @@ struct LeaguesView: View {
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
+                case .teamDetail: Text("Team")
+                case .predictionStats: PredictionStatsView()
                     FuturesListView()
                 }
             }

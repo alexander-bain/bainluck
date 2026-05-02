@@ -147,6 +147,10 @@ struct MyStuffView: View {
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
                     FuturesListView()
+                case .teamDetail:
+                    Text("Team")
+                case .predictionStats:
+                    PredictionStatsView()
                 }
             }
         }
@@ -515,7 +519,7 @@ private struct MergedTeamFuture: Identifiable {
     var bestChange: Double?
     var marketType: String?
 
-    var id: String { "\(primary.matchedTeam.id)-\(marketType ?? "nil")-\(primary.marketId)" }
+    var id: String { "\(primary.matchedTeam?.id ?? 0)-\(marketType ?? "nil")-\(primary.marketId)" }
 }
 
 /// Progression stage definitions.
@@ -573,7 +577,7 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
 
         let groupKey: String
         if isProgression {
-            groupKey = "progression:\(detectedType!):team_\(item.matchedTeam.id)"
+            groupKey = "progression:\(detectedType!):team_\(item.matchedTeam?.id ?? 0)"
         } else if let ck = item.canonicalMarketKey {
             groupKey = "\(ck)::\(item.outcomeName.lowercased().trimmingCharacters(in: .whitespaces))"
         } else {
@@ -664,9 +668,10 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
             continue
         }
 
-        let teamId = m.primary.matchedTeam.id
+        guard let matchedTeam = m.primary.matchedTeam else { continue }
+        let teamId = matchedTeam.id
         if teamStages[teamId] == nil {
-            teamStages[teamId] = (team: m.primary.matchedTeam, stages: [])
+            teamStages[teamId] = (team: matchedTeam, stages: [])
         }
         teamStages[teamId]!.stages.append((merged: m, order: stage.order, label: stage.label))
     }
@@ -938,9 +943,9 @@ private struct TeamFuturesSection: View {
         return HStack(spacing: 10) {
             // Team logo
             TeamLogoView(
-                url: item.matchedTeam.logoSmall,
-                teamName: item.matchedTeam.name,
-                color: Color(hex: item.matchedTeam.primaryColor ?? "#6b7280"),
+                url: item.matchedTeam?.logoSmall,
+                teamName: item.matchedTeam?.name ?? "",
+                color: Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"),
                 size: 28
             )
 
@@ -1000,7 +1005,7 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color(hex: item.matchedTeam.primaryColor ?? "#6b7280"))
+                    .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))
             }
         }
         .padding(.vertical, 6)
