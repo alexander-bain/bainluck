@@ -801,9 +801,6 @@ async def _score_futures(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.ilike('% vs %'),
-        ~FuturesMarket.name.ilike('% vs. %'),
-        ~FuturesMarket.name.ilike('% at %'),
     ]
 
     base_options = [
@@ -851,7 +848,7 @@ async def _score_futures(
         .limit(150)
     )
 
-    # Pool 2: non-sports futures (capped at 200 — generous to surface diverse content)
+    # Pool 2: non-sports futures — pull 500 to give scoring a deep pool
     nonsports_query = (
         select(FuturesMarket)
         .options(*base_options)
@@ -863,7 +860,7 @@ async def _score_futures(
             ),
         )
         .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(200)
+        .limit(500)
     )
 
     sports_result = await db.execute(sports_query)
