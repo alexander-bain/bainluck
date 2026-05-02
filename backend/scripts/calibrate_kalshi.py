@@ -9,8 +9,7 @@ async def run():
     import httpx
 
     # Load ground truth
-    gt_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                           "..", "Manus", "audit_results", "kalshi_ground_truth.json")
+    gt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kalshi_ground_truth.json")
     with open(gt_path) as f:
         gt_markets = json.load(f)
     print(f"Kalshi ground truth: {len(gt_markets)} markets, {sum(1 for m in gt_markets if m.get('trending'))} trending")
