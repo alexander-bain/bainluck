@@ -801,6 +801,11 @@ async def _score_futures(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
+        ~FuturesMarket.name.ilike('% vs %'),
+        ~FuturesMarket.name.ilike('% vs. %'),
+        # NOTE: '% at %' filter deliberately removed — it killed non-sports
+        # markets like "S&P at 4pm", "temperature at NYC". The event_id IS NULL
+        # filter already excludes game matchups.
     ]
 
     base_options = [
