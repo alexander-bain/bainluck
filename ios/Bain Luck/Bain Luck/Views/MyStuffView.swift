@@ -147,10 +147,12 @@ struct MyStuffView: View {
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
                     FuturesListView()
-                case .teamDetail(_):
-                    Text("Team")
+                case .teamDetail(let slug):
+                    TeamDetailView(slug: slug)
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    AboutView()
                 }
             }
         }
@@ -376,6 +378,12 @@ struct MyStuffView: View {
             }
             if let futures = vm.teamFutures, !futures.items.isEmpty {
                 TeamFuturesSection(futures: futures, path: $path)
+            }
+
+            Section {
+                NavigationLink(value: Route.about) {
+                    Label("About Bain Luck", systemImage: "info.circle")
+                }
             }
         }
         #if os(iOS)

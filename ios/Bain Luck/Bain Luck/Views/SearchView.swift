@@ -252,6 +252,8 @@ struct SearchView: View {
                     TeamDetailView(slug: slug)
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    AboutView()
                 }
             }
         }

@@ -14,4 +14,5 @@ enum Route: Hashable {
     case futuresList
     case teamDetail(slug: String)
     case predictionStats
+    case about
 }
