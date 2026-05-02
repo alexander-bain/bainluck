@@ -230,7 +230,9 @@ export default function SearchBar({
               {/* Text */}
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-text-primary truncate">
-                  {suggestion.text}
+                  {suggestion.type === "futures"
+                    ? formatFuturesName(suggestion.text)
+                    : suggestion.text}
                 </div>
                 {/* Subtitle */}
                 {suggestion.type === "event" && suggestion.commence_time && (
@@ -272,6 +274,13 @@ export default function SearchBar({
       )}
     </div>
   );
+}
+
+function formatFuturesName(name: string): string {
+  return name
+    .replace(/^(?:NBA|NHL|MLB|NFL|MLS|WNBA|PGA)\s+Playoffs?:\s*/i, "")
+    .replace(/\s*\d{4}(-\d{2,4})?\s*$/, "")
+    .trim();
 }
 
 function formatEventTime(isoString: string): string {

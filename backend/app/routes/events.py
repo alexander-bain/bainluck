@@ -40,27 +40,35 @@ router = APIRouter()
 
 _FUTURES_DEDUP_STRIP = re.compile(
     r"(nba\s+playoffs:\s*)?"
-    r"(who\s+will\s+win\s+series\s*[\-–—]\s*)?"
+    r"(nhl\s+playoffs:\s*)?"
+    r"(mlb\s+playoffs:\s*)?"
+    r"(who\s+will\s+win\s+series\s*[\-–—?]\s*)?"
     r"(win\s+series\s*[\-–—]\s*)?",
     re.I,
 )
 
 def _normalize_futures_dedup_key(market) -> str:
     """Normalize a futures market name for cross-source deduplication.
-    Strips prefixes like "NBA Playoffs: Who Will Win Series? -",
-    sorts team names alphabetically, and lowercases everything.
-    "76ers vs. Celtics" and "Celtics vs 76ers" produce the same key.
+
+    "2026 NBA Champion" and "NBA Championship Winner" → same key.
+    "76ers vs. Celtics" and "Celtics vs 76ers" → same key.
     """
     if market.group_id:
         return market.group_id
     name = (market.name or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
-    parts = re.split(r"\s+(?:vs\.?|at|@)\s+", name, maxsplit=1)
+    name_lower = name.lower()
+    # Normalize "2025-26 NBA Champion" / "NBA Championship Winner" → "nba champion"
+    name_lower = re.sub(r"\b\d{4}(-\d{2,4})?\s*", "", name_lower).strip()
+    name_lower = re.sub(r"\bchampionship\s+winner\b", "champion", name_lower)
+    name_lower = re.sub(r"\bwinner\b", "champion", name_lower)
+    # Split on matchup separators
+    parts = re.split(r"\s+(?:vs\.?|at|@)\s+", name_lower, maxsplit=1)
     if len(parts) == 2:
-        parts = sorted(p.strip().lower() for p in parts)
+        parts = sorted(p.strip() for p in parts)
         return f"matchup:{'|'.join(parts)}:{market.market_tier or 0}"
-    return f"name:{name.lower()}:{market.market_tier or 0}"
+    return f"name:{name_lower}:{market.market_tier or 0}"
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -1068,8 +1076,9 @@ async def typeahead_search(
             "market_type_label": label or market.market_type or "Market",
         })
 
-    # --- Slot-based assembly: 1 team, 2 events, 2 futures baseline ---
-    # Then fill remaining slots from whichever pool has more candidates.
+    # --- Slot-based assembly ---
+    # Guarantee: 1 team, up to 2 events, up to 3 futures. Max 7 total.
+    # Events get priority for extra slots over futures.
     suggestions = []
     suggestions.extend(team_pool[:1])
     suggestions.extend(event_pool[:2])
@@ -1077,7 +1086,8 @@ async def typeahead_search(
 
     remaining = 7 - len(suggestions)
     if remaining > 0:
-        extras = team_pool[1:2] + event_pool[2:4] + futures_pool[2:5]
+        # Prioritize more events over more futures
+        extras = event_pool[2:4] + futures_pool[2:3] + team_pool[1:2]
         suggestions.extend(extras[:remaining])
 
     return {"suggestions": suggestions, "query": q}
