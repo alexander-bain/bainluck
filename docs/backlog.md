@@ -949,7 +949,7 @@ Canonical team pages at `/sport/[sport]/[league]/team/[slug]` (e.g., `/sport/bas
 
 - [x] **P5a. Recent searches** — Last 5 in localStorage, shown on focus before typing with clock icons.
 - [ ] **P5b. Trending/popular searches** — Track queries server-side, surface top 5 as zero-state chips.
-- [ ] **P5c. Search results page redesign** — Group by entity type with headers.
+- [x] **P5c. Search results page redesign** — Three sections: Teams (compact cards with logo/record/league), Games (EventCard grid), Futures & Markets (FuturesCard grid). Backend returns matched teams. Summary line with per-entity counts.
 - [x] **P5d. Mobile search** — Full-screen overlay with auto-focus, recent searches, typeahead, Cancel button.
 - [x] **P5e. Keyboard shortcut** — `Cmd+K` / `Ctrl+K` focuses desktop search bar. Keyboard hint badge shown.
 
