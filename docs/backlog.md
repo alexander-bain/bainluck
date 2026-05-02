@@ -309,8 +309,8 @@ Replaced `truncate` with `line-clamp-2` across `FeedCard`, `DiscoverCard` (compa
 
 ### 0r. Golf Data Quality Issues (April 25)
 
-**0r-1. Tiger Woods British Open odds** — showing meaningful chance when he won't compete. The `_NON_WINNER_MARKET_RE` filter may not cover all cases.
-**Fix:** Check if British Open winner market outcomes include Tiger from "compete in" markets leaking through.
+**~~0r-1. Tiger Woods British Open odds~~ ✅ SHIPPED (May 2)**
+Expanded `_NON_WINNER_MARKET_RE` to catch "compete at", "will X compete", "tee up", "in the field". Added binary market detector: per-golfer Yes/No markets (<=2 outcomes) now skipped from winner aggregation.
 
 **~~0r-2. Dead category links in golf~~ ✅ SHIPPED (April 28)**
 TournamentCard default href changed from `/categories/golf/tournaments/` to `/sport/golf/{tour}/{slug}`. Tour slug mapping handles dp_world→dpworld, korn_ferry→kft.
@@ -439,13 +439,9 @@ Kalshi has 2nd half spread, 2nd half total, series winner, and other game-level 
 
 Reviewed BOS-PHI completed game (event 14617909). Screenshots in `/Users/bain/Desktop/Screenshot 2026-04-29 at 4.20*.png`. Issues affect BOTH web and native unless noted.
 
-#### 0f-13a. Win Probability Chart Extends Past Game End (WEB ONLY)
+#### ~~0f-13a. Win Probability Chart Extends Past Game End (WEB ONLY)~~ ✅ SHIPPED (May 2)
 
-**Problem:** Web chart shows data all the way to 7:16 PM when the game ended ~6:30 PM. Native clips correctly at ~6:30 PM. The `smartEndTime` / `completed_at` clipping isn't working on web.
-
-**Expected:** Chart should end within a few minutes of the final whistle, matching native behavior.
-
-**Files:** `frontend/components/OddsChart.tsx` (`smartEndTime` computation), `frontend/app/events/[id]/page.tsx` (`sharedChartDomain`)
+`sharedChartDomain` now computes end time from game-end sources only (ESPN, stat_model, mlb, fangraphs) instead of all sources. Removed sportsbook odds from `smartEndTime` candidates. 2-min buffer instead of 5.
 
 #### 0f-13b. X-Axis Labels STILL Not Identical Between Charts (WEB ONLY)
 
