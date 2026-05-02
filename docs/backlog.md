@@ -928,12 +928,19 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 - [x] **P1c. Better display names** — Fixed: `market_type_label` on all futures (Championship/Conference/Award/Division/Prop). Ranking by tier + volume instead of updated_at.
 - [ ] **P1d. Widen dropdown** — TODO: Truncation is partly a layout issue; dropdown inherits the narrow search input width.
 
-#### Phase 2: Better Matching (1 week)
+#### ~~Phase 2: Better Matching (1 week)~~ ✅ SHIPPED (May 1)
 
-- [ ] **P2a. Search team `alternate_names`** — Currently only searches canonical `name` and `abbreviation`. "Celts", "C's", city-only queries like "Boston" should match via JSONB `alternate_names`.
-- [ ] **P2b. Search player names** — "Tatum" should find Celtics game + player props. Query `team_roster` and `futures_outcomes.name`.
-- [ ] **P2c. Search Discover/non-sports markets** — Weather, economics, politics markets aren't in typeahead or full search. Add as a result type with category badge.
-- [ ] **P2d. Multi-word futures matching** — "celtics championship" should rank NBA Championship #1. Currently multi-word AND only works across event team names, not futures.
+- [x] **P2a. Search team `alternate_names`** — JSONB `alternate_names` now searched via `cast(Team.alternate_names, String).ilike()`.
+- [x] **P2b. Search player names** — Typeahead now searches `FuturesOutcome.name` via `.any()` subquery. "Tatum" finds player prop markets.
+- [x] **P2c. Search Discover/non-sports markets** — Non-sports markets (sport_id IS NULL) searched as fallback in typeahead. Category label from `llm_sport_category`.
+- [x] **P2d. Multi-word futures matching** — AND across terms in market name, same as events. "celtics championship" works.
+
+**Also shipped:**
+- Cross-source dedup via normalized name (sorted team names, stripped prefixes)
+- Tier 5 patterns for game-level markets (first half, series, O/U, next team, win by)
+- Removed blind trust of `category="championship"` (Polymarket labels everything as championship)
+- 8 new tests for tier 5 classification
+- Wider dropdown (min-w-[360px])
 
 #### Phase 3: Smarter Ranking (1 week)
 
