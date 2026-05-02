@@ -954,15 +954,17 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 
 #### TEAM PAGES ✅ SHIPPED (May 1)
 
-Canonical team pages at `/team/[slug]` (e.g., `/team/boston-celtics`).
+Canonical team pages at `/sport/[sport]/[league]/team/[slug]` (e.g., `/sport/basketball/nba/team/boston-celtics`). Follows the existing `/sport/[sport]/[league]` URL hierarchy — truncating to `/sport/basketball/nba` still lands on the league page.
 
-**Backend**: `GET /api/teams/{identifier}` returns team info + upcoming/recent games + futures + championship path. Slug column on Team model with backfill migration. team_id/slug in typeahead and _format_team_data.
+**Backend**: `GET /api/teams/{identifier}` returns team info + upcoming/recent games + futures + championship path. Slug column on Team model with backfill migration. team_id/slug/sport_key in typeahead and _format_team_data.
 
-**Frontend**: Hero (logo, colors, record, standings), championship path cards, game cards, season futures. Search typeahead links to team pages.
+**Frontend**: Hero (logo, colors, record, standings), championship path cards (Championship/Conference/Division %), game cards (upcoming + recent with W/L scores), season futures list. Breadcrumbs: Home / NBA / Celtics. SEO metadata with league name.
+
+**Search integration**: Typeahead team results link to `/sport/.../team/slug`. `buildTeamUrl()` constructs the full hierarchical path from `sport_key`.
 
 **Phase B (TODO)**: Cross-link team names in EventCard, grids, feed cards via TeamNameLink component.
 
-**Files**: `routes/teams.py`, `utils/slugify.py`, `app/team/[slug]/page.tsx`, migration `f1a2b3c4d5e6`.
+**Files**: `routes/teams.py`, `utils/slugify.py`, `app/sport/[sport]/[league]/team/[team]/page.tsx`, migration `f1a2b3c4d5e6`.
 
 ---
 
