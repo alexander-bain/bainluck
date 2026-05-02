@@ -596,17 +596,45 @@ async def search_teams(
         else_=3,                              # Contains
     )
 
+    # Sport keys to exclude: preseason, minor leagues, obscure foreign leagues
+    _EXCLUDED_SPORT_KEYS = {
+        "baseball_mlb_preseason",
+        "soccer_copa_sudamericana", "soccer_copa_libertadores",
+        "soccer_brazil_campeonato", "soccer_brazil_serie_b",
+        "soccer_argentina_primera_division",
+        "soccer_chile_primera_division", "soccer_colombia_primera_a",
+    }
+
+    # Tier ordering: lower = more relevant. Used for dedup (keep best tier).
+    _SPORT_TIER = {
+        "basketball_nba": 1, "americanfootball_nfl": 1, "baseball_mlb": 1,
+        "icehockey_nhl": 1, "soccer_epl": 1, "soccer_usa_mls": 1,
+        "basketball_wnba": 2, "basketball_ncaab": 2,
+        "americanfootball_ncaaf": 2, "soccer_germany_bundesliga": 2,
+        "soccer_spain_la_liga": 2, "soccer_italy_serie_a": 2,
+    }
+
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
-        .where(or_(*conditions))
+        .where(
+            or_(*conditions),
+            Sport.key.notin_(_EXCLUDED_SPORT_KEYS),
+        )
         .order_by(relevance, Team.name)
-        .limit(20)
+        .limit(50)  # Fetch extra for dedup
     )
     rows = result.all()
 
-    results = [
-        TeamSearchResult(
+    # Deduplicate: keep best sport_key per normalized team name
+    seen: dict[str, TeamSearchResult] = {}
+    seen_tiers: dict[str, int] = {}
+    for team, sport_key in rows:
+        norm = team.name.lower().strip()
+        tier = _SPORT_TIER.get(sport_key, 5)
+        if norm in seen and seen_tiers[norm] <= tier:
+            continue
+        seen[norm] = TeamSearchResult(
             id=team.id,
             name=team.name,
             location=team.location,
@@ -614,8 +642,8 @@ async def search_teams(
             logo_url=team.logo_url_small or team.logo_url,
             abbreviation=team.abbreviation,
         )
-        for team, sport_key in rows
-    ]
+        seen_tiers[norm] = tier
+    results = list(seen.values())[:20]
 
     # -------------------------------------------------------------------------
     # Events table fallback: find teams from events that lack Team records.
