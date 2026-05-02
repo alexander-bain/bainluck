@@ -7,6 +7,7 @@ struct DiscoverView: View {
     @State private var visibleCount = 20
     @State private var dismissed: Set<String> = Self.loadDismissed()
     @State private var scrollTarget: String? = nil
+    @State private var dailyGuesses: Int = Self.loadDailyGuesses()
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -91,6 +92,11 @@ struct DiscoverView: View {
                     .padding(.vertical, 8)
                 }
 
+                // Daily Challenge card
+                NativeDailyChallengeCard(guessesToday: dailyGuesses)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageItems = Array(filteredItems.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
@@ -101,9 +107,9 @@ struct DiscoverView: View {
                             let guessId = itemId(item)
                             Group {
                                 if isGuessSlot, item.type == "futures", let f = item.futures {
-                                    NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) })
+                                    NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) }, onGuessCompleted: { incrementDaily() })
                                 } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
-                                    NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) })
+                                    NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) }, onGuessCompleted: { incrementDaily() })
                                 } else if item.type == "event", let e = item.event {
                                     NativeEventDiscoverCard(event: e)
                                 } else if item.type == "futures", let f = item.futures {
@@ -162,6 +168,23 @@ struct DiscoverView: View {
     private static func saveDismissed(_ ids: Set<String>) {
         let recent = Array(ids.suffix(500))
         UserDefaults.standard.set(recent, forKey: "discover_dismissed")
+    }
+
+    private static func loadDailyGuesses() -> Int {
+        let today = Self.todayKey()
+        return UserDefaults.standard.integer(forKey: today)
+    }
+
+    private func incrementDaily() {
+        let today = Self.todayKey()
+        dailyGuesses += 1
+        UserDefaults.standard.set(dailyGuesses, forKey: today)
+    }
+
+    private static func todayKey() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        return "daily_guesses_\(fmt.string(from: Date()))"
     }
 }
 
@@ -411,11 +434,61 @@ private struct NativeFuturesDiscoverCard: View {
     }
 }
 
+// MARK: - Daily Challenge Card
+
+private let DAILY_GOAL = 5
+
+private struct NativeDailyChallengeCard: View {
+    let guessesToday: Int
+    private var completed: Bool { guessesToday >= DAILY_GOAL }
+    private var progress: Double { min(Double(guessesToday) / Double(DAILY_GOAL), 1.0) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(completed ? "🏆" : "🎯")
+                .font(.system(size: 28))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(completed ? "Daily Challenge Complete!" : "Today's Challenge")
+                    .font(.subheadline.weight(.bold))
+                Text(completed
+                     ? "Come back tomorrow for a new challenge"
+                     : "Make \(DAILY_GOAL) predictions today · \(guessesToday)/\(DAILY_GOAL)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if !completed {
+                ZStack {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 3)
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(Color.orange, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeInOut(duration: 0.5), value: progress)
+                    Text("\(guessesToday)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                }
+                .frame(width: 40, height: 40)
+            }
+        }
+        .padding()
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .stroke(completed ? Color.green.opacity(0.5) : Color.orange.opacity(0.3), lineWidth: 2))
+    }
+}
+
 // MARK: - Guess Card
 
 private struct NativeGuessCard: View {
     let data: FeedFuturesData
     var onNextQuestion: (() -> Void)? = nil
+    var onGuessCompleted: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil
@@ -443,6 +516,7 @@ private struct NativeGuessCard: View {
                 _ = try await APIClient.shared.submitPrediction(request)
                 let stats = try await APIClient.shared.fetchPredictionStats()
                 streak = stats.currentStreak
+                onGuessCompleted?()
             } catch { }
         }
     }
@@ -557,6 +631,7 @@ private struct NativeGuessCard: View {
 private struct NativeEventGuessCard: View {
     let event: FeedEventData
     var onNextQuestion: (() -> Void)? = nil
+    var onGuessCompleted: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil
@@ -583,6 +658,7 @@ private struct NativeEventGuessCard: View {
                 _ = try await APIClient.shared.submitPrediction(request)
                 let stats = try await APIClient.shared.fetchPredictionStats()
                 streak = stats.currentStreak
+                onGuessCompleted?()
             } catch { }
         }
     }
