@@ -301,14 +301,11 @@ Three staleness heuristics in `_score_futures()`: (1) all outcomes settled (<5% 
 **~~0q-2. Stale Masters golf market~~ ✅ SHIPPED (May 2)**
 Same fix — caught by the 7-day staleness + zero movement heuristic.
 
-**0q-3. No probability bars on Top Markets futures** — Just showing numbers without visual context. Event cards have probability bars, but futures cards in the feed are text-only.
-**Fix:** Add probability bars to `FeedCard` / `CombinedFeedCard` for futures items.
+**~~0q-3. No probability bars on Top Markets futures~~ ✅ SHIPPED (May 2)**
+Added fill bars to `FuturesFeedCard` top outcomes (leader in brand color, others muted). Matches existing `DiscoverCard` pattern.
 
-**0q-4. Truncated futures names** — "2026 Pro Football Draft: Number of RBs drafted O/U 16.5" is cut off.
-**Fix:** Show full market name or use smarter truncation (truncate the prefix, keep the distinguishing part).
-
-**Files:** `frontend/components/FeedCard.tsx` (display)
-**Parallel Safety:** Yellow
+**~~0q-4. Truncated futures names~~ ✅ SHIPPED (May 2)**
+Replaced `truncate` with `line-clamp-2` across `FeedCard`, `DiscoverCard` (compact row + hero leader), and `CombinedFeedCard`. Long names now wrap to 2 lines.
 
 ### 0r. Golf Data Quality Issues (April 25)
 
