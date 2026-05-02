@@ -952,6 +952,20 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 - Backfill script (`scripts/backfill_market_tiers.py`) to recompute tier for existing Polymarket markets
 - Cleaner search results header
 
+#### TEAM PAGES ✅ SHIPPED (May 1)
+
+Canonical team pages at `/team/[slug]` (e.g., `/team/boston-celtics`).
+
+**Backend**: `GET /api/teams/{identifier}` returns team info + upcoming/recent games + futures + championship path. Slug column on Team model with backfill migration. team_id/slug in typeahead and _format_team_data.
+
+**Frontend**: Hero (logo, colors, record, standings), championship path cards, game cards, season futures. Search typeahead links to team pages.
+
+**Phase B (TODO)**: Cross-link team names in EventCard, grids, feed cards via TeamNameLink component.
+
+**Files**: `routes/teams.py`, `utils/slugify.py`, `app/team/[slug]/page.tsx`, migration `f1a2b3c4d5e6`.
+
+---
+
 #### Phase 4: Fuzzy & Full-Text Search (1-2 weeks)
 
 - [ ] **P4a. `pg_trgm` extension** — Enable trigram similarity so "celitcs" still finds "Celtics". PostgreSQL native.
