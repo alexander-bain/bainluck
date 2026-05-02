@@ -445,7 +445,7 @@ async def _process_event_batch(
                 resolution_date = event.end_date
 
                 # Detect league and season for cross-source matching
-                league = detect_league(event.title)
+                league = detect_league(event.title, sport_category=llm_sport_category)
                 season = detect_season(event.title, league, resolution_date)
 
                 # For Olympics, use specific discipline as category.

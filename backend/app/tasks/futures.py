@@ -280,10 +280,12 @@ async def _poll_futures_odds():
 
                     now = datetime.now(timezone.utc)
                     yesterday = now - timedelta(hours=24)
+                    responded_ids: set[str] = set()
 
                     for rank, (outcome_name, odds_data) in enumerate(ranked_outcomes, 1):
                         prob = odds_data["probability"]
                         american = probability_to_american(prob)
+                        responded_ids.add(outcome_name)
 
                         # Check if outcome exists
                         existing = existing_outcomes.get(outcome_name)
@@ -349,6 +351,21 @@ async def _poll_futures_odds():
                             )
                             await session.execute(snapshot_stmt)
                             stats["snapshots_created"] += 1
+
+                    # Zero out stale outcomes absent from API response.
+                    # Only targets outcomes >24h old to avoid false positives
+                    # from transient API omissions.
+                    for ext_id, existing in existing_outcomes.items():
+                        if ext_id in responded_ids:
+                            continue
+                        if (existing.last_updated
+                                and existing.last_updated < yesterday
+                                and existing.current_probability
+                                and float(existing.current_probability) > 0):
+                            existing.current_probability = 0
+                            existing.last_updated = now
+                            stats.setdefault("stale_zeroed", 0)
+                            stats["stale_zeroed"] += 1
 
                 except Exception as e:
                     stats["errors"].append(f"{sport_key}: {str(e)}")

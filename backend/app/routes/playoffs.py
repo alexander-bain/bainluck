@@ -2453,6 +2453,8 @@ async def get_playoff_grid(
 
     # column_key -> list of (market, outcome) tuples
     column_data: dict[str, list[tuple]] = defaultdict(list)
+    _stale_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    _stale_skipped = 0
 
     for market in markets:
         col_key = _match_market_to_column(market, config)
@@ -2460,6 +2462,9 @@ async def get_playoff_grid(
             continue
 
         for outcome in market.outcomes:
+            if outcome.last_updated and outcome.last_updated < _stale_cutoff:
+                _stale_skipped += 1
+                continue
             if outcome.current_probability is not None:
                 prob = float(outcome.current_probability)
             elif (outcome.current_yes_bid is not None
@@ -2508,6 +2513,11 @@ async def get_playoff_grid(
 
             column_data[col_key].append((market, outcome))
 
+    if _stale_skipped:
+        logger.info(
+            "Playoff grid %s: skipped %d stale outcomes (>7 days old)",
+            league_slug, _stale_skipped,
+        )
     # Log column coverage + per-market breakdown for debugging
     for col in config.columns:
         entries = column_data.get(col.key, [])

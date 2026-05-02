@@ -347,7 +347,7 @@ async def _poll_kalshi_markets():
                         market_tier = 5
 
                     # Detect league and season for cross-source matching
-                    league = detect_league(market_name)
+                    league = detect_league(market_name, sport_category=sport_category)
                     season = detect_season(
                         market_name, league, expiration_time,
                     )

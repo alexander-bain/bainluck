@@ -909,7 +909,7 @@ LEAGUE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(daytona\s+500)\b", re.I), "NASCAR"),
     (re.compile(r"\b(indy\s+500)\b", re.I), "INDYCAR"),
     # Cricket
-    (re.compile(r"\bipl\b", re.I), "IPL"),
+    (re.compile(r"\b(ipl|indian\s+premier\s+league)\b", re.I), "IPL"),
     (re.compile(r"\b(cricket|t20|ashes|big\s+bash)\b", re.I), "ICC"),
     # Rugby
     (re.compile(r"\bnrl\b", re.I), "NRL"),
@@ -933,19 +933,42 @@ LEAGUE_PATTERNS: list[tuple[re.Pattern, str]] = [
 ]
 
 
+_SPORT_TO_VALID_LEAGUES: dict[str, set[str]] = {
+    "basketball": {"NBA", "WNBA", "NCAAB", "WNCAAB"},
+    "football": {"NFL", "NCAAF"},
+    "baseball": {"MLB"},
+    "hockey": {"NHL"},
+    "soccer": {"EPL", "UCL", "EUROPA", "LA_LIGA", "BUNDESLIGA", "SERIE_A",
+               "LIGUE_1", "MLS", "NWSL", "LIGA_MX", "FIFA_WC", "COPA_AMERICA"},
+    "golf": {"PGA", "LPGA", "LIV"},
+    "tennis": {"ATP", "WTA"},
+    "mma": {"UFC", "MMA"},
+    "boxing": {"BOXING"},
+    "cricket": {"IPL", "ICC"},
+    "rugby": {"NRL", "SIX_NATIONS", "RUGBY"},
+    "esports": {"LOL", "CSGO", "DOTA", "VALORANT"},
+    "aussierules": {"AFL"},
+}
+
+
 def detect_league(
     market_name: str,
     sport_key: Optional[str] = None,
+    sport_category: Optional[str] = None,
 ) -> Optional[str]:
     """
     Detect the league/competition for a futures market.
 
     For Odds API markets, trivially derives from sport_key.
     For Kalshi/Polymarket, parses from market name using regex patterns.
+    When sport_category is known, constrains matches to valid leagues
+    for that sport to prevent cross-sport contamination (e.g., esports
+    "Masters" matching golf's PGA pattern).
 
     Args:
         market_name: The name of the futures market
         sport_key: Optional sport key from The Odds API
+        sport_category: Optional sport category (e.g., "esports", "cricket")
 
     Returns:
         Standardized league abbreviation (e.g., "NBA", "NFL", "EPL"),
@@ -957,11 +980,14 @@ def detect_league(
             if sport_key.startswith(prefix):
                 return league
 
+    valid_leagues = _SPORT_TO_VALID_LEAGUES.get(sport_category) if sport_category else None
+
     # Phase 2: Try regex pattern matching on market name
     search_text = " ".join(filter(None, [sport_key, market_name]))
     for pattern, league in LEAGUE_PATTERNS:
         if pattern.search(search_text):
-            return league
+            if valid_leagues is None or league in valid_leagues:
+                return league
 
     return None
 
