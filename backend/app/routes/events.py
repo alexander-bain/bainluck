@@ -991,7 +991,7 @@ async def typeahead_search(
 
     # 1. Teams
     team_query = (
-        select(Team.name, Team.abbreviation, Team.sport_id, Team.logo_url_small)
+        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small)
         .where(team_filter)
         .order_by(Team.name)
         .limit(3)
@@ -1007,6 +1007,8 @@ async def typeahead_search(
                 "text": row.name,
                 "abbreviation": row.abbreviation,
                 "logo": row.logo_url_small,
+                "team_id": row.id,
+                "team_slug": row.slug,
             })
 
     # 2. Events (live/upcoming)
@@ -4961,6 +4963,8 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
 def _format_team_data(team: Team) -> dict:
     """Format team data for API response."""
     data = {
+        "team_id": team.id,
+        "slug": getattr(team, "slug", None),
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "logo_small": team.logo_url_small,

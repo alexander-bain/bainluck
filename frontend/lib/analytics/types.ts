@@ -55,7 +55,8 @@ export interface PageViewParams {
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'wrestlemania'
     | 'weather'
-    | 'economics';
+    | 'economics'
+    | 'team';
   page_path: string;
   page_title: string;
   /** For event_detail pages */

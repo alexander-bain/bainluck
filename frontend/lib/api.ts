@@ -237,6 +237,8 @@ export interface TypeaheadSuggestion {
   // Team fields
   abbreviation?: string;
   logo?: string;
+  team_id?: number;
+  team_slug?: string;
   // Event fields
   event_id?: number;
   status?: string;
@@ -257,6 +259,62 @@ export async function fetchTypeahead(q: string): Promise<TypeaheadResponse> {
   return apiFetch<TypeaheadResponse>(
     `/api/events/typeahead?q=${encodeURIComponent(q)}`
   );
+}
+
+// Team page
+export interface TeamPageTeam {
+  id: number;
+  slug: string;
+  name: string;
+  abbreviation: string | null;
+  sport_key: string | null;
+  sport_name: string | null;
+  location: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  logo_small: string | null;
+  logo_large: string | null;
+  record: string | null;
+  standings: Record<string, unknown> | null;
+  season_stats: Record<string, unknown> | null;
+  roster: Array<{ name: string; headshot?: string; espn_id?: string }> | null;
+}
+
+export interface TeamFutureItem {
+  outcome_id: number;
+  outcome_name: string;
+  market_id: number;
+  market_name: string;
+  market_tier: number | null;
+  category: string | null;
+  source: string;
+  probability: number | null;
+  probability_change_24h: number | null;
+  rank: number | null;
+  total_outcomes: number | null;
+  resolution_date: string | null;
+}
+
+export interface ChampionshipPathEntry {
+  tier: number;
+  label: string;
+  market_name: string;
+  market_id: number;
+  probability: number | null;
+  rank: number | null;
+  movement: number | null;
+}
+
+export interface TeamPageResponse {
+  team: TeamPageTeam;
+  upcoming_events: Event[];
+  recent_events: Event[];
+  futures: TeamFutureItem[];
+  championship_path: ChampionshipPathEntry[];
+}
+
+export async function fetchTeamPage(identifier: string): Promise<TeamPageResponse> {
+  return apiFetch<TeamPageResponse>(`/api/teams/${encodeURIComponent(identifier)}`);
 }
 
 /**

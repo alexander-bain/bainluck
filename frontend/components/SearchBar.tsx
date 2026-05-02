@@ -97,12 +97,17 @@ export default function SearchBar({
       from_page: 'search',
       to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
         : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`
+        : suggestion.type === 'team' && suggestion.team_slug ? `/team/${suggestion.team_slug}`
         : `/search?q=${suggestion.text}`,
     });
 
     switch (suggestion.type) {
       case "team":
-        router.push(`/search?q=${encodeURIComponent(suggestion.text)}`);
+        if (suggestion.team_slug) {
+          router.push(`/team/${suggestion.team_slug}`);
+        } else {
+          router.push(`/search?q=${encodeURIComponent(suggestion.text)}`);
+        }
         break;
       case "event":
         if (suggestion.event_id) {
