@@ -381,7 +381,6 @@ export default function EventPage({ params }: EventPageProps) {
   // so they have IDENTICAL x-axes, tick labels, and period markers.
   const sharedChartDomain = useMemo(() => {
     if (!historyData) return null;
-    // Collect all timestamps across all data sources
     const timestamps: number[] = [];
     for (const pt of historyData.history ?? []) {
       const t = new Date(pt.timestamp).getTime();
@@ -408,22 +407,33 @@ export default function EventPage({ params }: EventPageProps) {
     const allStart = new Date(Math.min(...timestamps));
     let end = new Date(Math.max(...timestamps));
 
-    // For completed games, clip chart at game end — not at last data point
-    // (polling continues 30-45min after final whistle, producing stale data).
-    // Best signal: last ESPN data point (ESPN stops when the game ends).
-    if (event?.status === "completed" || event?.status === "closed") {
-      const espnTimestamps = (historyData.espn_history ?? [])
-        .map((pt) => new Date(pt.timestamp).getTime())
-        .filter((t) => !isNaN(t));
-      if (espnTimestamps.length > 0) {
-        const lastEspn = new Date(Math.max(...espnTimestamps));
-        lastEspn.setMinutes(lastEspn.getMinutes() + 5);
-        if (lastEspn.getTime() < end.getTime()) {
-          end = lastEspn;
+    // For completed games, derive end time ONLY from game-end sources.
+    // Sportsbooks, Kalshi, and Polymarket continue polling 30-45 min after
+    // the final whistle, so using their timestamps extends the chart too far.
+    const isCompleted = event?.status === "completed" || event?.status === "closed";
+    if (isCompleted) {
+      const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb"]);
+      const gameEndTs: number[] = [];
+
+      for (const pt of historyData.espn_history ?? []) {
+        const t = new Date(pt.timestamp).getTime();
+        if (!isNaN(t)) gameEndTs.push(t);
+      }
+      for (const [source, pts] of Object.entries(historyData.win_prob_history ?? {})) {
+        if (!GAME_END_SOURCES.has(source)) continue;
+        for (const pt of pts) {
+          const t = new Date(pt.timestamp).getTime();
+          if (!isNaN(t)) gameEndTs.push(t);
         }
+      }
+
+      if (gameEndTs.length > 0) {
+        const lastGameData = new Date(Math.max(...gameEndTs));
+        lastGameData.setMinutes(lastGameData.getMinutes() + 2);
+        end = lastGameData;
       } else if (historyData.completed_at) {
         const ca = new Date(historyData.completed_at);
-        if (!isNaN(ca.getTime()) && ca.getTime() < end.getTime()) {
+        if (!isNaN(ca.getTime())) {
           end = ca;
         }
       }

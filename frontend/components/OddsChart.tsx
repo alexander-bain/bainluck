@@ -238,19 +238,14 @@ export default function OddsChart({
       candidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
     }
 
-    // Game-end data sources (not prediction markets — they update late)
-    const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb", "betting"]);
+    // Game-end data sources only — sportsbooks/prediction markets poll late
+    const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb"]);
     if (winProbHistory) {
       for (const [source, points] of Object.entries(winProbHistory)) {
         if (points.length > 0 && GAME_END_SOURCES.has(source)) {
           candidates.push(parseISO(points[points.length - 1].timestamp));
         }
       }
-    }
-
-    // Odds history as additional signal
-    if (history && history.length > 0) {
-      candidates.push(parseISO(history[history.length - 1].timestamp));
     }
 
     if (candidates.length > 0) {

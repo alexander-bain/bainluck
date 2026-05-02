@@ -251,8 +251,8 @@ _PROP_OUTCOME_RE = re.compile(
 # These include field/participation markets, placement, and prop bets.
 _NON_WINNER_MARKET_RE = re.compile(
     r"(?:"
-    r"\bcompete\s+in\b|"         # "Golfers to compete in The Masters"
-    r"\bplay\s+in\b|"            # "Will Tiger Woods play in..."
+    r"\bcompete\s+(?:in|at)\b|"  # "Golfers to compete in/at The Masters"
+    r"\bplay\s+(?:in|at)\b|"     # "Will Tiger Woods play in/at..."
     r"\bparticipat|"             # "participate in"
     r"\binvitational\b|"         # "Augusta National Invitational" (Kalshi participation market)
     r"\bmake\s+(?:the\s+)?cut\b|" # "Make Cut" / "Make the Cut" placement markets
@@ -266,6 +266,9 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bhole[- ]in[- ]one\b|"    # Hole-in-one props
     r"\bplayoff\b|"              # "Will there be a playoff"
     r"\bwill\b.*\bplay\b|"       # "Will X play in..."
+    r"\bwill\b.*\bcompete\b|"    # "Will X compete in/at..."
+    r"\btee\s+(?:it\s+)?up\b|"   # "Will X tee up at..."
+    r"\bin\s+the\s+field\b|"     # "Will X be in the field?"
     r"\bcaptain\b|"              # "U.S. Team Captain at 2027 Ryder Cup"
     # Prop market types (Kalshi creates separate events for these)
     r"\bnationality\b|"          # "Nationality of Winner"
@@ -977,6 +980,18 @@ async def get_golf(
             # Metadata (market_ids, sources, timing) is still tracked for all.
             if market.id in _dedup_candidates and market.id != _source_best.get(source):
                 continue
+
+            # Guard: per-golfer binary markets ("Tiger Woods: Open Winner?"
+            # with Yes/No outcomes) look like winner markets but are individual
+            # predictions. Route to props — they're not multi-outcome fields.
+            if len(market.outcomes) <= 2:
+                outcome_names = {o.name.strip().lower() for o in market.outcomes if o.name}
+                if outcome_names & {"yes", "no"}:
+                    logger.info(
+                        "Golf: skipping binary market '%s' (source=%s, outcomes=%s)",
+                        market.name, source, outcome_names,
+                    )
+                    continue
 
             # Guard: participation/field markets have outcome probabilities
             # that sum to far more than 100% (each golfer has 80-95% chance of
