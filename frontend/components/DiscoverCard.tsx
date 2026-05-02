@@ -563,18 +563,33 @@ function generateThreshold(actualProb: number): number {
 }
 
 export function GuessCard({ item }: { item: FeedItem }) {
-  const data = item.data as FeedFuturesData;
-  const leader = data.top_outcomes?.[0];
-  const actualProb = leader?.probability ?? 0;
+  const isEvent = item.type === "event";
+  const futuresData = isEvent ? null : (item.data as FeedFuturesData);
+  const eventData = isEvent ? (item.data as FeedEventData) : null;
+
+  const leader = futuresData?.top_outcomes?.[0];
+  const actualProb = isEvent
+    ? (eventData!.current_odds?.home_probability ?? 0)
+    : (leader?.probability ?? 0);
+  const subjectName = isEvent
+    ? `${eventData!.home_team} to win`
+    : (leader?.name ?? "");
+  const cardTitle = isEvent
+    ? `${eventData!.away_team} vs ${eventData!.home_team}`
+    : (futuresData!.name);
+  const itemId = isEvent ? eventData!.id : futuresData!.id;
+  const detailLink = isEvent ? `/events/${eventData!.id}` : `/futures/${futuresData!.id}`;
+  const sportCat = isEvent ? (eventData!.sport ?? "") : (futuresData!.llm_sport_category ?? "");
+
   const [guess, setGuess] = useState<"higher" | "lower" | null>(null);
   const [threshold] = useState(() => generateThreshold(actualProb));
   const [streak, setStreak] = useState<number | null>(null);
   const actualPct = Math.round(actualProb * 100);
   const correct = guess === "higher" ? actualPct > threshold : actualPct < threshold;
 
-  const catStyle = getCat(data.llm_sport_category);
-  const category = data.sport_name || data.llm_sport_category || "Markets";
-  const catGradient = CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)";
+  const catStyle = getCat(sportCat);
+  const category = (isEvent ? eventData!.sport_name : futuresData!.sport_name) || sportCat || "Markets";
+  const catGradient = CATEGORY_GRADIENTS[sportCat.toLowerCase()] || "linear-gradient(135deg, #0f172a, #1e293b)";
 
   const submitGuess = async (g: "higher" | "lower") => {
     setGuess(g);
@@ -583,7 +598,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
       await fetch("/api/predictions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-session-id": getSessionId() },
-        body: JSON.stringify({ market_id: data.id, guess: g, threshold, actual_probability: actualProb, correct: isCorrect }),
+        body: JSON.stringify({ market_id: itemId, guess: g, threshold, actual_probability: actualProb, correct: isCorrect }),
       });
       const statsRes = await fetch("/api/predictions/stats", { headers: { "x-session-id": getSessionId() } });
       if (statsRes.ok) {
@@ -593,10 +608,8 @@ export function GuessCard({ item }: { item: FeedItem }) {
     } catch {}
   };
 
-  const shareUrl = `https://api.bainluck.com/api/og/prediction?market_id=${data.id}&guess=${guess}&correct=${correct}&threshold=${threshold}&actual=${actualPct}`;
-
   const handleShare = async () => {
-    const text = `${correct ? "I got it right!" : "So close!"} ${data.name} — actual odds: ${actualPct}%. Can you beat me?`;
+    const text = `${correct ? "I got it right!" : "So close!"} ${cardTitle} — actual odds: ${actualPct}%. Can you beat me?`;
     if (navigator.share) {
       try { await navigator.share({ title: text, url: "https://bainluck.com/discover" }); } catch {}
     } else {
@@ -604,10 +617,11 @@ export function GuessCard({ item }: { item: FeedItem }) {
     }
   };
 
-  if (!leader) return null;
+  if (!isEvent && !leader) return null;
+  if (isEvent && eventData!.current_odds?.home_probability == null) return null;
 
   return (
-    <div data-guess-card data-market-id={data.id} className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
+    <div data-guess-card data-market-id={itemId} className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
         <span className="text-white text-sm">🎯</span>
         <span className="text-white/90 text-xs font-bold uppercase tracking-wider">What are the odds?</span>
@@ -617,12 +631,12 @@ export function GuessCard({ item }: { item: FeedItem }) {
       </div>
 
       <div className="p-4">
-        <h3 className="font-bold text-lg leading-tight mb-3">{data.name}</h3>
+        <h3 className="font-bold text-lg leading-tight mb-3">{cardTitle}</h3>
 
         {!guess ? (
           <>
             <p className="text-sm text-text-secondary mb-4">
-              {leader.name} — are the odds <span className="font-bold">higher</span> or <span className="font-bold">lower</span> than <span className="text-lg font-black">{threshold}%</span>?
+              {subjectName} — are the odds <span className="font-bold">higher</span> or <span className="font-bold">lower</span> than <span className="text-lg font-black">{threshold}%</span>?
             </p>
             <div className="flex gap-3">
               <button onClick={() => submitGuess("higher")} className="flex-1 py-3 rounded-xl bg-green-500/10 text-green-700 font-bold text-sm hover:bg-green-500/20 transition-colors border border-green-500/20">
@@ -641,7 +655,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
 
             <div className="mb-3">
               <div className="text-4xl font-black tabular-nums">{actualPct}%</div>
-              <div className="text-sm text-text-secondary mt-1">{leader.name}</div>
+              <div className="text-sm text-text-secondary mt-1">{subjectName}</div>
             </div>
 
             {streak != null && streak > 1 && (
@@ -653,8 +667,8 @@ export function GuessCard({ item }: { item: FeedItem }) {
             </div>
 
             <div className="flex items-center justify-center gap-3 mb-3">
-              <Link href={`/futures/${data.id}`} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
-                See full market →
+              <Link href={detailLink} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                See details →
               </Link>
               <button onClick={handleShare} className="text-xs text-text-muted hover:text-text-secondary font-medium flex items-center gap-1">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -667,7 +681,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
             <button
               onClick={() => {
                 const allGuessCards = document.querySelectorAll("[data-guess-card]");
-                const currentCard = document.querySelector(`[data-guess-card][data-market-id="${data.id}"]`);
+                const currentCard = document.querySelector(`[data-guess-card][data-market-id="${itemId}"]`);
                 let nextCard: Element | null = null;
                 let foundCurrent = false;
                 for (const card of allGuessCards) {

@@ -252,7 +252,7 @@ export default function DiscoverPage() {
   const { data, isLoading } = useSWR(
     "discover-feed",
     () => fetchFeed({ limit: 200, event_pct: 0.15 }),
-    { refreshInterval: 60000 }
+    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
   const handleDismiss = useCallback((itemId: string) => {
@@ -389,7 +389,7 @@ export default function DiscoverPage() {
         {/* Daily Challenge — expands to show a guess card inline */}
         {!isLoading && processedItems.length > 0 && (() => {
           const guessCandidate = processedItems.find(
-            (gi) => gi.type === "single" && gi.item?.type === "futures"
+            (gi) => gi.type === "single" && (gi.item?.type === "futures" || gi.item?.type === "event")
           );
           return (
             <div className="mb-4">
@@ -410,7 +410,7 @@ export default function DiscoverPage() {
         <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
-            const isGuessSlot = gi.type === "single" && (idx + 1) % 3 === 0 && gi.item!.type === "futures";
+            const isGuessSlot = gi.type === "single" && (idx + 1) % 2 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
 
             return (
               <div key={key} className="break-inside-avoid mb-4">
