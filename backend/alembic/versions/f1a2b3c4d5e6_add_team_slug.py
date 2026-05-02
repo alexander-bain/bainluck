@@ -38,6 +38,8 @@ def upgrade():
             ).fetchone()
             suffix = sport_row[0].split("_")[-1] if sport_row else str(team_id)
             slug = f"{slug}-{suffix}"
+        if slug in seen:
+            slug = f"{slug}-{team_id}"
         seen[slug] = team_id
         conn.execute(
             sa.text("UPDATE teams SET slug = :slug WHERE id = :id"),
