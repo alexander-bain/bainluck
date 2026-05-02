@@ -463,8 +463,8 @@ struct EventDetailView: View {
                 // Giant probabilities centered
                 VStack(spacing: 4) {
                     if isFinished {
-                        let awayProb = event.openingOdds?.awayProbability ?? event.currentOdds?.awayProbability
-                        let homeProb = event.openingOdds?.homeProbability ?? event.currentOdds?.homeProbability
+                        let awayProb = event.openingOdds?.awayProbability
+                        let homeProb = event.openingOdds?.homeProbability
                         if let ap = awayProb, let hp = homeProb {
                             HStack(spacing: 8) {
                                 Text(formatProbability(ap))
@@ -477,8 +477,13 @@ struct EventDetailView: View {
                                     .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
                             }
-                            Text("Pre-game Odds")
+                            // Show how odds shifted
+                            Text("Opened \(formatProbability(ap)) – \(formatProbability(hp))")
                                 .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Final")
+                                .font(.title3.weight(.bold))
                                 .foregroundStyle(.secondary)
                         }
                     } else if let odds = event.currentOdds,

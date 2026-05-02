@@ -335,24 +335,28 @@ final class DiscoverViewModel: ObservableObject {
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
 
+    private var statusText: String {
+        if event.status == "live" { return event.espn?.period ?? "LIVE" }
+        if event.status == "completed" || event.status == "closed" { return "Final" }
+        return "vs"
+    }
+
     var body: some View {
         NavigationLink(value: Route.eventDetail(id: event.id)) {
-            VStack(spacing: 0) {
-                // Hero
-                HStack(spacing: 16) {
-                    teamColumn(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
-                              color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"),
-                              score: event.awayScore)
-                    VStack {
-                        Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : event.status == "completed" || event.status == "closed" ? "Final" : "vs")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    teamColumn(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
-                              color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"),
-                              score: event.homeScore)
+            VStack(spacing: 8) {
+                // Compact matchup row
+                HStack(spacing: 10) {
+                    teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
+                             color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"),
+                             score: event.awayScore)
+                    Text(statusText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36)
+                    teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
+                             color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"),
+                             score: event.homeScore)
                 }
-                .padding()
 
                 // Probability bar
                 if let hp = event.currentOdds?.homeProbability, let ap = event.currentOdds?.awayProbability {
@@ -368,36 +372,38 @@ private struct NativeEventDiscoverCard: View {
                             }
                             .clipShape(Capsule())
                         }
-                        .frame(height: 6)
+                        .frame(height: 5)
                         Text(formatProbability(hp))
                             .font(.caption2.weight(.bold))
                     }
-                    .padding(.horizontal)
-                    .padding(.bottom, 12)
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack, lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
 
-    private func teamColumn(name: String, logo: String?, color: Color, score: Int?) -> some View {
-        VStack(spacing: 4) {
+    private func teamBadge(name: String, logo: String?, color: Color, score: Int?) -> some View {
+        HStack(spacing: 6) {
             if let logo, let url = URL(string: logo) {
                 AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
-                    .frame(width: 40, height: 40)
+                    .frame(width: 28, height: 28)
             } else {
-                RoundedRectangle(cornerRadius: 8).fill(color)
-                    .frame(width: 40, height: 40)
-                    .overlay(Text(String(name.split(separator: " ").last ?? "")).font(.system(size: 10, weight: .bold)).foregroundStyle(.white))
+                RoundedRectangle(cornerRadius: 6).fill(color)
+                    .frame(width: 28, height: 28)
+                    .overlay(Text(String(name.split(separator: " ").last ?? "")).font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
             }
-            Text(name.split(separator: " ").last.map(String.init) ?? name)
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-            if let s = score {
-                Text("\(s)").font(.title3.weight(.black).monospacedDigit())
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name.split(separator: " ").last.map(String.init) ?? name)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                if let s = score {
+                    Text("\(s)").font(.subheadline.weight(.black).monospacedDigit())
+                }
             }
         }
         .frame(maxWidth: .infinity)
