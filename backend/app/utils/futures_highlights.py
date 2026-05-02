@@ -397,7 +397,12 @@ def compute_futures_highlight(
         if resolution_date.tzinfo is None:
             resolution_date = resolution_date.replace(tzinfo=timezone.utc)
         days_until = (resolution_date - now).days
-        if 0 < days_until <= 7:
+        if days_until <= 1:
+            # Micro-bets (resolves today/tomorrow) — daily temperature, oil price,
+            # stock close. High volume but not Discover-worthy content.
+            result.score -= 20
+            result.reasons.append("micro_bet")
+        elif 0 < days_until <= 7:
             flags.is_resolving_soon = True
             result.score += FUTURES_WEIGHTS["resolving_soon_7d"]
             result.reasons.append("resolving_soon_7d")
