@@ -856,7 +856,7 @@ celery_app.conf.beat_schedule = {
     # },
     "enrich-market-hooks": {
         "task": "app.tasks.enrich_market_hooks",
-        "schedule": crontab(minute=40, hour="*/6"),  # 4x daily — generate LLM hooks for unhoooked markets
+        "schedule": crontab(minute=40, hour="*/3"),  # 8x daily — generate LLM hooks for unenriched markets
         "kwargs": {"limit": 100},
     },
     "enrich-market-images": {

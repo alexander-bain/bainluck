@@ -123,7 +123,10 @@ async def enrich_market_hooks(limit: int = 50):
                 FuturesMarket.hook_description.is_(None),
                 FuturesMarket.status == "open",
             )
-            .order_by(FuturesMarket.volume_24h.desc().nullslast())
+            .order_by(
+                FuturesMarket.market_tier.asc().nullslast(),
+                FuturesMarket.resolution_date.asc().nullslast(),
+            )
             .limit(limit)
         )
         markets = result.scalars().all()
