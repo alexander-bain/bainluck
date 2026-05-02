@@ -13,7 +13,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, or_, and_, func, delete
+from sqlalchemy import select, or_, and_, func, delete, case
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
@@ -554,12 +554,25 @@ async def _match_prediction_markets(limit: int = 500):
 
         all_linked_rows = []
         if not _skip_phase15:
+            # Prioritize markets linked to completed/closed events — these are
+            # most likely to need re-linking to the next scheduled game between
+            # the same teams (e.g., Polymarket "Celtics vs 76ers" linked to
+            # last night's game instead of tomorrow's).
             all_linked_result = await session.execute(
                 select(FuturesMarket, Event)
                 .join(Event, FuturesMarket.event_id == Event.id)
                 .where(
                     FuturesMarket.source.in_(["kalshi", "polymarket"]),
                     FuturesMarket.event_id.isnot(None),
+                    FuturesMarket.status == "open",
+                )
+                .order_by(
+                    case(
+                        (Event.status.in_(["completed", "closed"]), 0),
+                        (Event.external_id.is_(None), 1),
+                        else_=2,
+                    ),
+                    FuturesMarket.updated_at.desc(),
                 )
                 .limit(1000)
             )
@@ -1013,6 +1026,10 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         # Both teams verified matching (gate above ensures this when team_b exists)
         if matchup.team_b:
             score += 10
+
+        # Prefer Odds API events (external_id set) over auto-created ones
+        if event.external_id:
+            score += 8
 
         # Sport match bonus: prefer events in the same sport as the market.
         # Uses ticker-based sport prefix (most specific, Kalshi only) first,
