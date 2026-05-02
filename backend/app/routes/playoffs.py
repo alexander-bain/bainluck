@@ -1451,41 +1451,27 @@ async def _build_golf_tour_grid(
             "kxpgaholeinone", "kxpgawinningscore", "kxpgacutline",
             "kxpgawinmargin", "kxlpgatour",
         )
-        # Tournament date window for Kalshi ticker matching
-        _tourney_window_start = None
-        _tourney_window_end = None
-        if current_event.start_date:
-            try:
-                _ts = datetime.strptime(current_event.start_date, "%Y-%m-%d")
-                _tourney_window_start = _ts - timedelta(days=1)
-                _tourney_window_end = _ts + timedelta(days=10)
-            except ValueError:
-                pass
+        _freshness_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
         def _market_matches_tournament(market: object) -> bool:
             """Check if a market belongs to the current tournament.
 
             Two paths:
-            1. Kalshi golf ticker prefix + resolution date within tournament window
-            2. Tournament name tokens in market name
+            1. Tournament name tokens in market name (strict: all tokens)
+            2. Kalshi golf ticker prefix + recently updated (not stale from
+               a prior tournament week)
             """
+            name_lower = (market.name or "").lower()
+            if tourney_tokens and all(tok in name_lower for tok in tourney_tokens):
+                return True
             eid = (market.external_id or "").lower()
             if eid and any(eid.startswith(p) for p in _KALSHI_GOLF_PREFIXES):
-                if market.resolution_date and _tourney_window_start and _tourney_window_end:
-                    res_dt = market.resolution_date
-                    if hasattr(res_dt, 'date'):
-                        res_dt = res_dt.replace(tzinfo=None)
-                    elif isinstance(res_dt, str):
-                        try:
-                            res_dt = datetime.strptime(res_dt[:10], "%Y-%m-%d")
-                        except ValueError:
-                            return False
-                    return _tourney_window_start <= res_dt <= _tourney_window_end
-                return True
+                if market.updated_at and market.updated_at > _freshness_cutoff:
+                    return True
+                return False
             if not tourney_tokens:
                 return True
-            name_lower = (market.name or "").lower()
-            return all(tok in name_lower for tok in tourney_tokens)
+            return False
 
         db_markets_name_matched = [
             m for m in all_db_markets
