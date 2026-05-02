@@ -1,7 +1,7 @@
 """Add slug to teams
 
 Revision ID: f1a2b3c4d5e6
-Revises: ba4924b27a0c
+Revises: add_user_seen_mkts
 Create Date: 2026-05-01
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 import re
 
 revision = "f1a2b3c4d5e6"
-down_revision = "ba4924b27a0c"
+down_revision = "add_user_seen_mkts"
 branch_labels = None
 depends_on = None
 
