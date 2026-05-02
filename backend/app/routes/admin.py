@@ -15,6 +15,7 @@ from sqlalchemy import text, func, delete, and_
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
 from app.services import get_db
 from app.utils import probability_to_american
+from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
 router = APIRouter()
 
@@ -3498,12 +3499,23 @@ async def prediction_market_link_rate(
         "lacrosse", "esports", "aussierules",
     ]
 
-    from sqlalchemy import case
+    # Build game-level ticker filter for Kalshi.
+    # Only count markets that the matching task actually tries to link:
+    # game ticker prefixes (Pass 1) OR already linked via event_id (Pass 2).
+    _kalshi_ticker_conditions = [
+        func.lower(FuturesMarket.external_id).like(f"{p}%")
+        for p in KALSHI_GAME_TICKER_PREFIXES
+    ]
+    _kalshi_game_filter = or_(
+        or_(*_kalshi_ticker_conditions),
+        FuturesMarket.event_id.isnot(None),
+    )
 
-    # Kalshi: all sports-category markets (excluding politics/crypto/weather)
+    # Kalshi: game-level markets only (ticker match OR already linked)
     kalshi_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),
+            FuturesMarket.llm_league.label("league"),
             func.count().label("total"),
             func.count(FuturesMarket.event_id).label("linked"),
             func.count().filter(FuturesMarket.status == "open").label("open_total"),
@@ -3513,8 +3525,9 @@ async def prediction_market_link_rate(
             FuturesMarket.source == "kalshi",
             FuturesMarket.llm_sport_category.isnot(None),
             FuturesMarket.llm_sport_category.in_(_SPORT_CATEGORIES),
+            _kalshi_game_filter,
         )
-        .group_by(FuturesMarket.llm_sport_category)
+        .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
         .order_by(func.count().desc())
     )
     kalshi_by_sport = []
@@ -3522,6 +3535,7 @@ async def prediction_market_link_rate(
     for row in kalshi_result.all():
         sport_data = {
             "sport": row.sport,
+            "league": row.league,
             "total": row.total,
             "linked": row.linked,
             "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
@@ -3537,6 +3551,7 @@ async def prediction_market_link_rate(
     poly_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),
+            FuturesMarket.llm_league.label("league"),
             func.count().label("total"),
             func.count(FuturesMarket.event_id).label("linked"),
             func.count().filter(FuturesMarket.status == "open").label("open_total"),
@@ -3552,7 +3567,7 @@ async def prediction_market_link_rate(
                 FuturesMarket.name.ilike("% at %"),
             ),
         )
-        .group_by(FuturesMarket.llm_sport_category)
+        .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
         .order_by(func.count().desc())
     )
     poly_by_sport = []
@@ -3560,6 +3575,7 @@ async def prediction_market_link_rate(
     for row in poly_result.all():
         sport_data = {
             "sport": row.sport,
+            "league": row.league,
             "total": row.total,
             "linked": row.linked,
             "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
@@ -3579,6 +3595,7 @@ async def prediction_market_link_rate(
             "total_game_markets": grand_total,
             "linked": grand_linked,
             "link_rate_pct": round(grand_linked / grand_total * 100, 1) if grand_total else 0,
+            "denominator_note": "Kalshi: game ticker prefixes + already-linked. Polymarket: matchup name patterns.",
         },
         "kalshi": {
             "totals": {

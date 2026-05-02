@@ -1058,38 +1058,29 @@ async def _get_team_metadata(
 # Golf Kalshi noise filter
 # ---------------------------------------------------------------------------
 
-# Placement columns where Kalshi's binary market prices are often noise.
+# Placement columns where Kalshi's binary market prices can be noise.
 _GOLF_PLACEMENT_COLS = {"make_cut", "top_20", "top_10", "top_5"}
+
+# Volume threshold: markets with zero trading activity are noise regardless
+# of what probability they show. High or low probabilities are real signals.
+_MIN_VOLUME = 10
 
 
 def _is_kalshi_noise(source: dict) -> bool:
-    """Detect if a Kalshi source entry is likely noise (illiquid market).
-
-    Uses both price floor/ceiling detection AND volume — a Kalshi entry
-    is noise if its price is at the floor/ceiling (≤0.02 or ≥0.98)
-    OR if it has very low volume (<100 contracts, indicating no real trading).
-    """
+    """Detect if a Kalshi source entry is noise — no trading activity."""
     if source["source"] != "kalshi":
         return False
-    prob = source["probability"]
-    # Price floor/ceiling detection (original heuristic)
-    if prob <= 0.02 or prob >= 0.98:
-        return True
-    # Volume-based detection (new): very low volume = likely noise
     vol = source.get("volume_24h")
-    if vol is not None and vol < 100:
-        # Low volume AND probability in the noise band (0.45-0.55)
-        if 0.45 <= prob <= 0.55:
-            return True
+    if vol is not None and vol < _MIN_VOLUME:
+        return True
     return False
 
 
 def _filter_kalshi_placement_noise(cells: dict) -> None:
     """Filter out Kalshi noise from golf placement columns.
 
-    Uses price floor/ceiling detection + volume-based noise detection.
-    For placement columns: remove noisy Kalshi entries.
-    For the "win" column: keep all values (low win odds can be legitimate).
+    Removes Kalshi entries with no trading volume. High/low probabilities
+    are kept — a 98% make-cut or 2% top-5 is real data, not noise.
     """
     for col_key in _GOLF_PLACEMENT_COLS:
         cell = cells.get(col_key)
@@ -1097,12 +1088,10 @@ def _filter_kalshi_placement_noise(cells: dict) -> None:
             continue
         sources = cell.get("sources", [])
         if len(sources) <= 1:
-            # Only one source — if it's Kalshi noise, remove the cell entirely.
             if sources and _is_kalshi_noise(sources[0]):
                 del cells[col_key]
             continue
 
-        # Multiple sources: filter out noisy Kalshi entries
         filtered = [s for s in sources if not _is_kalshi_noise(s)]
         if filtered and len(filtered) < len(sources):
             cell["sources"] = filtered
@@ -1498,24 +1487,34 @@ async def _build_golf_tour_grid(
                     continue
             db_markets.append(m)
 
-        if len(db_markets) < len(all_db_markets):
-            logger.info(
-                "Golf grid [%s]: filtered %d → %d DB markets "
-                "(tournament='%s', tokens=%s, garbage_binary=%d)",
-                tour, len(all_db_markets), len(db_markets),
-                tournament_name, tourney_tokens, garbage_count,
-            )
+        logger.info(
+            "Golf grid [%s]: DB markets: %d raw → %d name-matched → %d after garbage filter "
+            "(tournament='%s', tokens=%s, garbage_binary=%d)",
+            tour, len(all_db_markets), len(db_markets_name_matched),
+            len(db_markets), tournament_name, tourney_tokens, garbage_count,
+        )
+        _source_counts = {}
+        for _m in db_markets:
+            _source_counts[_m.source] = _source_counts.get(_m.source, 0) + 1
+        logger.info(
+            "Golf grid [%s]: DB markets by source: %s",
+            tour, _source_counts,
+        )
 
         # 4. Match DB market outcomes to DataGolf golfers
         # column_key → norm_name → list of {source, probability, ...}
         grid_raw: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
         all_outcome_ids: list[int] = []
         outcome_id_to_name: dict[int, str] = {}
+        _diag_col_matched = 0
+        _diag_golfer_matched = 0
+        _diag_by_source_col: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
         for market in db_markets:
             col_key = _match_market_to_column(market, config)
             if not col_key:
                 continue
+            _diag_col_matched += 1
 
             for outcome in market.outcomes:
                 if outcome.current_probability is not None:
@@ -1550,6 +1549,8 @@ async def _build_golf_tour_grid(
                 if not matched_norm:
                     continue  # Not in the DataGolf field → skip
 
+                _diag_golfer_matched += 1
+                _diag_by_source_col[market.source][col_key] += 1
                 grid_raw[col_key][matched_norm].append({
                     "source": market.source,
                     "probability": prob,
@@ -1561,6 +1562,13 @@ async def _build_golf_tour_grid(
                 })
                 all_outcome_ids.append(outcome.id)
                 outcome_id_to_name[outcome.id] = oname
+
+        logger.info(
+            "Golf grid [%s]: outcome matching: %d markets matched columns, "
+            "%d outcomes matched golfers. By source×column: %s",
+            tour, _diag_col_matched, _diag_golfer_matched,
+            dict(_diag_by_source_col),
+        )
 
         # 5. Add DataGolf model probabilities
         # The in-play endpoint returns LIVE updated probabilities during
