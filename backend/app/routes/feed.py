@@ -910,21 +910,35 @@ async def _score_futures(
             leader_name = leader.name
             leader_prob = float(leader.current_probability) if leader.current_probability else None
 
-        # Handle effectively-resolved markets (leader at ≥97%).
-        # Keep markets with interesting journeys (opened <85%), skip boring locks.
-        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
-        leader_opening = None
+        # --- Staleness filters ---
+        # 1) All outcomes settled: every outcome is <5% or >95%
+        probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
+        all_settled = (
+            len(probs_available) >= 2
+            and all(p < 0.05 or p > 0.95 for p in probs_available)
+        )
+        if all_settled:
+            continue
 
+        # 2) Leader at ≥97% with no interesting journey
+        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
         if is_effectively_resolved:
+            leader_opening = None
             for o in outcomes_data:
                 if o["name"] == leader_name:
                     leader_opening = o.get("opening_probability")
                     break
-            # Skip if always a near-lock (opened >= 85%) — not interesting
-            if leader_opening is not None and leader_opening >= 0.85:
+            if leader_opening is None or leader_opening >= 0.85:
                 continue
-            # Skip if no opening data (can't show journey)
-            if leader_opening is None:
+
+        # 3) Stale market: no price updates for 7+ days and zero movement
+        if market.updated_at:
+            days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
+            has_any_movement = any(
+                o["probability_change_24h"] is not None and abs(o["probability_change_24h"]) > 0.001
+                for o in outcomes_data
+            )
+            if days_stale > 7 and not has_any_movement:
                 continue
 
         # Get source count from canonical key
