@@ -214,6 +214,13 @@ class BulkPinsRequest(BaseModel):
     futures: list[int] = []
 
 
+class TeamSportVariant(BaseModel):
+    """A specific sport variant of a team (e.g., Harvard Basketball vs Harvard Football)."""
+    id: int
+    sport_key: Optional[str]
+    sport_display: Optional[str]
+
+
 class TeamSearchResult(BaseModel):
     """Team search result for autocomplete."""
     id: int
@@ -222,6 +229,7 @@ class TeamSearchResult(BaseModel):
     sport_key: Optional[str]
     logo_url: Optional[str]
     abbreviation: Optional[str]
+    sports: list[TeamSportVariant] = []
 
 
 class TeamRef(BaseModel):
@@ -626,24 +634,58 @@ async def search_teams(
     )
     rows = result.all()
 
-    # Deduplicate: keep best sport_key per normalized team name
-    seen: dict[str, TeamSearchResult] = {}
-    seen_tiers: dict[str, int] = {}
+    # Group by normalized team name — collect all sport variants
+    _SPORT_DISPLAY = {
+        "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
+        "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
+        "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
+        "basketball_ncaab": "NCAAB", "basketball_wncaab": "WNCAAB",
+        "americanfootball_ncaaf": "NCAAF",
+        "soccer_epl": "EPL", "soccer_spain_la_liga": "La Liga",
+        "soccer_germany_bundesliga": "Bundesliga",
+        "soccer_italy_serie_a": "Serie A", "soccer_france_ligue_one": "Ligue 1",
+        "icehockey_ncaa": "NCAA Hockey", "baseball_ncaa": "NCAA Baseball",
+    }
+
+    grouped: dict[str, dict] = {}
     for team, sport_key in rows:
         norm = team.name.lower().strip()
         tier = _SPORT_TIER.get(sport_key, 5)
-        if norm in seen and seen_tiers[norm] <= tier:
-            continue
-        seen[norm] = TeamSearchResult(
+        display = _SPORT_DISPLAY.get(sport_key, sport_key.split("_", 1)[-1].upper() if sport_key else "OTHER")
+        variant = TeamSportVariant(id=team.id, sport_key=sport_key, sport_display=display)
+
+        if norm not in grouped:
+            grouped[norm] = {
+                "primary": team,
+                "sport_key": sport_key,
+                "tier": tier,
+                "logo": team.logo_url_small or team.logo_url,
+                "variants": [variant],
+            }
+        else:
+            grouped[norm]["variants"].append(variant)
+            if tier < grouped[norm]["tier"]:
+                grouped[norm]["primary"] = team
+                grouped[norm]["sport_key"] = sport_key
+                grouped[norm]["tier"] = tier
+                if team.logo_url_small or team.logo_url:
+                    grouped[norm]["logo"] = team.logo_url_small or team.logo_url
+
+    results = []
+    for norm, g in grouped.items():
+        team = g["primary"]
+        variants = sorted(g["variants"], key=lambda v: _SPORT_TIER.get(v.sport_key or "", 5))
+        results.append(TeamSearchResult(
             id=team.id,
             name=team.name,
             location=team.location,
-            sport_key=sport_key,
-            logo_url=team.logo_url_small or team.logo_url,
+            sport_key=g["sport_key"],
+            logo_url=g["logo"],
             abbreviation=team.abbreviation,
-        )
-        seen_tiers[norm] = tier
-    results = list(seen.values())[:20]
+            sports=variants if len(variants) > 1 else [],
+        ))
+    results.sort(key=lambda r: _SPORT_TIER.get(r.sport_key or "", 5))
+    results = results[:20]
 
     # -------------------------------------------------------------------------
     # Events table fallback: find teams from events that lack Team records.

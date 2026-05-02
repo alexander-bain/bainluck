@@ -436,46 +436,19 @@ struct OnboardingView: View {
     }
 
     private func searchDropdown(results: [TeamSearchResult], onSelect: @escaping (TeamSearchResult) -> Void) -> some View {
-        VStack(spacing: 0) {
-            ForEach(results.prefix(8)) { result in
-                Button {
-                    onSelect(result)
-                } label: {
-                    HStack(spacing: 10) {
-                        TeamLogoView(
-                            url: result.logoUrl,
-                            teamName: result.name,
-                            color: .blue,
-                            size: 24
-                        )
+        SearchDropdownView(results: results, onSelect: onSelect)
+            .zIndex(10)
+    }
 
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(result.name)
-                                .font(.subheadline)
-                                .lineLimit(1)
-                            if let sport = result.sportKey {
-                                Text(sportDisplayName(for: sport))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-
-                if result.id != results.prefix(8).last?.id {
-                    Divider().padding(.leading, 46)
-                }
-            }
-        }
-        .background(.ultraThickMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
-        .zIndex(10)
+    private func sportDisplayName(for key: String) -> String {
+        let map: [String: String] = [
+            "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
+            "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
+            "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
+            "basketball_ncaab": "NCAAB", "basketball_wncaab": "WNCAAB",
+            "americanfootball_ncaaf": "NCAAF",
+        ]
+        return map[key] ?? key.split(separator: "_").last.map(String.init)?.uppercased() ?? key.uppercased()
     }
 
     private func affinityRow(item: SportItem) -> some View {
@@ -511,5 +484,107 @@ struct OnboardingView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Search Dropdown with Sport Expansion
+
+private struct SearchDropdownView: View {
+    let results: [TeamSearchResult]
+    let onSelect: (TeamSearchResult) -> Void
+    @State private var expandedId: Int? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(results.prefix(8)) { result in
+                let hasSports = (result.sports ?? []).count > 1
+
+                // Main row
+                Button {
+                    if hasSports {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            expandedId = expandedId == result.id ? nil : result.id
+                        }
+                    } else {
+                        onSelect(result)
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        TeamLogoView(url: result.logoUrl, teamName: result.name, color: .blue, size: 24)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(result.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            if hasSports {
+                                Text("\((result.sports ?? []).count) sports")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else if let sport = result.sportKey {
+                                Text(displayName(sport))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if hasSports {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(expandedId == result.id ? 90 : 0))
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+
+                // Expanded sport variants
+                if expandedId == result.id, let sports = result.sports {
+                    ForEach(sports) { variant in
+                        Button {
+                            let variantResult = TeamSearchResult(
+                                id: variant.id, name: result.name,
+                                location: result.location,
+                                sportKey: variant.sportKey,
+                                logoUrl: result.logoUrl,
+                                abbreviation: result.abbreviation,
+                                sports: nil
+                            )
+                            onSelect(variantResult)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Spacer().frame(width: 24)
+                                Text(variant.sportDisplay ?? variant.sportKey ?? "")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.blue)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.04))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if result.id != results.prefix(8).last?.id {
+                    Divider().padding(.leading, 46)
+                }
+            }
+        }
+        .background(.ultraThickMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+    }
+
+    private func displayName(_ key: String) -> String {
+        let map: [String: String] = [
+            "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
+            "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
+            "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
+            "basketball_ncaab": "NCAAB", "americanfootball_ncaaf": "NCAAF",
+        ]
+        return map[key] ?? key.split(separator: "_").last.map(String.init)?.uppercased() ?? key
     }
 }

@@ -2,6 +2,12 @@ import Foundation
 
 // MARK: - Team Search Response
 
+nonisolated struct TeamSportVariant: Decodable, Identifiable, Sendable {
+    let id: Int
+    let sportKey: String?
+    let sportDisplay: String?
+}
+
 /// Response item from GET /api/me/teams/by-location and /api/me/teams/search
 nonisolated struct TeamSearchResult: Decodable, Identifiable, Sendable {
     let id: Int
@@ -10,6 +16,7 @@ nonisolated struct TeamSearchResult: Decodable, Identifiable, Sendable {
     let sportKey: String?
     let logoUrl: String?
     let abbreviation: String?
+    let sports: [TeamSportVariant]?
 }
 
 // MARK: - Selected Team (local UI state)
