@@ -53,8 +53,8 @@ def _normalize_futures_dedup_key(market) -> str:
     "2026 NBA Champion" and "NBA Championship Winner" → same key.
     "76ers vs. Celtics" and "Celtics vs 76ers" → same key.
     """
-    if market.group_id:
-        return market.group_id
+    if getattr(market, "canonical_market_key", None):
+        return f"canonical:{market.canonical_market_key}"
     name = (market.name or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
