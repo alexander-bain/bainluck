@@ -1,5 +1,9 @@
 # Completed Features (Shipped)
 
+## May 1, 2026
+
+- ✅ **Discover feed breakthrough**: Removed `% at %` SQL filter that was killing 10,300 non-sports markets (economics, politics, tech, entertainment). Changed pool sort from tier+resolution to volume. Added micro-bet penalty for <24h resolution markets. Scheduled LLM hook + image enrichment tasks 4x daily. Combined ground truth: 295 Kalshi + 4,680 Polymarket + 146 email = 5,121 labeled markets. Feed went from 0% non-sports to ~85% non-sports.
+
 ## April 30, 2026
 
 - ✅ **Discover content mix fix**: Feed API `event_pct` param lets Discover request 15% events instead of the default 60%. Non-sports futures (politics 35, geopolitics 38, economics 34, tech 34 base scores) now dominate Discover instead of being crowded out by sports events. Sports feed unchanged.
