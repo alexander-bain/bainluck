@@ -9,7 +9,8 @@ import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, use
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import CategoryBrowser from "@/components/CategoryBrowser";
-import type { SearchResponse, SearchSuggestion } from "@/lib/types";
+import { buildTeamPageUrl } from "@/lib/teamUrls";
+import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
 
 function SearchLoading() {
   return (
@@ -52,6 +53,52 @@ function SuggestionChips({ suggestions }: { suggestions: SearchSuggestion[] }) {
   );
 }
 
+function TeamCard({ team }: { team: SearchTeam }) {
+  const url = buildTeamPageUrl(team.name, team.sport_key);
+  if (!url) return null;
+
+  const sportLabel = team.sport_key
+    ? team.sport_key.split("_").slice(1).join(" ").toUpperCase()
+    : null;
+
+  return (
+    <Link
+      href={url}
+      className="flex items-center gap-3 p-3 bg-surface-card border border-surface-border rounded-card hover:shadow-md hover:border-accent-brand/30 transition-all"
+    >
+      {team.logo ? (
+        <img
+          src={team.logo}
+          alt=""
+          className="w-10 h-10 object-contain flex-shrink-0"
+          crossOrigin="anonymous"
+        />
+      ) : (
+        <div className="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center text-sm font-bold text-text-muted flex-shrink-0">
+          {team.abbreviation || team.name.charAt(0)}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-text-primary truncate">{team.name}</div>
+        <div className="text-xs text-text-secondary">
+          {team.record && <span>{team.record}</span>}
+          {team.record && sportLabel && <span> · </span>}
+          {sportLabel && <span>{sportLabel}</span>}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function SectionHeader({ title, count }: { title: string; count: number }) {
+  return (
+    <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-3 flex items-center gap-2">
+      <span>{title}</span>
+      <span className="text-text-muted">({count})</span>
+    </h2>
+  );
+}
+
 function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -60,7 +107,6 @@ function SearchContent() {
   const pageParam = searchParams.get("page");
   const currentPage = pageParam ? parseInt(pageParam, 10) : 1;
 
-  // Analytics
   const { track } = useAnalytics();
   usePageTracking({ pageType: 'search', pageTitle: 'Search', deps: [query] });
   useScrollDepth({ pageType: 'search' });
@@ -72,17 +118,13 @@ function SearchContent() {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
-  // Pinned events
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
-
-  // Pinned futures
   const {
     isPinned: isFuturesPinned,
     togglePin: toggleFuturesPin,
     isMaxReached: isFuturesMaxReached
   } = usePinnedFutures();
 
-  // Fetch search results
   useEffect(() => {
     if (!query || query.length < 2) {
       setResults(null);
@@ -114,10 +156,8 @@ function SearchContent() {
       });
   }, [query, sportFilter, currentPage]);
 
-  // Fetch suggestions when no query
   useEffect(() => {
     if (query && query.length >= 2) return;
-
     setSuggestionsLoading(true);
     fetchSearchSuggestions()
       .then((data) => {
@@ -129,7 +169,6 @@ function SearchContent() {
       });
   }, [query]);
 
-  // Update URL when changing filters
   const setFilter = (sport: string | undefined) => {
     const params = new URLSearchParams();
     params.set("q", query);
@@ -145,7 +184,7 @@ function SearchContent() {
     router.push(`/search?${params.toString()}`);
   };
 
-  // Zero-state: no query or too short
+  // Zero-state
   if (!query || query.length < 2) {
     return (
       <div className="max-w-xl mx-auto">
@@ -156,8 +195,6 @@ function SearchContent() {
         ) : (
           <SuggestionChips suggestions={suggestions} />
         )}
-
-        {/* Category browsing grid */}
         <div className="mt-8">
           <CategoryBrowser />
         </div>
@@ -184,17 +221,18 @@ function SearchContent() {
     );
   }
 
+  const hasTeams = results?.teams && results.teams.length > 0;
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
 
-  if (!results || (!hasEvents && !hasFutures)) {
+  if (!results || (!hasEvents && !hasFutures && !hasTeams)) {
     return (
       <div>
         <div className="text-center py-12">
           <div className="text-4xl mb-4">🤷</div>
           <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
           <p className="text-text-secondary">
-            No games or futures found for &quot;{query}&quot;
+            No teams, games, or markets found for &quot;{query}&quot;
             {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
           </p>
           {sportFilter && (
@@ -210,6 +248,10 @@ function SearchContent() {
     );
   }
 
+  const totalCount = (results.teams?.length ?? 0)
+    + (results.pagination?.total_results ?? 0)
+    + (results.futures?.length ?? 0);
+
   return (
     <div>
       {/* Header */}
@@ -224,9 +266,10 @@ function SearchContent() {
           Results for &quot;{query}&quot;
         </h1>
         <p className="text-text-secondary mt-1">
-          {hasEvents && `${results.pagination.total_results} game${results.pagination.total_results !== 1 ? "s" : ""}`}
-          {hasEvents && hasFutures && " · "}
-          {hasFutures && `${results.futures.length} market${results.futures.length !== 1 ? "s" : ""}`}
+          {totalCount} result{totalCount !== 1 ? "s" : ""}
+          {hasTeams && ` · ${results.teams.length} team${results.teams.length !== 1 ? "s" : ""}`}
+          {hasEvents && ` · ${results.pagination.total_results} game${results.pagination.total_results !== 1 ? "s" : ""}`}
+          {hasFutures && ` · ${results.futures.length} market${results.futures.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -248,7 +291,7 @@ function SearchContent() {
                 : "bg-surface-card border border-surface-border text-text-secondary hover:border-text-primary"
             }`}
           >
-            All ({results.pagination.total_results})
+            All
           </button>
           {results.sports.map((sport) => (
             <button
@@ -268,17 +311,22 @@ function SearchContent() {
         </div>
       )}
 
-      {/* Events results grid — show first */}
+      {/* Teams section */}
+      {hasTeams && (
+        <section className="mb-8">
+          <SectionHeader title="Teams" count={results.teams.length} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {results.teams.map((team) => (
+              <TeamCard key={team.id} team={team} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Games section */}
       {hasEvents && (
-        <>
-          {hasFutures && (
-            <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
-              <span>Games</span>
-              <span className="text-sm font-normal text-text-secondary">
-                ({results.pagination.total_results})
-              </span>
-            </h2>
-          )}
+        <section className="mb-8">
+          <SectionHeader title="Games" count={results.pagination.total_results} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {results.results.map((event, index) => (
               <div key={event.id} onClick={() => {
@@ -301,18 +349,13 @@ function SearchContent() {
               </div>
             ))}
           </div>
-        </>
+        </section>
       )}
 
-      {/* Futures results */}
+      {/* Futures & Markets section */}
       {hasFutures && (
-        <div className={hasEvents ? "mt-8" : ""}>
-          <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
-            <span>Futures & Markets</span>
-            <span className="text-sm font-normal text-text-secondary">
-              ({results.futures.length})
-            </span>
-          </h2>
+        <section className="mb-8">
+          <SectionHeader title="Futures & Markets" count={results.futures.length} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {results.futures.map((market, index) => (
               <div key={market.id} onClick={() => {
@@ -333,7 +376,7 @@ function SearchContent() {
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Pagination */}

@@ -685,9 +685,20 @@ export interface SearchSportFacet {
   count: number;
 }
 
+export interface SearchTeam {
+  id: number;
+  name: string;
+  slug: string | null;
+  abbreviation: string | null;
+  logo: string | null;
+  record: string | null;
+  sport_key: string | null;
+}
+
 export interface SearchResponse {
   results: Event[];
   futures: FuturesMarket[];
+  teams: SearchTeam[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];
   query: string;

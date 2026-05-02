@@ -942,8 +942,47 @@ async def search_events(
         for market in futures_markets
     ]
 
+    # Search teams
+    team_search_filter = or_(
+        Team.name.ilike(search_pattern),
+        Team.abbreviation.ilike(search_pattern),
+        cast(Team.alternate_names, String).ilike(search_pattern),
+    )
+    if fuzzy_corrected:
+        fuzzy_team_pattern = f"%{fuzzy_corrected}%"
+        team_search_filter = or_(
+            team_search_filter,
+            Team.name.ilike(fuzzy_team_pattern),
+        )
+    team_search_q = (
+        select(Team.id, Team.name, Team.slug, Team.abbreviation,
+               Team.logo_url_small, Team.record, Sport.key.label("sport_key"))
+        .join(Sport, Team.sport_id == Sport.id, isouter=True)
+        .where(team_search_filter)
+        .order_by(Team.name)
+        .limit(5)
+    )
+    if sport:
+        team_search_q = team_search_q.where(Sport.key == sport)
+    team_search_result = await db.execute(team_search_q)
+    teams_seen: set[str] = set()
+    matched_teams = []
+    for row in team_search_result.all():
+        if row.name not in teams_seen:
+            teams_seen.add(row.name)
+            matched_teams.append({
+                "id": row.id,
+                "name": row.name,
+                "slug": row.slug,
+                "abbreviation": row.abbreviation,
+                "logo": row.logo_url_small,
+                "record": row.record,
+                "sport_key": row.sport_key,
+            })
+
     return {
         "query": q,
+        "teams": matched_teams,
         "results": formatted_results,
         "futures": formatted_futures,
         "pagination": {
