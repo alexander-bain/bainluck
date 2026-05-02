@@ -111,9 +111,13 @@ struct DiscoverView: View {
                                 } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
                                     NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) }, onGuessCompleted: { incrementDaily() })
                                 } else if item.type == "event", let e = item.event {
-                                    NativeEventDiscoverCard(event: e)
+                                    SwipeToDismiss { dismiss(guessId) } content: {
+                                        NativeEventDiscoverCard(event: e)
+                                    }
                                 } else if item.type == "futures", let f = item.futures {
-                                    NativeFuturesDiscoverCard(data: f)
+                                    SwipeToDismiss { dismiss(guessId) } content: {
+                                        NativeFuturesDiscoverCard(data: f)
+                                    }
                                 }
                             }
                             .id(guessId)
@@ -362,15 +366,25 @@ private struct NativeFuturesDiscoverCard: View {
 
                     // Overlay content
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(data.llmSportCategory?.uppercased() ?? "MARKET")
-                            .font(.system(size: 9, weight: .heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.7))
+                        HStack(spacing: 6) {
+                            Text(data.llmSportCategory?.uppercased() ?? "MARKET")
+                                .font(.system(size: 9, weight: .heavy))
+                                .tracking(0.8)
+                                .foregroundStyle(.white.opacity(0.7))
+                            if isTrending(data) {
+                                Text("🔥 Trending")
+                                    .font(.system(size: 9, weight: .heavy))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
 
                         if let leader = data.topOutcomes?.first {
-                            Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
-                                .font(.system(size: 36, weight: .black).monospacedDigit())
-                                .foregroundStyle(.white)
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                                    .font(.system(size: 36, weight: .black).monospacedDigit())
+                                    .foregroundStyle(.white)
+                                MovementBadge(movement: leader.movement)
+                            }
                             Text(leader.name)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.white.opacity(0.85))
@@ -786,5 +800,65 @@ private struct NativeEventGuessCard: View {
             t = max(0.05, min(0.95, t))
         }
         threshold = Int((t * 100).rounded())
+    }
+}
+
+// MARK: - Swipe to Dismiss
+
+private struct SwipeToDismiss<Content: View>: View {
+    let onDismiss: () -> Void
+    @ViewBuilder let content: () -> Content
+    @State private var offset: CGFloat = 0
+    @State private var removing = false
+
+    var body: some View {
+        content()
+            .offset(x: offset)
+            .opacity(removing ? 0 : 1.0 - abs(offset) / 300)
+            .gesture(
+                DragGesture()
+                    .onChanged { v in offset = v.translation.width }
+                    .onEnded { v in
+                        if abs(v.translation.width) > 120 {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                offset = v.translation.width > 0 ? 400 : -400
+                                removing = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                onDismiss()
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.3)) { offset = 0 }
+                        }
+                    }
+            )
+    }
+}
+
+// MARK: - Movement Badge
+
+private func isTrending(_ data: FeedFuturesData) -> Bool {
+    guard let m = data.topOutcomes?.first?.movement else { return false }
+    return abs(m) >= 0.05
+}
+
+private struct MovementBadge: View {
+    let movement: Double?
+
+    var body: some View {
+        if let m = movement, abs(m) >= 0.01 {
+            let up = m > 0
+            HStack(spacing: 2) {
+                Image(systemName: up ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 7, weight: .black))
+                Text("\(abs(Int((m * 100).rounded())))%")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+            }
+            .foregroundStyle(up ? .green : .red)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background((up ? Color.green : Color.red).opacity(0.15))
+            .clipShape(Capsule())
+        }
     }
 }

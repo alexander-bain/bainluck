@@ -51,6 +51,9 @@ struct MainTabView: View {
                     Label("Search", systemImage: "magnifyingglass")
                 }
                 .tag(AppTab.search)
+                #if os(macOS)
+                .keyboardShortcut("k", modifiers: .command)
+                #endif
 
             MyStuffView()
                 .tabItem {
