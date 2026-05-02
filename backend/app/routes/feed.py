@@ -853,7 +853,7 @@ async def _score_futures(
         .limit(150)
     )
 
-    # Pool 2: non-sports futures — pull 500 to give scoring a deep pool
+    # Pool 2: non-sports futures — sort by volume to surface actively-traded markets
     nonsports_query = (
         select(FuturesMarket)
         .options(*base_options)
@@ -864,7 +864,7 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category.is_(None),
             ),
         )
-        .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
+        .order_by(FuturesMarket.volume_24h.desc().nulls_last(), FuturesMarket.market_tier.asc().nulls_last())
         .limit(500)
     )
 
