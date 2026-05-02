@@ -213,6 +213,43 @@ async def get_detailed_stats(request: Request):
     }
 
 
+@router.get("/resolutions")
+async def get_resolutions(request: Request):
+    """Return predictions on markets that have since resolved."""
+    user_id, session_id = _get_identity(request)
+    identity = _identity_filter(user_id, session_id)
+    if identity is None:
+        return {"resolutions": []}
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
+            .join(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
+            .where(
+                identity,
+                FuturesMarket.status.in_(("resolved", "closed")),
+            )
+            .order_by(desc(UserPrediction.created_at))
+            .limit(20)
+        )
+        rows = result.all()
+
+    return {
+        "resolutions": [
+            {
+                "market_name": name or f"Market #{pred.market_id}",
+                "category": cat,
+                "guess": pred.guess,
+                "threshold": pred.threshold,
+                "actual": round(float(pred.actual_probability) * 100),
+                "correct": pred.correct,
+                "created_at": pred.created_at.isoformat() if pred.created_at else None,
+            }
+            for pred, name, cat in rows
+        ],
+    }
+
+
 # Seen tracking endpoints temporarily disabled — will re-add after
 # migration tree is cleaned up. The user_seen_markets table exists
 # in the DB but the migration file was removed to unblock deploys.

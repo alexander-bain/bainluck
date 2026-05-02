@@ -529,4 +529,8 @@ actor APIClient {
     func fetchDetailedPredictionStats() async throws -> DetailedPredictionStats {
         return try await fetch("/api/predictions/detailed-stats")
     }
+
+    func fetchResolutions() async throws -> ResolutionsResponse {
+        return try await fetch("/api/predictions/resolutions")
+    }
 }

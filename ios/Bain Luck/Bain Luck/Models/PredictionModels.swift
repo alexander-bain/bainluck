@@ -38,3 +38,17 @@ nonisolated struct DetailedPredictionStats: Decodable, Sendable {
     let byCategory: [String: CategoryStats]
     let badges: [PredictionBadge]
 }
+
+nonisolated struct Resolution: Decodable, Sendable {
+    let marketName: String
+    let category: String?
+    let guess: String
+    let threshold: Int
+    let actual: Int
+    let correct: Bool
+    let createdAt: String?
+}
+
+nonisolated struct ResolutionsResponse: Decodable, Sendable {
+    let resolutions: [Resolution]
+}

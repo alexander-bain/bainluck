@@ -21,6 +21,7 @@ struct DiscoverView: View {
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
+    @State private var resolutions: [Resolution] = []
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -149,6 +150,12 @@ struct DiscoverView: View {
                     .padding(.vertical, 8)
                 }
 
+                // Resolution cards
+                ForEach(resolutions.prefix(3), id: \.marketName) { res in
+                    NativeResolutionCard(resolution: res)
+                        .padding(.horizontal)
+                }
+
                 // Daily Challenge card
                 NativeDailyChallengeCard(guessesToday: dailyGuesses)
                     .padding(.horizontal)
@@ -205,8 +212,18 @@ struct DiscoverView: View {
                 }
             }
         }
-        .task { await vm.load() }
-        .refreshable { await vm.load() }
+        .task {
+            await vm.load()
+            if let r = try? await APIClient.shared.fetchResolutions() {
+                resolutions = r.resolutions
+            }
+        }
+        .refreshable {
+            await vm.load()
+            if let r = try? await APIClient.shared.fetchResolutions() {
+                resolutions = r.resolutions
+            }
+        }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
@@ -573,6 +590,45 @@ private struct NativeDailyChallengeCard: View {
     }
 }
 
+// MARK: - Resolution Card
+
+private struct NativeResolutionCard: View {
+    let resolution: Resolution
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📋")
+                Text("MARKET RESOLVED")
+                    .font(.system(size: 11, weight: .heavy))
+                    .tracking(1)
+                    .foregroundStyle(.purple)
+                Spacer()
+            }
+
+            Text(resolution.marketName)
+                .font(.subheadline.weight(.bold))
+                .lineLimit(2)
+
+            Text(resolution.correct ? "✓ You got it right!" : "✗ Better luck next time")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(resolution.correct ? .green : .red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background((resolution.correct ? Color.green : Color.red).opacity(0.1))
+                .clipShape(Capsule())
+
+            Text("You guessed \(resolution.guess) than \(resolution.threshold)% — final: \(resolution.actual)%")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.purple.opacity(0.3), lineWidth: 2))
+    }
+}
+
 // MARK: - Group Card
 
 private struct NativeGroupCard: View {
@@ -672,6 +728,8 @@ private struct NativeGuessCard: View {
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil
+    @State private var displayPct: Int = 0
+    @State private var showShare = false
 
     private var leader: FeedFuturesOutcome? { data.topOutcomes?.first }
     private var actualPct: Int { Int(((leader?.probability ?? 0) * 100).rounded()) }
@@ -682,7 +740,9 @@ private struct NativeGuessCard: View {
 
     private func submitGuess(_ g: String) {
         guess = g
+        displayPct = 0
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
+        withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
         Task {
             do {
                 let request = PredictionRequest(
@@ -699,6 +759,11 @@ private struct NativeGuessCard: View {
                 onGuessCompleted?()
             } catch { }
         }
+    }
+
+    private var shareText: String {
+        let result = correct ? "Got it right" : "Missed it"
+        return "\(result)! \(data.name) — \(actualPct)%. Can you beat my streak? bainluck.com/discover"
     }
 
     var body: some View {
@@ -756,8 +821,9 @@ private struct NativeGuessCard: View {
                         .background((correct ? Color.green : Color.red).opacity(0.1))
                         .clipShape(Capsule())
 
-                    Text("\(actualPct)%")
+                    Text("\(displayPct)%")
                         .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                        .contentTransition(.numericText())
                     if let leader { Text(leader.name).font(.caption).foregroundStyle(.secondary) }
 
                     if let streak, streak > 1 {
@@ -772,6 +838,12 @@ private struct NativeGuessCard: View {
                                 .font(.caption)
                                 .foregroundStyle(.blue)
                         }
+                        Button { showShare = true } label: {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
                         if let onNextQuestion {
                             Button { onNextQuestion() } label: {
                                 Text("Next question →")
@@ -783,6 +855,9 @@ private struct NativeGuessCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
+                .sheet(isPresented: $showShare) {
+                    ShareSheet(text: shareText)
+                }
             }
         }
         .padding()
@@ -1007,6 +1082,40 @@ private func isTrending(_ data: FeedFuturesData) -> Bool {
     guard let m = data.topOutcomes?.first?.movement else { return false }
     return abs(m) >= 0.05
 }
+
+// MARK: - Share Sheet
+
+#if os(iOS)
+private struct ShareSheet: UIViewControllerRepresentable {
+    let text: String
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [text], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+#else
+private struct ShareSheet: View {
+    let text: String
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Share your prediction")
+                .font(.headline)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
+        .padding()
+        .frame(minWidth: 300)
+    }
+}
+#endif
+
+// MARK: - Movement Badge
 
 private struct MovementBadge: View {
     let movement: Double?
