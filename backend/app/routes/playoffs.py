@@ -1442,24 +1442,45 @@ async def _build_golf_tour_grid(
         if not tourney_tokens and tournament_name:
             tourney_tokens = [tournament_name.lower().strip()]
 
-        # Kalshi golf ticker prefixes are tournament-specific by design —
-        # Kalshi only has one active tournament's markets at a time.
+        # Kalshi golf ticker prefixes for placement markets. These markets
+        # don't include the tournament name, so we match by ticker prefix +
+        # date proximity to the current tournament window.
         _KALSHI_GOLF_PREFIXES = (
             "kxpgatour", "kxpgamakecut", "kxpgatop5", "kxpgatop10",
             "kxpgatop20", "kxpgar1", "kxpgar2", "kxpgar3", "kxpgah2h",
             "kxpgaholeinone", "kxpgawinningscore", "kxpgacutline",
             "kxpgawinmargin", "kxlpgatour",
         )
+        # Tournament date window for Kalshi ticker matching
+        _tourney_window_start = None
+        _tourney_window_end = None
+        if current_event.start_date:
+            try:
+                _ts = datetime.strptime(current_event.start_date, "%Y-%m-%d")
+                _tourney_window_start = _ts - timedelta(days=1)
+                _tourney_window_end = _ts + timedelta(days=10)
+            except ValueError:
+                pass
 
         def _market_matches_tournament(market: object) -> bool:
             """Check if a market belongs to the current tournament.
 
             Two paths:
-            1. Kalshi golf ticker prefix — inherently tournament-specific
+            1. Kalshi golf ticker prefix + resolution date within tournament window
             2. Tournament name tokens in market name
             """
             eid = (market.external_id or "").lower()
             if eid and any(eid.startswith(p) for p in _KALSHI_GOLF_PREFIXES):
+                if market.resolution_date and _tourney_window_start and _tourney_window_end:
+                    res_dt = market.resolution_date
+                    if hasattr(res_dt, 'date'):
+                        res_dt = res_dt.replace(tzinfo=None)
+                    elif isinstance(res_dt, str):
+                        try:
+                            res_dt = datetime.strptime(res_dt[:10], "%Y-%m-%d")
+                        except ValueError:
+                            return False
+                    return _tourney_window_start <= res_dt <= _tourney_window_end
                 return True
             if not tourney_tokens:
                 return True
