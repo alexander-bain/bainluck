@@ -94,6 +94,8 @@ struct LeaguesView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    Text("About")
                 }
             }
             .onAppear {

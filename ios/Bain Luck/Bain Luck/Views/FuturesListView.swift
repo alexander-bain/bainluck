@@ -128,6 +128,8 @@ struct FuturesListView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    Text("About")
                 }
             }
         }

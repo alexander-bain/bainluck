@@ -196,6 +196,8 @@ struct FeedView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    Text("About")
                 }
             }
         }

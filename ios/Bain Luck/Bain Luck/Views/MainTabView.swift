@@ -31,6 +31,7 @@ struct MainTabView: View {
                         case .eventDetail(let id): EventDetailView(eventId: id)
                         case .futuresDetail(let id): FuturesDetailView(marketId: id)
                         case .predictionStats: PredictionStatsView()
+                        case .about: Text("About")
                         default: EmptyView()
                         }
                     }
@@ -146,6 +147,8 @@ struct MainTabView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .about:
+                    Text("About")
                 }
             }
         } detail: {
