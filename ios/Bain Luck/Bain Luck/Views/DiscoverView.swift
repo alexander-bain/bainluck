@@ -1,6 +1,18 @@
 import SwiftUI
 import Combine
 
+private enum DiscoverGroupedItem: Identifiable {
+    case single(FeedItem)
+    case group(title: String, items: [FeedItem])
+
+    var id: String {
+        switch self {
+        case .single(let item): return item.id
+        case .group(let title, _): return "group-\(title)"
+        }
+    }
+}
+
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var categoryFilter = "all"
@@ -8,6 +20,7 @@ struct DiscoverView: View {
     @State private var dismissed: Set<String> = Self.loadDismissed()
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
+    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -63,6 +76,50 @@ struct DiscoverView: View {
         return items.filter { itemCategory($0) == categoryFilter }
     }
 
+    private var groupedItems: [DiscoverGroupedItem] {
+        var groups: [String: [FeedItem]] = [:]
+        var groupOrder: [String] = []
+        var result: [DiscoverGroupedItem] = []
+        var usedPrefixes: Set<String> = []
+
+        for item in filteredItems {
+            if item.type == "futures", let f = item.futures {
+                let name = f.name
+                let prefix: String
+                if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
+                    prefix = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+                } else {
+                    prefix = name.split(separator: " ").prefix(3).joined(separator: " ")
+                }
+                if groups[prefix] == nil { groupOrder.append(prefix) }
+                groups[prefix, default: []].append(item)
+            }
+        }
+
+        for item in filteredItems {
+            if item.type != "futures" {
+                result.append(.single(item))
+                continue
+            }
+            let name = item.futures?.name ?? ""
+            let prefix: String
+            if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
+                prefix = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+            } else {
+                prefix = name.split(separator: " ").prefix(3).joined(separator: " ")
+            }
+            if usedPrefixes.contains(prefix) { continue }
+            usedPrefixes.insert(prefix)
+            let group = groups[prefix] ?? [item]
+            if group.count >= 2 {
+                result.append(.group(title: prefix, items: group))
+            } else {
+                result.append(.single(group[0]))
+            }
+        }
+        return result
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -98,31 +155,35 @@ struct DiscoverView: View {
                     .padding(.bottom, 8)
 
                 // Cards (paginated — show `visibleCount` at a time)
-                let pageItems = Array(filteredItems.prefix(visibleCount))
+                let pageGrouped = Array(groupedItems.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
                 ScrollViewReader { proxy in
                     LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(Array(pageItems.enumerated()), id: \.element.id) { idx, item in
+                        ForEach(Array(pageGrouped.enumerated()), id: \.element.id) { idx, gi in
                             let isGuessSlot = (idx + 1) % 2 == 0
-                            let guessId = itemId(item)
                             Group {
-                                if isGuessSlot, item.type == "futures", let f = item.futures {
-                                    NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) }, onGuessCompleted: { incrementDaily() })
-                                } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
-                                    NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuess(proxy: proxy, after: idx, in: pageItems) }, onGuessCompleted: { incrementDaily() })
-                                } else if item.type == "event", let e = item.event {
-                                    SwipeToDismiss { dismiss(guessId) } content: {
-                                        NativeEventDiscoverCard(event: e)
-                                    }
-                                } else if item.type == "futures", let f = item.futures {
-                                    SwipeToDismiss { dismiss(guessId) } content: {
-                                        NativeFuturesDiscoverCard(data: f)
+                                switch gi {
+                                case .group(let title, let items):
+                                    NativeGroupCard(title: title, items: items)
+                                case .single(let item):
+                                    if isGuessSlot, item.type == "futures", let f = item.futures {
+                                        NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                    } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
+                                        NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                    } else if item.type == "event", let e = item.event {
+                                        SwipeToDismiss { dismiss(itemId(item)) } content: {
+                                            NativeEventDiscoverCard(event: e)
+                                        }
+                                    } else if item.type == "futures", let f = item.futures {
+                                        SwipeToDismiss { dismiss(itemId(item)) } content: {
+                                            NativeFuturesDiscoverCard(data: f)
+                                        }
                                     }
                                 }
                             }
-                            .id(guessId)
+                            .id(gi.id)
                             .onAppear {
-                                if idx == pageItems.count - 3 && visibleCount < filteredItems.count {
+                                if idx == pageGrouped.count - 3 && visibleCount < groupedItems.count {
                                     visibleCount += 20
                                 }
                             }
@@ -146,6 +207,10 @@ struct DiscoverView: View {
         }
         .task { await vm.load() }
         .refreshable { await vm.load() }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView()
+                .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+        }
     }
 
     private func scrollToNextGuess(proxy: ScrollViewProxy, after idx: Int, in items: [FeedItem]) {
@@ -156,6 +221,17 @@ struct DiscoverView: View {
             let targetId = itemId(items[next])
             withAnimation(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo(targetId, anchor: .top)
+            }
+        }
+    }
+
+    private func scrollToNextGuessGrouped(proxy: ScrollViewProxy, after idx: Int, in items: [DiscoverGroupedItem]) {
+        let nextIdx = stride(from: idx + 1, to: items.count, by: 1).first { i in
+            (i + 1) % 2 == 0
+        }
+        if let next = nextIdx, next < items.count {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(items[next].id, anchor: .top)
             }
         }
     }
@@ -494,6 +570,96 @@ private struct NativeDailyChallengeCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16)
             .stroke(completed ? Color.green.opacity(0.5) : Color.orange.opacity(0.3), lineWidth: 2))
+    }
+}
+
+// MARK: - Group Card
+
+private struct NativeGroupCard: View {
+    let title: String
+    let items: [FeedItem]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
+                HStack {
+                    Text(title)
+                        .font(.caption.weight(.bold))
+                        .lineLimit(1)
+                    Text("\(items.count) markets")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.secondary.opacity(0.05))
+            }
+            .buttonStyle(.plain)
+
+            if let primary = items.first, let f = primary.futures {
+                NativeCompactFuturesRow(data: f)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+
+            if expanded {
+                ForEach(items.dropFirst(), id: \.id) { item in
+                    if let f = item.futures {
+                        Divider().padding(.horizontal, 12)
+                        NativeCompactFuturesRow(data: f)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                    }
+                }
+            } else if items.count > 1 {
+                Button { withAnimation { expanded = true } } label: {
+                    Text("Show \(items.count - 1) more")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack, lineWidth: 0.5))
+    }
+}
+
+private struct NativeCompactFuturesRow: View {
+    let data: FeedFuturesData
+
+    var body: some View {
+        NavigationLink(value: Route.futuresDetail(id: data.id)) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(data.name)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    if let leader = data.topOutcomes?.first {
+                        Text(leader.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                if let leader = data.topOutcomes?.first {
+                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                        .font(.subheadline.weight(.black).monospacedDigit())
+                    MovementBadge(movement: leader.movement)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
