@@ -63,7 +63,8 @@ async def enrich_specific(market_ids):
                             model="gpt-4o-mini",
                             messages=[{"role": "user", "content":
                                 f"Write ONE sentence (max 100 chars) about this prediction market. "
-                                f"Be specific.\nMarket: {market.name}\nLeader: {leader.name} at {prob}\nHook:"}],
+                                f"Be specific. NEVER mention percentages or probability numbers.\n"
+                                f"Market: {market.name}\nLeader: {leader.name}\nHook:"}],
                             max_tokens=50, temperature=0.7,
                         )
                         hook = response.choices[0].message.content.strip().strip('"\'')

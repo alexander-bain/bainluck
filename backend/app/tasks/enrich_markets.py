@@ -114,9 +114,24 @@ async def enrich_market_hooks(limit: int = 50):
         logger.info("OpenAI not available — skipping hook enrichment")
         return {"skipped": True}
 
-    stats = {"processed": 0, "generated": 0, "errors": 0}
+    stats = {"processed": 0, "generated": 0, "errors": 0, "cleared_stale": 0}
 
     async with get_task_session() as session:
+        # Clear hooks containing stale percentages so they get regenerated
+        stale_result = await session.execute(
+            update(FuturesMarket)
+            .where(
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.hook_description.contains("%"),
+                FuturesMarket.status == "open",
+            )
+            .values(hook_description=None)
+        )
+        stats["cleared_stale"] = stale_result.rowcount
+        if stats["cleared_stale"]:
+            await session.commit()
+            logger.info("Cleared %d hooks with stale percentages", stats["cleared_stale"])
+
         result = await session.execute(
             select(FuturesMarket)
             .where(
@@ -161,14 +176,15 @@ async def enrich_market_hooks(limit: int = 50):
 
             prompt = (
                 f"Write a single compelling sentence (max 120 chars) describing this prediction market for a casual audience. "
-                f"Be specific and interesting — explain WHAT'S HAPPENING, not just what the market is.\n\n"
+                f"Be specific and interesting — explain WHAT'S HAPPENING, not just what the market is. "
+                f"NEVER mention specific percentages or probability numbers — those are shown separately on the card and go stale.\n\n"
                 f"Market: {market.name}\n"
-                f"Leader: {leader.name} at {leader_prob}{movement_str}{runner_str}{resolve_str}\n"
+                f"Leader: {leader.name}{movement_str}{runner_str}{resolve_str}\n"
                 f"Category: {market.llm_sport_category or 'general'}\n\n"
                 f"Example good hooks:\n"
                 f'- "SGA has locked up MVP since January — no challenger within 30 points"\n'
-                f'- "Oil tumbled 8% after OPEC surprise output hike"\n'
-                f'- "Down from 45% after Vatican denied the visit request"\n'
+                f'- "Oil tumbled after OPEC surprise output hike"\n'
+                f'- "Odds cratered after Vatican denied the visit request"\n'
                 f"Your hook:"
             )
 
