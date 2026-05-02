@@ -4025,6 +4025,30 @@ async def prediction_market_event_debug(
             search_conditions.append(FuturesMarket.name.ilike(pattern))
             search_conditions.append(FuturesMarket.external_id.ilike(pattern))
 
+    # Also find Polymarket markets linked to a DIFFERENT event (mislinked)
+    result["mislinked_polymarket"] = []
+    if search_conditions:
+        mislinked_result = await db.execute(
+            select(
+                FuturesMarket.id, FuturesMarket.name, FuturesMarket.event_id,
+                FuturesMarket.group_id, FuturesMarket.group_type,
+                FuturesMarket.llm_sport_category, FuturesMarket.status,
+            )
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.event_id.isnot(None),
+                FuturesMarket.event_id != event_id,
+                or_(*search_conditions),
+            )
+            .limit(10)
+        )
+        for r in mislinked_result.all():
+            result["mislinked_polymarket"].append({
+                "id": r.id, "name": r.name, "event_id": r.event_id,
+                "group_id": r.group_id, "group_type": r.group_type,
+                "sport_cat": r.llm_sport_category, "status": r.status,
+            })
+
     if search_conditions:
         potential_result = await db.execute(
             select(FuturesMarket)
