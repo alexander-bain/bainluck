@@ -443,15 +443,15 @@ Reviewed BOS-PHI completed game (event 14617909). Screenshots in `/Users/bain/De
 
 `sharedChartDomain` now computes end time from game-end sources only (ESPN, stat_model, mlb, fangraphs) instead of all sources. Removed sportsbook odds from `smartEndTime` candidates. 2-min buffer instead of 5.
 
-#### 0f-13b. X-Axis Labels STILL Not Identical Between Charts (WEB ONLY)
+#### ~~0f-13b. X-Axis Labels Not Identical Between Charts (WEB ONLY)~~ ✅ SHIPPED (May 2)
 
-**Problem:** Win Probability shows "4:00, 4:25, 4:50, 5:14, 5:38, 6:03, 6:28, 7:16" and Score Differential shows "4:00, 4:24, 4:49, 5:13, 5:37, 6:01, 6:25, 7:16" — intermediate ticks differ by 1 minute. The YAxis width fix (42→44) and domain pruning did NOT fix this. Native has identical x-axes.
+Fixed by computing explicit shared tick labels in the parent component and passing them to both charts via `sharedTicks` prop, replacing Recharts' `preserveStartEnd` which picked different indices on different-length arrays.
 
-**Root cause hypothesis:** The two charts still have different category counts (data point arrays of different lengths), causing Recharts `preserveStartEnd` to pick different ticks. Need to debug the actual `chartData.length` in both charts for this event.
+#### ~~0f-13c. 2nd Half Margin/Total Maps Not Showing (WEB)~~ ✅ SHIPPED (May 2)
 
-**Files:** `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
+Root cause: `halfMarginMaps` was reading from `gameMarkets.spreads` (full-game only) instead of `gameMarkets.period_markets` (where the backend puts `half_spread` markets). Fixed to read from `period_markets` with `market_type === "half_spread"` filter. Both 1H and 2H margin maps now render.
 
-#### 0f-13c. 2nd Half Margin/Total Maps Not Showing (WEB + NATIVE)
+#### 0f-13c-native. 2nd Half Margin/Total Maps Not Showing (NATIVE ONLY — remaining)
 
 **Problem:** Only 1st half maps show. 2nd half maps don't appear on either platform. The web fix (checking `market_name` for half grouping) either hasn't deployed or the underlying 2H market data still isn't in our DB.
 
@@ -491,16 +491,16 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 **Files:** `frontend/app/events/[id]/page.tsx` (Bigger Picture section), `backend/app/routes/events.py` (team-progression endpoint)
 
-#### 0f-13i. Polymarket Not Showing in Any Game Markets Section
+#### 0f-13i. Polymarket Not Showing in Any Game Markets Section — ROOT CAUSE IDENTIFIED (May 2)
 
-**Problem:** Zero Polymarket items in spreads, totals, period_markets, player_props, or other sections for this event. Polymarket has 3,906 basketball markets in our DB (93% linked), but none appear on event detail pages.
+**Problem:** Zero Polymarket items in spreads, totals, period_markets, player_props, or other sections for any event. Link rate dashboard shows 3,187 linked basketball sub-markets, but production diagnostic confirmed zero Polymarket markets have `event_id` pointing to Odds API events.
 
-**Investigation needed:**
-1. Query DB: do any Polymarket `futures_markets` have `event_id` matching this event?
-2. If yes: what are their market names and categories? Are they being filtered out by the game-markets endpoint?
-3. If no: why aren't they being linked by the matching task? Check if Polymarket basketball markets have `sport_id` and `llm_sport_category` set correctly
+**Root cause (May 2):** The matching task links Polymarket **parent events** (e.g., "Celtics vs. Lakers") to auto-created events via `_create_event_from_prediction_market()`. These auto-created events are DIFFERENT from the Odds API events that the event detail page loads. So the `event_id` FK on Polymarket sub-markets points to the wrong event.
 
-**Files:** `backend/app/tasks/prediction_market_matching.py`, `backend/app/routes/events.py` (game-markets endpoint)
+**Fix needed:** The matching task's `_match_prediction_market()` must use the Event Registry cascade (`find_or_create_event()`) to cross-reference Polymarket parents with existing Odds API events BEFORE auto-creating. The 4-step cascade (exact source ID → cross-source ID → structured match → create) should find the Odds API event if it exists.
+
+**Files:** `backend/app/tasks/prediction_market_matching.py` (`_match_prediction_market`, `_create_event_from_prediction_market`), `backend/app/services/event_registry.py`
+**Parallel Safety:** Red (touches matching task)
 
 ---
 
@@ -932,26 +932,26 @@ Canonical team pages at `/sport/[sport]/[league]/team/[slug]` (e.g., `/sport/bas
 
 **Search integration**: Typeahead team results link to `/sport/.../team/slug`. `buildTeamUrl()` constructs the full hierarchical path from `sport_key`.
 
-**Phase B (TODO)**: Cross-link team names in EventCard, grids, feed cards via TeamNameLink component.
+**~~Phase B~~ ✅ SHIPPED (May 2)**: TeamNameLink component cross-links team names in EventCard, FeedCard, event detail hero, ChampionshipGrid, TournamentProgressionTable, and team page GameCard. Shared `teamUrls.ts` utility with `slugify()` + `buildTeamPageUrl()`. SearchBar refactored to use shared utility. JSON-LD SportsTeam structured data + dynamic document titles on team pages.
 
-**Files**: `routes/teams.py`, `utils/slugify.py`, `app/sport/[sport]/[league]/team/[team]/page.tsx`, migration `f1a2b3c4d5e6`.
+**Files**: `routes/teams.py`, `utils/slugify.py`, `app/sport/[sport]/[league]/team/[team]/page.tsx`, `components/TeamNameLink.tsx`, `lib/teamUrls.ts`, migration `f1a2b3c4d5e6`.
 
 ---
 
-#### Phase 4: Fuzzy & Full-Text Search (1-2 weeks)
+#### ~~Phase 4: Fuzzy & Full-Text Search~~ PARTIALLY SHIPPED (May 2)
 
-- [ ] **P4a. `pg_trgm` extension** — Enable trigram similarity so "celitcs" still finds "Celtics". PostgreSQL native.
-- [ ] **P4b. GIN trigram indexes** — On `events.home_team_name`, `events.away_team_name`, `teams.name`, `futures_markets.name`. Sequential scans → index scans.
-- [ ] **P4c. Weighted `ts_vector` full-text search** — Team names weight A, market names weight B, outcome names weight C. Natural language queries like "who wins the nba finals".
-- [ ] **P4d. Did-you-mean suggestions** — When 0 results, suggest closest trigram match.
+- [x] **P4a. `pg_trgm` extension** — Enabled via Alembic migration `a7b8c9d0e1f2`.
+- [x] **P4b. GIN trigram indexes** — On `teams.name`, `events.home_team_name`, `events.away_team_name`, `futures_markets.name`.
+- [ ] **P4c. Weighted `ts_vector` full-text search** — Team names weight A, market names weight B, outcome names weight C.
+- [x] **P4d. Did-you-mean suggestions** — Typeahead + full search fall back to trigram similarity (threshold 0.25) when ILIKE finds no results. Frontend shows "Showing results for X" banner.
 
-#### Phase 5: Search UX Polish (1 week)
+#### ~~Phase 5: Search UX Polish~~ PARTIALLY SHIPPED (May 2)
 
-- [ ] **P5a. Recent searches** — Last 5-10 in localStorage, shown on focus before typing.
+- [x] **P5a. Recent searches** — Last 5 in localStorage, shown on focus before typing with clock icons.
 - [ ] **P5b. Trending/popular searches** — Track queries server-side, surface top 5 as zero-state chips.
-- [ ] **P5c. Search results page redesign** — Group by entity type with headers: "Teams (1)", "Games (2)", "Futures (5)", "Discover (3)".
-- [ ] **P5d. Mobile search** — Full-screen overlay on mobile instead of tiny dropdown.
-- [ ] **P5e. Keyboard shortcut** — `Cmd+K` or `/` to focus search from anywhere.
+- [ ] **P5c. Search results page redesign** — Group by entity type with headers.
+- [x] **P5d. Mobile search** — Full-screen overlay with auto-focus, recent searches, typeahead, Cancel button.
+- [x] **P5e. Keyboard shortcut** — `Cmd+K` / `Ctrl+K` focuses desktop search bar. Keyboard hint badge shown.
 
 #### Phase 6: Semantic Search (2-3 weeks, aspirational)
 

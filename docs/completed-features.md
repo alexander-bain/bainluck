@@ -1,5 +1,14 @@
 # Completed Features (Shipped)
 
+## May 2, 2026
+
+- ✅ **TeamNameLink (Phase B)**: Shared `TeamNameLink` component + `teamUrls.ts` utility (`slugify`, `buildTeamPageUrl`). Wired into EventCard, FeedCard, event detail hero, ChampionshipGrid, TournamentProgressionTable, and team page GameCard. Team names are clickable links to `/sport/[sport]/[league]/team/[slug]`. SearchBar refactored to use shared `buildTeamPageUrl`. 9 files, 160 lines.
+- ✅ **Search Phase 4: Fuzzy matching**: `pg_trgm` extension + GIN trigram indexes on `teams.name`, `events.home_team_name`, `events.away_team_name`, `futures_markets.name`. Typeahead and full search fall back to trigram similarity (threshold 0.25) when ILIKE finds no results. Both endpoints return `did_you_mean` when fuzzy correction applied. Frontend shows "Showing results for X" banner. Migration `a7b8c9d0e1f2`.
+- ✅ **Search Phase 5: UX polish**: Cmd+K / Ctrl+K global shortcut focuses desktop search bar (keyboard hint badge). Recent searches stored in localStorage (last 5), shown on focus before typing. Mobile search overlay replaces `/search` page navigation — full-screen with auto-focus, recent searches, typeahead results, Cancel button.
+- ✅ **Chart bug fixes (0f-13a, 0f-13b)**: Chart no longer extends 30-45min past game end — clips at last ESPN data point + 5min buffer instead of stale `completed_at`. Both charts now use identical shared tick labels computed in parent via `sharedTicks` prop.
+- ✅ **Half margin maps fix (0f-13c)**: `halfMarginMaps` was reading from `gameMarkets.spreads` (full-game only) instead of `gameMarkets.period_markets`. Both 1H and 2H margin maps now render.
+- ✅ **Team page SEO**: JSON-LD `SportsTeam` structured data + dynamic `document.title` on team pages.
+
 ## May 1, 2026
 
 - ✅ **Discover feed breakthrough**: Removed `% at %` SQL filter that was killing 10,300 non-sports markets (economics, politics, tech, entertainment). Changed pool sort from tier+resolution to volume. Added micro-bet penalty for <24h resolution markets. Scheduled LLM hook + image enrichment tasks 4x daily. Combined ground truth: 295 Kalshi + 4,680 Polymarket + 146 email = 5,121 labeled markets. Feed went from 0% non-sports to ~85% non-sports.
