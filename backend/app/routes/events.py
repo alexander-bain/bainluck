@@ -2972,11 +2972,6 @@ async def get_game_markets(
                     if "player_team" in prop:
                         break
 
-    # Debug: count Polymarket markets at each pipeline stage
-    poly_linked = sum(1 for m in markets if m.source == "polymarket")
-    poly_with_outcomes = sum(1 for m in markets if m.source == "polymarket" and outcomes_by_market.get(m.id))
-    poly_no_outcomes = sum(1 for m in markets if m.source == "polymarket" and not outcomes_by_market.get(m.id))
-
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -2991,11 +2986,6 @@ async def get_game_markets(
         "period_markets": period_markets,
         "other": other_markets,
         "pace": pace,
-        "_debug_polymarket": {
-            "linked": poly_linked,
-            "with_outcomes": poly_with_outcomes,
-            "no_outcomes": poly_no_outcomes,
-        },
     }
 
 
