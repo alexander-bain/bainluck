@@ -119,7 +119,9 @@ struct TeamDetailView: View {
                                     if let rank = future.rank, let total = future.totalOutcomes {
                                         Text("#\(rank) of \(total)").font(.caption2).foregroundStyle(.secondary)
                                     }
-                                    Text(future.source).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                                    if let src = future.source {
+                                        Text(src).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
