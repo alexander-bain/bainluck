@@ -463,36 +463,17 @@ Reviewed BOS-PHI completed game (event 14617909). Screenshots in `/Users/bain/De
 
 **Files:** `backend/app/services/kalshi_api.py` (supplementary fetch), `backend/app/routes/events.py` (`_classify_game_market`), `frontend/components/MarketMapSection.tsx` (grouping), `ios/.../Components/MarketMapSection` (if exists)
 
-#### 0f-13d. Double Doubles in Additional Markets, Not Player Props (WEB + NATIVE)
+#### ~~0f-13d. Double Doubles in Additional Markets, Not Player Props~~ ✅ SHIPPED (May 2)
 
-**Problem:** "Philadelphia at Boston: Double Doubles" market appears in Additional Markets / Player Performance section instead of being integrated into the Player Props grid.
+Root cause: `_PLAYER_PROP_RE` had `double.?double\b` — the `\b` word boundary rejected the plural "Doubles". Fixed both `_PLAYER_PROP_RE` and `_is_team_stat_market` to accept `doubles?`. Team-level "Double Doubles" → `team_total`, player-level "Tatum Double Doubles" → `player_prop`.
 
-**Investigation needed:** Trace the actual Kalshi market name through `_classify_game_market()`. The regex `_PLAYER_PROP_RE` includes `double.?double` but something diverts it earlier (likely "Total" keyword in the market name, or the outcome format is Yes/No without numeric thresholds, causing the player_prop pipeline to drop them).
+#### ~~0f-13e. Hero Bubbles + EI Badge Still Showing on NATIVE~~ ✅ SHIPPED (May 2)
 
-**Fix options:**
-1. Explicit detection: if market name contains "double double" or "triple double", classify as `player_prop` regardless of other keywords
-2. Handle non-threshold outcomes: Double Double markets use Yes/No outcomes, not "Over 1.5" — the player prop pipeline may silently drop them because `_extract_threshold()` returns None
+Removed EI badge, sportsbook spread warning, prediction market divergence bubbles, and stakes capsule from iOS hero. Also removed dead `divergenceBadge` method. -135 lines.
 
-**Files:** `backend/app/routes/events.py` (`_classify_game_market`, `_extract_threshold`), `frontend/components/PlayerPropsDashboard.tsx`
+#### ~~0f-13f. Standings Context Still Showing on NATIVE~~ ✅ SHIPPED (May 2)
 
-#### 0f-13e. Hero Bubbles + EI Badge Still Showing on NATIVE
-
-**Problem:** The web fix removed EI badge, sportsbook spread warning, and prediction market divergence bubbles — but the native app has its OWN SwiftUI implementation of these elements that was not touched. Native still shows:
-- EI badge with score "59"
-- "Sportsbooks spread 79% (8%–87%)" warning
-- "Kalshi has Celtics at 18% vs sportsbooks at 7% (10% gap)" warning
-
-**Fix:** Find and remove these elements from the iOS `EventDetailView.swift` hero section.
-
-**Files:** `ios/.../Views/EventDetailView.swift`
-
-#### 0f-13f. Standings Context Still Showing on NATIVE
-
-**Problem:** The "Standings Context" section (showing "45-37, #4 Eastern Conference" and "56-26, #1 Eastern Conference") is redundant with the Championship Path card which already shows record + conference. User asked to remove it.
-
-**Fix:** Remove the Standings Context section from `EventDetailView.swift`.
-
-**Files:** `ios/.../Views/EventDetailView.swift`
+Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Redundant with Championship Path card.
 
 #### 0f-13g. Player Prop Cards Not Fixed on NATIVE
 
