@@ -9,9 +9,11 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 export default function TeamPage() {
   const params = useParams();
-  const slug = params.slug as string;
+  const sport = params.sport as string;
+  const league = params.league as string;
+  const teamSlug = params.team as string;
 
-  usePageTracking({ pageType: "team", pageTitle: `Team — ${slug}` });
+  usePageTracking({ pageType: "team", pageTitle: `Team — ${teamSlug}` });
   useScrollDepth({ pageType: "team" });
   useEngagementTime({ pageType: "team" });
 
@@ -23,7 +25,7 @@ export default function TeamPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchTeamPage(slug)
+    fetchTeamPage(teamSlug)
       .then((result) => {
         if (!cancelled) setData(result);
       })
@@ -36,7 +38,7 @@ export default function TeamPage() {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [teamSlug]);
 
   if (loading) {
     return (
@@ -52,13 +54,13 @@ export default function TeamPage() {
       <div className="max-w-5xl mx-auto px-4 py-12 text-center">
         <h1 className="text-title-2 text-text-primary mb-2">Team Not Found</h1>
         <p className="text-text-secondary">
-          No team found for &quot;{slug}&quot;
+          No team found for &quot;{teamSlug}&quot;
         </p>
         <Link
-          href="/"
+          href={`/sport/${sport}/${league}`}
           className="mt-4 inline-block text-sm text-accent-brand hover:underline"
         >
-          Back to home
+          Back to {league.toUpperCase()}
         </Link>
       </div>
     );
@@ -66,10 +68,7 @@ export default function TeamPage() {
 
   const { team, upcoming_events, recent_events, futures, championship_path } =
     data;
-
-  const leaguePath = team.sport_key
-    ? `/sport/${team.sport_key.split("_")[0]}/${team.sport_key.split("_").slice(1).join("_")}`
-    : null;
+  const leaguePath = `/sport/${sport}/${league}`;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -79,14 +78,10 @@ export default function TeamPage() {
           Home
         </Link>
         <span>/</span>
-        {leaguePath && team.sport_name && (
-          <>
-            <Link href={leaguePath} className="hover:text-text-primary">
-              {team.sport_name}
-            </Link>
-            <span>/</span>
-          </>
-        )}
+        <Link href={leaguePath} className="hover:text-text-primary">
+          {team.sport_name || league.toUpperCase()}
+        </Link>
+        <span>/</span>
         <span className="text-text-primary">{team.name}</span>
       </nav>
 
