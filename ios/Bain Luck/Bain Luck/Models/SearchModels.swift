@@ -4,11 +4,13 @@ import Foundation
 
 nonisolated struct SearchResponse: Decodable, Sendable {
     let query: String
+    let teams: [SearchTeam]?
     let results: [SearchEvent]
     let futures: [SearchFuturesMarket]
     let pagination: SearchPagination?
     let sports: [SportFacet]?
     let filters: SearchFilters?
+    let didYouMean: String?
 }
 
 nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
@@ -127,6 +129,7 @@ nonisolated struct FacetTag: Decodable, Sendable {
 nonisolated struct TypeaheadResponse: Decodable, Sendable {
     let suggestions: [TypeaheadSuggestion]
     let query: String
+    let didYouMean: String?
 }
 
 nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
@@ -134,8 +137,92 @@ nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     let text: String
     let abbreviation: String?
     let logo: String?
+    let teamId: Int?
+    let teamSlug: String?
+    let sportKey: String?
+    let eventId: Int?
+    let status: String?
+    let commenceTime: String?
     let marketId: Int?
     let marketTier: Int?
+    let marketTypeLabel: String?
 
-    var id: String { "\(type)-\(text)-\(marketId ?? 0)" }
+    var id: String { "\(type)-\(text)-\(marketId ?? teamId ?? eventId ?? 0)" }
+}
+
+nonisolated struct SearchTeam: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let slug: String?
+    let abbreviation: String?
+    let logo: String?
+    let record: String?
+    let sportKey: String?
+}
+
+// MARK: - Team Page
+
+nonisolated struct TeamPageResponse: Decodable, Sendable {
+    let team: TeamPageTeam
+    let upcomingEvents: [SearchEvent]
+    let recentEvents: [SearchEvent]
+    let futures: [TeamFutureItem]
+    let championshipPath: [ChampionshipPathEntry]
+}
+
+nonisolated struct TeamPageTeam: Decodable, Sendable {
+    let id: Int
+    let slug: String
+    let name: String
+    let abbreviation: String?
+    let sportKey: String?
+    let sportName: String?
+    let primaryColor: String?
+    let secondaryColor: String?
+    let logoSmall: String?
+    let logoLarge: String?
+    let record: String?
+    let standings: [String: AnyCodable]?
+}
+
+nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let outcomeName: String
+    let marketId: Int
+    let marketName: String
+    let marketTier: Int?
+    let category: String?
+    let source: String
+    let probability: Double?
+    let probabilityChange24h: Double?
+    let rank: Int?
+    let totalOutcomes: Int?
+    let resolutionDate: String?
+
+    var id: Int { outcomeId }
+}
+
+nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
+    let tier: Int
+    let label: String
+    let marketName: String
+    let marketId: Int
+    let probability: Double?
+    let rank: Int?
+    let movement: Double?
+
+    var id: Int { tier }
+}
+
+nonisolated struct AnyCodable: Decodable, Sendable {
+    let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let intVal = try? container.decode(Int.self) { value = intVal }
+        else if let dblVal = try? container.decode(Double.self) { value = dblVal }
+        else if let strVal = try? container.decode(String.self) { value = strVal }
+        else if let boolVal = try? container.decode(Bool.self) { value = boolVal }
+        else { value = "" }
+    }
 }

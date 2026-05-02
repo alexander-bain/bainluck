@@ -65,6 +65,7 @@ private let searchSportFilters: [SearchSportFilter] = [
 final class SearchViewModel: ObservableObject {
     @Published var query = ""
     @Published var suggestions: [TypeaheadSuggestion] = []
+    @Published var didYouMean: String?
     @Published var results: SearchResponse?
     @Published var loading = false
     @Published var error: String?
@@ -145,6 +146,7 @@ final class SearchViewModel: ObservableObject {
             let response = try await APIClient.shared.fetchTypeahead(query: q)
             guard !Task.isCancelled else { return }
             suggestions = response.suggestions
+            didYouMean = response.didYouMean
         } catch {
             logger.error("Typeahead failed: \(error)")
         }
@@ -246,6 +248,10 @@ struct SearchView: View {
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
                     FuturesListView()
+                case .teamDetail(let slug):
+                    TeamDetailView(slug: slug)
+                case .predictionStats:
+                    PredictionStatsView()
                 }
             }
         }
@@ -492,39 +498,106 @@ struct SearchView: View {
     // MARK: - Suggestions
 
     private var suggestionList: some View {
-        List(vm.suggestions) { suggestion in
-            Button {
-                if suggestion.type == "futures", suggestion.marketId != nil {
-                    // Navigate directly to futures detail
-                    vm.query = suggestion.text
-                    vm.results = nil
-                    vm.suggestions = []
-                    // Use NavigationLink value instead — handle via search
-                    vm.query = suggestion.text
-                    Task { await vm.search() }
-                } else {
-                    // For events, trigger a full search
-                    vm.query = suggestion.text
-                    Task { await vm.search() }
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: suggestion.type == "futures" ? "chart.line.uptrend.xyaxis" : "figure.run")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 20)
-                    Text(suggestion.text)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                    Spacer()
-                    Image(systemName: "arrow.up.left")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+        List {
+            if let dym = vm.didYouMean {
+                Section {
+                    Button {
+                        vm.query = dym
+                        vm.didYouMean = nil
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Showing results for")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(dym)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .buttonStyle(.plain)
+
+            ForEach(vm.suggestions) { suggestion in
+                Button {
+                    RecentSearches.save(suggestion.text)
+                    vm.recentSearches = RecentSearches.load()
+
+                    switch suggestion.type {
+                    case "team":
+                        if let slug = suggestion.teamSlug {
+                            path.append(Route.teamDetail(slug: slug))
+                        } else {
+                            vm.query = suggestion.text
+                            Task { await vm.search() }
+                        }
+                    case "event":
+                        if let eventId = suggestion.eventId {
+                            path.append(Route.eventDetail(id: eventId))
+                        } else {
+                            vm.query = suggestion.text
+                            Task { await vm.search() }
+                        }
+                    case "futures":
+                        if let marketId = suggestion.marketId {
+                            path.append(Route.futuresDetail(id: marketId))
+                        }
+                    default:
+                        vm.query = suggestion.text
+                        Task { await vm.search() }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        suggestionIcon(suggestion)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(suggestion.text)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            if suggestion.type == "event", let status = suggestion.status {
+                                HStack(spacing: 4) {
+                                    StatusBadge(status: status)
+                                    if let ct = suggestion.commenceTime {
+                                        RelativeTimeText(dateString: ct)
+                                    }
+                                }
+                            }
+                            if suggestion.type == "futures", let label = suggestion.marketTypeLabel {
+                                Text(label)
+                                    .font(.caption2)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        Spacer()
+                        Text(suggestion.type == "team" ? "Team" : suggestion.type == "event" ? "Game" : "Futures")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
         .listStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func suggestionIcon(_ s: TypeaheadSuggestion) -> some View {
+        if s.type == "team", let logo = s.logo, let url = URL(string: logo) {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                Image(systemName: "basketball.fill").font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(width: 24, height: 24)
+        } else if s.type == "event" {
+            Image(systemName: s.status == "live" ? "circle.fill" : "calendar")
+                .font(.caption)
+                .foregroundStyle(s.status == "live" ? .red : .secondary)
+        } else {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - iPad Grid
@@ -547,6 +620,48 @@ struct SearchView: View {
 
     private func searchResults(_ results: SearchResponse) -> some View {
         List {
+            // Did you mean
+            if let dym = results.didYouMean {
+                Section {
+                    HStack(spacing: 4) {
+                        Text("Showing results for")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(dym)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+
+            // Teams
+            if let teams = results.teams, !teams.isEmpty {
+                Section {
+                    ForEach(teams) { team in
+                        if let slug = team.slug {
+                            NavigationLink(value: Route.teamDetail(slug: slug)) {
+                                searchTeamRow(team)
+                            }
+                        }
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        Label("Teams", systemImage: "person.3.fill")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        Text("\(teams.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+
             if !results.results.isEmpty {
                 Section {
                     if sizeClass == .regular {
@@ -631,7 +746,7 @@ struct SearchView: View {
                 }
             }
 
-            if results.results.isEmpty && results.futures.isEmpty {
+            if results.results.isEmpty && results.futures.isEmpty && (results.teams ?? []).isEmpty {
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
@@ -689,6 +804,40 @@ struct SearchView: View {
             if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Team Row
+
+    private func searchTeamRow(_ team: SearchTeam) -> some View {
+        HStack(spacing: 10) {
+            if let logo = team.logo, let url = URL(string: logo) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.2))
+                }
+                .frame(width: 32, height: 32)
+            } else {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(width: 32, height: 32)
+                    .overlay(Text(team.abbreviation ?? String(team.name.prefix(1))).font(.caption2).bold())
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(team.name).font(.subheadline).fontWeight(.medium)
+                HStack(spacing: 6) {
+                    if let record = team.record {
+                        Text(record).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if let sport = team.sportKey {
+                        Text(sport.split(separator: "_").dropFirst().joined(separator: " ").uppercased())
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer()
         }
         .padding(.vertical, 2)
     }
