@@ -439,7 +439,7 @@ export default function MarketMapSection({
 
   // ── Period Margin Maps (half spreads) ──
   const halfMarginMaps = useMemo(() => {
-    const halfSpreads = (gameMarkets.spreads || []).filter((s) => !isFullGameSpread(s.market_name || ""));
+    const halfSpreads = (gameMarkets.period_markets || []).filter((s) => s.market_type === "half_spread");
     const halfGroups: Record<string, typeof halfSpreads> = {};
     for (const s of halfSpreads) {
       const text = `${s.outcome_name} ${s.market_name || ""}`.toLowerCase();
@@ -573,7 +573,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.spreads, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
+  }, [gameMarkets.period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
 
   // ── Period Total Maps (half totals) ──
   const halfTotalMaps = useMemo(() => {
