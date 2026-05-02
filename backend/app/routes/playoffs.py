@@ -1442,22 +1442,33 @@ async def _build_golf_tour_grid(
         if not tourney_tokens and tournament_name:
             tourney_tokens = [tournament_name.lower().strip()]
 
-        def _market_matches_tournament(market_name: str) -> bool:
-            """Check if a market name references the current tournament.
+        # Kalshi golf ticker prefixes are tournament-specific by design —
+        # Kalshi only has one active tournament's markets at a time.
+        _KALSHI_GOLF_PREFIXES = (
+            "kxpgatour", "kxpgamakecut", "kxpgatop5", "kxpgatop10",
+            "kxpgatop20", "kxpgar1", "kxpgar2", "kxpgar3", "kxpgah2h",
+            "kxpgaholeinone", "kxpgawinningscore", "kxpgacutline",
+            "kxpgawinmargin", "kxlpgatour",
+        )
 
-            Requires ALL distinctive tournament tokens to appear in the market
-            name. Using 'any' caused cross-tournament contamination — e.g.,
-            "Valero Texas Open" token "texas" matched "Texas Children's Houston
-            Open" from a different week.
+        def _market_matches_tournament(market: object) -> bool:
+            """Check if a market belongs to the current tournament.
+
+            Two paths:
+            1. Kalshi golf ticker prefix — inherently tournament-specific
+            2. Tournament name tokens in market name
             """
+            eid = (market.external_id or "").lower()
+            if eid and any(eid.startswith(p) for p in _KALSHI_GOLF_PREFIXES):
+                return True
             if not tourney_tokens:
-                return True  # Can't filter without tournament name
-            name_lower = market_name.lower() if market_name else ""
+                return True
+            name_lower = (market.name or "").lower()
             return all(tok in name_lower for tok in tourney_tokens)
 
         db_markets_name_matched = [
             m for m in all_db_markets
-            if _market_matches_tournament(m.name)
+            if _market_matches_tournament(m)
         ]
 
         # Filter out garbage binary-market aggregates from Polymarket.
