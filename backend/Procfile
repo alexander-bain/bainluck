@@ -1,4 +1,4 @@
-release: python3 -c "from app.main import app; print(f'Import check OK: {len(app.routes)} routes')" && python3 scripts/fix_alembic_version.py && (alembic upgrade heads || echo "Alembic upgrade skipped — may have multiple heads")
+release: python3 -c "from app.main import app; print(f'Import check OK: {len(app.routes)} routes')" && (alembic upgrade heads || echo "Alembic upgrade skipped — may have multiple heads")
 web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 worker-realtime: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --queues=realtime --max-memory-per-child=350000
 worker-background: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --queues=background --max-memory-per-child=200000
