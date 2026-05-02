@@ -218,14 +218,15 @@ function SearchContent() {
           href="/"
           className="text-sm text-text-secondary hover:text-text-primary mb-2 inline-block"
         >
-          ← Back to all games
+          ← Back
         </Link>
         <h1 className="text-title-1 text-text-primary">
-          Search results for &quot;{query}&quot;
+          Results for &quot;{query}&quot;
         </h1>
         <p className="text-text-secondary mt-1">
-          {results.pagination.total_results} game{results.pagination.total_results !== 1 ? "s" : ""}
-          {hasFutures && ` and ${results.futures.length} futures market${results.futures.length !== 1 ? "s" : ""}`} found
+          {hasEvents && `${results.pagination.total_results} game${results.pagination.total_results !== 1 ? "s" : ""}`}
+          {hasEvents && hasFutures && " · "}
+          {hasFutures && `${results.futures.length} market${results.futures.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -300,7 +301,7 @@ function SearchContent() {
       {hasFutures && (
         <div className={hasEvents ? "mt-8" : ""}>
           <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
-            <span>Futures & Championships</span>
+            <span>Futures & Markets</span>
             <span className="text-sm font-normal text-text-secondary">
               ({results.futures.length})
             </span>

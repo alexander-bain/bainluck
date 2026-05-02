@@ -942,11 +942,15 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 - 8 new tests for tier 5 classification
 - Wider dropdown (min-w-[360px])
 
-#### Phase 3: Smarter Ranking (1 week)
+#### ~~Phase 3: Smarter Ranking (1 week)~~ ✅ SHIPPED (May 1)
 
-- [ ] **P3a. Relevance scoring** — Today's ranking is status-first, tag-second. Needs: exact match > partial, championship > random prop, higher tier > lower tier, higher liquidity first, game today > game next week.
-- [ ] **P3b. Category-aware grouping** — Full search results page: group by Teams, Games, Futures, Discover/World with clear headers and counts.
-- [ ] **P3c. Smart typeahead slot allocation** — Max 1 team, 2 games, 2 futures (best picks), not whatever ILIKE returns first.
+- [x] **P3a. Relevance scoring** — Futures ranked by tier ASC + volume DESC. Events ranked by live-first + commence_time ASC. Tier fix (Phase 2) ensures championship > prop.
+- [x] **P3b. Category-aware grouping** — Search results page shows "Games (N)" and "Futures & Markets (N)" as grouped sections with clear counts.
+- [x] **P3c. Smart typeahead slot allocation** — Collect into pools, then assemble: 1 team + 2 events + 2 futures baseline, fill remaining 2 slots from extras. No more 5 futures crowding out games.
+
+**Also shipped:**
+- Backfill script (`scripts/backfill_market_tiers.py`) to recompute tier for existing Polymarket markets
+- Cleaner search results header
 
 #### Phase 4: Fuzzy & Full-Text Search (1-2 weeks)
 

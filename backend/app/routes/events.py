@@ -975,26 +975,30 @@ async def typeahead_search(
         )
         futures_name_filter = FuturesMarket.name.ilike(pattern)
 
-    # 1. Find matching teams (deduplicated by name)
+    # --- Collect candidates into separate pools (all 3 queries run) ---
+    _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
+
+    # 1. Teams
     team_query = (
         select(Team.name, Team.abbreviation, Team.sport_id, Team.logo_url_small)
         .where(team_filter)
         .order_by(Team.name)
-        .limit(5)
+        .limit(3)
     )
     team_result = await db.execute(team_query)
+    team_pool = []
     teams_seen = set()
     for row in team_result.all():
         if row.name not in teams_seen:
             teams_seen.add(row.name)
-            suggestions.append({
+            team_pool.append({
                 "type": "team",
                 "text": row.name,
                 "abbreviation": row.abbreviation,
                 "logo": row.logo_url_small,
             })
 
-    # 2. Find upcoming/live events matching the query
+    # 2. Events (live/upcoming)
     event_query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
@@ -1012,8 +1016,9 @@ async def typeahead_search(
         .limit(4)
     )
     event_result = await db.execute(event_query)
+    event_pool = []
     for event in event_result.scalars().all():
-        suggestions.append({
+        event_pool.append({
             "type": "event",
             "text": f"{event.away_team_name} at {event.home_team_name}",
             "event_id": event.id,
@@ -1022,7 +1027,7 @@ async def typeahead_search(
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         })
 
-    # 3. Find matching futures markets (by name or outcome name, deduplicated)
+    # 3. Futures (sports + non-sports, deduplicated)
     futures_query = (
         select(FuturesMarket)
         .where(
@@ -1043,64 +1048,39 @@ async def typeahead_search(
         .limit(20)
     )
     futures_result = await db.execute(futures_query)
+    futures_pool = []
     seen_futures_keys: set[str] = set()
-    futures_count = 0
-    _TIER_LABELS = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     for market in futures_result.scalars().all():
-        if futures_count >= 3:
+        if len(futures_pool) >= 5:
             break
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue
         seen_futures_keys.add(dedup_key)
-        futures_count += 1
-        suggestions.append({
+        label = _TIER_LABELS.get(market.market_tier, None)
+        if not label and market.sport_id is None:
+            label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
+        futures_pool.append({
             "type": "futures",
             "text": market.name,
             "market_id": market.id,
             "market_tier": market.market_tier,
-            "market_type_label": _TIER_LABELS.get(market.market_tier, market.market_type or "Market"),
+            "market_type_label": label or market.market_type or "Market",
         })
 
-    # 4. Find matching non-sports markets (weather, economics, politics, etc.)
-    # Only search if no futures already matched, to avoid crowding
-    if futures_count < 2:
-        nonsport_query = (
-            select(FuturesMarket)
-            .where(
-                FuturesMarket.name.ilike(pattern),
-                FuturesMarket.status == "open",
-                FuturesMarket.sport_id.is_(None),
-                or_(
-                    FuturesMarket.resolution_date.is_(None),
-                    FuturesMarket.resolution_date >= now,
-                ),
-            )
-            .order_by(
-                FuturesMarket.market_tier.asc().nulls_last(),
-                FuturesMarket.volume.desc().nulls_last(),
-            )
-            .limit(3)
-        )
-        nonsport_result = await db.execute(nonsport_query)
-        for market in nonsport_result.scalars().all():
-            if futures_count >= 3:
-                break
-            dedup_key = _normalize_futures_dedup_key(market)
-            if dedup_key in seen_futures_keys:
-                continue
-            seen_futures_keys.add(dedup_key)
-            futures_count += 1
-            cat_label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
-            suggestions.append({
-                "type": "futures",
-                "text": market.name,
-                "market_id": market.id,
-                "market_tier": market.market_tier,
-                "market_type_label": cat_label,
-            })
+    # --- Slot-based assembly: 1 team, 2 events, 2 futures baseline ---
+    # Then fill remaining slots from whichever pool has more candidates.
+    suggestions = []
+    suggestions.extend(team_pool[:1])
+    suggestions.extend(event_pool[:2])
+    suggestions.extend(futures_pool[:2])
 
-    return {"suggestions": suggestions[:8], "query": q}
+    remaining = 7 - len(suggestions)
+    if remaining > 0:
+        extras = team_pool[1:2] + event_pool[2:4] + futures_pool[2:5]
+        suggestions.extend(extras[:remaining])
+
+    return {"suggestions": suggestions, "query": q}
 
 
 @router.get("/search-suggestions")
