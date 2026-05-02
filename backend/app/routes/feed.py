@@ -270,13 +270,15 @@ async def get_feed(
             ei_score = ei.get("score", 0) if ei else 0
             headline = (item.get("headline") or "").lower()
             is_exceptional = (
-                ei_score >= 85
-                or (data.get("status") == "live" and any(
-                    kw in headline for kw in ["elimination", "buzzer", "walk-off", "historic"]
-                ))
+                ei_score >= 70
+                or any(kw in headline for kw in [
+                    "elimination", "buzzer", "walk-off", "historic",
+                    "upset", "comeback", "playoff", "championship",
+                ])
+                or item.get("score", 0) >= 90
             )
             if not is_exceptional:
-                item["score"] = min(item["score"], 40)
+                item["score"] = min(item["score"], 35)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
 
