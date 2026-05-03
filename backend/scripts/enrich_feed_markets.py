@@ -51,26 +51,26 @@ async def enrich_specific(market_ids):
 
             if not market.hook_description and client:
                 outcomes = (await session.execute(
-                    select(FuturesOutcome.name, FuturesOutcome.current_probability)
+                    select(FuturesOutcome.name, FuturesOutcome.current_probability, FuturesOutcome.opening_probability)
                     .where(FuturesOutcome.market_id == market.id)
-                    .order_by(FuturesOutcome.rank.asc().nullslast()).limit(3)
+                    .order_by(FuturesOutcome.rank.asc().nullslast()).limit(5)
                 )).all()
                 if outcomes:
                     leader = outcomes[0]
-                    prob = f"{int((leader.current_probability or 0) * 100)}%"
+                    board = "; ".join(f"{o.name}" for o in outcomes[:3])
                     try:
                         response = client.chat.completions.create(
                             model="gpt-4o-mini",
                             messages=[{"role": "user", "content":
-                                f"Write ONE sentence (max 100 chars) about this prediction market. "
-                                f"Be specific. NEVER mention percentages or probability numbers.\n"
-                                f"Market: {market.name}\nLeader: {leader.name}\nHook:"}],
-                            max_tokens=50, temperature=0.7,
+                                f"Write 1-2 sentences (max 250 chars) explaining WHY this market matters right now. "
+                                f"Write like a journalist. NEVER mention percentages.\n"
+                                f"Market: {market.name}\nTop outcomes: {board}\nHook:"}],
+                            max_tokens=150, temperature=0.7,
                         )
                         hook = response.choices[0].message.content.strip().strip('"\'')
                         await session.execute(
                             update(FuturesMarket).where(FuturesMarket.id == market.id)
-                            .values(hook_description=hook[:300])
+                            .values(hook_description=hook[:500])
                         )
                         stats["hooks"] += 1
                     except Exception as e:

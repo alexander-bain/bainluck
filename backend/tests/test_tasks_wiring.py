@@ -197,6 +197,7 @@ class TestBeatScheduleCompleteness:
         "track-statpal-usage",
         "snapshot-golf-leaderboard-daily",
         "enrich-market-hooks",
+        "enrich-market-hooks-regen",
         "enrich-market-images",
         "merge-duplicate-events",
     }

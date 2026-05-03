@@ -1,0 +1,50 @@
+[
+  {
+    "market_name": "2025 Brazilian Presidential Election",
+    "blurb": "The son of former Brazilian president Jair Bolsonaro has surged into the lead, buoyed by a new wave of polls showing right-wing momentum",
+    "category": "politics",
+    "date": "2026-04-15"
+  },
+  {
+    "market_name": "Cadillac Championship Winner",
+    "blurb": "Cameron Young is running away with the Cadillac Championship after a tournament-record 64 in round one",
+    "category": "golf",
+    "date": "2026-03-28"
+  },
+  {
+    "market_name": "Fed Rate Cut by September",
+    "blurb": "Fed Chair Powell hinted at rate cuts, sending this market surging — three of four economists now expect a cut by September",
+    "category": "economics",
+    "date": "2026-04-10"
+  },
+  {
+    "market_name": "Next Pope",
+    "blurb": "The Pope's health scare sent 'Next Pope' markets into overdrive — Cardinal Parolin is the frontrunner but Tagle is surging",
+    "category": "politics",
+    "date": "2026-04-22"
+  },
+  {
+    "market_name": "Russia-Ukraine Ceasefire",
+    "blurb": "Ceasefire talks stalled after Russia's latest offensive in Kharkiv, but back-channel negotiations through Turkey have resumed",
+    "category": "geopolitics",
+    "date": "2026-04-18"
+  },
+  {
+    "market_name": "NBA MVP 2025-26",
+    "blurb": "Shai Gilgeous-Alexander has locked up MVP since January with a historically dominant season — no challenger has been within 30 first-place votes",
+    "category": "basketball",
+    "date": "2026-04-20"
+  },
+  {
+    "market_name": "Will TikTok be banned?",
+    "blurb": "The Supreme Court's surprise decision to take up the TikTok case sent ban odds soaring — oral arguments are set for June",
+    "category": "politics",
+    "date": "2026-04-25"
+  },
+  {
+    "market_name": "Trump approval rating",
+    "blurb": "The tariff rollback boosted approval 3 points overnight, the biggest single-day move since inauguration",
+    "category": "politics",
+    "date": "2026-04-28"
+  }
+]

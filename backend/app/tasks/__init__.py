@@ -936,7 +936,7 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour="3,15", minute=30),
         "kwargs": {"limit": 100},
     },
-    "enrich-market-hooks": {
+    "enrich-market-hooks-regen": {
         "task": "app.tasks.enrich_market_hooks",
         "schedule": crontab(hour="3,15", minute=45),
         "kwargs": {"limit": 100},

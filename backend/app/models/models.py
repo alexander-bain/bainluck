@@ -603,7 +603,9 @@ class FuturesMarket(Base):
 
     # Discover feed enrichment
     image_url: Mapped[Optional[str]] = mapped_column(String(500))  # Unsplash/Pexels photo URL
-    hook_description: Mapped[Optional[str]] = mapped_column(String(300))  # LLM-generated 1-sentence hook
+    hook_description: Mapped[Optional[str]] = mapped_column(String(500))  # LLM-generated context blurb
+    hook_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    hook_leader_at_generation: Mapped[Optional[str]] = mapped_column(String(200))
 
     # Volume/liquidity from prediction markets (internal signal, never user-facing)
     volume: Mapped[Optional[int]] = mapped_column(Integer)  # Lifetime volume in contracts/dollars
@@ -952,5 +954,23 @@ class UserSeenMarket(Base):
     item_type: Mapped[str] = mapped_column(String(10), nullable=False)
     item_id: Mapped[int] = mapped_column(Integer, nullable=False)
     seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class BugReport(Base):
+    """User-submitted bug reports via rage shake."""
+
+    __tablename__ = "bug_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    screenshot_base64: Mapped[Optional[str]] = mapped_column(Text)
+    app_state: Mapped[Optional[dict]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)
+    admin_notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
