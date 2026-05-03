@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import text, func, delete, and_
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
+from app.models.models import BugReport
 from app.services import get_db
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
@@ -8805,3 +8806,70 @@ async def backfill_completed_at(
 
     await db.commit()
     return stats
+
+
+# =============================================================================
+# Bug Report Inbox (Rage Shake)
+# =============================================================================
+
+@router.get("/bug-reports")
+async def list_bug_reports(
+    secret: str = Query(...),
+    status: str = Query(None),
+    limit: int = Query(50),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    query = select(BugReport).order_by(BugReport.created_at.desc()).limit(limit)
+    if status:
+        query = query.where(BugReport.status == status)
+
+    result = await db.execute(query)
+    reports = result.scalars().all()
+
+    return {
+        "reports": [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "session_id": r.session_id,
+                "description": r.description,
+                "has_screenshot": r.screenshot_base64 is not None,
+                "screenshot_base64": r.screenshot_base64,
+                "app_state": r.app_state,
+                "status": r.status,
+                "admin_notes": r.admin_notes,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reports
+        ],
+        "count": len(reports),
+    }
+
+
+@router.patch("/bug-reports/{report_id}")
+async def update_bug_report(
+    report_id: int,
+    secret: str = Query(...),
+    status: str = Query(None),
+    admin_notes: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    values = {}
+    if status:
+        values["status"] = status
+    if admin_notes is not None:
+        values["admin_notes"] = admin_notes
+
+    if values:
+        await db.execute(
+            update(BugReport).where(BugReport.id == report_id).values(**values)
+        )
+        await db.commit()
+
+    return {"status": "ok"}

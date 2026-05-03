@@ -115,6 +115,12 @@ struct Bain_LuckApp: App {
                 Button("My Stuff") { navCoordinator.selectedTab = .myStuff }
                     .keyboardShortcut("4", modifiers: .command)
             }
+            CommandMenu("Help") {
+                Button("Report a Bug") {
+                    NotificationCenter.default.post(name: .deviceDidShake, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+            }
         }
         #endif
 

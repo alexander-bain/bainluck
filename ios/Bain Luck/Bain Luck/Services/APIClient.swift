@@ -533,4 +533,10 @@ actor APIClient {
     func fetchResolutions() async throws -> ResolutionsResponse {
         return try await fetch("/api/predictions/resolutions")
     }
+
+    // MARK: - Bug Reports
+
+    func submitBugReport(_ body: BugReportSubmission) async throws -> BugReportResponse {
+        return try await postEncodable("/api/feedback/bug-report", body: body)
+    }
 }
