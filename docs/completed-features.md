@@ -1,5 +1,14 @@
 # Completed Features (Shipped)
 
+## May 3, 2026
+
+- ✅ **Rage Shake bug reporting (full stack)**: Shake iOS device (or Cmd+Shift+B on macOS) to report bugs. Captures screenshot with PencilKit finger/pencil markup overlay, text description, and automatic app state (current tab, app version, device model, OS version, user ID, session ID, live game count, timestamp). Backend: `POST /api/feedback/bug-report` stores base64 screenshot + JSONB state in `bug_reports` table. Admin: `GET/PATCH /api/admin/bug-reports` for inbox management. Frontend dashboard at `/admin/bug-reports` with split-pane layout, decoded screenshot viewer, status toggles (New/Reviewed/Actioned/Dismissed), app state metadata. Works for all users (auth + anonymous). 12 files, 649 lines.
+- ✅ **Polymarket-style hook descriptions**: Upgraded LLM hook generation from 120-char generic sentences to 250-char contextual, newsy blurbs. Prompt now includes opening probability, all top 5 outcomes, volume signal, and "why this matters" framing with Polymarket email-style few-shot examples. Smart re-generation: tracks `hook_generated_at` + leader at generation time, skips recent hooks unless leader changed or probability moved >15pp. `max_tokens` 60→150.
+- ✅ **Polymarket email blurb pipeline**: Google Apps Script extracts editorial blurbs from Polymarket's daily marketing emails (Gmail tag already set up). Parses market titles + context paragraphs from HTML. Blurbs stored as few-shot training examples for the hook generation prompt.
+- ✅ **Completed game hero fix**: iOS event detail shows opening odds ("Opened 45% – 55%") for finished games instead of misleading near-final 2%/98%. Falls back to "Final" when opening odds unavailable.
+- ✅ **Discover card compaction**: iOS event cards redesigned from vertical stack to compact horizontal layout — 28px logos, inline scores, ~40% shorter.
+- ✅ **Onboarding team search fix**: Deduplication by school/franchise name (Harvard shows once, not 8 times). Preseason/foreign league filtering. Multi-sport expansion — schools show "N sports" with chevron, tap to pick individual sport teams.
+
 ## May 2, 2026
 
 - ✅ **TeamNameLink (Phase B)**: Shared `TeamNameLink` component + `teamUrls.ts` utility (`slugify`, `buildTeamPageUrl`). Wired into EventCard, FeedCard, event detail hero, ChampionshipGrid, TournamentProgressionTable, and team page GameCard. Team names are clickable links to `/sport/[sport]/[league]/team/[slug]`. SearchBar refactored to use shared `buildTeamPageUrl`. 9 files, 160 lines.
