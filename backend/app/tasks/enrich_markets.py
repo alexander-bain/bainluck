@@ -232,9 +232,10 @@ async def enrich_market_hooks(limit: int = 50):
             )
 
             prompt = (
-                f"Write 1-2 sentences (max 250 chars) explaining WHY a reader should care about this prediction market RIGHT NOW. "
+                f"Write 1-2 sentences (max 250 chars) explaining WHY a reader should care about this topic RIGHT NOW. "
                 f"Write like a journalist, not a market description. Focus on what happened, what changed, or why this matters. "
-                f"NEVER include specific percentages or probability numbers — those are shown separately and go stale.\n\n"
+                f"NEVER include specific percentages or probability numbers — those are shown separately and go stale. "
+                f"NEVER reference prediction markets, Polymarket, Kalshi, odds, traders, betting, or gambling — write as pure news context.\n\n"
                 f"Market: {market.name}\n"
                 f"Category: {market.llm_sport_category or 'general'}\n"
                 f"Leaderboard:\n" + "\n".join(leaderboard_lines) + "\n"
