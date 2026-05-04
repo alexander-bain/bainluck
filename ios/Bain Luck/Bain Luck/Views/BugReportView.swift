@@ -28,6 +28,7 @@ struct BugReportView: View {
                             Image(platformImage: screenshot)
                                 .resizable()
                                 .scaledToFit()
+                                .frame(maxHeight: 300)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
                             #if os(iOS)
@@ -81,13 +82,9 @@ struct BugReportView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if submitted {
-                        Button("Done") { dismiss() }
-                    } else {
-                        Button("Submit") { submitReport() }
-                            .disabled(submitting || description.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .fontWeight(.semibold)
-                    }
+                    Button("Submit") { submitReport() }
+                        .disabled(submitting || submitted || description.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .fontWeight(.semibold)
                 }
             }
         }
@@ -101,7 +98,7 @@ struct BugReportView: View {
                 let base64 = imageData.map { $0.base64EncodedString() }
 
                 let appState: [String: String] = [
-                    "current_tab": navCoordinator.selectedTab.rawValue,
+                    "current_tab": "\(navCoordinator.selectedTab.rawValue)",
                     "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
                     "platform": platformString(),
                     "device_model": deviceModel(),
@@ -118,8 +115,10 @@ struct BugReportView: View {
                 )
                 _ = try await APIClient.shared.submitBugReport(submission)
                 submitted = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             } catch {
                 submitted = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             }
             submitting = false
         }
@@ -195,15 +194,25 @@ struct CanvasOverlay: UIViewRepresentable {
 
 func captureScreenshot() -> PlatformImage? {
     #if os(iOS)
-    guard let window = UIApplication.shared.connectedScenes
-        .compactMap({ $0 as? UIWindowScene })
-        .flatMap({ $0.windows })
-        .first(where: { $0.isKeyWindow }) else { return nil }
+    let scenes = UIApplication.shared.connectedScenes
+    print("[BugReport] Connected scenes: \(scenes.count)")
+    guard let windowScene = scenes.compactMap({ $0 as? UIWindowScene }).first else {
+        print("[BugReport] No UIWindowScene found")
+        return nil
+    }
+    print("[BugReport] Windows: \(windowScene.windows.count), keyWindow: \(windowScene.keyWindow != nil)")
+    guard let window = windowScene.keyWindow ?? windowScene.windows.first else {
+        print("[BugReport] No window found")
+        return nil
+    }
+    print("[BugReport] Window size: \(window.bounds.size)")
 
     let renderer = UIGraphicsImageRenderer(size: window.bounds.size)
-    return renderer.image { ctx in
+    let image = renderer.image { ctx in
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
     }
+    print("[BugReport] Screenshot captured: \(image.size)")
+    return image
     #elseif os(macOS)
     guard let window = NSApplication.shared.keyWindow else { return nil }
     guard let cgImage = CGWindowListCreateImage(

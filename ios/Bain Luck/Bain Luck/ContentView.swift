@@ -1,19 +1,22 @@
 import SwiftUI
 
+struct ScreenshotWrapper: Identifiable {
+    let id = UUID()
+    let image: PlatformImage
+}
+
 struct ContentView: View {
-    @State private var showBugReport = false
-    @State private var bugScreenshot: PlatformImage? = nil
+    @State private var bugScreenshot: ScreenshotWrapper? = nil
 
     var body: some View {
         MainTabView()
-            #if os(iOS)
             .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
-                bugScreenshot = captureScreenshot()
-                showBugReport = true
+                if let image = captureScreenshot() {
+                    bugScreenshot = ScreenshotWrapper(image: image)
+                }
             }
-            #endif
-            .sheet(isPresented: $showBugReport) {
-                BugReportView(screenshot: bugScreenshot)
+            .sheet(item: $bugScreenshot) { wrapper in
+                BugReportView(screenshot: wrapper.image)
             }
     }
 }

@@ -1,17 +1,10 @@
-//
-//  BainLuckWatchApp.swift
-//  BainLuckWatch Watch App
-//
-//  Created by bain on 5/2/26.
-//
-
 import SwiftUI
 
 @main
-struct BainLuckWatch_Watch_AppApp: App {
+struct BainLuckWatchApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            WatchTabView()
         }
     }
 }
