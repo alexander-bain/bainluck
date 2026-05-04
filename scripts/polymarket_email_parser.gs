@@ -11,7 +11,7 @@
  * 4. Set a daily trigger: Edit → Triggers → Add → processPolymarketEmails → Time-driven → Daily
  */
 
-const GMAIL_LABEL = "Polymarket"; // Change this to match your Gmail label
+const GMAIL_LABEL = "Polymarketing"; // Change this to match your Gmail label
 const SHEET_NAME = "Sheet1";
 const PROCESSED_LABEL = "Polymarket/Processed"; // Auto-created to track what's been read
 
@@ -32,7 +32,7 @@ function processPolymarketEmails() {
     return;
   }
 
-  const threads = label.getThreads(0, 20); // Process up to 20 at a time
+  const threads = label.getThreads(0, 100); // Process up to 100 at a time
   let totalMarkets = 0;
 
   for (const thread of threads) {
@@ -45,17 +45,16 @@ function processPolymarketEmails() {
       const subject = message.getSubject();
       const date = message.getDate();
       const plainBody = message.getPlainBody();
-      const htmlBody = message.getBody();
 
-      // Extract markets from plain text body (existing logic)
+      // Extract markets from email body
       const markets = extractMarkets(plainBody, subject);
 
-      // Extract editorial blurbs from HTML body (new)
-      const blurbs = extractBlurbs(htmlBody);
+      // Extract editorial blurbs from HTML
+      const htmlBody = message.getBody();
+      const blurbs = extractBlurbsFromHtml(htmlBody);
 
-      // Match blurbs to markets by proximity (blurb near a market name)
       for (const market of markets) {
-        const matchedBlurb = findBestBlurb(market.name, blurbs);
+        const blurb = matchBlurb(market.name, blurbs);
         sheet.appendRow([
           Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd"),
           "polymarket",
@@ -65,7 +64,7 @@ function processPolymarketEmails() {
           market.probability || "",
           market.resolutionDate || "",
           subject,
-          matchedBlurb || "",
+          blurb || "",
         ]);
         totalMarkets++;
       }
@@ -87,7 +86,7 @@ const JUNK_PATTERNS = [
   /^view in browser/i,
   /^polymarket/i,
   /^follow us/i,
-  /^©/,
+  /^\u00A9/,
   /^privacy/i,
   /^terms/i,
   /^download/i,
@@ -108,9 +107,9 @@ const JUNK_PATTERNS = [
   /^___/,
   /^-\s*\(/,                 // "- ( https://..." pattern
   /^--\s*\(/,                // "-- ( https://..." pattern
-  /→\s*\(/,                  // "→ ( https://..." pattern
+  /\u2192\s*\(/,              // "→ ( https://..." pattern
   /^\*\*\*/,
-  /^[•·▪►▸→←↓↑]/,          // bullet chars at start
+  /^[\u2022\u00B7\u25AA\u25BA\u25B8\u2192\u2190\u2193\u2191]/,  // bullet chars at start
   /^[\d,]+\s*(views|trades|comments|likes|shares|volume)/i,  // engagement stats
   /^\$[\d,.]+[KMB]?\s*(vol|volume|traded)/i,  // volume stats
   /^(yes|no|over|under)\s*$/i,  // bare outcome labels
@@ -144,7 +143,7 @@ function isJunk(line) {
   // Reject "Check odds" / "View market" CTA fragments
   if (/^(check|view|see|explore|browse|discover|read|click|tap|open|visit)\s/i.test(line)) return true;
   // Reject lines starting with quotes that are commentary, not markets
-  if (/^["'"']/.test(line) && line.length < 40 && !/\?/.test(line)) return true;
+  if (/^["'\u2018\u2019]/.test(line) && line.length < 40 && !/\?/.test(line)) return true;
   // Reject "Where are the favorites?" type editorial questions
   if (/^where are the\b/i.test(line)) return true;
   return false;
@@ -205,7 +204,7 @@ function extractMarkets(body, subject) {
   const lines = body.split("\n").map(l => l.trim()).filter(l => l.length > 0);
 
   // Pattern 1: "Market Name — XX%" or "Market Name: XX%" or "Market Name XX%"
-  const probPattern = /^(.+?)[\s—–:\-]+(\d{1,3})%\s*$/;
+  const probPattern = /^(.+?)[\s\u2014\u2013:\-]+(\d{1,3})%\s*$/;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -269,8 +268,8 @@ function extractMarkets(body, subject) {
 
 function cleanMarketName(name) {
   return name
-    .replace(/^[•·▪►▸→\-–—]\s*/, "")  // strip leading bullets
-    .replace(/\s*[→►▸]\s*$/, "")        // strip trailing arrows
+    .replace(/^[\u2022\u00B7\u25AA\u25BA\u25B8\u2192\-\u2013\u2014]\s*/, "")  // strip leading bullets
+    .replace(/\s*[\u2192\u25BA\u25B8]\s*$/, "")        // strip trailing arrows
     .replace(/\s+/g, " ")               // collapse whitespace
     .replace(/^\d+\.\s+/, "")           // strip numbered list prefix "1. "
     .trim();
@@ -383,103 +382,81 @@ function guessCategory(name) {
 }
 
 // ============================================================================
-// Extract editorial blurbs from HTML email body
+// LLM Enrichment — generate hook, category, scores via Gemini
 // ============================================================================
 
 /**
- * Parse the HTML email body and extract editorial context paragraphs.
- * Polymarket emails use table-based layouts where each market card has
- * a bold title followed by 1-2 sentences of editorial context.
- *
- * Returns an array of { title, blurb } objects.
+ * Extract editorial blurbs from the HTML email body.
+ * Polymarket emails have a consistent structure:
+ * - Headlines in <span> with color:#2E5CFF and font-weight:700
+ * - Blurbs in <span> with color:#212121 (17px body text)
+ * Returns [{headline, blurb}] pairs.
  */
-function extractBlurbs(html) {
+function extractBlurbsFromHtml(html) {
   if (!html) return [];
-  const blurbs = [];
+  const results = [];
 
-  // Strategy: find text blocks that look like editorial paragraphs.
-  // These are typically 40-500 chars, contain real sentences (capital letter
-  // start, period/question mark end), and are NOT market names or CTAs.
+  // Find all body-text spans (the editorial paragraphs)
+  // Pattern: <span style="font-size:17px!important;color:#212121;">TEXT</span>
+  const blurbRegex = /color:#212121;"?>([\s\S]*?)<\/span>/gi;
+  let match;
+  while ((match = blurbRegex.exec(html)) !== null) {
+    const text = match[1]
+      .replace(/<[^>]+>/g, "")       // strip nested tags
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#34;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
 
-  // Strip HTML tags but preserve structure with newlines
-  const text = html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/td>/gi, "\n")
-    .replace(/<\/tr>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#\d+;/g, " ")
-    .replace(/\s+/g, " ");
+    // Skip short fragments, CTAs, and intro boilerplate
+    if (text.length < 30) continue;
+    if (/^Welcome to your daily/i.test(text)) continue;
+    if (/^Check odds/i.test(text)) continue;
+    if (/^View (market|wallet)/i.test(text)) continue;
+    if (/^Read more/i.test(text)) continue;
+    if (/^Download now/i.test(text)) continue;
+    if (/^See all/i.test(text)) continue;
+    if (/^Get \$/i.test(text)) continue;
 
-  // Split into paragraphs and filter for editorial content
-  const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(p => p.length > 0);
-
-  for (const para of paragraphs) {
-    // Must be sentence-length (40-500 chars)
-    if (para.length < 40 || para.length > 500) continue;
-    // Must start with a capital letter (not a number, symbol, or lowercase)
-    if (!/^[A-Z]/.test(para)) continue;
-    // Must contain at least one verb-like word (editorial signal)
-    if (!/\b(is|are|was|were|has|have|had|could|would|may|might|will|should|sent|led|pushed|pulled|surged|dropped|fell|rose|moved|shifted|triggered|sparked|forced|boosted|cratered|soared|tumbled|rallied|jumped|climbed|slid|plunged|spiked)\b/i.test(para)) continue;
-    // Reject CTA / navigation text
-    if (/^(check|view|see|explore|browse|discover|read|click|tap|open|visit|sign|log|get|download|unsubscribe|follow)/i.test(para)) continue;
-    // Reject lines that are just market names (questions)
-    if (/\?$/.test(para) && para.length < 80) continue;
-    // Reject percentage-heavy lines (outcome lists)
-    if ((para.match(/%/g) || []).length > 2) continue;
-
-    blurbs.push(para);
+    results.push(text);
   }
 
-  return blurbs;
+  return results;
 }
 
 /**
- * Find the best matching blurb for a given market name.
- * Uses word overlap scoring — the blurb that shares the most
- * significant words with the market name is the best match.
+ * Match a market name to the best blurb by word overlap.
  */
-function findBestBlurb(marketName, blurbs) {
+function matchBlurb(marketName, blurbs) {
   if (!blurbs || blurbs.length === 0) return "";
 
   const marketWords = new Set(
-    marketName.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .split(/\s+/)
-      .filter(w => w.length > 3)
+    marketName.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(function(w) { return w.length > 3; })
   );
+  if (marketWords.size === 0) return "";
 
-  if (marketWords.size === 0) return blurbs[0] || "";
+  var bestBlurb = "";
+  var bestScore = 0;
 
-  let bestBlurb = "";
-  let bestScore = 0;
-
-  for (const blurb of blurbs) {
-    const blurbWords = blurb.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .split(/\s+/)
-      .filter(w => w.length > 3);
-
-    let score = 0;
-    for (const w of blurbWords) {
-      if (marketWords.has(w)) score++;
+  for (var i = 0; i < blurbs.length; i++) {
+    var words = blurbs[i].toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(function(w) { return w.length > 3; });
+    var score = 0;
+    for (var j = 0; j < words.length; j++) {
+      if (marketWords.has(words[j])) score++;
     }
-
     if (score > bestScore) {
       bestScore = score;
-      bestBlurb = blurb;
+      bestBlurb = blurbs[i];
     }
   }
 
-  // Only return if there's meaningful overlap (at least 2 shared words)
   return bestScore >= 2 ? bestBlurb : "";
 }
 
+// ============================================================================
+// Extract editorial blurbs from HTML email body
 /**
  * Manual trigger: process one email and show results in a dialog.
  * Useful for testing the parser on a specific email.
@@ -499,14 +476,22 @@ function testParseLatestEmail() {
 
   const message = threads[0].getMessages()[0];
   const markets = extractMarkets(message.getPlainBody(), message.getSubject());
-  const blurbs = extractBlurbs(message.getBody());
+  const blurbs = extractBlurbsFromHtml(message.getBody());
 
-  let output = "Subject: " + message.getSubject() + "\n\n";
-  output += "Found " + markets.length + " markets, " + blurbs.length + " blurbs:\n\n";
+  let output = "Subject: " + message.getSubject() + "\n";
+  output += "Found " + markets.length + " markets, " + blurbs.length + " blurbs\n\n";
+
+  output += "== BLURBS FOUND ==\n";
+  for (var i = 0; i < blurbs.length; i++) {
+    output += (i+1) + ". " + blurbs[i].substring(0, 120) + "\n";
+  }
+
+  output += "\n== MARKETS + MATCHED BLURBS ==\n";
   for (const m of markets) {
-    const blurb = findBestBlurb(m.name, blurbs);
-    output += "• " + m.name + " (" + (m.probability || "?") + ") [" + m.category + "]\n";
-    if (blurb) output += "  → " + blurb.substring(0, 100) + "...\n";
+    const blurb = matchBlurb(m.name, blurbs);
+    output += "- " + m.name + " [" + m.category + "]\n";
+    if (blurb) output += "  BLURB: " + blurb.substring(0, 100) + "...\n";
+    output += "\n";
   }
 
   SpreadsheetApp.getUi().alert(output);

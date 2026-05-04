@@ -1,50 +1,38 @@
 [
   {
-    "market_name": "2025 Brazilian Presidential Election",
-    "blurb": "The son of former Brazilian president Jair Bolsonaro has surged into the lead, buoyed by a new wave of polls showing right-wing momentum",
+    "market_name": "Democratic Presidential Nominee 2028",
+    "blurb": "Kamala Harris has jumped to the top of the 2028 Democratic field in a recent poll. Her Polymarket nomination odds have doubled, but she's still trailing the silver haired Californian.",
     "category": "politics",
-    "date": "2026-04-15"
+    "date": "2026-05-03"
   },
   {
-    "market_name": "Cadillac Championship Winner",
-    "blurb": "Cameron Young is running away with the Cadillac Championship after a tournament-record 64 in round one",
-    "category": "golf",
-    "date": "2026-03-28"
-  },
-  {
-    "market_name": "Fed Rate Cut by September",
-    "blurb": "Fed Chair Powell hinted at rate cuts, sending this market surging — three of four economists now expect a cut by September",
+    "market_name": "S&P 500 close at end of 2026",
+    "blurb": "The S&P 500 closed Friday at its highest level on record, adding $8.3 trillion in market cap in 24 trading days. But do Polymarket traders think it holds?",
     "category": "economics",
-    "date": "2026-04-10"
+    "date": "2026-05-03"
   },
   {
-    "market_name": "Next Pope",
-    "blurb": "The Pope's health scare sent 'Next Pope' markets into overdrive — Cardinal Parolin is the frontrunner but Tagle is surging",
+    "market_name": "2025 Brazilian Presidential Election",
+    "blurb": "Brazil's October presidential race is one of the hottest global polymarkets. A new set of polls has put right wing candidate Flavio Bolsonaro into a narrow lead over the incumbent Lula.",
     "category": "politics",
-    "date": "2026-04-22"
+    "date": "2026-05-03"
   },
   {
-    "market_name": "Russia-Ukraine Ceasefire",
-    "blurb": "Ceasefire talks stalled after Russia's latest offensive in Kharkiv, but back-channel negotiations through Turkey have resumed",
-    "category": "geopolitics",
-    "date": "2026-04-18"
+    "market_name": "Bolsonaro whale trade",
+    "blurb": "One of Polymarket's OG whales, @gopfan2, saw the Bolsonaro surge coming and is already up 49% on the trade.",
+    "category": "politics",
+    "date": "2026-05-03"
   },
   {
-    "market_name": "NBA MVP 2025-26",
-    "blurb": "Shai Gilgeous-Alexander has locked up MVP since January with a historically dominant season — no challenger has been within 30 first-place votes",
+    "market_name": "Midterm elections",
+    "blurb": "A Democratic operative breaks down what the Supreme Court's Callais ruling means for the midterms.",
+    "category": "politics",
+    "date": "2026-05-03"
+  },
+  {
+    "market_name": "Magic vs Pistons Game 7",
+    "blurb": "8th-seed Magic take on Detroit (3-3) in a winner-take-all Game 7 today at 3:30 ET. $500 to $1,811 if Orlando pulls off the upset.",
     "category": "basketball",
-    "date": "2026-04-20"
-  },
-  {
-    "market_name": "Will TikTok be banned?",
-    "blurb": "The Supreme Court's surprise decision to take up the TikTok case sent ban odds soaring — oral arguments are set for June",
-    "category": "politics",
-    "date": "2026-04-25"
-  },
-  {
-    "market_name": "Trump approval rating",
-    "blurb": "The tariff rollback boosted approval 3 points overnight, the biggest single-day move since inauguration",
-    "category": "politics",
-    "date": "2026-04-28"
+    "date": "2026-05-03"
   }
 ]
