@@ -3,12 +3,13 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, update, desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import BugReport
-from app.services import get_db as get_session
+from app.services import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -22,25 +23,29 @@ class BugReportSubmission(BaseModel):
 
 
 @router.post("/bug-report")
-async def submit_bug_report(body: BugReportSubmission, request: Request):
+async def submit_bug_report(
+    body: BugReportSubmission,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     session_id = request.headers.get("x-session-id")
     user_id = getattr(request.state, "user_id", None)
 
-    async with get_session() as session:
-        report = BugReport(
-            user_id=user_id,
-            session_id=session_id,
-            description=body.description,
-            screenshot_base64=body.screenshot_base64,
-            app_state=body.app_state,
-            status="new",
-        )
-        session.add(report)
-        await session.commit()
-        logger.info(
-            "Bug report #%d submitted (user=%s, session=%s, desc=%s)",
-            report.id, user_id, session_id,
-            (body.description or "")[:50],
-        )
+    report = BugReport(
+        user_id=user_id,
+        session_id=session_id,
+        description=body.description,
+        screenshot_base64=body.screenshot_base64,
+        app_state=body.app_state,
+        status="new",
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+    logger.info(
+        "Bug report #%d submitted (user=%s, session=%s, desc=%s)",
+        report.id, user_id, session_id,
+        (body.description or "")[:50],
+    )
 
     return {"status": "ok", "id": report.id}
