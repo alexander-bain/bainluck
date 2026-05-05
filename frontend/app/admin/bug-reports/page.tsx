@@ -190,24 +190,31 @@ export default function BugReportsPage() {
             <p className="text-sm text-gray-500">{reports.length} reports</p>
           </div>
           <div className="flex gap-2">
-            {["all", "new", "reviewed", "actioned", "dismissed"].map((s) => (
-              <button
-                key={s}
-                onClick={() => setFilter(s)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium ${
-                  filter === s
-                    ? "bg-blue-600 text-white"
-                    : "bg-white text-gray-600 border hover:bg-gray-50"
-                }`}
-              >
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-                {s === "new" && reports.filter(r => r.status === "new").length > 0 && (
-                  <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5">
-                    {reports.filter(r => r.status === "new").length}
-                  </span>
-                )}
-              </button>
-            ))}
+            {["all", "new", "reviewed", "actioned", "dismissed"].map((s) => {
+              const count = s === "all" ? reports.length : reports.filter(r => r.status === s).length;
+              return (
+                <button
+                  key={s}
+                  onClick={() => { setFilter(s); setSelectedId(null); }}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                    filter === s
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-gray-600 border hover:bg-gray-50"
+                  }`}
+                >
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                  {count > 0 && (
+                    <span className={`ml-1.5 text-xs rounded-full px-1.5 ${
+                      filter === s ? "bg-blue-500 text-white" :
+                      s === "new" ? "bg-red-500 text-white" :
+                      "bg-gray-200 text-gray-600"
+                    }`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -252,7 +259,9 @@ export default function BugReportsPage() {
                             </span>
                           )}
                           <span className="text-xs text-gray-400">
-                            {r.app_state?.user_id ? `user ${r.app_state.user_id}` : "anonymous"}
+                            {r.app_state?.user_name && r.app_state.user_name !== "anonymous"
+                              ? r.app_state.user_name
+                              : r.app_state?.user_id ? `user ${r.app_state.user_id}` : "anonymous"}
                           </span>
                         </div>
                       </div>
@@ -382,9 +391,7 @@ export default function BugReportsPage() {
                 </div>
               </div>
             ) : (
-              <div className="lg:col-span-3 bg-white rounded-xl border p-12 text-center text-gray-400">
-                Select a report to view details
-              </div>
+              <BugDashboard reports={reports} allReports={reports} />
             )}
           </div>
         )}
@@ -415,4 +422,169 @@ function timeAgo(dateStr: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+function BugDashboard({ reports, allReports }: { reports: BugReport[]; allReports: BugReport[] }) {
+  const statusCounts = {
+    new: allReports.filter(r => r.status === "new").length,
+    reviewed: allReports.filter(r => r.status === "reviewed").length,
+    actioned: allReports.filter(r => r.status === "actioned").length,
+    dismissed: allReports.filter(r => r.status === "dismissed").length,
+  };
+  const total = allReports.length;
+  const open = statusCounts.new + statusCounts.reviewed;
+  const resolved = statusCounts.actioned + statusCounts.dismissed;
+
+  const severityCounts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  for (const r of allReports) {
+    const a = analyzeBug(r);
+    severityCounts[a.severity as keyof typeof severityCounts]++;
+  }
+
+  // Reporter leaderboard
+  const reporterMap = new Map<string, { count: number; latest: string }>();
+  for (const r of allReports) {
+    const name = r.app_state?.user_name && r.app_state.user_name !== "anonymous"
+      ? r.app_state.user_name
+      : r.app_state?.user_id ? `User ${r.app_state.user_id}` : "Anonymous";
+    const existing = reporterMap.get(name);
+    if (existing) {
+      existing.count++;
+      if (r.created_at && r.created_at > existing.latest) existing.latest = r.created_at;
+    } else {
+      reporterMap.set(name, { count: 1, latest: r.created_at || "" });
+    }
+  }
+  const reporters = [...reporterMap.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5);
+
+  if (total === 0) {
+    return (
+      <div className="lg:col-span-3 bg-white rounded-xl border p-12 text-center">
+        <div className="text-4xl mb-3">📱</div>
+        <h3 className="font-bold text-lg mb-1">No bug reports yet</h3>
+        <p className="text-sm text-gray-500">Shake your phone to file the first one!</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lg:col-span-3 space-y-4">
+      {/* Stats Row */}
+      <div className="grid grid-cols-4 gap-3">
+        <StatCard label="Total" value={total} color="text-gray-900" bg="bg-white" />
+        <StatCard label="Open" value={open} color="text-red-700" bg="bg-red-50" />
+        <StatCard label="Backlogged" value={statusCounts.actioned} color="text-green-700" bg="bg-green-50" />
+        <StatCard label="Dismissed" value={statusCounts.dismissed} color="text-gray-500" bg="bg-gray-50" />
+      </div>
+
+      {/* Progress Bar */}
+      <div className="bg-white rounded-xl border p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-700">Triage Progress</h3>
+          <span className="text-xs text-gray-400">{resolved} of {total} resolved</span>
+        </div>
+        <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
+          {statusCounts.actioned > 0 && (
+            <div className="h-full bg-green-500 transition-all" style={{ width: `${(statusCounts.actioned / total) * 100}%` }} />
+          )}
+          {statusCounts.dismissed > 0 && (
+            <div className="h-full bg-gray-300 transition-all" style={{ width: `${(statusCounts.dismissed / total) * 100}%` }} />
+          )}
+          {statusCounts.reviewed > 0 && (
+            <div className="h-full bg-yellow-400 transition-all" style={{ width: `${(statusCounts.reviewed / total) * 100}%` }} />
+          )}
+          {statusCounts.new > 0 && (
+            <div className="h-full bg-red-400 transition-all" style={{ width: `${(statusCounts.new / total) * 100}%` }} />
+          )}
+        </div>
+        <div className="flex gap-4 mt-2">
+          <Legend color="bg-green-500" label="Backlogged" />
+          <Legend color="bg-gray-300" label="Dismissed" />
+          <Legend color="bg-yellow-400" label="Reviewed" />
+          <Legend color="bg-red-400" label="New" />
+        </div>
+      </div>
+
+      {/* Severity Breakdown */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">By Severity</h3>
+        <div className="space-y-2">
+          {(["P0", "P1", "P2", "P3"] as const).map(sev => {
+            const count = severityCounts[sev];
+            const pct = total > 0 ? (count / total) * 100 : 0;
+            const colors = { P0: "bg-red-500", P1: "bg-orange-400", P2: "bg-yellow-400", P3: "bg-gray-300" };
+            return (
+              <div key={sev} className="flex items-center gap-3">
+                <span className={`text-xs font-bold w-6 ${SEVERITY_COLORS[sev]} px-1 py-0.5 rounded text-center`}>{sev}</span>
+                <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className={`h-full rounded-full ${colors[sev]} transition-all`} style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-xs text-gray-500 w-6 text-right">{count}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Reporter Leaderboard */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Top Bug Reporters</h3>
+        {reporters.length === 0 ? (
+          <p className="text-xs text-gray-400">No reports yet</p>
+        ) : (
+          <div className="space-y-2">
+            {reporters.map(([name, data], i) => (
+              <div key={name} className="flex items-center gap-3">
+                <span className="text-sm w-6 text-center">
+                  {i === 0 ? "🏆" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium">{name}</span>
+                  <span className="text-xs text-gray-400 ml-2">{data.latest ? timeAgo(data.latest) : ""}</span>
+                </div>
+                <span className="text-sm font-bold text-gray-700">{data.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Reports */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Reports</h3>
+        <div className="space-y-2">
+          {allReports.slice(0, 5).map(r => (
+            <div key={r.id} className="flex items-start gap-2 text-xs">
+              <span className={`px-1 py-0.5 rounded text-[10px] font-bold shrink-0 ${SEVERITY_COLORS[analyzeBug(r).severity]}`}>
+                {analyzeBug(r).severity}
+              </span>
+              <span className="text-gray-700 line-clamp-1 flex-1">{r.description || "(no description)"}</span>
+              <StatusBadge status={r.status} />
+              <span className="text-gray-400 shrink-0">{r.created_at ? timeAgo(r.created_at) : ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, color, bg }: { label: string; value: number; color: string; bg: string }) {
+  return (
+    <div className={`${bg} rounded-xl border p-4 text-center`}>
+      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-1">
+      <div className={`w-2 h-2 rounded-full ${color}`} />
+      <span className="text-[10px] text-gray-400">{label}</span>
+    </div>
+  );
 }
