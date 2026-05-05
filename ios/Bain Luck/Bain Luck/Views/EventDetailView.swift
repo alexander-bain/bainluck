@@ -454,8 +454,8 @@ struct EventDetailView: View {
                     }
                     if let record = event.awayTeamData?.record {
                         Text(record)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.quaternary)
                     }
                 }
                 .frame(maxWidth: .infinity)
