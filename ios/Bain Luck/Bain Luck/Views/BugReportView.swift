@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 #if canImport(UIKit)
 import UIKit
 import PencilKit
@@ -97,14 +98,45 @@ struct BugReportView: View {
                 let imageData = flattenedScreenshot()
                 let base64 = imageData.map { $0.base64EncodedString() }
 
+                let tabNames = ["Feed", "Discover", "Leagues", "Search", "My Stuff"]
+                let tabName = navCoordinator.selectedTab.rawValue < tabNames.count
+                    ? tabNames[navCoordinator.selectedTab.rawValue]
+                    : "Tab \(navCoordinator.selectedTab.rawValue)"
+
+                var currentPage = tabName
+                if let route = navCoordinator.pendingRoute {
+                    switch route {
+                    case .eventDetail(let id): currentPage = "Event Detail (id: \(id))"
+                    case .futuresDetail(let id): currentPage = "Futures Detail (id: \(id))"
+                    case .leagueGrid(let slug): currentPage = "League Grid (\(slug))"
+                    case .sportCategory(let key, _): currentPage = "Sport Category (\(key))"
+                    case .teamDetail(let slug): currentPage = "Team Detail (\(slug))"
+                    case .golfCategory: currentPage = "Golf"
+                    case .golfLeaderboard: currentPage = "Golf Leaderboard"
+                    case .golfTournament(_, let name): currentPage = "Golf: \(name)"
+                    case .eiRankings: currentPage = "EI Rankings"
+                    case .preferences: currentPage = "Preferences"
+                    case .futuresList: currentPage = "Futures Browser"
+                    case .predictionStats: currentPage = "Prediction Stats"
+                    case .about: currentPage = "About"
+                    }
+                }
+
+                let networkType = currentNetworkType()
+                let userName = authManager.user?.displayName ?? authManager.user.map { "User \($0.id)" } ?? "anonymous"
+
                 let appState: [String: String] = [
-                    "current_tab": "\(navCoordinator.selectedTab.rawValue)",
-                    "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
+                    "current_page": currentPage,
+                    "current_tab": tabName,
+                    "user_name": userName,
+                    "user_id": authManager.user.map { "\($0.id)" } ?? "anonymous",
+                    "network": networkType,
                     "platform": platformString(),
                     "device_model": deviceModel(),
                     "os_version": osVersion(),
-                    "user_id": authManager.user.map { "\($0.id)" } ?? "anonymous",
+                    "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
                     "live_game_count": "\(navCoordinator.liveGameCount)",
+                    "screen_size": screenSize(),
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
                 ]
 
@@ -170,6 +202,25 @@ struct BugReportView: View {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         return "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
     }
+
+    private func screenSize() -> String {
+        #if os(iOS)
+        let s = UIScreen.main.bounds
+        return "\(Int(s.width))x\(Int(s.height))"
+        #else
+        return "Mac"
+        #endif
+    }
+}
+
+private func currentNetworkType() -> String {
+    let monitor = NWPathMonitor()
+    let path = monitor.currentPath
+    if path.usesInterfaceType(.wifi) { return "wifi" }
+    if path.usesInterfaceType(.cellular) { return "cellular" }
+    if path.usesInterfaceType(.wiredEthernet) { return "ethernet" }
+    if path.status == .satisfied { return "connected" }
+    return "offline"
 }
 
 // MARK: - PencilKit Canvas Overlay (iOS only)

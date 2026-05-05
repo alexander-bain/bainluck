@@ -244,7 +244,7 @@ export default function BugReportsPage() {
             {/* Detail — 3 cols */}
             {selected && analysis ? (
               <div className="lg:col-span-3 space-y-4">
-                {/* Header */}
+                {/* Header + Description */}
                 <div className="bg-white rounded-xl border p-5">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
@@ -253,10 +253,41 @@ export default function BugReportsPage() {
                       <StatusBadge status={selected.status} />
                     </div>
                     <div className="text-xs text-gray-400">
+                      {selected.app_state?.user_name && selected.app_state.user_name !== "anonymous"
+                        ? <span className="font-medium text-gray-600 mr-2">{selected.app_state.user_name}</span>
+                        : null}
                       {selected.created_at ? new Date(selected.created_at).toLocaleString() : ""}
                     </div>
                   </div>
                   <p className="text-sm leading-relaxed">{selected.description || "(no description)"}</p>
+                </div>
+
+                {/* Analysis + Copy Prompt — prominent, right after description */}
+                <div className="bg-blue-50 rounded-xl border border-blue-200 p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm text-blue-700 uppercase tracking-wider">Diagnosis</h3>
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${analysis.severityColor}`}>{analysis.severity}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-blue-400 text-xs">Likely Root Cause</span>
+                      <p className="font-medium text-blue-900">{analysis.rootCause}</p>
+                    </div>
+                    <div>
+                      <span className="text-blue-400 text-xs">Where to Look</span>
+                      <p className="font-medium text-blue-900">{analysis.likelyFix}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => copyPrompt(analysis.prompt)}
+                    className="w-full py-3 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                  >
+                    {copied ? (
+                      <><span>✓</span> Copied to clipboard — paste into Claude CLI</>
+                    ) : (
+                      <><span>📋</span> Copy Claude Prompt</>
+                    )}
+                  </button>
                 </div>
 
                 {/* Screenshot */}
@@ -270,21 +301,6 @@ export default function BugReportsPage() {
                   </div>
                 )}
 
-                {/* Analysis */}
-                <div className="bg-white rounded-xl border p-5 space-y-3">
-                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Analysis</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-400 text-xs">Root Cause</span>
-                      <p className="font-medium">{analysis.rootCause}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-400 text-xs">Suggested Fix</span>
-                      <p className="font-medium">{analysis.likelyFix}</p>
-                    </div>
-                  </div>
-                </div>
-
                 {/* App State */}
                 {selected.app_state && (
                   <div className="bg-white rounded-xl border p-5">
@@ -292,7 +308,7 @@ export default function BugReportsPage() {
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
                       {Object.entries(selected.app_state).map(([k, v]) => (
                         <div key={k} className="flex justify-between py-0.5">
-                          <span className="text-gray-400">{k}</span>
+                          <span className="text-gray-400">{k.replace(/_/g, " ")}</span>
                           <span className="text-gray-700 font-mono">{v}</span>
                         </div>
                       ))}
