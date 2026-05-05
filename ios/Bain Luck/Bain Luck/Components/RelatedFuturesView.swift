@@ -469,18 +469,6 @@ struct RelatedFuturesView: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    if let summary = rf.summary {
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.blue.opacity(0.06))
-                            )
-                    }
-
                     // Awards — compact rows grouped by player
                     if !mergedAwards.isEmpty {
                         sectionHeader(icon: "star.fill", label: "AWARDS")
