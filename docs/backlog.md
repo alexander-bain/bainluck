@@ -504,6 +504,41 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 ---
 
+### Bug Report #4 — Player Props Layout (HOU 3 - BOS 1, May 5)
+
+#### BR4-1. Wasted space in Player Props header (iOS)
+
+**Problem:** Large empty grey area to the right of the Player Props header. The "KALSHI" badge + "All stats" link + team filter tabs ("All", "Sox", "Astros") don't fill the available width, leaving a visible gap on the right side.
+
+**Fix:** Either make the filter tabs fill the width, or tighten the header layout so the gap isn't visible.
+
+**Files:** `ios/.../Components/PlayerPropsCardView.swift` or equivalent player props header
+**Parallel Safety:** Green
+
+---
+
+### Bug Report #5 — Baseball Period Markets Misclassified (HOU 3 - BOS 1, May 5)
+
+#### BR5-1. "First 5 Innings" should get market map treatment, not "Other Markets"
+
+**Problem:** "Houston vs Boston: First 5 Innings" appears under "Additional Markets → Other Markets" as a raw outcome list. This is the baseball equivalent of a 1st half market — it should be classified as `half_total` or `half_spread` and rendered as a market map (like 1st half spread/total maps in basketball and football).
+
+**Fix:** Update `_classify_game_market()` in `backend/app/routes/events.py` to recognize "First 5 Innings" / "F5" as a half-game market. Add regex pattern for baseball-specific period names.
+
+**Files:** `backend/app/routes/events.py` (`_classify_game_market`, `_is_half_market` or similar)
+**Parallel Safety:** Yellow
+
+#### BR5-2. "First Inning Run" should not be in "Other Markets"
+
+**Problem:** "Houston vs Boston: First Inning Run" (Yes 50%) is in "Other Markets" but is a well-known baseball prop. Could be shown as a binary prop card or integrated into the game markets section with better UI.
+
+**Fix:** Classify as `game_prop` or `period_market` rather than `other`. Consider a dedicated binary prop display.
+
+**Files:** `backend/app/routes/events.py` (`_classify_game_market`)
+**Parallel Safety:** Yellow
+
+---
+
 ### Bug Report #1 — Event Detail Page (PHI 109 - BOS 100, May 4)
 
 From rage shake. Three separate issues on a completed NBA playoff game event detail page.
