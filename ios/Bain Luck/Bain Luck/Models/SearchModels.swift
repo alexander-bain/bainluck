@@ -199,15 +199,29 @@ nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
     var id: Int { tier }
 }
 
-nonisolated struct AnyCodable: Decodable, Sendable {
-    let value: Any
+enum AnyCodable: Decodable, Sendable {
+    case int(Int)
+    case double(Double)
+    case string(String)
+    case bool(Bool)
+    case null
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let intVal = try? container.decode(Int.self) { value = intVal }
-        else if let dblVal = try? container.decode(Double.self) { value = dblVal }
-        else if let strVal = try? container.decode(String.self) { value = strVal }
-        else if let boolVal = try? container.decode(Bool.self) { value = boolVal }
-        else { value = "" }
+        if let v = try? container.decode(Int.self) { self = .int(v) }
+        else if let v = try? container.decode(Double.self) { self = .double(v) }
+        else if let v = try? container.decode(String.self) { self = .string(v) }
+        else if let v = try? container.decode(Bool.self) { self = .bool(v) }
+        else { self = .null }
+    }
+
+    var stringValue: String {
+        switch self {
+        case .int(let v): return "\(v)"
+        case .double(let v): return "\(v)"
+        case .string(let v): return v
+        case .bool(let v): return v ? "true" : "false"
+        case .null: return ""
+        }
     }
 }
