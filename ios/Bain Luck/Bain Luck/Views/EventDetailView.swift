@@ -797,7 +797,9 @@ struct EventDetailView: View {
                                     .font(.caption)
                                     .fontWeight(.medium)
                             } else {
-                                RelativeTimeText(dateString: ct)
+                                Text("\(date, format: .dateTime.month(.abbreviated).day()) at \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
                             }
                         }
                         .foregroundStyle(.secondary)

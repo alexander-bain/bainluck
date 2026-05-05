@@ -602,6 +602,13 @@ struct RelatedFuturesView: View {
                                     Text(award.label)
                                         .font(.system(size: 9))
                                         .foregroundStyle(.secondary)
+                                    Capsule()
+                                        .fill(color.opacity(0.2))
+                                        .frame(width: 30, height: 4)
+                                        .overlay(alignment: .leading) {
+                                            Capsule().fill(color)
+                                                .frame(width: max(2, 30 * award.prob))
+                                        }
                                     Text("\(Int((award.prob * 100).rounded()))%")
                                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                                         .foregroundStyle(color)
