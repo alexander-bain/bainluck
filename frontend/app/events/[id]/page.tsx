@@ -431,6 +431,19 @@ export default function EventPage({ params }: EventPageProps) {
         const lastGameData = new Date(Math.max(...gameEndTs));
         lastGameData.setMinutes(lastGameData.getMinutes() + 2);
         end = lastGameData;
+      } else if (event?.commence_time) {
+        // Fallback for non-US sports (soccer, cricket, tennis) with no ESPN/model data.
+        // Estimate game end from commence_time + sport-specific duration.
+        const ct = new Date(event.commence_time);
+        if (!isNaN(ct.getTime())) {
+          const sport = event.sport || "";
+          const isSoccer = sport.startsWith("soccer");
+          const isTennis = sport.startsWith("tennis");
+          const isCricket = sport.startsWith("cricket");
+          const durationMin = isSoccer ? 110 : isTennis ? 180 : isCricket ? 240 : 150;
+          const estimated = new Date(ct.getTime() + durationMin * 60_000);
+          end = estimated < end ? estimated : end;
+        }
       } else if (historyData.completed_at) {
         const ca = new Date(historyData.completed_at);
         if (!isNaN(ca.getTime())) {
