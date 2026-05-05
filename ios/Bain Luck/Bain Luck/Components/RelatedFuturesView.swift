@@ -318,7 +318,7 @@ private struct CategorizedFutures {
 }
 
 private let divisionPlayoffPattern = try! NSRegularExpression(
-    pattern: "division|playoff|play[- ]?in|#1\\s+seed|best\\s+record|worst\\s+record|east\\s+winner|west\\s+winner|central\\s+winner|north\\s+winner|south\\s+winner|atlantic\\s+winner|pacific\\s+winner|\\b[NAEW][LFC]\\s+\\w+\\s+winner",
+    pattern: "division|playoff|postseason|play[- ]?in|make.*playoffs|#1\\s+seed|best\\s+record|worst\\s+record|east\\s+winner|west\\s+winner|central\\s+winner|north\\s+winner|south\\s+winner|atlantic\\s+winner|pacific\\s+winner|\\b[NAEW][LFC]\\s+\\w+\\s+winner",
     options: .caseInsensitive
 )
 
