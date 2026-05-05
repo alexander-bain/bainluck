@@ -928,7 +928,7 @@ struct OddsChartView: View {
     private func fallbackDisplayName(_ source: String) -> String {
         switch source {
         case "espn": return "ESPN"
-        case "stat_model", "bainluck_model": return "Bain Luck Model"
+        case "stat_model", "bainluck_model": return "Statistical Model"
         case "kalshi": return "Kalshi"
         case "polymarket": return "Polymarket"
         case "mlb": return "MLB Model"
