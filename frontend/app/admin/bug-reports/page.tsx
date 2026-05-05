@@ -71,7 +71,12 @@ function analyzeBug(r: BugReport): LLMAnalysis {
 **Full App State:**
 ${appStateStr}
 
-${r.has_screenshot ? "**Screenshot:** Attached (user marked up the issue area with red marker)\n" : ""}
+${r.has_screenshot ? `**Screenshot:** Run this to download and view it:
+\`\`\`
+curl -s "${API}/api/admin/bug-reports/${r.id}/screenshot?secret=cleanup-soccer-2024" -o /tmp/bug_${r.id}.jpg && echo "Screenshot saved to /tmp/bug_${r.id}.jpg"
+\`\`\`
+Then read the image: \`/tmp/bug_${r.id}.jpg\` (user marked up the issue area with red marker)
+` : ""}
 ### Task
 This report may contain MULTIPLE issues. For each distinct issue:
 1. Identify it as a separate problem
@@ -155,6 +160,15 @@ export default function BugReportsPage() {
     loadReports();
   };
 
+  const selectReport = (id: number) => {
+    setSelectedId(id);
+    setShowPrompt(false);
+    const report = reports.find(r => r.id === id);
+    if (report && report.status === "new") {
+      updateStatus(id, "reviewed");
+    }
+  };
+
   const copyPrompt = (prompt: string) => {
     navigator.clipboard.writeText(prompt);
     setCopied(true);
@@ -212,7 +226,7 @@ export default function BugReportsPage() {
                 return (
                   <div
                     key={r.id}
-                    onClick={() => setSelectedId(r.id)}
+                    onClick={() => selectReport(r.id)}
                     className={`p-4 rounded-xl border cursor-pointer transition-all ${
                       selectedId === r.id
                         ? "border-blue-500 bg-blue-50 shadow-md"
@@ -341,24 +355,29 @@ export default function BugReportsPage() {
                   </div>
                 )}
 
-                {/* Actions — status only, no duplicate copy button */}
+                {/* Actions */}
                 <div className="bg-white rounded-xl border p-5 space-y-3">
-                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Status</h3>
-                  <div className="flex gap-2">
-                    {["new", "reviewed", "actioned", "dismissed"].map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => updateStatus(selected.id, s)}
-                        disabled={selected.status === s}
-                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                          selected.status === s
-                            ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
-                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        }`}
-                      >
-                        {s.charAt(0).toUpperCase() + s.slice(1)}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => updateStatus(selected.id, "actioned")}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        selected.status === "actioned"
+                          ? "bg-green-100 text-green-700 ring-1 ring-green-300"
+                          : "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
+                      }`}
+                    >
+                      {selected.status === "actioned" ? "✓ Added to Backlog" : "Mark as Added to Backlog"}
+                    </button>
+                    <button
+                      onClick={() => updateStatus(selected.id, "dismissed")}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        selected.status === "dismissed"
+                          ? "bg-gray-200 text-gray-500 ring-1 ring-gray-300"
+                          : "bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200"
+                      }`}
+                    >
+                      {selected.status === "dismissed" ? "Dismissed" : "Dismiss"}
+                    </button>
                   </div>
                 </div>
               </div>

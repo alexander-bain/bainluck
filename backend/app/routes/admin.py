@@ -8900,3 +8900,26 @@ async def update_bug_report(
         await db.commit()
 
     return {"status": "ok"}
+
+
+@router.get("/bug-reports/{report_id}/screenshot")
+async def get_bug_screenshot(
+    report_id: int,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await _check_admin_auth(secret, request, db):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    result = await db.execute(
+        select(BugReport.screenshot_base64).where(BugReport.id == report_id)
+    )
+    b64 = result.scalar_one_or_none()
+    if not b64:
+        raise HTTPException(status_code=404, detail="No screenshot")
+
+    import base64
+    from fastapi.responses import Response
+    image_data = base64.b64decode(b64)
+    return Response(content=image_data, media_type="image/jpeg")
