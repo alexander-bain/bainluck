@@ -58,7 +58,7 @@ struct BugReportView: View {
                             Image(systemName: "photo.on.rectangle")
                                 .font(.system(size: 32))
                                 .foregroundStyle(.secondary)
-                            Text("Use Cmd+Shift+4 to capture, then Cmd+V to paste")
+                            Text("Cmd+Shift+4 to capture, then click here to paste")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -67,15 +67,10 @@ struct BugReportView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(style: StrokeStyle(lineWidth: 1, dash: [6])).foregroundStyle(.secondary.opacity(0.3)))
                         .padding(.horizontal)
-                        .onPasteCommand(of: [.png, .tiff]) { providers in
-                            for provider in providers {
-                                if let data = try? provider.data(forType: .png),
-                                   let img = NSImage(data: data) {
-                                    pastedScreenshot = img
-                                } else if let data = try? provider.data(forType: .tiff),
-                                          let img = NSImage(data: data) {
-                                    pastedScreenshot = img
-                                }
+                        .onTapGesture {
+                            let pb = NSPasteboard.general
+                            if let img = NSImage(pasteboard: pb) {
+                                pastedScreenshot = img
                             }
                         }
                         #endif
