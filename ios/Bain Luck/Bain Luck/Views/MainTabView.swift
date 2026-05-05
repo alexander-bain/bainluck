@@ -70,7 +70,10 @@ struct MainTabView: View {
     private var tabSelection: Binding<AppTab?> {
         Binding(
             get: { navCoordinator.selectedTab },
-            set: { if let tab = $0 { navCoordinator.selectedTab = tab } }
+            set: { newTab in
+                guard let tab = newTab else { return }
+                DispatchQueue.main.async { navCoordinator.selectedTab = tab }
+            }
         )
     }
 
