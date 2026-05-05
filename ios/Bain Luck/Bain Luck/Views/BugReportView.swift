@@ -19,6 +19,10 @@ struct BugReportView: View {
     @State private var canvasView = PKCanvasView()
     #endif
 
+    #if os(macOS)
+    @State private var pastedScreenshot: NSImage? = nil
+    #endif
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -48,7 +52,46 @@ struct BugReportView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         #endif
+                    } else {
+                        #if os(macOS)
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: 32))
+                                .foregroundStyle(.secondary)
+                            Text("Use Cmd+Shift+4 to capture, then Cmd+V to paste")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .background(Color.secondary.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(style: StrokeStyle(lineWidth: 1, dash: [6])).foregroundStyle(.secondary.opacity(0.3)))
+                        .padding(.horizontal)
+                        .onPasteCommand(of: [.png, .tiff]) { providers in
+                            for provider in providers {
+                                if let data = try? provider.data(forType: .png),
+                                   let img = NSImage(data: data) {
+                                    pastedScreenshot = img
+                                } else if let data = try? provider.data(forType: .tiff),
+                                          let img = NSImage(data: data) {
+                                    pastedScreenshot = img
+                                }
+                            }
+                        }
+                        #endif
                     }
+
+                    #if os(macOS)
+                    if let pasted = pastedScreenshot {
+                        Image(nsImage: pasted)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 300)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.5), lineWidth: 2))
+                            .padding(.horizontal)
+                    }
+                    #endif
 
                     // Description field
                     VStack(alignment: .leading, spacing: 6) {
@@ -157,7 +200,12 @@ struct BugReportView: View {
     }
 
     private func flattenedScreenshot() -> Data? {
-        guard let screenshot else { return nil }
+        #if os(macOS)
+        let img = pastedScreenshot ?? screenshot
+        #else
+        let img = screenshot
+        #endif
+        guard let screenshot = img else { return nil }
 
         #if os(iOS)
         let drawing = canvasView.drawing
@@ -265,26 +313,9 @@ func captureScreenshot() -> PlatformImage? {
     print("[BugReport] Screenshot captured: \(image.size)")
     return image
     #elseif os(macOS)
-    guard let window = NSApplication.shared.keyWindow,
-          let contentView = window.contentView else { return nil }
-    contentView.wantsLayer = true
-    let pdfData = contentView.dataWithPDF(inside: contentView.bounds)
-    guard let pdfImage = NSImage(data: pdfData) else { return nil }
-    let size = contentView.bounds.size
-    let scale = window.backingScaleFactor
-    let pixelSize = NSSize(width: size.width * scale, height: size.height * scale)
-    let bitmapRep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: Int(pixelSize.width), pixelsHigh: Int(pixelSize.height),
-        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-    )!
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmapRep)
-    pdfImage.draw(in: NSRect(origin: .zero, size: pixelSize))
-    NSGraphicsContext.restoreGraphicsState()
-    let result = NSImage(size: size)
-    result.addRepresentation(bitmapRep)
-    return result
+    // SwiftUI's Metal rendering can't be captured via AppKit APIs.
+    // Return nil — BugReportView will show a paste prompt instead.
+    return nil
     #else
     return nil
     #endif
