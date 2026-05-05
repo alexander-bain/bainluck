@@ -115,7 +115,7 @@ struct AboutView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 .padding()
-                .background(Color(.systemGray6))
+                .background(Color.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding()

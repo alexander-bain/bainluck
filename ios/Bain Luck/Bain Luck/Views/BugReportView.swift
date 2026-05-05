@@ -214,13 +214,16 @@ func captureScreenshot() -> PlatformImage? {
     print("[BugReport] Screenshot captured: \(image.size)")
     return image
     #elseif os(macOS)
-    guard let window = NSApplication.shared.keyWindow else { return nil }
-    guard let cgImage = CGWindowListCreateImage(
-        .null, .optionIncludingWindow,
-        CGWindowID(window.windowNumber),
-        [.boundsIgnoreFraming]
-    ) else { return nil }
-    return NSImage(cgImage: cgImage, size: window.frame.size)
+    guard let window = NSApplication.shared.keyWindow,
+          let contentView = window.contentView else { return nil }
+    let rep = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds)
+    if let rep {
+        contentView.cacheDisplay(in: contentView.bounds, to: rep)
+        let image = NSImage(size: contentView.bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+    return nil
     #else
     return nil
     #endif
