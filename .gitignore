@@ -32,6 +32,7 @@ env/
 
 # Environment variables - NEVER COMMIT SECRETS
 .env
+.env.*
 .env.local
 .env.*.local
 *.env

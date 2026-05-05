@@ -716,7 +716,7 @@ Direct SQL: `UPDATE futures_markets SET llm_sport_category = 'hockey' WHERE exte
 heroku pg:psql -a bainluck -c "SELECT external_id, name, llm_sport_category FROM futures_markets WHERE source='kalshi' AND external_id LIKE 'KXNHL%';"
 
 # Trigger poll
-heroku ps:restart worker-background -a bainluck && sleep 30 && curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=cleanup-soccer-2024"
+heroku ps:restart worker-background -a bainluck && sleep 30 && curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=$ADMIN_TOKEN"
 
 # Check worker logs
 heroku logs -a bainluck --ps worker-background -n 300 | grep -i "kalshi\|Fetched.*unique\|supplement"

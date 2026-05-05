@@ -239,7 +239,7 @@ At the start of every session, run a quick production health scan (~10 seconds):
 
 ```bash
 # 1. Sentry — new/high-frequency errors since last session
-export SENTRY_AUTH_TOKEN="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"
+# SENTRY_AUTH_TOKEN is in .env.claude — source it first
 curl -s -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
   "https://us.sentry.io/api/0/projects/alexander-bain/bainluck/issues/?query=is:unresolved&limit=5&sort=date" \
   | python3 -c "import json,sys; [print(f'  {i[\"shortId\"]:12s} {i[\"count\"]:>5s} evts  {i[\"title\"][:60]}') for i in json.load(sys.stdin)]"

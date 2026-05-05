@@ -73,7 +73,7 @@ ${appStateStr}
 
 ${r.has_screenshot ? `**Screenshot:** Run this to download and view it:
 \`\`\`
-curl -s "${API}/api/admin/bug-reports/${r.id}/screenshot?secret=cleanup-soccer-2024" -o /tmp/bug_${r.id}.jpg && echo "Screenshot saved to /tmp/bug_${r.id}.jpg"
+curl -s "${API}/api/admin/bug-reports/${r.id}/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_${r.id}.jpg && echo "Screenshot saved to /tmp/bug_${r.id}.jpg"
 \`\`\`
 Then read the image: \`/tmp/bug_${r.id}.jpg\` (user marked up the issue area with red marker)
 ` : ""}
