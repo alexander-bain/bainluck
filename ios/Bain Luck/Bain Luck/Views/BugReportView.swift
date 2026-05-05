@@ -215,15 +215,19 @@ func captureScreenshot() -> PlatformImage? {
     return image
     #elseif os(macOS)
     guard let window = NSApplication.shared.keyWindow,
-          let contentView = window.contentView else { return nil }
-    let rep = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds)
-    if let rep {
-        contentView.cacheDisplay(in: contentView.bounds, to: rep)
-        let image = NSImage(size: contentView.bounds.size)
-        image.addRepresentation(rep)
-        return image
-    }
-    return nil
+          let contentView = window.contentView,
+          let layer = contentView.layer else { return nil }
+    let scale = window.backingScaleFactor
+    let size = contentView.bounds.size
+    let pixelSize = CGSize(width: size.width * scale, height: size.height * scale)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let ctx = CGContext(data: nil, width: Int(pixelSize.width), height: Int(pixelSize.height),
+                              bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+    ctx.scaleBy(x: scale, y: scale)
+    layer.render(in: ctx)
+    guard let cgImage = ctx.makeImage() else { return nil }
+    return NSImage(cgImage: cgImage, size: size)
     #else
     return nil
     #endif
