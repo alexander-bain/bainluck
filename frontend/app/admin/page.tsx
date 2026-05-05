@@ -1265,6 +1265,9 @@ export default function AdminDashboard() {
           <a href="/admin/eval" className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
             Eval &rarr;
           </a>
+          <a href={`/admin/bug-reports?secret=${secret}`} className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
+            Bug Reports &rarr;
+          </a>
         </div>
         {data && (
           <span className="text-micro text-text-muted">

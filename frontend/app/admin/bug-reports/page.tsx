@@ -15,13 +15,78 @@ interface BugReport {
   created_at: string | null;
 }
 
+interface LLMAnalysis {
+  severity: string;
+  severityColor: string;
+  likelyFix: string;
+  rootCause: string;
+  prompt: string;
+}
+
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com";
+
+const SEVERITY_COLORS: Record<string, string> = {
+  P0: "bg-red-600 text-white",
+  P1: "bg-orange-500 text-white",
+  P2: "bg-yellow-400 text-gray-900",
+  P3: "bg-gray-200 text-gray-600",
+};
+
+function analyzeBug(r: BugReport): LLMAnalysis {
+  const desc = (r.description || "").toLowerCase();
+  const platform = r.app_state?.platform || "unknown";
+
+  let severity = "P2";
+  if (/crash|broken|can't|cannot|500|error|blank|missing|won't load/i.test(desc)) severity = "P1";
+  if (/data loss|wrong data|incorrect|duplicate|security/i.test(desc)) severity = "P0";
+  if (/ugly|weird|minor|typo|color|font|spacing|alignment/i.test(desc)) severity = "P3";
+
+  let rootCause = "UI/display issue";
+  if (/odds|probability|percent|%|number/i.test(desc)) rootCause = "Data display / aggregation issue";
+  if (/chart|graph|axis|line/i.test(desc)) rootCause = "Chart rendering issue";
+  if (/load|slow|spinner|blank/i.test(desc)) rootCause = "Performance / loading issue";
+  if (/twice|duplicate|repeated/i.test(desc)) rootCause = "Duplicate data rendering";
+  if (/source|attribution|kalshi|polymarket|espn/i.test(desc)) rootCause = "Source display / attribution issue";
+  if (/layout|overlap|cut off|truncat/i.test(desc)) rootCause = "Layout / responsive issue";
+
+  const likelyFix = `Check ${platform} rendering for: ${rootCause.toLowerCase()}. Review the relevant component in the ${platform === "ios" ? "iOS Views/" : platform === "macos" ? "iOS Views/" : "frontend/components/"} directory.`;
+
+  const prompt = `## Bug Report #${r.id}
+
+**Description:** ${r.description || "(no description)"}
+
+**Platform:** ${r.app_state?.platform || "unknown"} (${r.app_state?.device_model || "?"}, OS ${r.app_state?.os_version || "?"})
+**App Version:** ${r.app_state?.app_version || "?"}
+**Current Tab:** ${r.app_state?.current_tab || "?"}
+**User:** ${r.app_state?.user_id || "anonymous"}
+**Submitted:** ${r.created_at ? new Date(r.created_at).toLocaleString() : "?"}
+**Severity:** ${severity}
+**Root Cause (estimated):** ${rootCause}
+
+${r.has_screenshot ? "**Screenshot:** Attached (user marked up the issue area with red marker)\n" : ""}
+### Task
+1. Read the bug description and screenshot context above
+2. Find the relevant code that renders this UI
+3. Identify the root cause
+4. Write a fix
+5. Add appropriate tests if the fix touches backend logic
+6. Run the smoke test: \`cd backend && python3 -m pytest tests/test_startup.py -v\``;
+
+  return {
+    severity,
+    severityColor: SEVERITY_COLORS[severity] || SEVERITY_COLORS.P2,
+    likelyFix,
+    rootCause,
+    prompt,
+  };
+}
 
 export default function BugReportsPage() {
   const [reports, setReports] = useState<BugReport[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("new");
+  const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const secret =
     typeof window !== "undefined"
@@ -56,7 +121,14 @@ export default function BugReportsPage() {
     loadReports();
   };
 
+  const copyPrompt = (prompt: string) => {
+    navigator.clipboard.writeText(prompt);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const selected = reports.find((r) => r.id === selectedId);
+  const analysis = selected ? analyzeBug(selected) : null;
 
   if (!secret) {
     return (
@@ -70,9 +142,13 @@ export default function BugReportsPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Bug Reports (Rage Shake)</h1>
+          <div>
+            <a href={`/admin?secret=${secret}`} className="text-sm text-blue-600 hover:underline">&larr; Admin Dashboard</a>
+            <h1 className="text-2xl font-bold mt-1">Bug Reports</h1>
+            <p className="text-sm text-gray-500">{reports.length} reports</p>
+          </div>
           <div className="flex gap-2">
-            {["new", "reviewed", "actioned", "dismissed", "all"].map((s) => (
+            {["all", "new", "reviewed", "actioned", "dismissed"].map((s) => (
               <button
                 key={s}
                 onClick={() => setFilter(s)}
@@ -83,6 +159,11 @@ export default function BugReportsPage() {
                 }`}
               >
                 {s.charAt(0).toUpperCase() + s.slice(1)}
+                {s === "new" && reports.filter(r => r.status === "new").length > 0 && (
+                  <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5">
+                    {reports.filter(r => r.status === "new").length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -95,106 +176,154 @@ export default function BugReportsPage() {
             No bug reports{filter !== "all" ? ` with status "${filter}"` : ""}
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* List */}
-            <div className="space-y-3">
-              {reports.map((r) => (
-                <div
-                  key={r.id}
-                  onClick={() => setSelectedId(r.id)}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    selectedId === r.id
-                      ? "border-blue-500 bg-blue-50 shadow-md"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">
-                        {r.description || "(no description)"}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <StatusBadge status={r.status} />
-                        <span className="text-xs text-gray-400">
-                          {r.created_at
-                            ? new Date(r.created_at).toLocaleString()
-                            : ""}
-                        </span>
-                        {r.app_state?.platform && (
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* List — 2 cols */}
+            <div className="lg:col-span-2 space-y-3">
+              {reports.map((r) => {
+                const a = analyzeBug(r);
+                return (
+                  <div
+                    key={r.id}
+                    onClick={() => setSelectedId(r.id)}
+                    className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                      selectedId === r.id
+                        ? "border-blue-500 bg-blue-50 shadow-md"
+                        : "border-gray-200 bg-white hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${a.severityColor}`}>{a.severity}</span>
+                          <StatusBadge status={r.status} />
+                        </div>
+                        <p className="font-medium text-sm line-clamp-2">
+                          {r.description || "(no description)"}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs text-gray-400">
-                            {r.app_state.platform}
+                            {r.created_at ? timeAgo(r.created_at) : ""}
                           </span>
-                        )}
+                          {r.app_state?.platform && (
+                            <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                              {r.app_state.platform}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-400">
+                            {r.app_state?.user_id ? `user ${r.app_state.user_id}` : "anonymous"}
+                          </span>
+                        </div>
                       </div>
+                      {r.has_screenshot && (
+                        <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center text-gray-400 text-xs shrink-0">
+                          📷
+                        </div>
+                      )}
                     </div>
-                    {r.has_screenshot && (
-                      <div className="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-400 text-xs ml-3">
-                        📷
-                      </div>
-                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            {/* Detail */}
-            {selected ? (
-              <div className="bg-white rounded-xl border p-6 sticky top-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-bold">Bug Report #{selected.id}</h2>
-                  <StatusBadge status={selected.status} />
+            {/* Detail — 3 cols */}
+            {selected && analysis ? (
+              <div className="lg:col-span-3 space-y-4">
+                {/* Header */}
+                <div className="bg-white rounded-xl border p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <h2 className="font-bold text-lg">Bug #{selected.id}</h2>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${analysis.severityColor}`}>{analysis.severity}</span>
+                      <StatusBadge status={selected.status} />
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {selected.created_at ? new Date(selected.created_at).toLocaleString() : ""}
+                    </div>
+                  </div>
+                  <p className="text-sm leading-relaxed">{selected.description || "(no description)"}</p>
                 </div>
 
-                <p className="text-sm">
-                  {selected.description || "(no description)"}
-                </p>
-
+                {/* Screenshot */}
                 {selected.screenshot_base64 && (
-                  <img
-                    src={`data:image/jpeg;base64,${selected.screenshot_base64}`}
-                    alt="Bug screenshot"
-                    className="rounded-lg border max-h-96 w-full object-contain bg-gray-50"
-                  />
-                )}
-
-                {selected.app_state && (
-                  <div className="text-xs space-y-1">
-                    <p className="font-semibold text-gray-500 uppercase tracking-wider">
-                      App State
-                    </p>
-                    {Object.entries(selected.app_state).map(([k, v]) => (
-                      <div key={k} className="flex justify-between">
-                        <span className="text-gray-400">{k}</span>
-                        <span className="text-gray-700 font-mono">{v}</span>
-                      </div>
-                    ))}
+                  <div className="bg-white rounded-xl border p-4">
+                    <img
+                      src={`data:image/jpeg;base64,${selected.screenshot_base64}`}
+                      alt="Bug screenshot"
+                      className="rounded-lg border max-h-[500px] w-full object-contain bg-gray-50"
+                    />
                   </div>
                 )}
 
-                <div className="flex gap-2 pt-2">
-                  {["new", "reviewed", "actioned", "dismissed"].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => updateStatus(selected.id, s)}
-                      disabled={selected.status === s}
-                      className={`px-3 py-1.5 rounded text-xs font-medium ${
-                        selected.status === s
-                          ? "bg-gray-200 text-gray-400"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
-                    >
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </button>
-                  ))}
+                {/* Analysis */}
+                <div className="bg-white rounded-xl border p-5 space-y-3">
+                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Analysis</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-400 text-xs">Root Cause</span>
+                      <p className="font-medium">{analysis.rootCause}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 text-xs">Suggested Fix</span>
+                      <p className="font-medium">{analysis.likelyFix}</p>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="text-xs text-gray-400">
-                  User: {selected.user_id || "anonymous"} · Session:{" "}
-                  {selected.session_id?.slice(0, 8) || "?"}
+                {/* App State */}
+                {selected.app_state && (
+                  <div className="bg-white rounded-xl border p-5">
+                    <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider mb-2">App State</h3>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                      {Object.entries(selected.app_state).map(([k, v]) => (
+                        <div key={k} className="flex justify-between py-0.5">
+                          <span className="text-gray-400">{k}</span>
+                          <span className="text-gray-700 font-mono">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="bg-white rounded-xl border p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Actions</h3>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {["new", "reviewed", "actioned", "dismissed"].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => updateStatus(selected.id, s)}
+                        disabled={selected.status === s}
+                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                          selected.status === s
+                            ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        }`}
+                      >
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => copyPrompt(analysis.prompt)}
+                    className="w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                  >
+                    {copied ? (
+                      <><span>✓</span> Copied to clipboard</>
+                    ) : (
+                      <><span>📋</span> Copy Claude Prompt</>
+                    )}
+                  </button>
+                  <p className="text-xs text-gray-400 text-center">
+                    Paste into Claude CLI to get a diagnosis and fix
+                  </p>
                 </div>
               </div>
             ) : (
-              <div className="bg-white rounded-xl border p-12 text-center text-gray-400">
+              <div className="lg:col-span-3 bg-white rounded-xl border p-12 text-center text-gray-400">
                 Select a report to view details
               </div>
             )}
@@ -213,12 +342,18 @@ function StatusBadge({ status }: { status: string }) {
     dismissed: "bg-gray-100 text-gray-500",
   };
   return (
-    <span
-      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-        colors[status] || colors.new
-      }`}
-    >
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors[status] || colors.new}`}>
       {status}
     </span>
   );
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
