@@ -477,8 +477,7 @@ struct EventDetailView: View {
                                     .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
                             }
-                            // Show how odds shifted
-                            Text("Opened \(formatProbability(ap)) – \(formatProbability(hp))")
+                            Text("Pre-Game Odds")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -832,14 +831,9 @@ struct EventDetailView: View {
                     }
                 } label: {
                     HStack {
-                        // Legend items
-                        HStack(spacing: 12) {
-                            legendItem(color: Color(hex: event.homeTeamData?.primaryColor ?? "#10B981"), label: "BainLuck")
-                            legendItem(color: .secondary.opacity(0.4), label: "Sportsbooks")
-                        }
                         Spacer()
                         HStack(spacing: 4) {
-                            Text("Sources")
+                            Text("Individual Sportsbooks")
                                 .font(.caption2)
                                 .fontWeight(.medium)
                                 .foregroundStyle(.secondary)
