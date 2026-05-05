@@ -504,6 +504,23 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 ---
 
+### Bug Report #3 — Runs Map Missing Zero Label (HOU 3 - BOS 1, May 5)
+
+#### BR3-1. Market map axes must always label zero
+
+**Problem:** The Runs Map shows axis labels "-9", "6", "22+" but doesn't label "0". For any distribution or map where zero is meaningful (total runs, margin, spread), the zero point MUST always be labeled. Users can't orient themselves without it.
+
+Same applies to the margin map above it — "HOU by 8+" and "BOS by 8+" are labeled but "Tie" (zero margin) could be more prominent.
+
+**Design rule:** On any market map axis, always show where zero is. This is a non-negotiable labeling requirement.
+
+**Fix:** In the market map component, ensure the axis tick generation always includes 0 (or the equivalent neutral point like "Tie" for margins). If 0 falls between existing ticks, add it explicitly.
+
+**Files:** `ios/.../Components/MarketMapView.swift`, `frontend/components/MarketMapSection.tsx`
+**Parallel Safety:** Green
+
+---
+
 ### Bug Report #4 — Player Props Layout (HOU 3 - BOS 1, May 5)
 
 #### BR4-1. Wasted space in Player Props header (iOS)
