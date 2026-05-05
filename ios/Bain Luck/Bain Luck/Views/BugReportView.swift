@@ -30,23 +30,22 @@ struct BugReportView: View {
                 VStack(spacing: 16) {
                     // Screenshot with markup
                     if let screenshot {
-                        ZStack {
-                            Image(platformImage: screenshot)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxHeight: 300)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                            #if os(iOS)
-                            CanvasOverlay(canvasView: $canvasView)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                            #endif
-                        }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                        )
-                        .padding(.horizontal)
+                        Image(platformImage: screenshot)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 300)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay {
+                                #if os(iOS)
+                                CanvasOverlay(canvasView: $canvasView)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                #endif
+                            }
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                            .padding(.horizontal)
 
                         #if os(iOS)
                         Text("Draw on the screenshot to highlight the issue")
