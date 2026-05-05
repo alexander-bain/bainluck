@@ -315,11 +315,30 @@ export default function MarketMapSection({
 
   // ── Total Map ──
   const totalData = useMemo(() => {
-    const gameTotals = (gameMarkets.totals || [])
+    const rawTotals = (gameMarkets.totals || [])
       .filter((t) => t.market_type === "game_total" && isGameTotal(t.outcome_name))
       .sort((a, b) => a.threshold - b.threshold);
 
-    if (gameTotals.length === 0) return null;
+    if (rawTotals.length === 0) return null;
+
+    // Dedup by threshold (keep highest-volume source), then enforce monotonicity
+    const byThresh = new Map<number, typeof rawTotals[0]>();
+    for (const t of rawTotals) {
+      const existing = byThresh.get(t.threshold);
+      if (!existing || (t.bookmaker_count ?? 0) > (existing.bookmaker_count ?? 0)) {
+        byThresh.set(t.threshold, t);
+      }
+    }
+    const deduped = [...byThresh.values()].sort((a, b) => a.threshold - b.threshold);
+    // Over probability must decrease as threshold increases
+    const gameTotals = deduped.map((t, i) => {
+      if (i === 0) return t;
+      const prev = deduped[i - 1];
+      if (t.over_probability > prev.over_probability) {
+        return { ...t, over_probability: prev.over_probability };
+      }
+      return t;
+    });
 
     const ouLine = gameTotals.reduce((closest, t) =>
       Math.abs(t.over_probability - 0.5) < Math.abs(closest.over_probability - 0.5) ? t : closest
