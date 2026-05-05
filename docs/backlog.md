@@ -504,6 +504,42 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 ---
 
+### Bug Report #1 — Event Detail Page (PHI 109 - BOS 100, May 4)
+
+From rage shake. Three separate issues on a completed NBA playoff game event detail page.
+
+#### BR1-1. Pre-game odds shown twice in hero (iOS + WEB)
+
+**Problem:** The completed-game hero shows opening odds as the giant probability numbers (41% / 59%) AND repeats them as an "Opened 41% – 59%" caption below. Redundant — same numbers displayed twice.
+
+**Fix:** Change the caption to "Pre-Game Odds" label (since the big numbers already ARE the opening odds), or remove the caption entirely.
+
+**Files:** `ios/.../Views/EventDetailView.swift` (hero section, `isFinished` branch ~line 468-488), `frontend/app/events/[id]/page.tsx` (equivalent web hero)
+**Parallel Safety:** Green
+
+#### BR1-2. Source attribution looks duplicated — NEEDS DESIGN
+
+**Problem:** The source list (sportsbooks contributing to the aggregate) appears to show twice — once as a static list and once inside a collapsible dropdown. The dropdown is valuable because it shows we're aggregating across many sportsbooks, but in practice users see the sources listed twice since they don't click the dropdown. Needs a design fix, not just a code change.
+
+**Design question:** How should source attribution work? Options:
+- Show just the count ("Aggregated from 12 sportsbooks") with dropdown for details
+- Show the dropdown only, collapsed by default
+- Inline chips for the top 3 sources + "+9 more" expander
+
+**Files:** `ios/.../Views/EventDetailView.swift` (`sourcesToggle` ~line 824), `frontend/app/events/[id]/page.tsx`
+**Parallel Safety:** Yellow (design brief needed)
+
+#### BR1-3. Kalshi/Polymarket probabilities missing for NBA playoff game
+
+**Problem:** Kalshi and Polymarket had markets for this NBA playoff game, but their probabilities didn't show on the event detail page — neither during the game nor after. This is a linking issue, not a completed-event filtering issue.
+
+**Investigation:** Check if the prediction market matching task linked Kalshi/Polymarket game markets to this event (via `event_id` FK on `futures_markets`). If not, the matching task may be failing for NBA playoff games specifically. Check `futures_markets` for Kalshi NBA playoff tickers and whether they have `event_id` set.
+
+**Files:** `backend/app/tasks/prediction_market_matching.py`, `backend/app/routes/events.py` (game-markets endpoint)
+**Parallel Safety:** Yellow
+
+---
+
 ### Manus Site Sweep Findings (April 25) — NEW
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
