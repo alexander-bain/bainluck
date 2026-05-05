@@ -266,19 +266,25 @@ func captureScreenshot() -> PlatformImage? {
     return image
     #elseif os(macOS)
     guard let window = NSApplication.shared.keyWindow,
-          let contentView = window.contentView,
-          let layer = contentView.layer else { return nil }
-    let scale = window.backingScaleFactor
+          let contentView = window.contentView else { return nil }
+    contentView.wantsLayer = true
+    let pdfData = contentView.dataWithPDF(inside: contentView.bounds)
+    guard let pdfImage = NSImage(data: pdfData) else { return nil }
     let size = contentView.bounds.size
-    let pixelSize = CGSize(width: size.width * scale, height: size.height * scale)
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    guard let ctx = CGContext(data: nil, width: Int(pixelSize.width), height: Int(pixelSize.height),
-                              bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
-                              bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
-    ctx.scaleBy(x: scale, y: scale)
-    layer.render(in: ctx)
-    guard let cgImage = ctx.makeImage() else { return nil }
-    return NSImage(cgImage: cgImage, size: size)
+    let scale = window.backingScaleFactor
+    let pixelSize = NSSize(width: size.width * scale, height: size.height * scale)
+    let bitmapRep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: Int(pixelSize.width), pixelsHigh: Int(pixelSize.height),
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    )!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmapRep)
+    pdfImage.draw(in: NSRect(origin: .zero, size: pixelSize))
+    NSGraphicsContext.restoreGraphicsState()
+    let result = NSImage(size: size)
+    result.addRepresentation(bitmapRep)
+    return result
     #else
     return nil
     #endif
