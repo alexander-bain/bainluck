@@ -9,6 +9,18 @@ struct WatchGlancesView: View {
             if vm.loading {
                 ProgressView()
                     .padding(.top, 20)
+            } else if let error = vm.error {
+                VStack(spacing: 8) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await vm.load() } }
+                        .font(.caption2)
+                }
+                .padding(.top, 20)
             } else if vm.markets.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "chart.line.uptrend.xyaxis")
@@ -96,13 +108,15 @@ struct WatchMarket: Identifiable {
 final class WatchGlancesViewModel: ObservableObject {
     @Published var markets: [WatchMarket] = []
     @Published var loading = true
+    @Published var error: String?
 
     func load() async {
         loading = true
+        error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 20)
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8)
             markets = feed.items.compactMap { item -> WatchMarket? in
                 guard let f = item.futures,
                       let leader = f.topOutcomes?.first,
@@ -117,6 +131,7 @@ final class WatchGlancesViewModel: ObservableObject {
                 )
             }
         } catch {
+            self.error = "Couldn't load"
             markets = []
         }
     }

@@ -9,6 +9,18 @@ struct WatchLiveView: View {
             if vm.loading {
                 ProgressView()
                     .padding(.top, 20)
+            } else if let error = vm.error {
+                VStack(spacing: 8) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await vm.load() } }
+                        .font(.caption2)
+                }
+                .padding(.top, 20)
             } else if vm.games.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "sportscourt")
@@ -114,13 +126,15 @@ struct WatchLiveGame: Identifiable {
 final class WatchLiveViewModel: ObservableObject {
     @Published var games: [WatchLiveGame] = []
     @Published var loading = true
+    @Published var error: String?
 
     func load() async {
         loading = true
+        error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 50)
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8)
             games = feed.items.compactMap { item -> WatchLiveGame? in
                 guard let e = item.event, e.status == "live",
                       let homeProb = e.currentOdds?.homeProbability else { return nil }
@@ -143,6 +157,7 @@ final class WatchLiveViewModel: ObservableObject {
                 )
             }
         } catch {
+            self.error = "Couldn't load"
             games = []
         }
     }

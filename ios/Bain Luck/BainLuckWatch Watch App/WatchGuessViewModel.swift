@@ -8,16 +8,18 @@ final class WatchGuessViewModel: ObservableObject {
     @Published var currentQuestion: GuessQuestion?
     @Published var lastResult: GuessResult?
     @Published var streak: Int?
+    @Published var error: String?
 
     private var questions: [GuessQuestion] = []
     private var currentIndex = 0
 
     func loadQuestions() async {
         loading = true
+        error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 30)
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8)
             questions = feed.items.compactMap { item -> GuessQuestion? in
                 if item.type == "futures", let f = item.futures {
                     guard let leader = f.topOutcomes?.first,
@@ -50,6 +52,7 @@ final class WatchGuessViewModel: ObservableObject {
             currentIndex = 0
             currentQuestion = questions.first
         } catch {
+            self.error = "Couldn't load"
             questions = []
             currentQuestion = nil
         }

@@ -7,6 +7,17 @@ struct WatchGuessView: View {
         Group {
             if vm.loading {
                 ProgressView()
+            } else if let error = vm.error {
+                VStack(spacing: 8) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.title2)
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await vm.loadQuestions() } }
+                        .font(.caption2)
+                }
             } else if let q = vm.currentQuestion {
                 questionCard(q)
             } else {
