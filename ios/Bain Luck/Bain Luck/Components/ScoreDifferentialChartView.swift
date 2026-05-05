@@ -215,7 +215,7 @@ struct ScoreDifferentialChartView: View {
                     .foregroundStyle(.primary.opacity(0.4))
             }
 
-            // Period markers — matching Win Probability chart's clean floating chip style
+            // Period markers
             ForEach(periodMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
@@ -226,7 +226,7 @@ struct ScoreDifferentialChartView: View {
                             .foregroundStyle(.secondary.opacity(0.7))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
-                            .background(.ultraThinMaterial)
+                            .background(Color.cardBackground.opacity(0.9))
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
             }

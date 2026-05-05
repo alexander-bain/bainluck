@@ -14,6 +14,7 @@ struct BugReportView: View {
     @State private var description = ""
     @State private var submitting = false
     @State private var submitted = false
+    @State private var submitError: String? = nil
 
     #if os(iOS)
     @State private var canvasView = PKCanvasView()
@@ -109,6 +110,17 @@ struct BugReportView: View {
                         }
                         .padding()
                     }
+
+                    if let error = submitError {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                    }
                 }
                 .padding(.vertical)
             }
@@ -184,11 +196,11 @@ struct BugReportView: View {
                     appState: appState
                 )
                 _ = try await APIClient.shared.submitBugReport(submission)
+                submitError = nil
                 submitted = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             } catch {
-                submitted = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
+                submitError = "Couldn't submit — check your connection and try again."
             }
             submitting = false
         }

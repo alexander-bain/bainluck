@@ -163,10 +163,6 @@ export default function BugReportsPage() {
   const selectReport = (id: number) => {
     setSelectedId(id);
     setShowPrompt(false);
-    const report = reports.find(r => r.id === id);
-    if (report && report.status === "new") {
-      updateStatus(id, "reviewed");
-    }
   };
 
   const copyPrompt = (prompt: string) => {
