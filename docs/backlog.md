@@ -540,6 +540,58 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 
 ---
 
+### Manus Sweep May 4 — 7 Issues Found (Health Score: 58/100)
+
+9 modules run, all completed. MLB and NBA live pages are excellent. Grids score 85-92. Source accuracy within 3pp of Kalshi/Polymarket across all spot checks.
+
+#### MS-May4-1. MLB Monotonicity Violation — Runs Map 41% → 75% (CRITICAL)
+
+**Event:** Mets vs Rockies (`/events/14624780`)
+**Problem:** Full game runs map jumps from 41% (Over 6.5) to 75% (Over 7.5). Indicates two datasets merged incorrectly — likely Polymarket sub-markets (from new group_id lookup) merging with Kalshi spreads and bypassing per-source monotonicity enforcement.
+**Fix:** `MarketMapSection.tsx` monotonicity enforcement needs to run AFTER cross-source merge, not per-source. Or dedup by threshold before enforcing.
+**Files:** `frontend/components/MarketMapSection.tsx`, `backend/app/routes/events.py` (game-markets dedup)
+**Parallel Safety:** Yellow
+
+#### MS-May4-2. Chart extends 50-60 min past game end for Soccer (CRITICAL)
+
+**Timing Health Score:** 39/100
+**Problem:** EPL/La Liga/UCL charts extend 50-60 min past actual game end with stale bookmaker data. NBA 20-30 min. NHL/MLB are clean (within 5 min).
+**Root cause:** May 2 fix clips at last ESPN data point — but soccer events have no ESPN data. Fallback to `completed_at` or last non-sportsbook data source needs to fire for non-US sports.
+**Files:** `frontend/app/events/[id]/page.tsx` (`sharedChartDomain`, lines ~382-440)
+**Parallel Safety:** Yellow
+
+#### MS-May4-3. Tennis Futures — Infinite Loading Spinner
+
+**Problem:** Tennis futures detail page shows infinite loading spinner instead of content or error message. Likely a 404 or API error the frontend doesn't surface.
+**Files:** `frontend/app/futures/[id]/page.tsx` (error handling)
+**Parallel Safety:** Green
+
+#### MS-May4-4. EPL League Page Data Contamination
+
+**Problem:** EPL page shows contaminated data from non-EPL sources. Need to investigate what's leaking in.
+**Files:** Backend league page endpoint, sport key classification
+**Parallel Safety:** Yellow
+
+#### MS-May4-5. NBA/NHL Grids Missing Make Playoffs + Win Division Columns
+
+**Problem:** Only Conference + Championship columns shown. MLB correctly shows all 4. Grid endpoint may filter out resolved playoff-stage markets during active playoffs.
+**Files:** `backend/app/routes/futures.py` or `playoffs.py` (grid endpoint)
+**Parallel Safety:** Yellow
+
+#### MS-May4-6. NBA 1H Total — 7 Thresholds vs Kalshi's 9 (23% gap at Over 98.5)
+
+**Problem:** Missing 2 threshold values from Kalshi. Could be outcome ingestion issue or dedup filtering too aggressively.
+**Files:** Backend outcome ingestion, `backend/app/routes/events.py` (game-markets threshold logic)
+**Parallel Safety:** Yellow
+
+#### MS-May4-7. NBA Duplicated Player Awards in Futures Section
+
+**Problem:** Awards appearing multiple times on event detail page. Likely a dedup issue in related-futures endpoint.
+**Files:** `backend/app/routes/events.py` (related-futures), `frontend/app/events/[id]/page.tsx`
+**Parallel Safety:** Yellow
+
+---
+
 ### Manus Site Sweep Findings (April 25) — NEW
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
