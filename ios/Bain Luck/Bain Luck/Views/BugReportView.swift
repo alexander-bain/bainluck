@@ -59,7 +59,7 @@ struct BugReportView: View {
                             Image(systemName: "photo.on.rectangle")
                                 .font(.system(size: 32))
                                 .foregroundStyle(.secondary)
-                            Text("Cmd+Shift+4 to capture, then click here to paste")
+                            Text("Cmd+Ctrl+Shift+4 to copy screenshot, then click here")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -70,7 +70,19 @@ struct BugReportView: View {
                         .padding(.horizontal)
                         .onTapGesture {
                             let pb = NSPasteboard.general
-                            if let img = NSImage(pasteboard: pb) {
+                            // Try PNG data first (Cmd+Shift+Ctrl+4 copies to clipboard)
+                            if let data = pb.data(forType: .png), let img = NSImage(data: data) {
+                                pastedScreenshot = img
+                            // Try TIFF (some apps put TIFF on clipboard)
+                            } else if let data = pb.data(forType: .tiff), let img = NSImage(data: data) {
+                                pastedScreenshot = img
+                            // Try file URL (Cmd+Shift+4 saves to desktop)
+                            } else if let urlStr = pb.string(forType: .fileURL),
+                                      let url = URL(string: urlStr),
+                                      let img = NSImage(contentsOf: url) {
+                                pastedScreenshot = img
+                            // Fallback: NSImage(pasteboard:)
+                            } else if let img = NSImage(pasteboard: pb) {
                                 pastedScreenshot = img
                             }
                         }
