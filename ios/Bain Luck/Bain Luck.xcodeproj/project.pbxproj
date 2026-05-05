@@ -53,11 +53,21 @@
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
+		A7FF02752FA9AC0B00C82C55 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWatch Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				BainLuckComplication.swift,
+			);
+			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A70F40152FA6C20000170BF2 /* BainLuckWatch Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A7FF02752FA9AC0B00C82C55 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWatch Watch App" target */,
+			);
 			path = "BainLuckWatch Watch App";
 			sourceTree = "<group>";
 		};
