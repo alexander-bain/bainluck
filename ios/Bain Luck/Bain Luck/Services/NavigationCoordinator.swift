@@ -18,6 +18,7 @@ final class NavigationCoordinator: ObservableObject {
     @Published var pendingRoute: Route?
     @Published var pendingSearchQuery: String?
     @Published var liveGameCount: Int = 0
+    @Published var showBugReport = false
 
     /// Parse a URL and navigate to the appropriate destination.
     /// Returns `true` if the URL was handled.
