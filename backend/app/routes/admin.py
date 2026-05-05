@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8812,15 +8812,41 @@ async def backfill_completed_at(
 # Bug Report Inbox (Rage Shake)
 # =============================================================================
 
+ADMIN_USER_IDS = {364}
+
+async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
+    if secret and _check_admin_secret(secret):
+        return True
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        try:
+            from app.services.firebase_auth import verify_id_token
+            claims = verify_id_token(token)
+            if claims:
+                firebase_uid = claims.get("uid") or claims.get("sub")
+                if firebase_uid and db:
+                    from app.models.models import User
+                    result = await db.execute(
+                        select(User).where(User.firebase_uid == firebase_uid)
+                    )
+                    user = result.scalar_one_or_none()
+                    if user and user.id in ADMIN_USER_IDS:
+                        return True
+        except Exception:
+            pass
+    return False
+
 @router.get("/bug-reports")
 async def list_bug_reports(
-    secret: str = Query(...),
+    request: Request,
+    secret: str = Query(None),
     status: str = Query(None),
     limit: int = Query(50),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not await _check_admin_auth(secret, request, db):
+        raise HTTPException(status_code=403, detail="Unauthorized")
 
     query = select(BugReport).order_by(BugReport.created_at.desc()).limit(limit)
     if status:
@@ -8852,13 +8878,14 @@ async def list_bug_reports(
 @router.patch("/bug-reports/{report_id}")
 async def update_bug_report(
     report_id: int,
-    secret: str = Query(...),
+    request: Request,
+    secret: str = Query(None),
     status: str = Query(None),
     admin_notes: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not await _check_admin_auth(secret, request, db):
+        raise HTTPException(status_code=403, detail="Unauthorized")
 
     values = {}
     if status:

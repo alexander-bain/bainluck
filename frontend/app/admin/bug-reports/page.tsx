@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { getAuth } from "firebase/auth";
 
 interface BugReport {
   id: number;
@@ -93,30 +94,51 @@ export default function BugReportsPage() {
       ? new URLSearchParams(window.location.search).get("secret") || ""
       : "";
 
+  const getAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (user) {
+        const token = await user.getIdToken();
+        return { Authorization: `Bearer ${token}` };
+      }
+    } catch {}
+    return {};
+  }, []);
+
   const loadReports = useCallback(async () => {
-    if (!secret) return;
     setLoading(true);
     try {
+      const headers = await getAuthHeaders();
       const statusParam = filter === "all" ? "" : `&status=${filter}`;
+      const secretParam = secret ? `&secret=${secret}` : "";
       const res = await fetch(
-        `${API}/api/admin/bug-reports?secret=${secret}${statusParam}&limit=100`
+        `${API}/api/admin/bug-reports?limit=100${statusParam}${secretParam}`,
+        { headers }
       );
+      if (!res.ok) {
+        setReports([]);
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
       setReports(data.reports || []);
     } catch {
       setReports([]);
     }
     setLoading(false);
-  }, [secret, filter]);
+  }, [secret, filter, getAuthHeaders]);
 
   useEffect(() => {
     loadReports();
   }, [loadReports]);
 
   const updateStatus = async (id: number, newStatus: string) => {
+    const headers = await getAuthHeaders();
+    const secretParam = secret ? `&secret=${secret}` : "";
     await fetch(
-      `${API}/api/admin/bug-reports/${id}?secret=${secret}&status=${newStatus}`,
-      { method: "PATCH" }
+      `${API}/api/admin/bug-reports/${id}?status=${newStatus}${secretParam}`,
+      { method: "PATCH", headers }
     );
     loadReports();
   };
@@ -130,13 +152,7 @@ export default function BugReportsPage() {
   const selected = reports.find((r) => r.id === selectedId);
   const analysis = selected ? analyzeBug(selected) : null;
 
-  if (!secret) {
-    return (
-      <div className="p-8 text-center text-gray-500">
-        Add ?secret=YOUR_ADMIN_TOKEN to the URL
-      </div>
-    );
-  }
+  // No gate — auth is checked server-side via Firebase token or secret
 
   return (
     <div className="min-h-screen bg-gray-50">
