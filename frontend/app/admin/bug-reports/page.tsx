@@ -52,26 +52,37 @@ function analyzeBug(r: BugReport): LLMAnalysis {
 
   const likelyFix = `Check ${platform} rendering for: ${rootCause.toLowerCase()}. Review the relevant component in the ${platform === "ios" ? "iOS Views/" : platform === "macos" ? "iOS Views/" : "frontend/components/"} directory.`;
 
+  const appStateStr = r.app_state
+    ? Object.entries(r.app_state).map(([k, v]) => `- ${k}: ${v}`).join("\n")
+    : "(no app state)";
+
   const prompt = `## Bug Report #${r.id}
 
 **Description:** ${r.description || "(no description)"}
 
 **Platform:** ${r.app_state?.platform || "unknown"} (${r.app_state?.device_model || "?"}, OS ${r.app_state?.os_version || "?"})
-**App Version:** ${r.app_state?.app_version || "?"}
-**Current Tab:** ${r.app_state?.current_tab || "?"}
-**User:** ${r.app_state?.user_id || "anonymous"}
+**Current Page:** ${r.app_state?.current_page || r.app_state?.current_tab || "?"}
+**User:** ${r.app_state?.user_name || r.app_state?.user_id || "anonymous"}
+**Network:** ${r.app_state?.network || "?"}
 **Submitted:** ${r.created_at ? new Date(r.created_at).toLocaleString() : "?"}
 **Severity:** ${severity}
 **Root Cause (estimated):** ${rootCause}
 
+**Full App State:**
+${appStateStr}
+
 ${r.has_screenshot ? "**Screenshot:** Attached (user marked up the issue area with red marker)\n" : ""}
 ### Task
-1. Read the bug description and screenshot context above
-2. Find the relevant code that renders this UI
-3. Identify the root cause
+This report may contain MULTIPLE issues. For each distinct issue:
+1. Identify it as a separate problem
+2. Find the relevant code
+3. Diagnose the root cause
 4. Write a fix
-5. Add appropriate tests if the fix touches backend logic
-6. Run the smoke test: \`cd backend && python3 -m pytest tests/test_startup.py -v\``;
+5. Add a test if it touches backend logic
+
+After fixing, run: \`cd backend && python3 -m pytest tests/test_startup.py -v\`
+
+For each issue, note whether it should be a separate backlog item.`;
 
   return {
     severity,
@@ -88,6 +99,7 @@ export default function BugReportsPage() {
   const [filter, setFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
 
   const secret =
     typeof window !== "undefined"
@@ -278,16 +290,29 @@ export default function BugReportsPage() {
                       <p className="font-medium text-blue-900">{analysis.likelyFix}</p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => copyPrompt(analysis.prompt)}
-                    className="w-full py-3 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
-                  >
-                    {copied ? (
-                      <><span>✓</span> Copied to clipboard — paste into Claude CLI</>
-                    ) : (
-                      <><span>📋</span> Copy Claude Prompt</>
-                    )}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => copyPrompt(analysis.prompt)}
+                      className="flex-1 py-3 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                    >
+                      {copied ? (
+                        <><span>✓</span> Copied — paste into Claude CLI</>
+                      ) : (
+                        <><span>📋</span> Copy Claude Prompt</>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowPrompt(!showPrompt)}
+                      className="px-4 py-3 rounded-lg bg-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-300 transition-colors"
+                    >
+                      {showPrompt ? "Hide" : "Preview"}
+                    </button>
+                  </div>
+                  {showPrompt && (
+                    <pre className="mt-2 p-3 bg-gray-900 text-gray-100 text-xs rounded-lg overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
+                      {analysis.prompt}
+                    </pre>
+                  )}
                 </div>
 
                 {/* Screenshot */}
@@ -316,12 +341,9 @@ export default function BugReportsPage() {
                   </div>
                 )}
 
-                {/* Actions */}
+                {/* Actions — status only, no duplicate copy button */}
                 <div className="bg-white rounded-xl border p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Actions</h3>
-                  </div>
-
+                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Status</h3>
                   <div className="flex gap-2">
                     {["new", "reviewed", "actioned", "dismissed"].map((s) => (
                       <button
@@ -338,20 +360,6 @@ export default function BugReportsPage() {
                       </button>
                     ))}
                   </div>
-
-                  <button
-                    onClick={() => copyPrompt(analysis.prompt)}
-                    className="w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
-                  >
-                    {copied ? (
-                      <><span>✓</span> Copied to clipboard</>
-                    ) : (
-                      <><span>📋</span> Copy Claude Prompt</>
-                    )}
-                  </button>
-                  <p className="text-xs text-gray-400 text-center">
-                    Paste into Claude CLI to get a diagnosis and fix
-                  </p>
                 </div>
               </div>
             ) : (
