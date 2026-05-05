@@ -1,5 +1,52 @@
 # Completed Features (Shipped)
 
+## May 5, 2026
+
+### Backlog Blitz — 14 Items Shipped
+
+Systematic pass through the backlog, clearing quick wins then medium-effort items.
+
+**Bug Report Fixes (from Rage Shake #2):**
+- ✅ **Score Diff period markers** (Bug #2): `.ultraThinMaterial` rendered as opaque black boxes inside Chart annotations on some iOS versions. Replaced with `Color.cardBackground.opacity(0.9)`.
+- ✅ **Admin auto-review removed**: Clicking a bug report no longer auto-transitions to "reviewed" — status must be changed manually.
+- ✅ **Submit error handling**: Shows error message + allows retry when offline, instead of greying out the button permanently.
+
+**Event Detail (iOS):**
+- ✅ **BR1-1**: Completed game hero showed opening odds as giant numbers AND as "Opened X% – Y%" caption (same data twice). Caption changed to "Pre-Game Odds" label.
+- ✅ **iOS-GD6**: "BainLuck / Sportsbooks" redundant legend row removed. "Sources" dropdown renamed to "Individual Sportsbooks."
+- ✅ **iOS-GD4**: Chart legend "Bain Luck Model" renamed to "Statistical Model" to distinguish from "Bain Luck" aggregate line.
+- ✅ **iOS-GD2**: Team records (10-16-2) reduced to size 9 + quaternary opacity to visually separate from scores.
+- ✅ **iOS-GD11**: Award probability bars — inline 30px capsule bars next to each percentage in the Awards section.
+- ✅ **iOS-GD14**: Game Info footer uses absolute date ("May 4 at 7:00 PM") instead of RelativeTimeText ("Today") for scheduled games.
+- ✅ **iOS-GD10**: LLM-generated prose summary removed from Season Futures section — card sections below already show the same info visually.
+- ✅ **iOS-GD7**: Chart x-axis ticks use stride-based intervals (15/30/60 min) instead of `.automatic` which rounded to "nice" hours and could skip past game start.
+- ✅ **iOS-GD13**: "Team to make postseason" now routes to Championship Path bucket instead of duplicating in Season Outlook. Added "postseason" and "make.*playoffs" to `divisionPlayoffPattern`.
+
+**Data Accuracy:**
+- ✅ **MS-May4-2**: Soccer/EPL charts extended 50-60 min past game end because `GAME_END_SOURCES` only included US sources (ESPN, MLB). Added sport-specific duration fallback: soccer 110min, tennis 180min, cricket 240min from `commence_time`.
+- ✅ **MS-May4-5**: NBA/NHL grids missing Make Playoffs + Win Division columns. Root cause: grid query filtered `status IN ("open", "closed")`, excluding resolved markets. During active playoffs, early-stage markets are resolved. Fixed to include `"resolved"`.
+- ✅ **MS-May4-1**: MLB runs map monotonicity violation (41% → 75%). Cross-source merge (Kalshi + Polymarket) produced non-monotonic over_probabilities. Added dedup-by-threshold (keep highest-volume source) + monotonicity enforcement on the total map.
+
+**Rage Shake Polish:**
+- ✅ **macOS paste**: Fixed clipboard reading to handle PNG/TIFF data types (Cmd+Ctrl+Shift+4 copies to clipboard as PNG, not file URL).
+- ✅ **macOS Report a Bug**: Menu item was greyed out because `NotificationCenter.post` in `CommandMenu` doesn't enable SwiftUI buttons. Changed to `navCoordinator.showBugReport` state binding.
+- ✅ **macOS screenshot**: Gave up on programmatic capture (SwiftUI's Metal rendering can't be captured via AppKit APIs). Shows paste prompt instead.
+- ✅ **SwiftUI warning**: Fixed "Publishing changes from within view updates" in MainTabView tab selection binding.
+
+**Other:**
+- ✅ **Bug reports dashboard v2**: Stats section (total/new/resolved/avg response time), severity badges (P0-P3), leaderboard, triage progress bar.
+- ✅ **macOS build fixes**: Replaced deprecated `CGWindowListCreateImage`, fixed `systemGray6` → `Color.cardBackground`, added missing `.about` Route case to all switch statements.
+
+### Still Open (needs investigation)
+
+- **iOS-GD3**: Post-game win prob drifts to 50% — needs DB query to find wrong linked market
+- **iOS-GD5**: Chart indicators cluttered — design decision needed
+- **iOS-GD9**: Championship Path shows wrong league rows — backend team-progression logic
+- **BR1-2**: Source attribution design — need to decide on display approach
+- **BR1-3**: 5 Polymarket NBA markets at 0% link rate — matching investigation
+- **MS-May4-4**: EPL league page data contamination — filtering issue
+- **MS-May4-3**: Tennis futures infinite spinner — can't reproduce
+
 ## May 3, 2026
 
 - ✅ **Rage Shake bug reporting (full stack)**: Shake iOS device (or Cmd+Shift+B on macOS) to report bugs. Captures screenshot with PencilKit finger/pencil markup overlay, text description, and automatic app state (current tab, app version, device model, OS version, user ID, session ID, live game count, timestamp). Backend: `POST /api/feedback/bug-report` stores base64 screenshot + JSONB state in `bug_reports` table. Admin: `GET/PATCH /api/admin/bug-reports` for inbox management. Frontend dashboard at `/admin/bug-reports` with split-pane layout, decoded screenshot viewer, status toggles (New/Reviewed/Actioned/Dismissed), app state metadata. Works for all users (auth + anonymous). 12 files, 649 lines.

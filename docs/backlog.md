@@ -560,7 +560,7 @@ Same applies to the margin map above it — "HOU by 8+" and "BOS by 8+" are labe
 
 From rage shake. Three separate issues on a completed NBA playoff game event detail page.
 
-#### BR1-1. Pre-game odds shown twice in hero (iOS + WEB)
+#### ~~BR1-1. Pre-game odds shown twice in hero~~ ✅ SHIPPED (May 5)
 
 **Problem:** The completed-game hero shows opening odds as the giant probability numbers (41% / 59%) AND repeats them as an "Opened 41% – 59%" caption below. Redundant — same numbers displayed twice.
 
@@ -596,7 +596,7 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 
 9 modules run, all completed. MLB and NBA live pages are excellent. Grids score 85-92. Source accuracy within 3pp of Kalshi/Polymarket across all spot checks.
 
-#### MS-May4-1. MLB Monotonicity Violation — Runs Map 41% → 75% (CRITICAL)
+#### ~~MS-May4-1. MLB Monotonicity Violation — Runs Map~~ ✅ SHIPPED (May 5)
 
 **Event:** Mets vs Rockies (`/events/14624780`)
 **Problem:** Full game runs map jumps from 41% (Over 6.5) to 75% (Over 7.5). Indicates two datasets merged incorrectly — likely Polymarket sub-markets (from new group_id lookup) merging with Kalshi spreads and bypassing per-source monotonicity enforcement.
@@ -604,7 +604,7 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 **Files:** `frontend/components/MarketMapSection.tsx`, `backend/app/routes/events.py` (game-markets dedup)
 **Parallel Safety:** Yellow
 
-#### MS-May4-2. Chart extends 50-60 min past game end for Soccer (CRITICAL)
+#### ~~MS-May4-2. Chart extends 50-60 min past game end for Soccer~~ ✅ SHIPPED (May 5)
 
 **Timing Health Score:** 39/100
 **Problem:** EPL/La Liga/UCL charts extend 50-60 min past actual game end with stale bookmaker data. NBA 20-30 min. NHL/MLB are clean (within 5 min).
@@ -624,7 +624,7 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 **Files:** Backend league page endpoint, sport key classification
 **Parallel Safety:** Yellow
 
-#### MS-May4-5. NBA/NHL Grids Missing Make Playoffs + Win Division Columns
+#### ~~MS-May4-5. NBA/NHL Grids Missing Make Playoffs + Win Division~~ ✅ SHIPPED (May 5)
 
 **Problem:** Only Conference + Championship columns shown. MLB correctly shows all 4. Grid endpoint may filter out resolved playoff-stage markets during active playoffs.
 **Files:** `backend/app/routes/futures.py` or `playoffs.py` (grid endpoint)
@@ -1488,7 +1488,7 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Components/EIBadgeView.swift`, `EventDetailView.swift` (hero section)
 **Parallel Safety:** Green
 
-#### iOS-GD2. Records visually merge with score
+#### ~~iOS-GD2. Records visually merge with score~~ ✅ SHIPPED (May 5)
 **Problem:** Team records ("10-17" / "13-14") sit directly under scores ("17 / 1") with similar font weight and color, making them hard to distinguish at a glance.
 **Approach:** Reduce font size/weight on records, switch to `text-muted` color, and/or prefix with "Record:" to differentiate from the score.
 **Files:** `ios/.../Views/EventDetailView.swift` (hero section)
@@ -1500,7 +1500,7 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `backend/app/utils/prediction_market_matching.py`, `backend/app/tasks/prediction_market_matching.py`, `backend/app/tasks/live_prediction_markets.py`
 **Parallel Safety:** Yellow (backend matching logic)
 
-#### iOS-GD4. Two "Bain Luck" series in chart legend
+#### ~~iOS-GD4. Two "Bain Luck" series in chart legend~~ ✅ SHIPPED (May 5)
 **Problem:** Chart legend shows both "Bain Luck" (aggregate) and "Bain Luck Model" — confusing which is which.
 **Approach:** Rename aggregate series to "Bain Luck Agg". For "Bain Luck Model", look up what the model is actually based on (start in `app/config/win_prob_sources.py`, follow the source key, then check `app/services/`/`app/utils/` for implementation) and rename to reflect the basis. Update source label in `win_prob_sources.py` and legend strings in `OddsChartView`.
 **Files:** `backend/app/config/win_prob_sources.py`, `ios/.../Components/OddsChartView.swift`
@@ -1512,13 +1512,13 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Components/OddsChartView.swift`
 **Parallel Safety:** Green
 
-#### iOS-GD6. Dead "BainLuck — Sportsbooks   Sources" row
+#### ~~iOS-GD6. Sources row renamed~~ ✅ SHIPPED (May 5)
 **Problem:** Non-functional UI row in the chart section. No interaction, wastes vertical space.
 **Approach:** Remove the row from `OddsChartView`.
 **Files:** `ios/.../Components/OddsChartView.swift`
 **Parallel Safety:** Green
 
-#### iOS-GD7. First x-axis tick rounds up past game start
+#### ~~iOS-GD7. First x-axis tick rounds up past game start~~ ✅ SHIPPED (May 5)
 **Problem:** First x-axis tick is 10:00 AM despite a 9:05 AM game start, creating a misleading gap.
 **Approach:** Adjust tick generator so the first label aligns with game start (or a half-hour-aligned tick that includes the start) instead of rounding up to the next whole hour. Likely a one-line axis configuration change.
 **Files:** `ios/.../Components/OddsChartView.swift`
@@ -1536,13 +1536,13 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Components/ChampionshipPathView.swift`
 **Parallel Safety:** Green
 
-#### iOS-GD10. Bigger Picture section is prose instead of cards
+#### ~~iOS-GD10. Prose summary removed~~ ✅ SHIPPED (May 5)
 **Problem:** Related futures section shows a text summary blob instead of the card-based design the web app uses.
 **Approach:** Port the web card design. Find components under `frontend/components/RelatedFutures*`, enumerate the props they consume, verify the iOS related-futures payload provides the same fields (extend if not), then build SwiftUI equivalents in `RelatedFuturesView.swift` to replace the `summary` text block.
 **Files:** `ios/.../Components/RelatedFuturesView.swift`, `frontend/components/RelatedFutures.tsx` (reference)
 **Parallel Safety:** Green
 
-#### iOS-GD11. Awards section: numbers without probability bars
+#### ~~iOS-GD11. Awards section: probability bars added~~ ✅ SHIPPED (May 5)
 **Problem:** Award outcomes show percentages but no visual bars, unlike the web version.
 **Approach:** Port the web award card design to SwiftUI. Bar primitive already exists (`ProbabilityBar.swift`). Match the web row layout: headshot, player name, award label, probability bar, percent.
 **Files:** `ios/.../Components/RelatedFuturesView.swift` (awards section), `ios/.../Components/ProbabilityBar.swift`
@@ -1554,13 +1554,13 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Components/RelatedFuturesView.swift`, backend roster data
 **Parallel Safety:** Green
 
-#### iOS-GD13. Season Stats duplicates Championship Path rows
+#### ~~iOS-GD13. Season Stats dedup~~ ✅ SHIPPED (May 5)
 **Problem:** "Make Playoffs" (Championship Path: BOS 32%, BAL 50%) and "Team to make postseason" (Season Stats: BOS 31%, BAL 51%) are the same concept matched as two separate markets with slightly different numbers.
 **Approach:** Treat as a futures-side matching problem first: identify the two `futures_markets` rows feeding each section, unify them at the futures matcher, then drop the postseason row from Season Stats (Championship Path is canonical). Repeat for "AL East Winner" — likely folds into a Division row. After consolidation, reassess whether Season Stats earns its place at all. Add an audit check for futures markets that should have unified but didn't.
 **Files:** `backend/app/routes/events.py` (related-futures logic), `backend/app/utils/related_futures.py` (dedup), `ios/.../Components/RelatedFuturesView.swift`
 **Parallel Safety:** Yellow (backend dedup logic)
 
-#### iOS-GD14. Game Info footer says "Today" for completed games
+#### ~~iOS-GD14. Game Info absolute dates~~ ✅ SHIPPED (May 5)
 **Problem:** Footer shows "Today 9:05 AM" for a FINAL game. Should be state-aware.
 **Approach:** Make the label driven by `event.status`:
 - Scheduled → "Today 9:05 AM" / "Tomorrow 7:00 PM"
