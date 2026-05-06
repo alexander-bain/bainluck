@@ -290,7 +290,7 @@ def poll_kalshi_markets(self):
 
 # --- Polymarket ---
 
-@celery_app.task(bind=True, name="app.tasks.poll_polymarket_markets")
+@celery_app.task(bind=True, name="app.tasks.poll_polymarket_markets", soft_time_limit=540, time_limit=600)
 def poll_polymarket_markets(self):
     """Poll prediction markets from Polymarket (no API key needed)."""
     from app.tasks.polymarket import _poll_polymarket_markets
