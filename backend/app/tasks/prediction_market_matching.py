@@ -264,6 +264,15 @@ async def _match_prediction_markets(limit: int = 500):
                 market.name, external_id=market.external_id,
             )
 
+            # Track sport key extraction success/failure for monitoring
+            ticker_sport = get_sport_prefix_from_ticker(market.external_id)
+            if ticker_sport:
+                stats["funnel"].setdefault("sport_key_extracted", 0)
+                stats["funnel"]["sport_key_extracted"] += 1
+            else:
+                stats["funnel"].setdefault("sport_key_extraction_failed", 0)
+                stats["funnel"]["sport_key_extraction_failed"] += 1
+
             # Extract game date from ticker — Kalshi commence_time is the
             # market RESOLUTION date (often weeks after the game), not the
             # actual game date. The ticker embeds the real date.

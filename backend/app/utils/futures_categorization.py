@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Sport categories with their regex patterns
 # Order matters - more specific patterns should come first
 SPORT_PATTERNS = [
-    # Baseball - Match AL/NL awards, MVP, Cy Young, etc.
+    # Baseball - Match AL/NL awards, MVP, Cy Young, team names, etc.
     (re.compile(r"\b(mlb|world.series)\b", re.I), "baseball"),
     (re.compile(r"\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron|manager|comeback|batting|home.run|era)\b", re.I), "baseball"),
     (re.compile(r"\bcy.young\s+(award|winner)\b", re.I), "baseball"),
@@ -32,9 +32,11 @@ SPORT_PATTERNS = [
     (re.compile(r"\bnational.league\b", re.I), "baseball"),
     (re.compile(r"\bpro.baseball\b", re.I), "baseball"),
     (re.compile(r"\bhome.run.derby\b", re.I), "baseball"),
+    (re.compile(r"\b(yankees|red.sox|dodgers|padres|braves|astros|phillies|mets|cubs|cardinals|brewers|guardians|orioles|rays|twins|mariners|blue.jays|diamondbacks|rockies|reds|pirates|royals|athletics|white.sox|marlins|nationals|angels)\b", re.I), "baseball"),
     (re.compile(r"\bbaseball\b", re.I), "baseball"),
 
-    # Football - Match college football, NFL, Super Bowl, Heisman, etc.
+    # Football - NFL team names, league, awards
+    (re.compile(r"\b(chiefs|ravens|49ers|niners|eagles|cowboys|packers|bills|dolphins|bengals|steelers|chargers|broncos|seahawks|commanders|bears|saints|buccaneers|bucs|falcons|texans|colts|jaguars|titans)\b", re.I), "football"),
     (re.compile(r"\b(nfl|super.bowl)\b", re.I), "football"),
     (re.compile(r"\bcollege.football\b", re.I), "football"),
     (re.compile(r"\bncaaf\b", re.I), "football"),
@@ -52,7 +54,8 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(offensive|defensive).player.of.the.year\b", re.I), "football"),
     (re.compile(r"\bnfl.mvp\b", re.I), "football"),
 
-    # Basketball - Must come after football patterns to avoid false matches
+    # Basketball - team names + league names
+    (re.compile(r"\b(celtics|lakers|warriors|76ers|sixers|bucks|suns|grizzlies|pelicans|timberwolves|nuggets|cavaliers|clippers|spurs|raptors|knicks|nets|pacers|hornets|wizards|heat|magic|pistons|rockets|trail.blazers|blazers|thunder|mavericks|hawks|bulls)\b", re.I), "basketball"),
     (re.compile(r"\b(nba|ncaab|wnba)\b", re.I), "basketball"),
     (re.compile(r"\bmarch.madness\b", re.I), "basketball"),
     (re.compile(r"\b(eastern|western).conference\b", re.I), "basketball"),
@@ -67,9 +70,10 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(big.east|big.12|acc|sec|big.ten|pac.12).basketball\b", re.I), "basketball"),
     (re.compile(r"\bbasketball\b", re.I), "basketball"),
 
-    # Hockey - NHL and awards
+    # Hockey - NHL, awards, and team names
     (re.compile(r"\b(nhl|stanley.cup)\b", re.I), "hockey"),
     (re.compile(r"\b(hart.trophy|vezina|calder|conn.smythe|norris.trophy|selke|lady.byng|rocket.richard)\b", re.I), "hockey"),
+    (re.compile(r"\b(bruins|canadiens|maple.leafs|red.wings|blackhawks|penguins|flyers|islanders|devils|hurricanes|lightning|blue.jackets|senators|sabres|predators|avalanche|canucks|kraken|golden.knights|oilers|flames)\b", re.I), "hockey"),
     (re.compile(r"\bhockey\b", re.I), "hockey"),
 
     # Monte-Carlo Masters is tennis, not golf — must precede golf "masters" pattern
@@ -738,15 +742,18 @@ def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Op
     if game_prop_sport:
         return game_prop_sport
 
-    # Try bare matchup detection with seasonal inference (Team at Team)
-    bare_matchup_sport = detect_bare_matchup_sport(market_name)
-    if bare_matchup_sport:
-        return bare_matchup_sport
-
-    # Try regex pattern matching
+    # Try regex pattern matching (includes team names, league names, keywords)
+    # Must run BEFORE bare matchup detection — team name patterns are more
+    # reliable than the seasonal inference that bare matchup uses.
     for pattern, category in SPORT_PATTERNS:
         if pattern.search(search_text):
             return category
+
+    # Try bare matchup detection with seasonal inference (Team at Team)
+    # Only used when no sport-specific keyword matched above.
+    bare_matchup_sport = detect_bare_matchup_sport(market_name)
+    if bare_matchup_sport:
+        return bare_matchup_sport
 
     return None
 
