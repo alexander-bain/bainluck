@@ -516,6 +516,15 @@ async def _poll_all_odds():
                 soonest_game = row[1]
                 is_live = row[2]
 
+                # Skip sports that returned 404 (cached for 24h)
+                if r:
+                    try:
+                        if r.get(f"bainluck:sport_404:{sport_key}"):
+                            sports_skipped += 1
+                            continue
+                    except Exception:
+                        pass
+
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
                     # Live game - poll every 32 seconds
@@ -756,7 +765,16 @@ async def _poll_all_odds():
                             )
 
                 except Exception as e:
-                    print(f"Error polling {sport_key}: {e}")
+                    # Cache 404 sports to avoid retrying for 24h
+                    if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
+                        logger.info("Sport %s returned 404, skipping for 24h", sport_key)
+                        if r:
+                            try:
+                                r.set(f"bainluck:sport_404:{sport_key}", "1", ex=86400)
+                            except Exception:
+                                pass
+                    else:
+                        logger.warning("Error polling %s: %s", sport_key, e)
                     continue
 
             # Fetch scores for sports with events that have started.
@@ -802,6 +820,14 @@ async def _poll_all_odds():
             for sport_key in sports_for_scores:
                 if sport_key in espn_covered_sports:
                     continue
+
+                # Skip sports that returned 404 (cached for 24h)
+                if r:
+                    try:
+                        if r.get(f"bainluck:sport_404:{sport_key}"):
+                            continue
+                    except Exception:
+                        pass
 
                 # Per-sport rate limiting for score fetches
                 if r:
@@ -1010,7 +1036,15 @@ async def _poll_all_odds():
                             continue
 
                 except Exception as e:
-                    print(f"Error fetching scores for {sport_key}: {e}")
+                    if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
+                        logger.info("Scores for %s returned 404, skipping for 24h", sport_key)
+                        if r:
+                            try:
+                                r.set(f"bainluck:sport_404:{sport_key}", "1", ex=86400)
+                            except Exception:
+                                pass
+                    else:
+                        logger.warning("Error fetching scores for %s: %s", sport_key, e)
                     continue
 
             # Detect and mark stale events as "closed"
