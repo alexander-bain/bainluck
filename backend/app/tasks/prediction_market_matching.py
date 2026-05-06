@@ -1031,10 +1031,18 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         if event.external_id:
             score += 8
 
+        # Sport validation: ticker-derived sport prefix is authoritative.
+        # If KXNBA ticker → basketball prefix, REJECT non-basketball events.
+        # This prevents city-name collisions (Boston/New York) from linking
+        # NBA markets to MLB events.
+        ticker_sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+        if ticker_sport_prefix and event.sport and event.sport.key:
+            if not event.sport.key.startswith(ticker_sport_prefix):
+                continue  # Wrong sport — skip this candidate
+
         # Sport match bonus: prefer events in the same sport as the market.
-        # Uses ticker-based sport prefix (most specific, Kalshi only) first,
-        # then falls back to llm_sport_category (both Kalshi and Polymarket).
-        sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+        # Falls back to llm_sport_category when ticker prefix is unavailable.
+        sport_prefix = ticker_sport_prefix
         if not sport_prefix and market.llm_sport_category:
             sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
         if sport_prefix and event.sport and event.sport.key:
