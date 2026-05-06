@@ -278,7 +278,7 @@ export default function SearchBar({
       {showRecent && !isOpen && recentSearches.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-full min-w-[360px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
+          className="absolute z-50 w-full min-w-[360px] sm:min-w-[480px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
           <div className="px-4 py-2 text-xs text-text-muted font-medium uppercase tracking-wide">
             Recent
@@ -306,7 +306,7 @@ export default function SearchBar({
       {isOpen && suggestions.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-full min-w-[360px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
+          className="absolute z-50 w-full min-w-[360px] sm:min-w-[480px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
           {didYouMean && (
             <button
