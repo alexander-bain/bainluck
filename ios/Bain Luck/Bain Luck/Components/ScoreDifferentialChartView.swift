@@ -169,6 +169,22 @@ struct ScoreDifferentialChartView: View {
             actualByMinute[bucket] = (date, Double(sp.homeScore - sp.awayScore))
         }
 
+        // Fallback: win_prob_history game states (when ESPN scores are null)
+        if actualByMinute.isEmpty {
+            for (_, points) in history.winProbHistory ?? [:] {
+                for pt in points {
+                    guard let gs = pt.gameState,
+                          let hs = gs.homeScore, let as_ = gs.awayScore,
+                          let date = pt.timestamp.asDate else { continue }
+                    if let start = startDate, date < start { continue }
+                    let bucket = Int(date.timeIntervalSince1970 / 60)
+                    if actualByMinute[bucket] == nil {
+                        actualByMinute[bucket] = (date, Double(hs - as_))
+                    }
+                }
+            }
+        }
+
         // Merge projected and actual into unified points
         let allBuckets = Set(projectedByMinute.keys).union(actualByMinute.keys)
         var merged: [DiffPoint] = []
