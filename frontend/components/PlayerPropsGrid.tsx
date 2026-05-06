@@ -150,6 +150,8 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
                   <img
                     src={prop.headshot}
                     alt={prop.playerName}
+                    loading="eager"
+                    fetchPriority="high"
                     className="w-6 h-6 rounded-full object-cover shrink-0"
                     style={{ backgroundColor: teamColor || "#6B7280" }}
                   />

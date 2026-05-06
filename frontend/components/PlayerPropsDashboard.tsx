@@ -283,6 +283,8 @@ function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; g
           <img
             src={player.headshot}
             alt={player.name}
+            loading="eager"
+            fetchPriority="high"
             className="w-11 h-11 rounded-full object-cover shrink-0"
             style={{ backgroundColor: player.color }}
           />
@@ -348,7 +350,9 @@ export default function PlayerPropsDashboard({
     (eventStatus === "completed" || eventStatus === "closed") && hasBoxScore ? "done" : "pre";
 
   const players = useMemo(() => {
-    if (!data.player_props || data.player_props.length === 0) return [];
+    const hasPlayerProps = data.player_props && data.player_props.length > 0;
+    const hasOtherProps = data.other && data.other.length > 0;
+    if (!hasPlayerProps && !hasOtherProps) return [];
 
     // Group props by player → stat type
     const playerMap = new Map<string, {
@@ -423,6 +427,32 @@ export default function PlayerPropsDashboard({
       if (p.movement != null && (statEntry.movement == null || Math.abs(p.movement) > Math.abs(statEntry.movement))) {
         statEntry.movement = p.movement;
       }
+    }
+
+    // Scan "other" markets for player props (double/triple doubles, etc.)
+    for (const o of (data.other || [])) {
+      const parsed = parsePlayerName(o.market_name || "", o.outcome_name || "");
+      if (!parsed || !parsed.player || !parsed.stat) continue;
+      const statLower = parsed.stat.toLowerCase();
+      if (!STAT_TYPES.some((st) => st.toLowerCase() === statLower)) continue;
+
+      const playerKey = parsed.player.toLowerCase();
+      if (!playerMap.has(playerKey)) {
+        playerMap.set(playerKey, {
+          name: parsed.player,
+          team: detectTeam(parsed.team || o.market_name || ""),
+          stats: new Map(),
+        });
+      }
+      const playerEntry = playerMap.get(playerKey)!;
+      if (!playerEntry.stats.has(statLower)) {
+        playerEntry.stats.set(statLower, { rungs: [], sources: new Set(), movement: null });
+      }
+      const statEntry = playerEntry.stats.get(statLower)!;
+      if (o.probability != null) {
+        statEntry.rungs.push({ threshold: 0.5, overProb: o.probability, sources: 1, movement: null });
+      }
+      statEntry.sources.add(o.source);
     }
 
     // Build player data with box score actuals
