@@ -64,7 +64,7 @@ struct PlayerPropsCardView: View {
                 .prefix(2)
                 .joined()
 
-            let headshotURL = props.first?.prop.playerHeadshot.flatMap { URL(string: $0) }
+            let headshotURL = props.compactMap({ $0.prop.playerHeadshot }).first.flatMap { URL(string: $0) }
             let apiTeam = props.first?.prop.playerTeam ?? "away"
             let teamLabel = apiTeam == "home" ? "Home" : "Away"
             let color = apiTeam == "home" ? homeColor : awayColor
@@ -198,7 +198,15 @@ struct PlayerPropsCardView: View {
                         switch phase {
                         case .success(let image):
                             image.resizable().scaledToFill()
-                        default:
+                        case .empty:
+                            // Loading state — show subtle placeholder
+                            Color(card.color.opacity(0.15))
+                        case .failure:
+                            // Image failed to load — fall back to initials
+                            Text(card.initials)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                        @unknown default:
                             Text(card.initials)
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(.white)
