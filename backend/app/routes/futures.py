@@ -2651,6 +2651,8 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
         "group_id": market.group_id,
         "canonical_market_key": market.canonical_market_key,
+        "hook_description": market.hook_description,
+        "image_url": market.image_url,
     }
 
 

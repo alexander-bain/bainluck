@@ -1032,7 +1032,7 @@ async def _poll_all_odds():
                                     logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
 
                         except Exception as e:
-                            print(f"Error updating score for event {score_event.get('id')}: {e}")
+                            logger.warning("Error updating score for event %s: %s", score_event.get('id'), e)
                             continue
 
                 except Exception as e:
