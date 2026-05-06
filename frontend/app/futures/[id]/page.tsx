@@ -82,6 +82,7 @@ type SortDirection = "asc" | "desc";
 
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
+  const isValidId = !isNaN(marketId) && marketId > 0;
 
   // Analytics hooks must be called before conditional returns
   usePageTracking({
@@ -110,7 +111,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     isLoading: marketLoading,
     mutate: refreshMarket,
   } = useSWR(
-    ["futures-market", marketId],
+    isValidId ? ["futures-market", marketId] : null,
     () => fetchFuturesMarket(marketId),
     { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
@@ -233,21 +234,45 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     });
   };
 
+  const backLink = (
+    <div className="flex items-center gap-2">
+      <Link
+        href="/futures"
+        className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
+      >
+        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Back to Futures
+      </Link>
+    </div>
+  );
+
   if (marketLoading) {
     return (
-      <div className="py-12">
-        <LoadingSpinner text="Loading market..." />
+      <div className="space-y-6">
+        {backLink}
+        <div className="py-12">
+          <LoadingSpinner text="Loading market..." />
+        </div>
       </div>
     );
   }
 
   if (marketError || !market) {
     return (
-      <ErrorMessage
-        title="Market not found"
-        message={marketError?.message || "Unable to load market details"}
-        onRetry={() => refreshMarket()}
-      />
+      <div className="space-y-6">
+        {backLink}
+        <ErrorMessage
+          title="Market not found"
+          message={
+            !isValidId
+              ? "This market ID is invalid. It may have been removed or the link is incorrect."
+              : marketError?.message || "Unable to load this market. It may have been removed or is temporarily unavailable."
+          }
+          onRetry={isValidId ? () => refreshMarket() : undefined}
+        />
+      </div>
     );
   }
 
@@ -257,27 +282,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   return (
     <div className="space-y-6">
       {/* Navigation */}
-      <div className="flex items-center gap-2">
-        <Link
-          href="/futures"
-          className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
-        >
-          <svg
-            className="w-4 h-4 mr-1"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
-            />
-          </svg>
-          Back to Futures
-        </Link>
-      </div>
+      {backLink}
 
       {/* Expired market banner */}
       {market.resolution_date && new Date(market.resolution_date) < new Date() && (
