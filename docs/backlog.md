@@ -797,9 +797,9 @@ Sub-themes: AI/LLMs, Space, Big Tech, Social Media, Science/Health. Spiky (viral
 
 ---
 
-### 19. "What Are The Odds?" Discovery Page
+### ~~19. "What Are The Odds?" Discovery Page~~ ✅ ABSORBED INTO DISCOVER
 
-**Goal:** Surface the most interesting prediction markets across ALL categories in one browsable page. The front door for non-sports content. Extends Bain Luck's "visual probability" brand from sports to everything.
+The Discover feed (`/discover`) now serves this purpose — it surfaces non-sports markets with images, LLM hooks, category filtering, and Higher/Lower games across all categories. The original vision of a separate `/explore` page is unnecessary.
 
 **URL:** `/explore` (or `/odds` — TBD)
 
