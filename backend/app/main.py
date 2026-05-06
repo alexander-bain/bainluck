@@ -6,6 +6,7 @@ Main FastAPI application entry point.
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,7 +86,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Response-Time"],
+    expose_headers=["X-Response-Time", "X-Request-ID"],
 )
 
 
@@ -102,12 +103,17 @@ CACHE_RULES: list[tuple[str, int]] = [
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["X-Request-ID"] = request_id
     response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
-    if duration_ms > 500 and "/admin" not in request.url.path:
-        logger.warning("SLOW %s %s %dms", request.method, request.url.path, duration_ms)
+    if duration_ms > 1000 and "/admin" not in request.url.path:
+        logger.warning("SLOW %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+    elif duration_ms > 500 and "/admin" not in request.url.path:
+        logger.info("MODERATE %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
 
     if request.method == "GET" and response.status_code == 200:
         path = request.url.path
