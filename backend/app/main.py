@@ -26,9 +26,10 @@ if sentry_dsn:
         if exc_info:
             exc_type = exc_info[0]
             exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in ("WorkerLost", "Terminated"):
-                return None
-            if exc_name == "TimeLimitExceeded":
+            if exc_name in (
+                "WorkerLost", "Terminated", "TimeLimitExceeded",
+                "PendingRollbackError", "InvalidRequestError",
+            ):
                 return None
             if exc_name == "ConnectionError" and "redis" in str(exc_info[1]).lower():
                 return None

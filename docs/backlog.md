@@ -272,7 +272,7 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Parallel Safety:** Green (no code changes)
 
-### 0f-2. Futures Detail Page Data Quality — IN PROGRESS (April 25)
+### ~~0f-2. Futures Detail Page Data Quality~~ ✅ SHIPPED (May 6)
 Polymarket Cy Young (futures/132810) showed "player AA" garbage names. Root cause: (1) orphan outcomes with NULL external_id from old polling code, (2) Polymarket poll capped at 10K events but 10,542 exist — Cy Young market fell outside pagination. 
 **Fixes deployed:** orphan cleanup + pagination increased to 13K + one-off fix script. Awaiting next poll to verify.
 **Cross-game contamination FIXED:** ±18h time window on BOTH linked and fallback queries. NBA went from 38 violations → 0.
