@@ -477,6 +477,13 @@ def enrich_market_hooks(self, limit: int = 50):
     return _tracked_run("enrich_hooks", _enrich(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
+def check_aggregation_quality(self):
+    """Daily: sample events, measure source diversity, alert on single-source spikes."""
+    from app.tasks.monitoring import check_aggregation_quality as _check
+    return _tracked_run("aggregation_quality", _check())
+
+
 @celery_app.task(bind=True, name="app.tasks.sync_statpal_livescores")
 def sync_statpal_livescores(self):
     """Poll StatPal livescores for real-time game state (every 30s)."""
@@ -863,6 +870,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.enrich_market_images",
         "schedule": crontab(minute=50, hour="*/6"),  # 4x daily — fetch Pexels images
         "kwargs": {"limit": 100},
+    },
+    "check-aggregation-quality": {
+        "task": "app.tasks.check_aggregation_quality",
+        "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
