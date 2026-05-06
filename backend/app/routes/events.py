@@ -3017,6 +3017,38 @@ async def get_game_markets(
             period_markets.append(t)
     game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
 
+    # 7b. Enforce monotonicity on totals — P(Over X) must decrease as X increases.
+    # Thinly traded Kalshi half-period markets often have non-monotonic prices
+    # (e.g., Over 98.5 at 68% but Over 101.5 at 75%). Drop violating points.
+    def _enforce_monotonicity(items: list[dict], prob_key: str = "over_probability") -> list[dict]:
+        if len(items) < 2:
+            return items
+        result = [items[0]]
+        for item in items[1:]:
+            if item.get(prob_key) is not None and result[-1].get(prob_key) is not None:
+                if item[prob_key] <= result[-1][prob_key]:
+                    result.append(item)
+            else:
+                result.append(item)
+        return result
+
+    game_totals = _enforce_monotonicity(game_totals)
+
+    # Also enforce on period totals within each market group
+    period_total_groups: dict[str, list[dict]] = {}
+    period_non_totals: list[dict] = []
+    for pm in period_markets:
+        if pm.get("market_type") in ("half_total", "quarter_total") and pm.get("over_probability") is not None:
+            key = pm.get("market_name", "")
+            period_total_groups.setdefault(key, []).append(pm)
+        else:
+            period_non_totals.append(pm)
+    cleaned_period_totals = []
+    for group in period_total_groups.values():
+        group.sort(key=lambda x: x.get("threshold", 0) or 0)
+        cleaned_period_totals.extend(_enforce_monotonicity(group))
+    period_markets = period_non_totals + cleaned_period_totals
+
     # 8. Calculate pace
     pace = _estimate_game_pace(
         event.home_score,
