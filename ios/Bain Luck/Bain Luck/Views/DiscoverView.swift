@@ -181,10 +181,12 @@ struct DiscoverView: View {
                                         SwipeToDismiss { dismiss(itemId(item)) } content: {
                                             NativeEventDiscoverCard(event: e)
                                         }
+                                        .contextMenu { discoverCardMenu(item) }
                                     } else if item.type == "futures", let f = item.futures {
                                         SwipeToDismiss { dismiss(itemId(item)) } content: {
                                             NativeFuturesDiscoverCard(data: f)
                                         }
+                                        .contextMenu { discoverCardMenu(item) }
                                     }
                                 }
                             }
@@ -282,6 +284,51 @@ struct DiscoverView: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         return "daily_guesses_\(fmt.string(from: Date()))"
+    }
+
+    @ViewBuilder
+    private func discoverCardMenu(_ item: FeedItem) -> some View {
+        if let e = item.event {
+            if let prob = e.currentOdds?.homeProbability {
+                Button {
+                    let text = "\(e.homeTeam): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
+            ShareLink(item: URL(string: "https://bainluck.com/events/\(e.id)")!) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        } else if let f = item.futures {
+            if let leader = f.topOutcomes?.first, let prob = leader.probability {
+                Button {
+                    let text = "\(leader.name): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
+            ShareLink(item: URL(string: "https://bainluck.com/futures/\(f.id)")!) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
+        Divider()
+        Button(role: .destructive) {
+            dismiss(itemId(item))
+        } label: {
+            Label("Dismiss", systemImage: "xmark")
+        }
     }
 }
 

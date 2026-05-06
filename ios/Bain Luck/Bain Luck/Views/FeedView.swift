@@ -442,6 +442,7 @@ struct FeedView: View {
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
+            .contextMenu { cardContextMenu(item) }
         } else if item.type == "futures", let futures = item.futures {
             Button {
                 path.append(Route.futuresDetail(id: futures.id))
@@ -450,6 +451,7 @@ struct FeedView: View {
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
+            .contextMenu { cardContextMenu(item) }
         }
     }
 
@@ -481,6 +483,19 @@ struct FeedView: View {
             }
         }
         if let event = item.event {
+            if let prob = event.currentOdds?.homeProbability {
+                Button {
+                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
             Divider()
             ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
                 Label("Share Link", systemImage: "square.and.arrow.up")
@@ -493,6 +508,19 @@ struct FeedView: View {
             }
             #endif
         } else if let futures = item.futures {
+            if let leader = futures.topOutcomes?.first, let prob = leader.probability {
+                Button {
+                    let text = "\(leader.name): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
             Divider()
             ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)")!) {
                 Label("Share Link", systemImage: "square.and.arrow.up")
