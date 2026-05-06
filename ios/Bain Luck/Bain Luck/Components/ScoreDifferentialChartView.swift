@@ -215,20 +215,11 @@ struct ScoreDifferentialChartView: View {
                     .foregroundStyle(.primary.opacity(0.4))
             }
 
-            // Period markers
+            // Period markers — light vertical gridlines at period boundaries
             ForEach(periodMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(.secondary.opacity(0.3))
-                    .annotation(position: .top, alignment: .center) {
-                        Text(marker.label)
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.cardBackground.opacity(0.9))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
+                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    .foregroundStyle(.secondary.opacity(0.25))
             }
 
             // Projected spread (orange dashed — contrasts with teal actual)
@@ -283,6 +274,23 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartXSelection(value: $selectedDate)
+        // Period marker labels as small floating chips inside the chart
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                ForEach(periodMarkers) { marker in
+                    if let xPos = proxy.position(forX: marker.date) {
+                        Text(marker.label)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .position(x: xPos, y: 8)
+                    }
+                }
+            }
+        }
     }
 
     private func chartXDomain(dataPoints: [DiffPoint]) -> ClosedRange<Date> {
