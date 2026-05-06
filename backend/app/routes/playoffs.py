@@ -1700,11 +1700,16 @@ async def _build_golf_tour_grid(
                     if old_p is not None:
                         trend_24h = round(merged - old_p, 4)
 
-                cells[col.key] = {
+                cell_data = {
                     "merged_probability": round(merged, 4),
                     "sources": sources,
                     "trend_24h": trend_24h,
                 }
+                if (len(sources) == 1
+                        and sources[0]["source"] == "kalshi"
+                        and abs(merged - 0.01) < 0.001):
+                    cell_data["is_minimum_tick"] = True
+                cells[col.key] = cell_data
 
             # Filter Kalshi price floor/ceiling noise for placement columns.
             # Kalshi binary golf markets often have illiquid prices stuck at
@@ -2073,11 +2078,16 @@ async def _build_upcoming_golf_event_grid(
                 if old_p is not None:
                     trend_24h = round(merged - old_p, 4)
 
-            cells[col.key] = {
+            cell_data = {
                 "merged_probability": round(merged, 4),
                 "sources": sources,
                 "trend_24h": trend_24h,
             }
+            if (len(sources) == 1
+                    and sources[0]["source"] == "kalshi"
+                    and abs(merged - 0.01) < 0.001):
+                cell_data["is_minimum_tick"] = True
+            cells[col.key] = cell_data
 
         _filter_kalshi_placement_noise(cells)
 
@@ -2799,11 +2809,19 @@ async def get_playoff_grid(
                 if old_p is not None:
                     trend_24h = round(merged - old_p, 4)
 
-            cells[col.key] = {
+            cell_data = {
                 "merged_probability": round(merged, 4),
                 "sources": sources,
                 "trend_24h": trend_24h,
             }
+            # Kalshi's minimum tick is 0.01 (1%). When a cell is exactly at the
+            # minimum and Kalshi is the only source, flag it so the frontend
+            # can display "< 1%" instead of a misleading "1.0%".
+            if (len(sources) == 1
+                    and sources[0]["source"] == "kalshi"
+                    and abs(merged - 0.01) < 0.001):
+                cell_data["is_minimum_tick"] = True
+            cells[col.key] = cell_data
 
         # ---- Kalshi noise filter + monotonicity enforcement ----
         # Kalshi binary markets default to ~0.50-0.60 when illiquid.

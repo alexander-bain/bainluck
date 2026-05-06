@@ -22,8 +22,9 @@ import TeamNameLink from "./TeamNameLink";
 // ---------------------------------------------------------------------------
 
 function fmt(p: number): string {
+  if (p > 0 && p <= 0.01) return "<1";
   const pct = Math.round(p * 100);
-  return pct < 1 && p > 0 ? "<1" : `${pct}`;
+  return `${pct}`;
 }
 
 function hexToRgba(hex: string, alpha: number): string {

@@ -1390,6 +1390,7 @@ export interface ChampionshipGridCell {
   merged_probability: number;
   sources: ChampionshipGridCellSource[];
   trend_24h: number | null;
+  is_minimum_tick?: boolean;
 }
 
 export interface ChampionshipGridTeam {
