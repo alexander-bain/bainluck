@@ -17,6 +17,10 @@ struct EventCardView: View {
     private var awayColor: Color { Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280") }
     private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
 
+    #if os(macOS)
+    @State private var isHovered = false
+    #endif
+
     /// "Today 7:00 PM", "Tomorrow 3:30 PM", or "Mar 8 7:00 PM"
     private var formattedDateTimeString: String? {
         guard let dateStr = event.commenceTime, let date = dateStr.asDate else { return nil }
@@ -75,6 +79,11 @@ struct EventCardView: View {
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+        #if os(macOS)
+        .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovered = $0 }
+        #endif
     }
 
     // MARK: - Top Bar

@@ -4,6 +4,10 @@ import SwiftUI
 struct FuturesCardView: View {
     let futures: FeedFuturesData
 
+    #if os(macOS)
+    @State private var isHovered = false
+    #endif
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
@@ -49,6 +53,12 @@ struct FuturesCardView: View {
             }
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        #if os(macOS)
+        .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { isHovered = $0 }
+        #endif
     }
 
     private func outcomeRow(_ outcome: FeedFuturesOutcome) -> some View {
