@@ -2515,13 +2515,23 @@ def _classify_game_market(name: str) -> str:
     having a player name before it (player prop).
     """
     lower = name.lower()
+
+    _HALF_PATTERNS = ("1st half", "1h", "2nd half", "2h", "first half", "second half",
+                      "first 5 innings", "f5 innings", "f5")
+    _QUARTER_PATTERNS = ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter",
+                         "1q", "2q", "3q", "4q")
+
+    # "First Inning Run" — binary baseball prop, not a period market
+    if "first inning run" in lower or "1st inning run" in lower:
+        return "game_prop"
+
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
         if "team" in lower:
             return "team_total"
-        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h", "first half", "second half")):
+        if any(x in lower for x in _HALF_PATTERNS):
             return "half_total"
-        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+        if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
         return "game_total"
     # Over/Under without "total" — check if it's a player prop or game total
@@ -2532,9 +2542,9 @@ def _classify_game_market(name: str) -> str:
             return "player_prop"
         return "game_total"
     if "spread" in lower or "margin" in lower or "handicap" in lower:
-        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+        if any(x in lower for x in _HALF_PATTERNS):
             return "half_spread"
-        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+        if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_spread"
         return "spread"
     # Team-level stat markets: "Team at Team: Points" (no player name)
@@ -2544,9 +2554,9 @@ def _classify_game_market(name: str) -> str:
     if _PLAYER_PROP_RE.search(name):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
-        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+        if any(x in lower for x in _HALF_PATTERNS):
             return "half_winner"
-        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+        if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_winner"
         return "moneyline"
     return "other"
@@ -2958,12 +2968,21 @@ async def get_game_markets(
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
+    home_lower = (event.home_team_name or "").lower()
+    away_lower = (event.away_team_name or "").lower()
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
             key = t["threshold"]
             if key not in seen_thresholds or t["source"] == "kalshi":
                 seen_thresholds[key] = t
         elif t["market_type"] == "team_total":
+            mname = (t.get("market_name") or "").lower()
+            if home_lower and any(w in mname for w in home_lower.split() if len(w) >= 4):
+                t["team_name"] = event.home_team_name
+                t["team_side"] = "home"
+            elif away_lower and any(w in mname for w in away_lower.split() if len(w) >= 4):
+                t["team_name"] = event.away_team_name
+                t["team_side"] = "away"
             team_total_items.append(t)
         elif t["market_type"] in ("half_total", "quarter_total"):
             period_markets.append(t)

@@ -125,13 +125,14 @@ class TestCrossConsistency:
         """ESPN_SPORT_MAPPING keys should all be in SPORT_LEAGUE_MAP."""
         assert set(ESPN_SPORT_MAPPING.keys()).issubset(set(SPORT_LEAGUE_MAP.keys()))
 
-    def test_kalshi_ticker_prefixes_match_ticker_to_sport_key(self):
-        """KALSHI_GAME_TICKER_PREFIXES should be exactly the keys of KALSHI_TICKER_TO_SPORT_KEY."""
-        assert set(KALSHI_GAME_TICKER_PREFIXES) == set(KALSHI_TICKER_TO_SPORT_KEY.keys())
+    def test_kalshi_ticker_prefixes_subset_of_ticker_to_sport_key(self):
+        """KALSHI_GAME_TICKER_PREFIXES should be a subset of KALSHI_TICKER_TO_SPORT_KEY
+        (unsupported leagues like AHL/KHL/DEL are excluded from the link-rate denominator)."""
+        assert set(KALSHI_GAME_TICKER_PREFIXES).issubset(set(KALSHI_TICKER_TO_SPORT_KEY.keys()))
 
-    def test_display_label_keys_are_subset_of_ticker_prefixes(self):
-        """KALSHI_TICKER_TO_DISPLAY_LABEL keys should all be in KALSHI_GAME_TICKER_PREFIXES."""
-        assert set(KALSHI_TICKER_TO_DISPLAY_LABEL.keys()).issubset(set(KALSHI_GAME_TICKER_PREFIXES))
+    def test_display_label_keys_are_subset_of_ticker_to_sport_key(self):
+        """KALSHI_TICKER_TO_DISPLAY_LABEL keys should all be in KALSHI_TICKER_TO_SPORT_KEY."""
+        assert set(KALSHI_TICKER_TO_DISPLAY_LABEL.keys()).issubset(set(KALSHI_TICKER_TO_SPORT_KEY.keys()))
 
     def test_prefix_to_category_and_category_to_prefix_are_inverses(self):
         """For keys present in both, mappings should round-trip."""

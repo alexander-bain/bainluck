@@ -487,7 +487,17 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # 8. KALSHI_GAME_TICKER_PREFIXES — tuple of Kalshi game ticker prefixes
 # =============================================================================
 
-KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(KALSHI_TICKER_TO_SPORT_KEY.keys())
+# Leagues we ingest from The Odds API / StatPal / ESPN. Markets for other
+# leagues (AHL, KHL, DEL, etc.) can never link because we have no events.
+_UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
+    "kxahlgame", "kxkhlgame", "kxdelgame",
+    "kxshlgame", "kxliigagame",
+})
+
+KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
+    k for k in KALSHI_TICKER_TO_SPORT_KEY.keys()
+    if k not in _UNSUPPORTED_LEAGUE_PREFIXES
+)
 
 
 # =============================================================================
