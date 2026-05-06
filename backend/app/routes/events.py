@@ -2904,11 +2904,16 @@ async def get_game_markets(
                 # Kalshi names markets "Team at Team: Steals" but outcomes
                 # are per-player: "Joel Embiid: 1+". Route these to player_props.
                 if market_type == "team_total" and _PLAYER_OUTCOME_RE.match(o.name):
+                    tt_opening_over = None
+                    if o.opening_probability is not None:
+                        tt_op = float(o.opening_probability)
+                        tt_opening_over = round(tt_op if is_over or not is_under else 1.0 - tt_op, 4)
                     player_props.append({
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
+                        "opening_over_probability": tt_opening_over,
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
@@ -2946,11 +2951,17 @@ async def get_game_markets(
 
                 # Try to extract player name and stat type from market name
                 # Market names look like "Boston at Atlanta: Trae Young Points"
+                opening_over = None
+                if o.opening_probability is not None:
+                    op = float(o.opening_probability)
+                    opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+
                 player_props.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
+                    "opening_over_probability": opening_over,
                     "source": market.source,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
