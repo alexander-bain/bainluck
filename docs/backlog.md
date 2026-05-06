@@ -231,17 +231,8 @@ The league page should become a **one-stop destination** for everything happenin
 
 **Implementation plan:**
 
-#### Phase 2: Frontend — Tabbed/sectioned league page
-Add sections below the championship grid. Could be tabs (Games / Futures / Awards / Props) or a single scrollable page with sections (simpler, more discoverable).
-
-Reusable components needed:
-- `SeriesCard` — matchup with series score dots, probabilities, next game date
-- `AwardCard` — award name, top 3 candidates with headshots + probability bars
-- `PropGroupCard` — group of threshold outcomes (sweeps, Game 7s, win totals)
-- `PlayerWatchCard` — player name, event description, probability bar, date
-
-**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`, new components in `frontend/components/`
-**Parallel Safety:** Yellow (touches league page + new components)
+#### ~~Phase 2: Frontend — Sectioned league page~~ ✅ SHIPPED (May 6)
+4 new components: SeriesCard (playoff matchups), AwardCard (leader highlight + contenders), PropGroupCard (threshold/ranked outcomes), LeagueMarketSection (routing + grid layout). Wired into league page below championship grid.
 
 #### Phase 3: Cross-sport generalization
 Same pattern for NHL (series, Conn Smythe, playoff props), MLB (pennant races, awards, World Series props), NFL (division winners, MVP, draft props). Each sport gets the same sectioned layout, populated by the same league-scoped endpoint.
@@ -426,11 +417,9 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
 
-#### MS-8. Kalshi 1.0% minimum tick misleading in grids
-**Problem:** Many teams show exactly "1.0%" for Conference/Champion odds. This is Kalshi's minimum tick, not a real 1% probability — it's misleading when aggregated.
-**Fix:** Filter or annotate Kalshi values at the minimum tick (0.01). Either: (a) exclude from aggregation when it's the only source at 1%, or (b) show "< 1%" instead of "1.0%". This is similar to the existing Kalshi noise filter (0.45-0.65 range).
-**Files:** `backend/app/routes/playoffs.py` (grid cell assembly), `backend/app/utils/playoff_grid.py`
-**Parallel Safety:** Yellow
+#### ~~MS-8. Kalshi 1.0% minimum tick~~ ✅ SHIPPED (May 6)
+
+Backend adds `is_minimum_tick` flag on grid cells at exactly 0.01 from Kalshi-only source. Frontend `fmt()` shows "<1" for any probability ≤ 0.01.
 
 ### 0f-9. Mac App — SHIPPED + Polish (April 24-25)
 
@@ -438,18 +427,18 @@ Full report: `Manus/audit_results/site_sweep_april25.md`
 
 **Remaining macOS polish items:**
 
-| # | Feature | Effort | Notes |
-|---|---------|--------|-------|
-| MAC-1 | **Live-updating title bar** | 1-2h | Show score in window title (e.g., "BOS 87 - PHI 82 • Q4 2:31") when on event detail. Visible even when app is backgrounded. |
-| MAC-2 | **Multi-window support** | 2-3h | Cmd+click event → opens in own window. Watch multiple games. THE killer desktop feature. Uses SwiftUI `openWindow(value:)`. |
-| MAC-3 | **Keyboard navigation** | 2-3h | Arrow keys between feed cards, Enter to open, Escape to go back. `.focusable()` + `onKeyPress`. |
-| MAC-4 | **Toolbar refresh button** | 30min | Add refresh button + countdown ring to toolbar on event detail. |
-| MAC-5 | **Menu bar extra (scores)** | 3-4h | Clover icon in macOS menu bar → dropdown with live scores. `MenuBarExtra` API. |
-| MAC-6 | **Push notifications** | 2-3h | Game start, momentum shifts, upsets. macOS notification center. |
-| MAC-7 | **Hover states** | 1-2h | Feed cards highlight on mouse hover. `.onHover` modifier. |
-| MAC-8 | **Right-click context menus** | 1h | Pin, copy probability, open in new window. Some already via `.contextMenu`. |
-| MAC-9 | **Share button + universal links** | 2-3h | Share button on event detail (top-right). Shares `https://bainluck.com/events/{id}`. Falls back to web for non-app users. Also consider drag-and-drop of cards to create shareable links. |
-| MAC-12 | **macOS widgets** | 3-4h | Desktop widgets showing live scores/probabilities. `WidgetKit`. |
+| # | Feature | Effort | Status |
+|---|---------|--------|--------|
+| MAC-1 | **Live-updating title bar** | 1-2h | Open |
+| ~~MAC-2~~ | ~~Multi-window support~~ | — | ✅ Already done (context menu + WindowGroup) |
+| MAC-3 | **Keyboard navigation** | 2-3h | Skipped (>1.5h, complex focus management) |
+| ~~MAC-4~~ | ~~Toolbar refresh button~~ | — | ✅ SHIPPED May 6 |
+| MAC-5 | **Menu bar extra (scores)** | 3-4h | Open |
+| MAC-6 | **Push notifications** | 2-3h | Open |
+| ~~MAC-7~~ | ~~Hover states~~ | — | ✅ SHIPPED May 6 |
+| MAC-8 | **Right-click context menus** | 1h | Open |
+| MAC-9 | **Share button + universal links** | 2-3h | Open |
+| MAC-12 | **macOS widgets** | 3-4h | Open |
 
 **Files:** `ios/Bain Luck/Bain Luck/` (various Views, Bain_LuckApp.swift)
 **Parallel Safety:** Green (iOS-only changes)
@@ -764,7 +753,7 @@ iOS search (`SearchView.swift`) has typeahead, sport filters, recent searches, q
 - [x] **~~SN-2. Team page navigation** — Web links to `/sport/.../team/slug`. iOS has no team pages. Requires new `TeamDetailView.swift`. **P0**
 - [x] **~~SN-3. Enriched typeahead model** — iOS `TypeaheadSuggestion` model is missing `team_id`, `team_slug`, `sport_key`, `status`, `commence_time`, `logo_url`, `market_type_label`. Update model + render logos, live indicators, type differentiation in suggestions. **P1**
 - [x] **~~SN-4. "Did you mean" fuzzy correction** — Web shows correction banner when trigram fallback is used. iOS doesn't display `did_you_mean` from API response. **P1**
-- [ ] **SN-5. Cmd+K shortcut on macOS** — Web has `Cmd+K` global focus. Missing on macOS build. **P2**
+- [x] **~~SN-5. Cmd+K shortcut on macOS~~ ✅ SHIPPED May 6** — Added to Navigate menu.
 
 **Files:** `ios/.../SearchView.swift`, `ios/.../Models/SearchModels.swift`, new `ios/.../Views/TeamDetailView.swift`
 
@@ -1040,7 +1029,7 @@ interestingness = (
 
 Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: hero with team logos/scores, multi-source win prob chart with period markers, score diff chart with period markers, ChampionshipPathView (from team-progression), PlayerPropsCardView (from game-markets), awards, season stats, trade watch, clean error messages.
 
-### iOS-12. Score Diff Actual Line Cuts Off Mid-Game — BACKEND BUG
+### ~~iOS-12. Score Diff Actual Line Cuts Off Mid-Game~~ ✅ SHIPPED (May 6)
 
 **Problem:** The teal "Actual Score Diff" line stops partway through the game (e.g., 5th inning).
 
@@ -1081,7 +1070,7 @@ Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: he
 
 Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 
-#### iOS-GD3. Win prob chart drifts toward 50% post-final — PRIORITY
+#### ~~iOS-GD3. Win prob chart clipped at game end~~ ✅ SHIPPED (May 6)
 **Problem:** For BOS @ BAL (final 17–1), the aggregate win probability drifts toward ~50% after the game ends, even though real sources resolved to ~100%. Likely a wrong Kalshi/Polymarket market linked to the event, and/or upstream market resolution status isn't propagating.
 **Approach:** Investigate via: `SELECT id, source, source_market_id, name, status, last_price FROM prediction_markets WHERE event_id = <id>`. Fix root cause in match logic (`app/utils/prediction_market_matching.py`) and/or status propagation (`app/tasks/prediction_market_matching.py`, `poll_live_prediction_markets`). Add audit: for every completed event, every linked market should be resolved upstream and our latest snapshot should match the realized outcome within tolerance. New check in `scripts/audit_matching_quality.py` or `audit_post_final_consistency.py`.
 **Files:** `backend/app/utils/prediction_market_matching.py`, `backend/app/tasks/prediction_market_matching.py`, `backend/app/tasks/live_prediction_markets.py`
