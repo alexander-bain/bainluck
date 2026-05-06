@@ -429,17 +429,19 @@ struct OddsChartView: View {
     }
 
     private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
+        var filtered = points
+
+        // Always clip post-game data for completed games (prevents Kalshi/Polymarket drift toward 50%)
+        if (status == "completed" || status == "closed"), let endDate = gameEndDate {
+            filtered = filtered.filter { $0.date <= endDate }
+        }
+
         guard vm.selectedRange == .sinceStart,
               let startDate = gameStartDate,
               isGameStarted else {
-            return points
+            return filtered
         }
-        var filtered = points.filter { $0.date >= startDate }
-
-        // Clip end for completed games
-        if let endDate = gameEndDate {
-            filtered = filtered.filter { $0.date <= endDate }
-        }
+        filtered = filtered.filter { $0.date >= startDate }
 
         guard let firstPoint = filtered.first else {
             return filtered
