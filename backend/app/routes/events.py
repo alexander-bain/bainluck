@@ -3076,6 +3076,33 @@ async def get_game_markets(
         if 0.05 <= p["over_probability"] <= 0.95
     ]
 
+    # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
+    # player+stat+threshold, merge into one entry with averaged probability
+    # and a sources list, instead of showing duplicate rows.
+    if len(player_props) > 1:
+        dedup_map: dict[tuple, list[dict]] = {}
+        for p in player_props:
+            # Extract player name from outcome ("Aaron Judge: 1+" → "aaron judge")
+            oname = p.get("outcome_name", "")
+            colon_idx = oname.find(":")
+            player_part = oname[:colon_idx].strip().lower() if colon_idx > 0 else oname.lower()
+            key = (player_part, p.get("threshold"))
+            dedup_map.setdefault(key, []).append(p)
+
+        merged_props = []
+        for entries in dedup_map.values():
+            if len(entries) == 1:
+                merged_props.append(entries[0])
+            else:
+                probs = [e["over_probability"] for e in entries]
+                avg_prob = round(sum(probs) / len(probs), 4)
+                best = max(entries, key=lambda e: 1 if e.get("source") == "kalshi" else 0)
+                best["over_probability"] = avg_prob
+                best["all_sources"] = list({e.get("source") for e in entries})
+                best["source_count"] = len(entries)
+                merged_props.append(best)
+        player_props = merged_props
+
     # 10. Enrich player props with headshot URLs + team assignment from rosters
     if player_props and event.sport_id:
         # player_name_lower → {"headshot": url, "team": "home"|"away"}

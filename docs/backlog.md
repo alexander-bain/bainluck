@@ -425,14 +425,9 @@ Backend adds `is_minimum_tick` flag on grid cells at exactly 0.01 from Kalshi-on
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
 **Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
 
-### 0f-4. Sport Hierarchy Page Data Quality (Manus audit April 22)
+### ~~0f-4. Sport Hierarchy Page Data Quality~~ ✅ VERIFIED CLEAN (May 6)
 
-Two issues reported by Manus league page audit. May be transient data issues — verify before investing time:
-1. **EPL page shows Egyptian Premier League teams** — cross-league contamination in grid or event data. Grid API currently shows correct 20 English teams. May have been stale data at audit time.
-2. **Tennis category page shows Golf content** — `/categories/tennis` or `/sport/tennis/atp` displaying golf tournaments. Tennis feed API returns correct data. May be a rendering path issue where golf-specific code runs for non-golf sports.
-
-**Verify:** Visit `/sport/soccer/epl` and `/sport/tennis/atp` in browser. If issues persist, trace the data loading path.
-**Files:** `frontend/app/sport/[sport]/[league]/page.tsx`, `frontend/app/categories/[slug]/page.tsx`
+Both EPL and Tennis pages verified clean. EPL: 38 markets, all EPL teams. Tennis ATP: 1 market, no golf content. Was transient at audit time.
 
 ---
 
