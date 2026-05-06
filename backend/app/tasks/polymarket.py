@@ -245,6 +245,9 @@ async def _poll_polymarket_markets():
         "outcomes_updated": 0,
         "snapshots_created": 0,
         "errors": [],
+        "by_category": {},
+        "crypto_skipped": 0,
+        "total_api_events": 0,
     }
 
     BATCH_SIZE = 50  # Commit every N events to limit memory
@@ -355,12 +358,12 @@ async def _poll_polymarket_markets():
     finally:
         await service.close()
 
+    stats["total_api_events"] = len(seen_ids)
     logger.info(
-        "Polymarket poll complete: %d events, %d outcomes, %d snapshots, %d errors",
-        stats["events_processed"],
-        stats["outcomes_updated"],
-        stats["snapshots_created"],
-        len(stats["errors"]),
+        "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
+        stats["total_api_events"], stats["events_processed"], stats["markets_processed"],
+        stats["outcomes_updated"], stats["snapshots_created"], stats["crypto_skipped"],
+        len(stats["errors"]), stats["by_category"],
     )
     return stats
 
@@ -401,6 +404,7 @@ async def _process_event_batch(
                 # Skip crypto markets entirely — they consume DB space
                 # without providing value to users
                 if llm_sport_category == "crypto" or category == "crypto":
+                    stats["crypto_skipped"] += 1
                     continue
 
                 # Fall back to pattern matching + league inference if tags didn't help
@@ -416,6 +420,7 @@ async def _process_event_batch(
                                 llm_sport_category = _sport
 
                     # If we found a sport category, ensure category is "championship"
+                    stats["by_category"][llm_sport_category or "unknown"] = stats["by_category"].get(llm_sport_category or "unknown", 0) + 1
                     if llm_sport_category and llm_sport_category not in _NON_SPORT_CATEGORIES:
                         category = "championship"
 

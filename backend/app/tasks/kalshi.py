@@ -231,6 +231,9 @@ async def _poll_kalshi_markets():
         "outcomes_updated": 0,
         "snapshots_created": 0,
         "errors": [],
+        "by_category": {},
+        "crypto_skipped": 0,
+        "total_api_events": 0,
     }
 
     try:
@@ -239,6 +242,7 @@ async def _poll_kalshi_markets():
         # figure skating, etc.) + non-sports markets (politics, economics,
         # entertainment) as the site expands beyond sports.
         events = await service.get_all_events(categories=None)
+        stats["total_api_events"] = len(events)
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
@@ -290,7 +294,9 @@ async def _poll_kalshi_markets():
                     # Skip crypto markets entirely — they consume DB space
                     # without providing value to users
                     if sport_category == "crypto" or category == "crypto":
+                        stats["crypto_skipped"] += 1
                         continue
+                    stats["by_category"][sport_category] = stats["by_category"].get(sport_category, 0) + 1
 
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
@@ -587,4 +593,10 @@ async def _poll_kalshi_markets():
     finally:
         await service.close()
 
+    logger.info(
+        "Kalshi poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
+        stats["total_api_events"], stats["events_processed"], stats["markets_processed"],
+        stats["outcomes_updated"], stats["snapshots_created"], stats["crypto_skipped"],
+        len(stats["errors"]), stats["by_category"],
+    )
     return stats
