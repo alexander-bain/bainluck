@@ -271,9 +271,13 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
-                    .foregroundStyle(.secondary.opacity(0.15))
+            // Match OddsChartView's stride-based ticks for identical x-axis labels
+            let domain = chartXDomain(dataPoints: dataPoints)
+            let duration = domain.upperBound.timeIntervalSince(domain.lowerBound)
+            let strideMinutes = duration > 10800 ? 60 : duration > 5400 ? 30 : 15
+            AxisMarks(values: .stride(by: .minute, count: strideMinutes)) { _ in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
+                    .foregroundStyle(.secondary.opacity(0.3))
                 AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
                     .font(.caption2)
             }
