@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchFeed } from "@/lib/api";
+import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -255,6 +255,12 @@ export default function DiscoverPage() {
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
+  const { data: resolutionsData } = useSWR(
+    "discover-resolutions",
+    fetchResolutions,
+    { revalidateOnFocus: false }
+  );
+
   const handleDismiss = useCallback((itemId: string) => {
     addDismissed(itemId);
     setDismissed((prev) => new Set([...prev, itemId]));
@@ -383,6 +389,23 @@ export default function DiscoverPage() {
                 ? <button onClick={() => setCategoryFilter("all")} className="text-blue-600 hover:underline">Show all markets</button>
                 : "Check back later for new markets"}
             </p>
+          </div>
+        )}
+
+        {/* Resolution notifications */}
+        {resolutionsData && resolutionsData.resolutions.length > 0 && (
+          <div className="mb-4 columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
+            {resolutionsData.resolutions.slice(0, 3).map((r, idx) => (
+              <div key={idx} className="break-inside-avoid mb-4">
+                <ResolutionCard
+                  marketName={r.market_name}
+                  guess={r.guess}
+                  threshold={r.threshold}
+                  actual={r.actual}
+                  correct={r.correct}
+                />
+              </div>
+            ))}
           </div>
         )}
 

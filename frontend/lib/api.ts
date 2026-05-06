@@ -1314,3 +1314,17 @@ export async function fetchSharedTeamFutures(
   );
 }
 
+export interface ResolutionItem {
+  market_name: string;
+  category: string | null;
+  guess: string;
+  threshold: number;
+  actual: number;
+  correct: boolean;
+  created_at: string | null;
+}
+
+export async function fetchResolutions(): Promise<{ resolutions: ResolutionItem[] }> {
+  return apiFetch<{ resolutions: ResolutionItem[] }>("/api/predictions/resolutions");
+}
+
