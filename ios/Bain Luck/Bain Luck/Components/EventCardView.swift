@@ -90,7 +90,7 @@ struct EventCardView: View {
                 gameClock: event.espn?.gameClock,
                 period: event.espn?.period
             )
-            if let ei = event.ei ?? event.pulse {
+            if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
             if let badge = personalizationBadge {
