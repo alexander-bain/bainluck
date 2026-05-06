@@ -1613,10 +1613,32 @@ async def _transition_event_statuses_impl() -> dict:
                     event.completed_at = now
                 stats["live_to_closed"] += 1
 
+                # Write resolved win probability for prediction market sources.
+                # Without this, Kalshi/Polymarket stay at their last mid-game
+                # probability instead of resolving to 1.0/0.0.
+                if (event.home_score is not None
+                        and event.away_score is not None
+                        and event.home_score != event.away_score):
+                    home_won = event.home_score > event.away_score
+                    resolved_home = 1.0 if home_won else 0.0
+                    wp_sources = event.win_probability_sources or {}
+                    for src_key in ("kalshi", "polymarket"):
+                        if src_key in wp_sources:
+                            wp_sources[src_key]["value"] = resolved_home
+                    if wp_sources:
+                        await session.execute(
+                            _sql_update(Event)
+                            .where(Event.id == event.id)
+                            .values(win_probability_sources=wp_sources)
+                        )
+                        stats.setdefault("pm_resolved", 0)
+                        stats["pm_resolved"] += 1
+
         if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0:
             logger.info(
-                "Status transitions: %d scheduled→live, %d live→closed",
+                "Status transitions: %d scheduled→live, %d live→closed (pm_resolved=%d)",
                 stats["scheduled_to_live"], stats["live_to_closed"],
+                stats.get("pm_resolved", 0),
             )
 
     return stats

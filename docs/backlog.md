@@ -529,7 +529,7 @@ Commit `eb32ace`. Kalshi uses 7-day window in broad fallback, 48h when ticker ga
 **Effort:** 1-2 hours
 **Parallel Safety:** Yellow
 
-#### 1d. Non-NHL Hockey Markets (KHL/AHL/DEL)
+#### ~~1d. Non-NHL Hockey Markets (KHL/AHL/DEL)~~ ✅ SHIPPED (May 6)
 **Root cause:** Kalshi has markets for KHL, AHL, DEL leagues. Our event DB only covers NHL. These markets fail silently — they're counted in the denominator but can never link.
 **Fix:** Either (a) filter them from the link rate denominator, or (b) add these leagues to event ingestion. Short-term: add explicit tracking counter `non_nhl_hockey_market_skipped`.
 **Expected impact:** Adjusts denominator, hockey rate would jump 5-10% if filtered.
@@ -539,8 +539,8 @@ Commit `eb32ace`. Kalshi uses 7-day window in broad fallback, 48h when ticker ga
 
 #### ~~1e. MMA~~ ✅ TARGET MET (86.3% Kalshi)
 
-#### 1f. Kalshi team aliases for championship grids (R3)
-**Fix:** Admin endpoint to extract all 30 Kalshi outcome names per sport, add as `Team.alternate_names`.
+#### ~~1f. Kalshi team aliases for championship grids~~ ✅ NOT NEEDED (May 6)
+Verified: MLB (30 teams, 0 cells missing Kalshi), NHL (32 teams, 0 cells missing Kalshi). All Kalshi outcome names already match.
 
 ---
 
