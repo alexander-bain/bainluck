@@ -146,19 +146,6 @@ Built to measure and hill-climb matching accuracy to 100%. Same pattern as grid 
 **Files:** `frontend/components/DesktopNav.tsx`, `frontend/components/BottomNav.tsx`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, new `/categories` routing
 **Parallel Safety:** Red (touches navigation on all platforms)
 
-### ~~0p. Sport/League Pages: Add Live Events~~ ✅ SHIPPED (April 28)
-
-Moved to `docs/completed-features.md`.
-
-### ~~0q. Feed Ranking: Penalize "Empty" Events~~ ✅ SHIPPED (April 28)
-
-Added `compute_content_richness_penalty()` to `feed_scoring.py`. Three signals, live events only:
-- **Flat line** (-10): EI is 0 after 25%+ of game elapsed
-- **Scoreless stalemate** (-8): 0-0 past halftime (exempt soccer/hockey)
-- **Thin data** (-5/-8): only 1 or 0 sources in `win_probability_sources`
-- **Rich data** (+3): 4+ sources = small bonus
-Combined penalty capped at -20. 19 new tests. Applies to web + iOS/Mac (backend feed API).
-
 ### 0s. League Pages: Surface ALL Sport Markets (Series, Awards, Playoff Props, Season Stats) — Phase 1 SHIPPED
 
 **Problem:** The league page (`/sport/basketball/nba`) is a single-purpose page — it shows the championship grid and nothing else. Meanwhile we're ingesting thousands of markets from Kalshi and Polymarket that are clearly sport-specific (NBA series winners, MVP, DPOY, playoff win totals, sweeps, Game 7 counts, player return dates) and NOT showing them anywhere at the league level. Users have to stumble onto these via individual event detail pages or the generic futures browser.
@@ -244,26 +231,6 @@ The league page should become a **one-stop destination** for everything happenin
 
 **Implementation plan:**
 
-#### ~~Phase 1: Backend — League-scoped futures endpoint~~ ✅ SHIPPED (April 28)
-`GET /api/leagues/{sport_key}` returns all open markets for a league, grouped by section (series, awards, playoff_props, season_stats, novelty). Frontend `LeagueMarketCard` component renders 3-column grid with probability bars for series. Cross-source dedup via canonical_market_key. Created `routes/league_futures.py`.
-
-```python
-{
-  "series": [...],      # Series winner markets (current playoff matchups)
-  "awards": [...],      # MVP, DPOY, 6MOY, MIP, ROY, Finals MVP, etc.
-  "playoff_props": [...], # Sweeps, Game 7 count, playoff win totals
-  "season_stats": [...],  # Win totals, stat leaders (if season ongoing)
-  "novelty": [...],     # Player returns, records, streaks
-}
-```
-
-Each group: markets sorted by interestingness (decisive probability + recent movement). Top 3 outcomes per market. Cross-source dedup via `canonical_market_key`.
-
-**Key challenge:** Filtering by league, not just sport. `llm_sport_category='basketball'` includes WNBA, NCAAB, international leagues. Need to filter using ticker prefixes (`KXNBA` for Kalshi) and/or `canonical_market_key` patterns for Polymarket.
-
-**Files:** New file `backend/app/routes/league_futures.py`, or add to `routes/futures.py`
-**Depends on:** Existing `market_label_normalization.py` classification system
-
 #### Phase 2: Frontend — Tabbed/sectioned league page
 Add sections below the championship grid. Could be tabs (Games / Futures / Awards / Props) or a single scrollable page with sections (simpler, more discoverable).
 
@@ -295,25 +262,7 @@ Port the new sections to `LeagueView.swift`. Reuse existing card components wher
 
 ### 0q. Feed "Top Markets" Stale Data (BUG — user-facing)
 
-**~~0q-1. "Pro Basketball Best Regular Season Record"~~ ✅ SHIPPED (May 2)**
-Three staleness heuristics in `_score_futures()`: (1) all outcomes settled (<5% or >95%), (2) leader ≥97% with boring journey, (3) no updates for 7+ days with zero movement.
-
-**~~0q-2. Stale Masters golf market~~ ✅ SHIPPED (May 2)**
-Same fix — caught by the 7-day staleness + zero movement heuristic.
-
-**~~0q-3. No probability bars on Top Markets futures~~ ✅ SHIPPED (May 2)**
-Added fill bars to `FuturesFeedCard` top outcomes (leader in brand color, others muted). Matches existing `DiscoverCard` pattern.
-
-**~~0q-4. Truncated futures names~~ ✅ SHIPPED (May 2)**
-Replaced `truncate` with `line-clamp-2` across `FeedCard`, `DiscoverCard` (compact row + hero leader), and `CombinedFeedCard`. Long names now wrap to 2 lines.
-
 ### 0r. Golf Data Quality Issues (April 25)
-
-**~~0r-1. Tiger Woods British Open odds~~ ✅ SHIPPED (May 2)**
-Expanded `_NON_WINNER_MARKET_RE` to catch "compete at", "will X compete", "tee up", "in the field". Added binary market detector: per-golfer Yes/No markets (<=2 outcomes) now skipped from winner aggregation.
-
-**~~0r-2. Dead category links in golf~~ ✅ SHIPPED (April 28)**
-TournamentCard default href changed from `/categories/golf/tournaments/` to `/sport/golf/{tour}/{slug}`. Tour slug mapping handles dp_world→dpworld, korn_ferry→kft.
 
 ---
 
@@ -330,12 +279,6 @@ Full report: `Manus/mystery_shopper.md`.
 
 ### ~~0e. Wire Manus audit results into /health skill~~ ✅ ALREADY DONE
 Section H of `/health` (`.claude/commands/health.md`) already reads `Manus/audit_results/latest/manifest.json`, scans `*.md` reports for findings, flags staleness >7 days, and suggests running the suite. Verified working April 29.
-
-### ~~0e-2. GA4 Analytics Overhaul Phases 1-3~~ ✅ SHIPPED (April 29)
-
-Phase 1: Wired 16 dead-code events, fixed consent bug (none→denied), fixed FeedCard/SearchBar tagging, added iOS platform/login_status user properties, wired onboarding + futures tracking on iOS.
-Phase 2: Added onboarding_start/skip, search_result_click, return_visit (web + iOS), app_version + days_since_install user properties (iOS).
-Phase 3: Added navigation_click on BottomNav + DesktopNav, type definitions for grid_cell_click, player_prop_click, market_map_interact, share, feed_refresh.
 
 ### 0e-3. GA4 Console Configuration — TODO (Phase 4)
 
@@ -406,50 +349,11 @@ Two fixes:
 1. **iOS Score Diff chart noise**: X-axis `AxisMarks` had no count limit, creating grid lines at every data point (hundreds). Fixed to `desiredCount: 5`.
 2. **Web + iOS chart axis alignment**: Win Probability and Score Differential charts now share a single computed domain (`sharedChartDomain`) from ALL data sources. Both charts fill every minute in the range, ensuring identical x-axes, linear time, and aligned period markers. Previously OddsChart computed its own domain and reported it async — now both use the same parent-computed domain.
 
-### ~~0f-7. Kalshi Win Probability Spikes~~ ✅ SHIPPED (April 29)
-
-**Phase 1 (April 29):** Deduplicate markets by `(event_id, source)` before writing snapshots.
-**Phase 2 (April 29):** Fixed ticker team extraction for per-team binary markets (e.g., `KXNBAGAME-26APR28BOSPHI-BOS`). The outcome suffix `-BOS` was polluting `extract_teams_from_ticker()`, causing `teams_str` to be `"bosphi-bos"` instead of `"bosphi"`. Now strips the suffix before parsing. This was the root cause of the Kalshi line showing inverted probabilities.
-
-### ~~0f-12. Event Detail Batch Fix~~ ✅ SHIPPED (April 29)
-
-6 fixes in one batch:
-1. **Hero bubbles removed** — EI badge, sportsbook spread warning, prediction market divergence bubbles all removed (150 lines of dead code cleaned up)
-2. **Player props default to Points only** — fixed `.includes("point")` substring match (caught "Three Pointers") → exact match `^points?$`. Per-card "+N more stats" expansion link replaces global toggle
-3. **2nd half market grouping** — frontend now checks `market_name` (not just `outcome_name`) for half indicators. Kalshi puts "First Half"/"Second Half" in market_name only
-4. **1st half final markers** — expanded halftime detection regex to also match "End of 2nd Quarter". Searches from end of ESPN history array for latest entry
-5. **X-axis label alignment** — YAxis width 42→44 to match OddsChart, plus pruning ScoreDiffChart data points outside shared domain
-6. **iOS league page** — synced LeagueGridModels with current API fields (marketId, region, marketName, championshipMarketId)
-
-### ~~0f-8. Win Probability Chart Mobile Readability~~ ✅ SHIPPED (April 28)
-
-Y-axis bumped 12→13px with darker fill (#4B5563), width 42→44. X-axis bumped 11→12px.
-
-### ~~0f-10. Half-Game Maps Missing Actual Markers~~ ✅ SHIPPED (April 28)
-
-1st half margin and total maps had no "Actual" tile or bubble during live games — only showed Projection/Pre-game. Fixed: during the 1st half, actual = current game scores (they're the same). During the 2nd half, uses halftime scores from ESPN history to split actuals between halves. Marker order now matches full-game maps (Actual first).
-
-### ~~0f-11. Kalshi 2H Spread/Total Markets Not Ingested~~ ✅ SHIPPED (April 28)
-
-Kalshi has 2nd half spread, 2nd half total, series winner, and other game-level markets that weren't appearing on event detail pages. Root cause: these are neg-risk events (`status=None`) falling outside the 50-page unfiltered pagination window. Added 25 game-level series tickers (NBA/NHL/MLB/NFL) to the supplementary fetch list. Increased per-ticker limit from 10→50. Markets will appear after next Kalshi poll cycle.
-
 ---
 
 ### 0f-13. Event Detail April 29 Review — 9 OPEN ISSUES
 
 Reviewed BOS-PHI completed game (event 14617909). Screenshots in `/Users/bain/Desktop/Screenshot 2026-04-29 at 4.20*.png`. Issues affect BOTH web and native unless noted.
-
-#### ~~0f-13a. Win Probability Chart Extends Past Game End (WEB ONLY)~~ ✅ SHIPPED (May 2)
-
-`sharedChartDomain` now computes end time from game-end sources only (ESPN, stat_model, mlb, fangraphs) instead of all sources. Removed sportsbook odds from `smartEndTime` candidates. 2-min buffer instead of 5.
-
-#### ~~0f-13b. X-Axis Labels Not Identical Between Charts (WEB ONLY)~~ ✅ SHIPPED (May 2)
-
-Fixed by computing explicit shared tick labels in the parent component and passing them to both charts via `sharedTicks` prop, replacing Recharts' `preserveStartEnd` which picked different indices on different-length arrays.
-
-#### ~~0f-13c. 2nd Half Margin/Total Maps Not Showing (WEB)~~ ✅ SHIPPED (May 2)
-
-Root cause: `halfMarginMaps` was reading from `gameMarkets.spreads` (full-game only) instead of `gameMarkets.period_markets` (where the backend puts `half_spread` markets). Fixed to read from `period_markets` with `market_type === "half_spread"` filter. Both 1H and 2H margin maps now render.
 
 #### 0f-13c-native. 2nd Half Margin/Total Maps Not Showing (NATIVE ONLY — remaining)
 
@@ -463,22 +367,6 @@ Root cause: `halfMarginMaps` was reading from `gameMarkets.spreads` (full-game o
 
 **Files:** `backend/app/services/kalshi_api.py` (supplementary fetch), `backend/app/routes/events.py` (`_classify_game_market`), `frontend/components/MarketMapSection.tsx` (grouping), `ios/.../Components/MarketMapSection` (if exists)
 
-#### ~~0f-13d. Double Doubles in Additional Markets, Not Player Props~~ ✅ SHIPPED (May 2)
-
-Root cause: `_PLAYER_PROP_RE` had `double.?double\b` — the `\b` word boundary rejected the plural "Doubles". Fixed both `_PLAYER_PROP_RE` and `_is_team_stat_market` to accept `doubles?`. Team-level "Double Doubles" → `team_total`, player-level "Tatum Double Doubles" → `player_prop`.
-
-#### ~~0f-13e. Hero Bubbles + EI Badge Still Showing on NATIVE~~ ✅ SHIPPED (May 2)
-
-Removed EI badge, sportsbook spread warning, prediction market divergence bubbles, and stakes capsule from iOS hero. Also removed dead `divergenceBadge` method. -135 lines.
-
-#### ~~0f-13f. Standings Context Still Showing on NATIVE~~ ✅ SHIPPED (May 2)
-
-Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Redundant with Championship Path card.
-
-#### ~~0f-13g. Player Prop Cards Default to Points (NATIVE)~~ ✅ SHIPPED (May 6)
-
-Replaced global "All stats" toggle with per-card `expandedCards` Set and "+N more stats" expansion link, defaulting to Points only.
-
 #### 0f-13h. Player Award Headshots Missing on WEB
 
 **Problem:** Native shows player headshots (from roster data) next to award names in the Season Futures / Awards section. Web shows only colored initials circles.
@@ -487,59 +375,11 @@ Replaced global "All stats" toggle with per-card `expandedCards` Set and "+N mor
 
 **Files:** `frontend/app/events/[id]/page.tsx` (Bigger Picture section), `backend/app/routes/events.py` (team-progression endpoint)
 
-#### ~~0f-13i. Polymarket Not Showing in Any Game Markets Section~~ ✅ SHIPPED (May 2)
-
-**Root cause:** Polymarket creates series-level events (e.g., "Celtics vs. 76ers" covers all playoff games). Sub-market names like "O/U 196.5" don't include team names. The matching task linked parents to old completed events instead of current games, and the fallback name-matching query couldn't find sub-markets without team names.
-
-**Fix (3 commits):**
-1. Game-markets endpoint: find Polymarket parents by team name, then pull all sub-markets via `group_id` — bypasses `event_id` linking entirely
-2. Matching scoring: +8 bonus for Odds API events to prevent matching to wrong game
-3. Phase 1.5: prioritize open markets linked to completed events for re-linking
-
-**Remaining polish:** De-duplicate Polymarket spreads that appear multiple times (series has overlapping game markets). Game-specific sub-market routing (Game 1 vs Game 5 within a series).
-
----
-
-### Bug Report #3 — Runs Map Missing Zero Label (HOU 3 - BOS 1, May 5)
-
-#### ~~BR3-1. Market map axes must always label zero~~ ✅ SHIPPED (May 6)
-
-Fixed: MarketMap now renders a positioned "0" label at the actual zero position when it's offset from the visual center (where "Tie" sits). Margin maps already label zero as "Tie" at center. Commit `1e2a598`.
-
----
-
-### Bug Report #4 — Player Props Layout (HOU 3 - BOS 1, May 5)
-
-#### ~~BR4-1. Wasted space in Player Props header (iOS)~~ ✅ SHIPPED (May 6)
-
-Team filter tabs now use `.frame(maxWidth: .infinity)` to fill available width, eliminating header dead space.
-
----
-
-### Bug Report #5 — Baseball Period Markets Misclassified (HOU 3 - BOS 1, May 5)
-
-#### ~~BR5-1. "First 5 Innings" classified as half-market~~ ✅ SHIPPED (May 6)
-
-`_classify_game_market()` now recognizes "first 5 innings", "f5 innings", and "f5" as half-period patterns alongside existing basketball/football half patterns. Renders as market maps instead of raw "Other Markets" dump.
-
-#### ~~BR5-2. "First Inning Run" classified as game_prop~~ ✅ SHIPPED (May 6)
-
-"First Inning Run" / "1st Inning Run" now returns `game_prop` instead of `other`.
-
 ---
 
 ### Bug Report #1 — Event Detail Page (PHI 109 - BOS 100, May 4)
 
 From rage shake. Three separate issues on a completed NBA playoff game event detail page.
-
-#### ~~BR1-1. Pre-game odds shown twice in hero~~ ✅ SHIPPED (May 5)
-
-**Problem:** The completed-game hero shows opening odds as the giant probability numbers (41% / 59%) AND repeats them as an "Opened 41% – 59%" caption below. Redundant — same numbers displayed twice.
-
-**Fix:** Change the caption to "Pre-Game Odds" label (since the big numbers already ARE the opening odds), or remove the caption entirely.
-
-**Files:** `ios/.../Views/EventDetailView.swift` (hero section, `isFinished` branch ~line 468-488), `frontend/app/events/[id]/page.tsx` (equivalent web hero)
-**Parallel Safety:** Green
 
 #### BR1-2. Source attribution looks duplicated — NEEDS DESIGN
 
@@ -568,36 +408,10 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 
 9 modules run, all completed. MLB and NBA live pages are excellent. Grids score 85-92. Source accuracy within 3pp of Kalshi/Polymarket across all spot checks.
 
-#### ~~MS-May4-1. MLB Monotonicity Violation — Runs Map~~ ✅ SHIPPED (May 5)
-
-**Event:** Mets vs Rockies (`/events/14624780`)
-**Problem:** Full game runs map jumps from 41% (Over 6.5) to 75% (Over 7.5). Indicates two datasets merged incorrectly — likely Polymarket sub-markets (from new group_id lookup) merging with Kalshi spreads and bypassing per-source monotonicity enforcement.
-**Fix:** `MarketMapSection.tsx` monotonicity enforcement needs to run AFTER cross-source merge, not per-source. Or dedup by threshold before enforcing.
-**Files:** `frontend/components/MarketMapSection.tsx`, `backend/app/routes/events.py` (game-markets dedup)
-**Parallel Safety:** Yellow
-
-#### ~~MS-May4-2. Chart extends 50-60 min past game end for Soccer~~ ✅ SHIPPED (May 5)
-
-**Timing Health Score:** 39/100
-**Problem:** EPL/La Liga/UCL charts extend 50-60 min past actual game end with stale bookmaker data. NBA 20-30 min. NHL/MLB are clean (within 5 min).
-**Root cause:** May 2 fix clips at last ESPN data point — but soccer events have no ESPN data. Fallback to `completed_at` or last non-sportsbook data source needs to fire for non-US sports.
-**Files:** `frontend/app/events/[id]/page.tsx` (`sharedChartDomain`, lines ~382-440)
-**Parallel Safety:** Yellow
-
-#### ~~MS-May4-3. Tennis Futures — Infinite Loading Spinner~~ ✅ SHIPPED (May 6)
-
-Fixed: Skip SWR fetch for invalid/NaN market IDs, show back navigation during loading/error states, improved error messages. Commit `79d721f`.
-
 #### MS-May4-4. EPL League Page Data Contamination
 
 **Problem:** EPL page shows contaminated data from non-EPL sources. Need to investigate what's leaking in.
 **Files:** Backend league page endpoint, sport key classification
-**Parallel Safety:** Yellow
-
-#### ~~MS-May4-5. NBA/NHL Grids Missing Make Playoffs + Win Division~~ ✅ SHIPPED (May 5)
-
-**Problem:** Only Conference + Championship columns shown. MLB correctly shows all 4. Grid endpoint may filter out resolved playoff-stage markets during active playoffs.
-**Files:** `backend/app/routes/futures.py` or `playoffs.py` (grid endpoint)
 **Parallel Safety:** Yellow
 
 #### MS-May4-6. NBA 1H Total — 7 Thresholds vs Kalshi's 9 (23% gap at Over 98.5)
@@ -606,37 +420,11 @@ Fixed: Skip SWR fetch for invalid/NaN market IDs, show back navigation during lo
 **Files:** Backend outcome ingestion, `backend/app/routes/events.py` (game-markets threshold logic)
 **Parallel Safety:** Yellow
 
-#### ~~MS-May4-7. NBA Duplicated Player Awards in Futures Section~~ ✅ SHIPPED (May 6)
-
-Root cause: merge rules used strict `^DPOY$` anchors, so "NBA DPOY" didn't merge with "DPOY". Fixed merge rules to accept optional league prefix (NBA/NHL/MLB/NFL). Same fix for Finals MVP, 6MOY, MIP, ROY, Clutch Player. Also added "6th Man of the Year" → 6moy alias.
-
 ---
 
 ### Manus Site Sweep Findings (April 25) — NEW
 
 Full report: `Manus/audit_results/site_sweep_april25.md`
-
-#### ~~MS-1. Small text audit — 388 elements <11px across site~~ ✅ SHIPPED (April 28)
-Bumped text-[9px]→10px and text-[10px]→11px across FeedCard, ChampionshipGrid, OddsChart, event detail page. Trend indicators 7→9px.
-
-#### ~~MS-2. Cookie consent banner overlaps bottom nav~~ ✅ SHIPPED (April 27)
-Banner uses `bottom-16` on mobile to sit above the tab bar.
-
-#### ~~MS-3. Missing team logos on event detail (pink/grey placeholders)~~ ✅ SHIPPED (April 28)
-ESPN CDN fallback when team_data.logo_large missing + onError handler shows initials if image fails.
-
-#### ~~MS-4. Game props missing team names~~ ✅ SHIPPED (May 6)
-
-Added `team_name` and `team_side` fields to `team_total` items in game-markets response. Parses team name from market name by matching 4+ char words against event team names.
-
-#### ~~MS-5. NYC rainfall listed 8 times~~ ✅ SHIPPED (April 27)
-Monthly rain deduplicates by city name, keeps latest resolution date.
-
-#### ~~MS-6. Tornado months non-chronological~~ ✅ SHIPPED (April 27)
-Tornado markets sorted by resolution date (chronological).
-
-#### ~~MS-7. Championship grid: no horizontal scroll indicator on mobile~~ ✅ SHIPPED (April 28)
-Changed overflow-hidden → overflow-x-auto with right-edge gradient fade on mobile.
 
 #### MS-8. Kalshi 1.0% minimum tick misleading in grids
 **Problem:** Many teams show exactly "1.0%" for Conference/Champion odds. This is Kalshi's minimum tick, not a real 1% probability — it's misleading when aggregated.
@@ -682,10 +470,6 @@ Changed overflow-hidden → overflow-x-auto with right-edge gradient fade on mob
 **Tests:** 39 existing game-markets tests pass. No new TS errors introduced.
 **Files:** `backend/app/routes/events.py` (headshot enrichment rewrite), `frontend/components/PlayerPropsDashboard.tsx:363`, `frontend/components/PlayerPropsGrid.tsx:91-100`, `frontend/lib/api.ts:574`
 **Parallel Safety:** Yellow (touches events.py + 2 frontend components)
-
-### ~~0f-3b. Player Prop Headshots~~ ✅ DONE (April 23)
-
-Roster sync fixed: moved to 10 AM UTC, loaded 3,261 players across MLB/NBA/NHL with headshot URLs. Enrichment gating bug fixed (`player_roster_info` instead of `player_headshots`). Verified: 151/156 props return headshots + team assignments for Padres-Rockies game. Both web and iOS now display headshots.
 
 ### 0f-3. Live Box Score Integration for Player Props
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
@@ -759,19 +543,11 @@ Two issues reported by Manus league page audit. May be transient data issues —
 
 **Context:** Audited event 14523747 (Red Sox vs Yankees, April 22) to check if we're showing ALL available markets. Found 21 linked markets (all Kalshi), but several data quality issues.
 
-#### ~~Issue 1: NBA markets incorrectly linked to MLB event~~ ✅ SHIPPED (May 6)
-
-Fixed: Ticker-derived sport prefix now hard-rejects cross-sport matches in `_score_candidates()`. KXNBA tickers can no longer link to baseball_mlb events. Commit `6dbf84f`.
-
 #### Issue 2: Zero Polymarket game-specific markets linked
 ~20 Polymarket markets exist mentioning Red Sox/Yankees (NRFI, win markets), but ALL have `sport_id=None` and `llm_sport_category=None`. They're never considered for linking because the matching task requires sport identification.
 
 **Fix:** Improve Polymarket sport classification. These markets have team names in their titles ("New York Yankees vs. Boston Red Sox") — the matching task should detect the sport from team names even without explicit sport metadata.
 **Files:** `tasks/polymarket.py` (sport classification), `tasks/prediction_market_matching.py`
-
-#### ~~Issue 3: Tomorrow's game markets linked to today's event~~ ✅ SHIPPED (May 6)
-
-Root cause: ±7-day time window even when ticker has a parseable game date. Fixed: when `extract_game_date_from_ticker()` succeeds, window tightens to ±36h (timezone slack only). The 7-day fallback remains for tickers without parseable dates.
 
 #### Issue 4: Series markets not surfaced on event detail pages
 Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series. Example: Bruins vs Sabres NHL playoff game (April 28) — Kalshi has "BUF wins 4-1 62%", series spread -2.5, series total games — none of this appears on bainluck.com for any game in that series.
@@ -818,14 +594,6 @@ We don't use `live-strokes-gained`. We use `preds/in-play`. Verified April 22.
 Discovered via `scripts/audit_event_timing.py` — 45 completed events audited across 17 sport/league combos.
 Full audit baseline: `scripts/audit_results/timing_latest.json`. Manus visual prompt: `Manus/prompts/chart_timing_audit.md`.
 
-#### ~~0t-1. Prediction Market Snapshots Bleed Past Game End~~ — SHIPPED (April 22)
-
-Fixed in two passes:
-1. `smartEndTime` excludes kalshi/polymarket/aggregate_line — only ESPN + stat_model used as game-end signals. Backend PM matching Phase 2 no longer writes snapshots for completed events.
-2. Added `completed_at` column to Event model. Set from ESPN ("post"/"final"), Odds API (`completed` flag), StatPal (`statpal_end_time`), and staleness detection. History API returns `completed_at`; frontend uses it as authoritative chart end boundary. No guessing — if we don't know when the game ended, we don't clip.
-
-Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
-
 #### 0t-2. 47% of Events Have Zero Period Markers
 
 **Problem:** 21/45 completed events have no game state indicators (period/quarter/inning vertical lines on charts). All are non-ESPN events: soccer, tennis, KBO/NPB baseball. No markers = no context.
@@ -854,10 +622,6 @@ Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 **Files:** `frontend/components/OddsChart.tsx` (onRenderedDomain), `frontend/components/ScoreDifferentialChart.tsx:339-366`
 **Parallel Safety:** Green
 
-#### 0t-bonus. Soccer EFL/League 2: 53-Minute Late Start — NOT A BUG
-
-**Investigation (May 6):** Traced the full commence_time chain — Odds API → `fromisoformat(Z→+00:00)` → Event Registry → DB. All UTC throughout, no BST/UTC confusion anywhere. The 53-minute gap is not a timezone issue (BST would be exactly 60min). Most likely cause: late odds publication for lower-tier English football — event is created at discovery time but odds don't flow until bookmakers post lines near kickoff. Tier 3/4 sports also poll less frequently. No code fix needed.
-
 ---
 
 ### 1. Improve Game Prop Link Rate (1C continuation)
@@ -877,9 +641,6 @@ Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 
 #### ~~1a. Time Window Expansion (48h → 7d for Kalshi)~~ ✅ ALREADY SHIPPED
 Commit `eb32ace`. Kalshi uses 7-day window in broad fallback, 48h when ticker game date is available.
-
-#### ~~1b. Ticker-Based Team Name Fallback~~ ✅ SHIPPED (April 27)
-Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching fails, falls back to `extract_teams_from_ticker()` which uses reliable 3-letter Kalshi ticker codes. 2 new tests.
 
 #### 1b-monitor. Hockey Kalshi Link Rate — MONITOR (April 28)
 **Context:** Health check (April 27) found Hockey Kalshi at 59%, Polymarket at 23.8% — both well below 80% target. The ticker-based fallback (1b) shipped April 27; check if it moved the needle. Also investigate whether 1d (non-NHL leagues in denominator) is inflating the gap.
@@ -909,23 +670,6 @@ Added `external_id` param to `match_teams_to_event()`. When fuzzy name matching 
 ---
 
 ## Active Sentry Issues (April 28, 2026)
-
-### ~~PREQ-7. N+1 Query Audit~~ ✅ SHIPPED (April 28)
-
-Fixed all 5 top Sentry N+1 issues (4,350+ events total). Root cause was Celery tasks, not API routes (routes already had correct `selectinload()`). Three batch-loading fixes: ESPN team cache, PM outcome batch-load, odds snapshot cache. Monitor Sentry over 24h to confirm drop to zero.
-
-**Monitor / low priority:**
-| ID | Events | Status |
-|----|--------|--------|
-| N+1 Query warnings (GA, H0, G7, K8, KE) | 4,350+ | **PREQ-7 shipped April 28. ESPN sync N+1 fixes May 2 (win_probability_sources re-read × 3 + identity registration × 2). Monitoring.** |
-| Redis ConnectionError (E, JJ, M, EQ) | various | Transient Redis connection drops. Heroku Redis recovers automatically. |
-| WorkerLost/SIGTERM (1, 2) | 1,868 | Normal Celery worker recycling (max-memory-per-child). Not a bug. |
-| TimeLimitExceeded (J, K) | 917 | Polymarket poll exceeds 300s occasionally. Increase time limit or optimize. |
-| aussierules_other (JP) | 4 | Unknown sport key. Add to `sport_keys.py` mapping. |
-| PendingRollbackError (JN) | 3 | Session in bad state after prior error. Related to session-during-API pattern. |
-| DataGolf errors (HV, HW, HY) | various | DataGolf API 400s for `opp` (non-PGA) tours. Known limitation. |
-
-**Session-leak audit:** 2 files still hold sessions during API calls (`odds_polling.py:462→613`, `espn_sync.py:~254→325`). Fix during deeper god function refactoring.
 
 ---
 
@@ -980,37 +724,6 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 **Current architecture:** 3 backend endpoints in `routes/events.py` (typeahead, full search, suggestions). Frontend in `components/SearchBar.tsx` + `app/search/page.tsx`. All matching is `ILIKE '%query%'` — no trigram, no full-text search, no fuzzy matching. No indexes on searched columns.
 
 **Files:** `backend/app/routes/events.py` (lines 577-1219), `frontend/components/SearchBar.tsx`, `frontend/app/search/page.tsx`, `frontend/lib/api.ts`
-
-#### ~~Phase 1: Fix What's Broken (1-2 days)~~ ✅ SHIPPED (May 1)
-
-- [x] **P1a. HTML entity rendering** — Fixed: Unicode escapes in `<span>` elements instead of JS string HTML entities.
-- [x] **P1b. Deduplicate futures in typeahead** — Fixed: group_id dedup in both typeahead and full search. Fetches 15/20 candidates, deduplicates, returns top 3/10.
-- [x] **P1c. Better display names** — Fixed: `market_type_label` on all futures (Championship/Conference/Award/Division/Prop). Ranking by tier + volume instead of updated_at.
-- [x] **P1d. Widen dropdown** — Fixed: `min-w-[480px]` on sm+ breakpoints. Commit `dee1b74`.
-
-#### ~~Phase 2: Better Matching (1 week)~~ ✅ SHIPPED (May 1)
-
-- [x] **P2a. Search team `alternate_names`** — JSONB `alternate_names` now searched via `cast(Team.alternate_names, String).ilike()`.
-- [x] **P2b. Search player names** — Typeahead now searches `FuturesOutcome.name` via `.any()` subquery. "Tatum" finds player prop markets.
-- [x] **P2c. Search Discover/non-sports markets** — Non-sports markets (sport_id IS NULL) searched as fallback in typeahead. Category label from `llm_sport_category`.
-- [x] **P2d. Multi-word futures matching** — AND across terms in market name, same as events. "celtics championship" works.
-
-**Also shipped:**
-- Cross-source dedup via normalized name (sorted team names, stripped prefixes)
-- Tier 5 patterns for game-level markets (first half, series, O/U, next team, win by)
-- Removed blind trust of `category="championship"` (Polymarket labels everything as championship)
-- 8 new tests for tier 5 classification
-- Wider dropdown (min-w-[360px])
-
-#### ~~Phase 3: Smarter Ranking (1 week)~~ ✅ SHIPPED (May 1)
-
-- [x] **P3a. Relevance scoring** — Futures ranked by tier ASC + volume DESC. Events ranked by live-first + commence_time ASC. Tier fix (Phase 2) ensures championship > prop.
-- [x] **P3b. Category-aware grouping** — Search results page shows "Games (N)" and "Futures & Markets (N)" as grouped sections with clear counts.
-- [x] **P3c. Smart typeahead slot allocation** — Collect into pools, then assemble: 1 team + 2 events + 2 futures baseline, fill remaining 2 slots from extras. No more 5 futures crowding out games.
-
-**Also shipped:**
-- Backfill script (`scripts/backfill_market_tiers.py`) to recompute tier for existing Polymarket markets
-- Cleaner search results header
 
 #### TEAM PAGES ✅ SHIPPED (May 1)
 
@@ -1156,9 +869,6 @@ Dedicated pass to make everything faster, more reliable, and higher quality.
 | ~~PREQ-10~~ | ~~Health endpoint (Redis + poll timestamps)~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-11~~ | ~~Source degradation (try/except in feed)~~ | ✅ Shipped Apr 25 |
 | ~~PREQ-12~~ | ~~Sentry noise cleanup (before_send filter)~~ | ✅ Shipped Apr 25 |
-
-### ~~PREQ-7. N+1 Query Audit~~ ✅ SHIPPED (April 28)
-Batch-loading fixes in 3 Celery tasks: `espn_sync.py`, `prediction_market_matching.py`, `odds_polling.py`. PREQ sprint now 12/12 complete.
 
 ---
 
@@ -1330,18 +1040,6 @@ interestingness = (
 
 Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: hero with team logos/scores, multi-source win prob chart with period markers, score diff chart with period markers, ChampionshipPathView (from team-progression), PlayerPropsCardView (from game-markets), awards, season stats, trade watch, clean error messages.
 
-### ~~iOS-1. Period Markers~~ — SHIPPED
-### ~~iOS-2. Feed Card Polish~~ — SHIPPED
-### ~~iOS-3. Chart Clipping~~ — SHIPPED
-### ~~iOS-cleanup~~ — SHIPPED: removed LineMovement, divergence badge, tags, baseball clock, refresh countdown
-
-### ~~iOS-7/8/9/10~~ — SHIPPED (April 22)
-Period markers on score diff chart, championship card filter fix, ChampionshipPathView from team-progression endpoint, PlayerPropsCardView from game-markets endpoint.
-
-### ~~iOS-11. Sections Disappear on Auto-Refresh~~ ✅ SHIPPED (May 6)
-
-Secondary data (gameMarkets, relatedFutures, teamProgression) now only overwrites when the new response has meaningful content.
-
 ### iOS-12. Score Diff Actual Line Cuts Off Mid-Game — BACKEND BUG
 
 **Problem:** The teal "Actual Score Diff" line stops partway through the game (e.g., 5th inning).
@@ -1350,30 +1048,6 @@ Secondary data (gameMarkets, relatedFutures, teamProgression) now only overwrite
 
 **Fix:** Debug the ESPN sync score extraction: `ee.home_score` is None when writing ESPNSnapshot. Check what the ESPN API returns and how it's parsed. The `_sync_espn_live_events` function at line 493 sets `event.home_score = ee.home_score` — this path works for Event updates but the snapshot write at line 541 may be running before scores are available.
 **Files:** `backend/app/tasks/espn_sync.py` (ESPN API response parsing), `backend/app/services/espn_api.py`
-
-### ~~iOS-13. Score Diff X-Axis Mismatch~~ ✅ SHIPPED (May 6)
-
-ScoreDifferentialChartView now uses the same stride-based tick calculation as OddsChartView.
-
-### ~~iOS-14. Player Prop Threshold Monotonicity~~ ✅ SHIPPED (May 6)
-
-Player prop rungs now group by full `marketName` instead of suffix after colon, preventing cross-stat-type mixing.
-
-### ~~iOS-15. Bigger Picture Section Redesign~~ ✅ DONE (April 23)
-
-V6 redesign: renamed to "Season Futures". Stat leader markets (Doubles Leader, ERA Leader, etc.) extracted from championship bucket into new "Stat Leaders" section with 2-column grid grouped by stat type. Season Stats renamed to "Season Outlook". Division/conference winner patterns now properly route to championship path. All futures shown — nothing removed.
-
-### ~~iOS-16. Season Stats Categorization~~ ✅ DONE (April 23)
-
-iOS-side reclassification: expanded `isDivisionOrPlayoff` regex to catch "NL East Winner", "AL West Winner", etc. New `isStatLeader` regex catches "Leader" markets miscategorized as championship by backend. Active items filtered (skip <=1% and >=99%).
-
-### ~~iOS-17. Player Headshot Images~~ ✅ DONE (April 23)
-
-Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `player_headshot` + `player_team` on game-markets endpoint. iOS `PlayerPropsCardView` updated to show AsyncImage headshots with initials fallback, plus uses `playerTeam` from API instead of guessing from name.
-
-### ~~iOS-18. Prevent Screen Sleep While App Is Foreground~~ ✅ SHIPPED (May 6)
-
-Added `scenePhase` observer to disable idle timer when active, re-enable on background.
 
 ### iOS-4. Dead/Stale Views Cleanup
 
@@ -1407,87 +1081,17 @@ Added `scenePhase` observer to disable idle timer when active, re-enable on back
 
 Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 
-#### ~~iOS-GD1. Mystery "8" icon between teams in hero~~ ✅ SHIPPED (May 6)
-
-EI badge hidden on completed game cards via `!isFinished` guard.
-
-#### ~~iOS-GD2. Records visually merge with score~~ ✅ SHIPPED (May 5)
-**Problem:** Team records ("10-17" / "13-14") sit directly under scores ("17 / 1") with similar font weight and color, making them hard to distinguish at a glance.
-**Approach:** Reduce font size/weight on records, switch to `text-muted` color, and/or prefix with "Record:" to differentiate from the score.
-**Files:** `ios/.../Views/EventDetailView.swift` (hero section)
-**Parallel Safety:** Green
-
 #### iOS-GD3. Win prob chart drifts toward 50% post-final — PRIORITY
 **Problem:** For BOS @ BAL (final 17–1), the aggregate win probability drifts toward ~50% after the game ends, even though real sources resolved to ~100%. Likely a wrong Kalshi/Polymarket market linked to the event, and/or upstream market resolution status isn't propagating.
 **Approach:** Investigate via: `SELECT id, source, source_market_id, name, status, last_price FROM prediction_markets WHERE event_id = <id>`. Fix root cause in match logic (`app/utils/prediction_market_matching.py`) and/or status propagation (`app/tasks/prediction_market_matching.py`, `poll_live_prediction_markets`). Add audit: for every completed event, every linked market should be resolved upstream and our latest snapshot should match the realized outcome within tolerance. New check in `scripts/audit_matching_quality.py` or `audit_post_final_consistency.py`.
 **Files:** `backend/app/utils/prediction_market_matching.py`, `backend/app/tasks/prediction_market_matching.py`, `backend/app/tasks/live_prediction_markets.py`
 **Parallel Safety:** Yellow (backend matching logic)
 
-#### ~~iOS-GD4. Two "Bain Luck" series in chart legend~~ ✅ SHIPPED (May 5)
-**Problem:** Chart legend shows both "Bain Luck" (aggregate) and "Bain Luck Model" — confusing which is which.
-**Approach:** Rename aggregate series to "Bain Luck Agg". For "Bain Luck Model", look up what the model is actually based on (start in `app/config/win_prob_sources.py`, follow the source key, then check `app/services/`/`app/utils/` for implementation) and rename to reflect the basis. Update source label in `win_prob_sources.py` and legend strings in `OddsChartView`.
-**Files:** `backend/app/config/win_prob_sources.py`, `ios/.../Components/OddsChartView.swift`
-**Parallel Safety:** Yellow (touches backend config + iOS)
-
-#### ~~iOS-GD5. Game-state indicators: floating chips~~ ✅ SHIPPED (May 6)
-
-Replaced cramped `.annotation(position: .top)` period markers with dashed gridlines + `chartOverlay` floating chips.
-
-#### ~~iOS-GD6. Sources row renamed~~ ✅ SHIPPED (May 5)
-**Problem:** Non-functional UI row in the chart section. No interaction, wastes vertical space.
-**Approach:** Remove the row from `OddsChartView`.
-**Files:** `ios/.../Components/OddsChartView.swift`
-**Parallel Safety:** Green
-
-#### ~~iOS-GD7. First x-axis tick rounds up past game start~~ ✅ SHIPPED (May 5)
-**Problem:** First x-axis tick is 10:00 AM despite a 9:05 AM game start, creating a misleading gap.
-**Approach:** Adjust tick generator so the first label aligns with game start (or a half-hour-aligned tick that includes the start) instead of rounding up to the next whole hour. Likely a one-line axis configuration change.
-**Files:** `ios/.../Components/OddsChartView.swift`
-**Parallel Safety:** Green
-
-#### ~~iOS-GD8. Player props headshots~~ ✅ SHIPPED (May 6)
-
-Headshot URL search now checks all props for a player. Loading state shows subtle color placeholder instead of flashing initials.
-
-#### ~~iOS-GD9. Championship Path conference filtering~~ ✅ SHIPPED (May 6)
-
-Hide opposing-conference championship path stages when both teams share a conference.
-
-#### ~~iOS-GD10. Prose summary removed~~ ✅ SHIPPED (May 5)
-**Problem:** Related futures section shows a text summary blob instead of the card-based design the web app uses.
-**Approach:** Port the web card design. Find components under `frontend/components/RelatedFutures*`, enumerate the props they consume, verify the iOS related-futures payload provides the same fields (extend if not), then build SwiftUI equivalents in `RelatedFuturesView.swift` to replace the `summary` text block.
-**Files:** `ios/.../Components/RelatedFuturesView.swift`, `frontend/components/RelatedFutures.tsx` (reference)
-**Parallel Safety:** Green
-
-#### ~~iOS-GD11. Awards section: probability bars added~~ ✅ SHIPPED (May 5)
-**Problem:** Award outcomes show percentages but no visual bars, unlike the web version.
-**Approach:** Port the web award card design to SwiftUI. Bar primitive already exists (`ProbabilityBar.swift`). Match the web row layout: headshot, player name, award label, probability bar, percent.
-**Files:** `ios/.../Components/RelatedFuturesView.swift` (awards section), `ios/.../Components/ProbabilityBar.swift`
-**Parallel Safety:** Green
-
 #### iOS-GD12. Trevor Story missing headshot
 **Problem:** Trevor Story's award row shows an initials chip instead of a headshot.
 **Approach:** Verify whether the headshot URL is missing in the API payload or just not loading on iOS. Add a generic player silhouette as fallback so rows look uniform even when headshots are unavailable.
 **Files:** `ios/.../Components/RelatedFuturesView.swift`, backend roster data
 **Parallel Safety:** Green
-
-#### ~~iOS-GD13. Season Stats dedup~~ ✅ SHIPPED (May 5)
-**Problem:** "Make Playoffs" (Championship Path: BOS 32%, BAL 50%) and "Team to make postseason" (Season Stats: BOS 31%, BAL 51%) are the same concept matched as two separate markets with slightly different numbers.
-**Approach:** Treat as a futures-side matching problem first: identify the two `futures_markets` rows feeding each section, unify them at the futures matcher, then drop the postseason row from Season Stats (Championship Path is canonical). Repeat for "AL East Winner" — likely folds into a Division row. After consolidation, reassess whether Season Stats earns its place at all. Add an audit check for futures markets that should have unified but didn't.
-**Files:** `backend/app/routes/events.py` (related-futures logic), `backend/app/utils/related_futures.py` (dedup), `ios/.../Components/RelatedFuturesView.swift`
-**Parallel Safety:** Yellow (backend dedup logic)
-
-#### ~~iOS-GD14. Game Info absolute dates~~ ✅ SHIPPED (May 5)
-**Problem:** Footer shows "Today 9:05 AM" for a FINAL game. Should be state-aware.
-**Approach:** Make the label driven by `event.status`:
-- Scheduled → "Today 9:05 AM" / "Tomorrow 7:00 PM"
-- Live → "Started 9:05 AM"
-- Final → "Final · Apr 25, 9:05 AM"
-**Files:** `ios/.../Views/EventDetailView.swift` (espnSection / game info footer)
-**Parallel Safety:** Green
-
-#### ~~iOS/macOS Event Detail Parity Sweep~~ ✅ SHIPPED (April 28)
-Full parity achieved. See `docs/completed-features.md`. Added: tag chips, trend indicator, projected score, divergence warnings, stakes context, bookmaker table, market maps, special event markets, series probability, league page link, related-by-tag. Removed from web: Game Segments, Period Markets, Blowout Warning.
 
 #### iOS-GD — NOT YET APPROVED (ask before adding)
 - Score Differential chart inning labels cramped; "Projected Spread" occluded by "Actual Score Diff."
@@ -1498,21 +1102,6 @@ Full parity achieved. See `docs/completed-features.md`. Added: tag chips, trend 
 ---
 
 ## Tier 2.5 — Discover Feed Enhancement (April 29)
-
-### ~~D-1. Market Card Images~~ ✅ SHIPPED (April 30)
-Pexels API integration. `image_url` column on FuturesMarket. Enrichment task runs 2x daily.
-
-### ~~D-2. LLM Hook Descriptions~~ ✅ SHIPPED (April 30)
-GPT-4o-mini generates 1-sentence hooks. `hook_description` column. Enrichment task runs 2x daily.
-
-### ~~D-3. Content Ranking~~ PARTIALLY SHIPPED (April 30)
-Staleness filtering, category interleaving, non-sports quota implemented in Discover page. Volume-weighted scoring deferred.
-
-### ~~D-4. Behavioral Engagement Tracking~~ PARTIALLY SHIPPED (April 30)
-`user_predictions` table tracks Higher/Lower guesses. Full click/view tracking deferred.
-
-### ~~D-5. Native Discover Feed~~ ✅ SHIPPED (April 30)
-DiscoverView.swift with category chips, event/futures/guess cards, API wiring.
 
 ### DN. Native Discover Parity (iOS/macOS) — May 2, 2026 audit
 
@@ -1527,7 +1116,7 @@ iOS Discover (`DiscoverView.swift`) has category chips, event/futures cards, gue
 
 **P1 — Engagement gaps:**
 - [x] **~~DN-6. Events as guessable** — Web (as of May 2) makes events guessable ("Lakers to win — higher or lower than X%?"). iOS only makes futures guessable.
-- [x] **~~DN-7. Guess density** — Web shows guess slot every 2nd card. iOS shows every 5th. Lower engagement surface.
+- [x] **~~DN-7. Guess density** — Web now shows guess slot every 5th card (was every 2nd, changed May 5 to reduce feed noise). iOS also every 5th. Aligned.
 - [x] **~~DN-8. Dismiss persistence** — Same as D-10a. iOS uses `@State` — dismissed items reset on tab switch.
 
 **P2 — Nice to have:**
@@ -1538,9 +1127,6 @@ iOS Discover (`DiscoverView.swift`) has category chips, event/futures cards, gue
 **Files:** `ios/.../Views/DiscoverView.swift` (careful — active native thread may be touching this), new `ios/.../Views/PredictionStatsView.swift`, `ios/.../Models/DiscoverModels.swift`
 
 ---
-
-### ~~D-3a. Volume-Weighted Feed Scoring~~ ✅ SHIPPED (May 6)
-Added `volume_24h` + `volume_7d_avg` to `compute_base_score`, volume velocity scoring (3x avg = spike +12, 1.5x = uptick +5), surprise factor (`abs(current - opening)` >= 20% = +15, >= 10% = +8) to both event and futures scoring. Commit `b47f8a0`.
 
 ### D-4a. Full Click/View Tracking (REMAINING)
 `user_interactions` table logging event/futures detail views. Backend middleware for zero-frontend-work implicit tracking. View-weighted sport affinities.
@@ -1553,9 +1139,6 @@ Dismiss actions on Discover cards are currently `@State`/`useState` — they res
 ### D-10b. Like/Dismiss → Feed Ranking
 Feed thumbs up/down and Discover dismiss signals should feed back into futures scoring. New `user_market_feedback` table with `(user_id, market_id, signal, category)`. `_score_futures()` in `feed.py` applies a personalization multiplier based on category-level feedback (liked categories boosted, dismissed categories suppressed). Same pattern as the existing `compute_futures_multiplier()` for sport affinities.
 **Files:** New migration, `backend/app/routes/feed.py` (`_score_futures`), `backend/app/utils/personalization.py`
-
-### ~~D-10. Resolution Notifications Backend~~ ✅ SHIPPED (May 6)
-Backend endpoint `/api/predictions/resolutions` already existed. Added `fetchResolutions` API client, wired SWR call into Discover page, renders up to 3 ResolutionCards at top of feed. Commit `94cdf52`.
 
 ---
 
@@ -1816,9 +1399,6 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 
 **Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
 **Parallel Safety:** Green
-
-### ~~0f-13. Score Differential y-axis labels should match Win Probability style~~ ✅ SHIPPED (April 28)
-Replaced horizontal "leading" labels with vertical rotated team abbreviation + logo matching OddsChart. Chart height h-40→h-48.
 
 ### 0f-12. Kalshi Half-Period Spread/Total Prices Are Non-Monotonic — DATA QUALITY (April 28)
 
