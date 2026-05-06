@@ -127,6 +127,9 @@ struct Bain_LuckApp: App {
                     .keyboardShortcut("3", modifiers: .command)
                 Button("My Stuff") { navCoordinator.selectedTab = .myStuff }
                     .keyboardShortcut("4", modifiers: .command)
+                Divider()
+                Button("Quick Search") { navCoordinator.selectedTab = .search }
+                    .keyboardShortcut("k", modifiers: .command)
             }
             CommandGroup(after: .help) {
                 Button("Report a Bug") {
