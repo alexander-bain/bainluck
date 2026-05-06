@@ -191,7 +191,7 @@ struct EventDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                if isLive {
+                if isLive || isScheduled {
                     ToolbarItem(placement: .cancellationAction) {
                         Button { Task { await vm.load(); lastRefreshDate = Date() } } label: {
                             refreshRing
@@ -1065,10 +1065,11 @@ struct EventDetailView: View {
     private var refreshRing: some View {
         let total = max(refreshInterval, 1)
         let progress = Double(total - refreshCountdown) / Double(total)
+        let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
         return ZStack {
             Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 2)
             Circle().trim(from: 0, to: progress)
-                .stroke(Color(hex: "#10B981"), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(refreshCountdown)")
                 .font(.system(size: 8, weight: .bold, design: .monospaced))
