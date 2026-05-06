@@ -50,10 +50,9 @@ struct PlayerPropsCardView: View {
             let parts = prop.outcomeName.split(separator: ":", maxSplits: 1)
             guard parts.count == 2 else { continue }
             let player = parts[0].trimmingCharacters(in: .whitespaces)
-            let marketParts = prop.marketName.split(separator: ":")
-            let statType = marketParts.count >= 2
-                ? marketParts.last!.trimmingCharacters(in: .whitespaces)
-                : "Props"
+            // Use the full marketName as the stat type key to prevent mixing
+            // different stat categories (e.g., "Player Hits" vs "Player RBIs")
+            let statType = prop.marketName.trimmingCharacters(in: .whitespaces)
             byPlayer[player, default: []].append((prop, statType))
         }
 
@@ -263,10 +262,22 @@ struct PlayerPropsCardView: View {
         )
     }
 
+    /// Clean up stat type labels: strip "Player " prefix, keep just the stat name
+    private func cleanStatLabel(_ raw: String) -> String {
+        var s = raw
+        // Strip common prefixes like "Player " or "Batter "
+        for prefix in ["Player ", "Batter ", "Pitcher "] {
+            if s.hasPrefix(prefix) {
+                s = String(s.dropFirst(prefix.count))
+            }
+        }
+        return s
+    }
+
     private func statGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text(group.type.uppercased())
+                Text(cleanStatLabel(group.type).uppercased())
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)
