@@ -2595,10 +2595,19 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
     return result
 
 
+_GARBAGE_OUTCOME_RE = re.compile(r"^player\s+[A-Z]{1,3}$", re.I)
+
+
 def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:
     """Format a market for detail view with all outcomes."""
+    # Filter out orphan placeholder outcomes ("player A", "player AB")
+    # from old Polymarket polling code with NULL external_id
+    valid_outcomes = [
+        o for o in market.outcomes
+        if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+    ]
     sorted_outcomes = sorted(
-        market.outcomes,
+        valid_outcomes,
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
