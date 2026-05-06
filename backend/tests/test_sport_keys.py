@@ -33,7 +33,7 @@ class TestDictContents:
     """Verify each dict has the expected size and a few key entries."""
 
     def test_sport_league_map_size(self):
-        assert len(SPORT_LEAGUE_MAP) == 28
+        assert len(SPORT_LEAGUE_MAP) == 29
 
     def test_sport_league_map_sample_entries(self):
         assert SPORT_LEAGUE_MAP["basketball_nba"] == ("basketball", "nba")
@@ -42,7 +42,7 @@ class TestDictContents:
         assert SPORT_LEAGUE_MAP["soccer_epl"] == ("soccer", "eng.1")
 
     def test_espn_sport_mapping_size(self):
-        assert len(ESPN_SPORT_MAPPING) == 25
+        assert len(ESPN_SPORT_MAPPING) == 26
 
     def test_espn_sport_mapping_sample(self):
         assert ESPN_SPORT_MAPPING["basketball_nba"] == "basketball/nba"

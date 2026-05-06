@@ -53,6 +53,7 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "lacrosse_pll": ("lacrosse", "pll"),
     # Aussie Rules
     "aussierules_afl": ("australian-football", "afl"),
+    "aussierules_other": ("australian-football", "other"),
     # College Baseball
     "baseball_ncaa": ("baseball", "college-baseball"),
     # UFL
@@ -99,6 +100,7 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "lacrosse_pll": 4,
     # Aussie Rules — 4 quarters
     "aussierules_afl": 4,
+    "aussierules_other": 4,
     # Variable-round sports
     "golf_pga": None,
     "golf_lpga": None,
@@ -147,6 +149,7 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "mma_mixed_martial_arts": "mma/ufc",
     # Aussie Rules
     "aussierules_afl": "australian-football/afl",
+    "aussierules_other": "australian-football/other",
     # College Baseball
     "baseball_ncaa": "baseball/college-baseball",
     # UFL

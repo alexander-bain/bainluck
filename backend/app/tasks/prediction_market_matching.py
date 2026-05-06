@@ -900,10 +900,17 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
 
     # ── Pass 1: Time-windowed search ──────────────────────────────────
     # Kalshi commence_time is the market RESOLUTION date (often weeks after
-    # the game), so we use a wider window when matching by ticker-extracted
-    # game date. Polymarket dates are closer to actual game time.
+    # the game), so we use the ticker-extracted game date when available.
+    # When the ticker date IS available, use a tight ±36h window (just
+    # timezone/time-of-day slack). Without a ticker date, fall back to
+    # the wider 7-day window for Kalshi or 48h for Polymarket.
     reference_time = game_date_override or market.commence_time or now
-    time_delta = timedelta(days=7) if market.source == "kalshi" else MAX_TIME_DELTA
+    if game_date_override:
+        time_delta = timedelta(hours=36)
+    elif market.source == "kalshi":
+        time_delta = timedelta(days=7)
+    else:
+        time_delta = MAX_TIME_DELTA
     time_start = reference_time - time_delta
     time_end = reference_time + time_delta
 
@@ -1031,23 +1038,19 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         if event.external_id:
             score += 8
 
-        # Sport validation: ticker-derived sport prefix is authoritative.
-        # If KXNBA ticker → basketball prefix, REJECT non-basketball events.
-        # This prevents city-name collisions (Boston/New York) from linking
-        # NBA markets to MLB events.
+        # Sport validation: hard-reject events from the wrong sport.
+        # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
+        # llm_sport_category (Polymarket and Kalshi without parseable ticker).
+        # Both are hard rejects — city-name collisions (Boston/New York)
+        # cause cross-sport mismatches if we only use soft scoring.
         ticker_sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
-        if ticker_sport_prefix and event.sport and event.sport.key:
-            if not event.sport.key.startswith(ticker_sport_prefix):
-                continue  # Wrong sport — skip this candidate
-
-        # Sport match bonus: prefer events in the same sport as the market.
-        # Falls back to llm_sport_category when ticker prefix is unavailable.
         sport_prefix = ticker_sport_prefix
         if not sport_prefix and market.llm_sport_category:
             sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
         if sport_prefix and event.sport and event.sport.key:
-            if event.sport.key.startswith(sport_prefix):
-                score += 5  # Same sport — prefer over cross-sport matches
+            if not event.sport.key.startswith(sport_prefix):
+                continue  # Wrong sport — skip this candidate
+            score += 5  # Same sport confirmed
 
         if score > best_score:
             best_score = score
