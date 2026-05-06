@@ -506,18 +506,9 @@ Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Red
 
 ### Bug Report #3 — Runs Map Missing Zero Label (HOU 3 - BOS 1, May 5)
 
-#### BR3-1. Market map axes must always label zero
+#### ~~BR3-1. Market map axes must always label zero~~ ✅ SHIPPED (May 6)
 
-**Problem:** The Runs Map shows axis labels "-9", "6", "22+" but doesn't label "0". For any distribution or map where zero is meaningful (total runs, margin, spread), the zero point MUST always be labeled. Users can't orient themselves without it.
-
-Same applies to the margin map above it — "HOU by 8+" and "BOS by 8+" are labeled but "Tie" (zero margin) could be more prominent.
-
-**Design rule:** On any market map axis, always show where zero is. This is a non-negotiable labeling requirement.
-
-**Fix:** In the market map component, ensure the axis tick generation always includes 0 (or the equivalent neutral point like "Tie" for margins). If 0 falls between existing ticks, add it explicitly.
-
-**Files:** `ios/.../Components/MarketMapView.swift`, `frontend/components/MarketMapSection.tsx`
-**Parallel Safety:** Green
+Fixed: MarketMap now renders a positioned "0" label at the actual zero position when it's offset from the visual center (where "Tie" sits). Margin maps already label zero as "Tie" at center. Commit `1e2a598`.
 
 ---
 
@@ -612,11 +603,9 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 **Files:** `frontend/app/events/[id]/page.tsx` (`sharedChartDomain`, lines ~382-440)
 **Parallel Safety:** Yellow
 
-#### MS-May4-3. Tennis Futures — Infinite Loading Spinner
+#### ~~MS-May4-3. Tennis Futures — Infinite Loading Spinner~~ ✅ SHIPPED (May 6)
 
-**Problem:** Tennis futures detail page shows infinite loading spinner instead of content or error message. Likely a 404 or API error the frontend doesn't surface.
-**Files:** `frontend/app/futures/[id]/page.tsx` (error handling)
-**Parallel Safety:** Green
+Fixed: Skip SWR fetch for invalid/NaN market IDs, show back navigation during loading/error states, improved error messages. Commit `79d721f`.
 
 #### MS-May4-4. EPL League Page Data Contamination
 
@@ -792,11 +781,9 @@ Two issues reported by Manus league page audit. May be transient data issues —
 
 **Context:** Audited event 14523747 (Red Sox vs Yankees, April 22) to check if we're showing ALL available markets. Found 21 linked markets (all Kalshi), but several data quality issues.
 
-#### Issue 1: NBA markets incorrectly linked to MLB event
-Two NBA markets (`KXNBA2D-26APR09BOSNYK`, `KXNBA1HSPREAD-26APR09BOSNYK`) are linked to this MLB event via `event_id`. Root cause: "Boston" + "New York" city name collision — Celtics/Knicks game matched Red Sox/Yankees event. The game-markets endpoint filters these out via `llm_sport_category` so they don't display, but they waste the `event_id` FK slot.
+#### ~~Issue 1: NBA markets incorrectly linked to MLB event~~ ✅ SHIPPED (May 6)
 
-**Fix:** Add sport validation in prediction market matching — if market ticker starts with `KXNBA`, don't link to a `baseball_mlb` event. Check `sport_id` consistency between market and event before linking.
-**Files:** `tasks/prediction_market_matching.py` (Pass 2 general scan)
+Fixed: Ticker-derived sport prefix now hard-rejects cross-sport matches in `_score_candidates()`. KXNBA tickers can no longer link to baseball_mlb events. Commit `6dbf84f`.
 
 #### Issue 2: Zero Polymarket game-specific markets linked
 ~20 Polymarket markets exist mentioning Red Sox/Yankees (NRFI, win markets), but ALL have `sport_id=None` and `llm_sport_category=None`. They're never considered for linking because the matching task requires sport identification.
@@ -899,14 +886,9 @@ Result: NBA duration 4.32x→1.07x, MLB 3.31x→0.88x, findings 113→64.
 **Files:** `frontend/components/OddsChart.tsx` (onRenderedDomain), `frontend/components/ScoreDifferentialChart.tsx:339-366`
 **Parallel Safety:** Green
 
-#### 0t-bonus. Soccer EFL/League 2: 53-Minute Late Start
+#### 0t-bonus. Soccer EFL/League 2: 53-Minute Late Start — NOT A BUG
 
-**Problem:** 4 EFL Championship and League 2 events show data starting 53 minutes after `commence_time`. Likely a timezone or commence_time source issue specific to English lower-league soccer.
-
-**Fix:** Investigate `commence_time_source` for these events. If it's Odds API, check whether their times are off by ~1 hour (BST/UTC confusion).
-
-**Files:** `backend/app/services/event_registry.py`, `backend/app/tasks/sports.py`
-**Parallel Safety:** Green
+**Investigation (May 6):** Traced the full commence_time chain — Odds API → `fromisoformat(Z→+00:00)` → Event Registry → DB. All UTC throughout, no BST/UTC confusion anywhere. The 53-minute gap is not a timezone issue (BST would be exactly 60min). Most likely cause: late odds publication for lower-tier English football — event is created at discovery time but odds don't flow until bookmakers post lines near kickoff. Tier 3/4 sports also poll less frequently. No code fix needed.
 
 ---
 
@@ -1036,7 +1018,7 @@ Task 9 running: Manus is checking 3 live games (NBA, NHL, MLB) to compare what K
 - [x] **P1a. HTML entity rendering** — Fixed: Unicode escapes in `<span>` elements instead of JS string HTML entities.
 - [x] **P1b. Deduplicate futures in typeahead** — Fixed: group_id dedup in both typeahead and full search. Fetches 15/20 candidates, deduplicates, returns top 3/10.
 - [x] **P1c. Better display names** — Fixed: `market_type_label` on all futures (Championship/Conference/Award/Division/Prop). Ranking by tier + volume instead of updated_at.
-- [ ] **P1d. Widen dropdown** — TODO: Truncation is partly a layout issue; dropdown inherits the narrow search input width.
+- [x] **P1d. Widen dropdown** — Fixed: `min-w-[480px]` on sm+ breakpoints. Commit `dee1b74`.
 
 #### ~~Phase 2: Better Matching (1 week)~~ ✅ SHIPPED (May 1)
 
@@ -1622,9 +1604,8 @@ iOS Discover (`DiscoverView.swift`) has category chips, event/futures cards, gue
 
 ---
 
-### D-3a. Volume-Weighted Feed Scoring (REMAINING)
-Use `volume_24h` in base event scoring, volume velocity (current vs 7-day avg), surprise factor (`abs(current - opening)`). Data exists, just needs formula changes.
-**Files:** `backend/app/utils/feed_scoring.py`, `backend/app/utils/futures_highlights.py`
+### ~~D-3a. Volume-Weighted Feed Scoring~~ ✅ SHIPPED (May 6)
+Added `volume_24h` + `volume_7d_avg` to `compute_base_score`, volume velocity scoring (3x avg = spike +12, 1.5x = uptick +5), surprise factor (`abs(current - opening)` >= 20% = +15, >= 10% = +8) to both event and futures scoring. Commit `b47f8a0`.
 
 ### D-4a. Full Click/View Tracking (REMAINING)
 `user_interactions` table logging event/futures detail views. Backend middleware for zero-frontend-work implicit tracking. View-weighted sport affinities.
@@ -1638,9 +1619,8 @@ Dismiss actions on Discover cards are currently `@State`/`useState` — they res
 Feed thumbs up/down and Discover dismiss signals should feed back into futures scoring. New `user_market_feedback` table with `(user_id, market_id, signal, category)`. `_score_futures()` in `feed.py` applies a personalization multiplier based on category-level feedback (liked categories boosted, dismissed categories suppressed). Same pattern as the existing `compute_futures_multiplier()` for sport affinities.
 **Files:** New migration, `backend/app/routes/feed.py` (`_score_futures`), `backend/app/utils/personalization.py`
 
-### D-10. Resolution Notifications Backend
-Wire `ResolutionCard` component to a backend endpoint that finds the user's past predictions on markets that have since resolved. Query `user_predictions` JOIN `futures_markets` WHERE market status changed to resolved.
-**Files:** `backend/app/routes/predictions.py`, `frontend/app/discover/page.tsx`
+### ~~D-10. Resolution Notifications Backend~~ ✅ SHIPPED (May 6)
+Backend endpoint `/api/predictions/resolutions` already existed. Added `fetchResolutions` API client, wired SWR call into Discover page, renders up to 3 ResolutionCards at top of feed. Commit `94cdf52`.
 
 ---
 

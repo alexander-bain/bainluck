@@ -1,5 +1,24 @@
 # Completed Features (Shipped)
 
+## May 6, 2026
+
+### Mixed Bag — 6 Items Shipped (Discover, Search, Frontend, Matching)
+
+**Frontend Fixes:**
+- ✅ **MS-May4-3: Tennis futures infinite loading spinner** — Skip SWR fetch for invalid/NaN market IDs, show back navigation during loading/error states, improved error messages for 404s vs invalid IDs.
+- ✅ **BR3-1: Market map zero labeling** — MarketMap now renders a positioned "0" label at the actual zero position when offset from center (where "Tie" sits).
+- ✅ **SEARCH P1d: Widen search dropdown** — Both typeahead and recent search dropdowns widened to `min-w-[480px]` on sm+ breakpoints to prevent futures name truncation.
+
+**Feed & Scoring:**
+- ✅ **D-3a: Volume-weighted feed scoring** — Added `volume_24h` + `volume_7d_avg` to `compute_base_score`, volume velocity scoring (3x avg = spike +12, 1.5x = uptick +5), surprise factor (|current - opening| >= 20% = +15, >= 10% = +8) to both event and futures highlight scoring.
+- ✅ **D-10: Resolution notifications** — Wired existing `/api/predictions/resolutions` endpoint to Discover page via SWR. Renders up to 3 ResolutionCards at top of feed showing resolved predictions.
+
+**Matching Quality:**
+- ✅ **0f-3d Issue 1: Sport validation in matching** — Ticker-derived sport prefix now hard-rejects cross-sport matches in `_score_candidates()`. KXNBA tickers can no longer link to baseball_mlb events due to city name collisions (Boston, New York).
+
+**Investigated (no fix needed):**
+- **0t-bonus: Soccer EFL/League 2 53-minute late start** — Not a timezone bug. Full commence_time chain is UTC throughout. 53-minute gap is late odds publication for lower-tier English football, not a code issue.
+
 ## May 5, 2026
 
 ### Backlog Blitz — 14 Items Shipped
