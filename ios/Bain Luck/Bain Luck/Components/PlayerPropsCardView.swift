@@ -119,7 +119,7 @@ struct PlayerPropsCardView: View {
         if allPlayerCards.isEmpty { EmptyView() }
         else {
             VStack(alignment: .leading, spacing: 10) {
-                // Header: title + source badge + team filter
+                // Header: title + source badge + controls
                 HStack {
                     Text("Player Props")
                         .font(.subheadline)
@@ -149,16 +149,19 @@ struct PlayerPropsCardView: View {
                             .padding(.vertical, 4)
                     }
                     .buttonStyle(.plain)
-
-                    // Team filter
-                    HStack(spacing: 0) {
-                        filterButton("All", value: "all")
-                        filterButton(homeAbbr, value: "home")
-                        filterButton(awayAbbr, value: "away")
-                    }
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+
+                // Team filter — full width
+                HStack(spacing: 0) {
+                    filterButton("All", value: "all")
+                        .frame(maxWidth: .infinity)
+                    filterButton(homeAbbr, value: "home")
+                        .frame(maxWidth: .infinity)
+                    filterButton(awayAbbr, value: "away")
+                        .frame(maxWidth: .infinity)
+                }
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 // Player grid — responsive columns
                 let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
