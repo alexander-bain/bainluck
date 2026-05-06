@@ -5,6 +5,56 @@ struct ChampionshipPathView: View {
     var homeTeamColor: Color = .blue
     var awayTeamColor: Color = .red
 
+    /// Whether both teams share the same conference/league
+    private var sameConference: Bool {
+        guard let homeConf = progression.homeTeam?.conference,
+              let awayConf = progression.awayTeam?.conference,
+              !homeConf.isEmpty, !awayConf.isEmpty else { return false }
+        return homeConf.lowercased() == awayConf.lowercased()
+    }
+
+    /// Conference keywords for the opposing conference (used to filter irrelevant rows)
+    private var opposingConferenceKeywords: [String] {
+        // Common conference abbreviation pairs
+        let pairs: [[String]] = [
+            ["al", "american league", "american"],
+            ["nl", "national league", "national"],
+            ["afc", "american football conference"],
+            ["nfc", "national football conference"],
+            ["eastern", "east"],
+            ["western", "west"],
+        ]
+        guard let homeConf = progression.homeTeam?.conference?.lowercased() else { return [] }
+        // Find which group the home conference belongs to
+        for group in pairs {
+            if group.contains(where: { homeConf.contains($0) }) {
+                // Return the OTHER group's keywords (the opposing conference)
+                for otherGroup in pairs where otherGroup != group {
+                    // Only return the partner pair
+                    let idx = pairs.firstIndex(of: group) ?? 0
+                    // AL pairs with NL (indices 0,1), AFC with NFC (2,3), East with West (4,5)
+                    let partnerIdx = idx % 2 == 0 ? idx + 1 : idx - 1
+                    if partnerIdx >= 0, partnerIdx < pairs.count {
+                        return pairs[partnerIdx]
+                    }
+                }
+            }
+        }
+        return []
+    }
+
+    /// Filter out stages that reference the opposing conference when both teams share one
+    private func filteredStages(for team: TeamProgressionData) -> [ProgressionStageData] {
+        guard sameConference, !opposingConferenceKeywords.isEmpty else {
+            return team.stages
+        }
+        return team.stages.filter { stage in
+            let lower = stage.label.lowercased()
+            // Keep the stage unless its label contains an opposing conference keyword
+            return !opposingConferenceKeywords.contains(where: { lower.contains($0) })
+        }
+    }
+
     var body: some View {
         let away = progression.awayTeam
         let home = progression.homeTeam
@@ -17,10 +67,10 @@ struct ChampionshipPathView: View {
 
                 HStack(alignment: .top, spacing: 16) {
                     if let away {
-                        teamCard(team: away, color: awayTeamColor)
+                        teamCard(team: away, stages: filteredStages(for: away), color: awayTeamColor)
                     }
                     if let home {
-                        teamCard(team: home, color: homeTeamColor)
+                        teamCard(team: home, stages: filteredStages(for: home), color: homeTeamColor)
                     }
                 }
             }
@@ -30,8 +80,9 @@ struct ChampionshipPathView: View {
         }
     }
 
-    private func teamCard(team: TeamProgressionData, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func teamCard(team: TeamProgressionData, stages: [ProgressionStageData]? = nil, color: Color) -> some View {
+        let displayStages = stages ?? team.stages
+        return VStack(alignment: .leading, spacing: 12) {
             // Team header with logo, name, record, conference
             HStack(spacing: 8) {
                 if let logoUrl = team.logoUrl, let url = URL(string: logoUrl) {
@@ -87,7 +138,7 @@ struct ChampionshipPathView: View {
                 .tracking(0.5)
 
             // Stages
-            ForEach(team.stages, id: \.key) { stage in
+            ForEach(displayStages, id: \.key) { stage in
                 stageRow(stage: stage, color: color)
             }
         }
