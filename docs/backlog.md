@@ -384,14 +384,9 @@ From rage shake. Three separate issues on a completed NBA playoff game event det
 **Files:** `ios/.../Views/EventDetailView.swift` (`sourcesToggle` ~line 824), `frontend/app/events/[id]/page.tsx`
 **Parallel Safety:** Yellow (design brief needed)
 
-#### BR1-3. Kalshi/Polymarket probabilities missing for NBA playoff game
+#### ~~BR1-3. Kalshi/Polymarket probabilities for NBA playoff game~~ ✅ INVESTIGATED (May 6)
 
-**Problem:** Kalshi and Polymarket had markets for this NBA playoff game, but their probabilities didn't show on the event detail page — neither during the game nor after. This is a linking issue, not a completed-event filtering issue.
-
-**Investigation:** Check if the prediction market matching task linked Kalshi/Polymarket game markets to this event (via `event_id` FK on `futures_markets`). If not, the matching task may be failing for NBA playoff games specifically. Check `futures_markets` for Kalshi NBA playoff tickers and whether they have `event_id` set.
-
-**Files:** `backend/app/tasks/prediction_market_matching.py`, `backend/app/routes/events.py` (game-markets endpoint)
-**Parallel Safety:** Yellow
+Event 14617909 now has Kalshi (230 markets) and Polymarket (10 markets) linked. Kalshi shows in win_probability_sources. Root cause was the cross-sport/cross-day matching bugs fixed in this session (0f-3d Issues 1/3). Polymarket prob history missing for this past game because markets were linked post-completion — expected for historical games. Future games will have live snapshots.
 
 ---
 

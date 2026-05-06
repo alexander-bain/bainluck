@@ -4371,6 +4371,19 @@ async def get_event_odds_history(
                 for period, ts in sorted(first_seen_wp.items(), key=lambda x: x[1])
             ]
 
+    # Fourth fallback: sport-specific estimated period markers.
+    # For completed events with no period data from any source, use
+    # the sport's standard period structure + commence_time to place
+    # approximate markers. Only for sports with fixed period durations.
+    if not period_markers and event.commence_time and event.status in ("completed", "closed"):
+        sport_key = event.sport.key if event.sport else ""
+        if sport_key.startswith("soccer"):
+            ht = event.commence_time + timedelta(minutes=47)
+            period_markers = [
+                {"timestamp": event.commence_time.isoformat(), "period": "1H"},
+                {"timestamp": ht.isoformat(), "period": "2H"},
+            ]
+
     # ── Prediction market spread/total binary contracts ──
     # Query FuturesMarkets linked to this event for spread/total data,
     # then derive implied spread, total, and projected final score.
