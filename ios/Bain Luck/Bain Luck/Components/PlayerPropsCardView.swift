@@ -10,7 +10,7 @@ struct PlayerPropsCardView: View {
     var boxScore: [String: [String: Double]]?
 
     @State private var teamFilter: String = "all"
-    @State private var showAllStats: Bool = false
+    @State private var expandedCards: Set<String> = []
 
     private var homeAbbr: String {
         String(homeTeam.split(separator: " ").last ?? "Home")
@@ -137,18 +137,6 @@ struct PlayerPropsCardView: View {
                     }
 
                     Spacer()
-
-                    // Stat toggle
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { showAllStats.toggle() }
-                    } label: {
-                        Text(showAllStats ? "Points" : "All stats")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
                 }
 
                 // Team filter — full width
@@ -240,11 +228,14 @@ struct PlayerPropsCardView: View {
                 Spacer()
             }
 
-            // Stat groups — filtered by toggle, 2-column layout
-            let visibleGroups = showAllStats ? card.statGroups : card.statGroups.filter {
+            // Stat groups — default to Points, per-card expansion for other stats
+            let isExpanded = expandedCards.contains(card.id)
+            let pointsGroups = card.statGroups.filter {
                 $0.type.lowercased().contains("point") || $0.type.lowercased().contains("pts")
             }
-            let groupsToShow = visibleGroups.isEmpty ? Array(card.statGroups.prefix(1)) : visibleGroups
+            let defaultGroups = pointsGroups.isEmpty ? Array(card.statGroups.prefix(1)) : pointsGroups
+            let groupsToShow = isExpanded ? card.statGroups : defaultGroups
+            let hiddenCount = card.statGroups.count - defaultGroups.count
             let pairs = stride(from: 0, to: groupsToShow.count, by: 2).map { i in
                 (groupsToShow[i], i + 1 < groupsToShow.count ? groupsToShow[i + 1] : nil)
             }
@@ -260,6 +251,23 @@ struct PlayerPropsCardView: View {
                         Spacer().frame(maxWidth: .infinity)
                     }
                 }
+            }
+            // Per-card expansion link
+            if hiddenCount > 0 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if isExpanded {
+                            expandedCards.remove(card.id)
+                        } else {
+                            expandedCards.insert(card.id)
+                        }
+                    }
+                } label: {
+                    Text(isExpanded ? "Show less" : "+\(hiddenCount) more stat\(hiddenCount == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(10)
