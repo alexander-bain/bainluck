@@ -379,17 +379,13 @@ Event 14617909 now has Kalshi (230 markets) and Polymarket (10 markets) linked. 
 
 9 modules run, all completed. MLB and NBA live pages are excellent. Grids score 85-92. Source accuracy within 3pp of Kalshi/Polymarket across all spot checks.
 
-#### MS-May4-4. EPL League Page Data Contamination
+#### ~~MS-May4-4. EPL League Page Data Contamination~~ ✅ INVESTIGATED (May 6)
 
-**Problem:** EPL page shows contaminated data from non-EPL sources. Need to investigate what's leaking in.
-**Files:** Backend league page endpoint, sport key classification
-**Parallel Safety:** Yellow
+Verified: 38 markets on EPL page are all EPL-related. "Non-EPL" items are UEFA competition qualifications for EPL teams (legitimate). No actual contamination. Was likely transient at audit time.
 
-#### MS-May4-6. NBA 1H Total — 7 Thresholds vs Kalshi's 9 (23% gap at Over 98.5)
+#### ~~MS-May4-6. NBA 1H Total thresholds~~ ✅ RESOLVED (May 6)
 
-**Problem:** Missing 2 threshold values from Kalshi. Could be outcome ingestion issue or dedup filtering too aggressively.
-**Files:** Backend outcome ingestion, `backend/app/routes/events.py` (game-markets threshold logic)
-**Parallel Safety:** Yellow
+Verified: NYK vs PHI now shows 9 half-total thresholds, matching Kalshi. Was likely a transient ingestion gap at audit time. (Remaining issue: last threshold is non-monotonic — covered by 0f-12.)
 
 ---
 
@@ -1243,15 +1239,13 @@ New feed mode: "Discover" tab alongside the existing sports feed. Or interleave 
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 - Clean up ~90 remote git branches
 
-### 0f-9. Kalshi Win Probability Mismatched Market — DATA BUG (April 28)
+### 0f-9. Prediction Market Probabilities Stale After Game Completion
 
-**Problem:** DET @ ORL (event 14598003) shows Kalshi at ORL 93.5% while betting/ESPN/stat_model show ~37%. A ~55pp discrepancy. Visible as wild green dashed line on win probability chart.
+**Problem:** Completed events show stale Kalshi/Polymarket probabilities (e.g., DET@ORL: Kalshi 0.365, Polymarket 0.25 while ESPN 0.999). The live polling task stops writing snapshots when a game completes, leaving the last mid-game probability as the final value.
 
-**Root cause (suspected):** A spread or prop market is being matched as this game's moneyline. Different from 0f-7 (oscillation) — this is a wrong market entirely feeding the probability.
+**Fix:** When `transition_event_statuses` marks a game complete, write a final resolved snapshot (1.0 for winner, 0.0 for loser) for all linked prediction market sources. This ensures the chart and win_probability_sources show correct final values.
 
-**Fix:** Trace which Kalshi market_id is writing to `win_probability_sources["kalshi"]` for this event. Verify it's the correct moneyline market, not a spread/prop. May need tighter market-type filtering in the live polling task.
-
-**Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/prediction_market_matching.py`
+**Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/sports.py` (status transition)
 **Parallel Safety:** Yellow
 
 ### 0f-10b. Cross-Source Player Prop Merging
