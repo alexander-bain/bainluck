@@ -57,11 +57,32 @@ final class EventDetailViewModel: ObservableObject {
         loading = false
         configureAutoRefresh()
 
-        // Await secondary fetches — only update if successful (preserve existing data on failure)
-        if let h = await historyTask.value { history = h }
-        if let rf = await relatedFuturesTask.value { relatedFutures = rf }
-        if let tp = await progressionTask.value { teamProgression = tp }
-        if let gm = await gameMarketsTask.value { gameMarkets = gm }
+        // Await secondary fetches — only update if successful AND non-empty
+        // (preserve existing data when a refresh returns nil or empty results)
+        if let h = await historyTask.value {
+            history = h
+        }
+        if let rf = await relatedFuturesTask.value {
+            // Only overwrite if new data has content, or we had nothing before
+            if relatedFutures == nil || rf.homeTeamFutures != nil || rf.awayTeamFutures != nil || rf.sharedFutures != nil || rf.boxScore != nil {
+                relatedFutures = rf
+            }
+        }
+        if let tp = await progressionTask.value {
+            if teamProgression == nil || tp.homeTeam != nil || tp.awayTeam != nil {
+                teamProgression = tp
+            }
+        }
+        if let gm = await gameMarketsTask.value {
+            // Only overwrite if new data has meaningful content, or we had nothing before
+            let hasContent = (gm.playerProps != nil && !(gm.playerProps?.isEmpty ?? true))
+                || (gm.spreads != nil && !(gm.spreads?.isEmpty ?? true))
+                || (gm.totals != nil && !(gm.totals?.isEmpty ?? true))
+                || (gm.other != nil && !(gm.other?.isEmpty ?? true))
+            if gameMarkets == nil || hasContent {
+                gameMarkets = gm
+            }
+        }
     }
 
     private func configureAutoRefresh() {
