@@ -288,9 +288,8 @@ Kalshi "2+", "Aaron Judge: 1+" outcomes weren't detected as "over" thresholds �
 **~~0f-4b. Score differential chart empty after 1st inning~~ ✅ FIXED (April 23)**
 Root cause: ESPN's scoreboard API only provides ~2 win probability data points per MLB game (sparse `situation.lastPlay.probability` field). The MLB Stats API has ~50 dense data points with scores in `game_state`. Fix: when `espn_history` is sparse (<10 points), supplement with MLB/stat_model score data from `win_prob_history`. Yankees game went from 2 → 81 data points.
 
-**0f-4c. Player props: no pre-game vs current comparison**
-Cards show current probabilities but not what they were pre-game or actual results so far. During a live game, "was 22% pre-game, now 45%" would be much more useful context. Need pre-game snapshot + actual stat tracking.
-**Files:** Frontend `components/PlayerPropsCardView`, backend game-markets endpoint
+**~~0f-4c. Player props: pre-game vs current comparison~~ ✅ BACKEND SHIPPED (May 6)**
+`opening_over_probability` field added to player props in game-markets response. Frontend can now show "was X% → now Y%". Frontend rendering is a separate item.
 
 **0f-4d. Player award headshots STILL missing**
 Roster `player_metadata` lookup was enabled for completed events (April 23 fix), but award outcomes often reference players NOT on either team's roster (e.g., Quentin Grimes for 6MOY). The headshot lookup only checks the two event teams' rosters. Fix needs to either: look up ALL rosters for the sport, or use a separate player image service.
@@ -1234,23 +1233,13 @@ New feed mode: "Discover" tab alongside the existing sports feed. Or interleave 
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 - Clean up ~90 remote git branches
 
-### 0f-9. Prediction Market Probabilities Stale After Game Completion
+### ~~0f-9. PM Probabilities Stale After Game Completion~~ ✅ SHIPPED (May 6)
 
-**Problem:** Completed events show stale Kalshi/Polymarket probabilities (e.g., DET@ORL: Kalshi 0.365, Polymarket 0.25 while ESPN 0.999). The live polling task stops writing snapshots when a game completes, leaving the last mid-game probability as the final value.
+`transition_event_statuses` now writes resolved win_probability_sources for kalshi/polymarket (1.0 for winner, 0.0 for loser) when marking a game closed.
 
-**Fix:** When `transition_event_statuses` marks a game complete, write a final resolved snapshot (1.0 for winner, 0.0 for loser) for all linked prediction market sources. This ensures the chart and win_probability_sources show correct final values.
+### ~~0f-10b. Cross-Source Player Prop Merging~~ ✅ SHIPPED (May 6)
 
-**Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/sports.py` (status transition)
-**Parallel Safety:** Yellow
-
-### 0f-10b. Cross-Source Player Prop Merging
-
-**Problem:** Now that both Kalshi and Polymarket player props surface on the same event, duplicate thresholds appear when both sources have the same player+stat. Currently the frontend deduplicates by keeping the higher probability — but the right approach is to merge across sources with weighted averaging, same as `compute_aggregate_probability()` does for win probability.
-
-**Fix:** In `PlayerPropsDashboard.tsx`, when the same player+stat+threshold appears from multiple sources, compute a weighted average (Kalshi weight 0.8, Polymarket weight 0.8) instead of just keeping the higher value. Show source count badge.
-
-**Files:** `frontend/components/PlayerPropsDashboard.tsx`
-**Parallel Safety:** Green
+Done server-side in game-markets endpoint. Same player+stat+threshold from multiple sources merged with averaged probability. `all_sources` and `source_count` fields added.
 
 ### 0f-11. Win Probability and Score Differential Charts Have Different X-Axes (April 28)
 
@@ -1263,18 +1252,9 @@ New feed mode: "Discover" tab alongside the existing sports feed. Or interleave 
 **Files:** `frontend/app/events/[id]/page.tsx` (shared domain), `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
 **Parallel Safety:** Green
 
-### 0f-12. Kalshi Half-Period Spread/Total Prices Are Non-Monotonic — DATA QUALITY (April 28)
+### ~~0f-12. Half-Period Non-Monotonic Prices~~ ✅ SHIPPED (May 6)
 
-**Problem:** Half-period spread and total market probabilities from Kalshi are frequently non-monotonic (e.g., ORL +11.5 at 24%, ORL +14.5 at 4%, ORL +17.5 at 17%). This makes the distribution visualization misleading and the data untrustworthy.
-
-**Root cause:** Kalshi half-period markets are thinly traded. Each threshold's `yes_bid` reflects the last trade or last resting order, which may be from different points in the game. Unlike full-game moneylines (which trade actively), half spreads at +11.5 vs +17.5 may not have traded since different quarters.
-
-**Impact:** Market Map cards for half margins/totals show nonsensical distributions. The density rail has random hot spots instead of a coherent bell curve.
-
-**Fix options:**
-1. **Client-side:** Enforce monotonicity by dropping non-monotonic points (already done for half totals). For spreads, enforce that P(team wins by X) ≥ P(team wins by X+Y) for each team separately.
-2. **Backend:** Track `last_trade_time` per market and exclude markets that haven't traded in >30 min from the game-markets response. More correct but harder.
-3. **Both:** Client-side cleanup as a stopgap, backend fix for real solution.
+Server-side monotonicity enforcement on game_totals and period_markets (half_total, quarter_total). Drops violating points where P(Over X+1) > P(Over X). Spread monotonicity remains a future item.
 
 **Files:** `frontend/components/MarketMapSection.tsx` (client enforcement), `backend/app/routes/events.py` (backend filtering)
 **Parallel Safety:** Yellow (touches same half-period data as market maps)
