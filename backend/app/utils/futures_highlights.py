@@ -235,6 +235,7 @@ def compute_futures_highlight(
     market_name: Optional[str] = None,
     # Volume/liquidity (internal signal)
     volume_24h: Optional[int] = None,
+    volume_7d_avg: Optional[float] = None,
 ) -> FuturesHighlightResult:
     """
     Compute highlight score and flags for a futures market.
@@ -432,6 +433,35 @@ def compute_futures_highlight(
             result.score += FUTURES_WEIGHTS["moderate_volume"]
             result.reasons.append("moderate_volume")
 
+    # === Volume velocity (current vs 7-day average) ===
+    if (
+        volume_24h is not None
+        and volume_7d_avg is not None
+        and volume_7d_avg > 0
+    ):
+        velocity = volume_24h / volume_7d_avg
+        if velocity >= 3.0:
+            result.score += 12
+            result.reasons.append("volume_spike")
+        elif velocity >= 1.5:
+            result.score += 5
+            result.reasons.append("volume_uptick")
+
+    # === Surprise factor (current vs opening probability) ===
+    if outcomes:
+        max_surprise = 0.0
+        for o in outcomes:
+            opening = o.get("opening_probability")
+            current = o.get("probability")
+            if opening is not None and current is not None:
+                max_surprise = max(max_surprise, abs(current - opening))
+        if max_surprise >= 0.20:
+            result.score += 15
+            result.reasons.append("major_surprise")
+        elif max_surprise >= 0.10:
+            result.score += 8
+            result.reasons.append("moderate_surprise")
+
     # === Cap score at 100 ===
     result.score = min(100, result.score)
 
@@ -440,8 +470,11 @@ def compute_futures_highlight(
         ("leader_change", "New favorite"),
         ("source_divergence", "Sources disagree"),
         ("major_movement_24h", "Big odds movement"),
+        ("major_surprise", "Big shift from opening"),
+        ("volume_spike", "Trading surge"),
         ("rank_shakeup", "Rankings shakeup"),
         ("moderate_movement_24h", "Odds moving"),
+        ("moderate_surprise", "Odds shifted"),
         ("resolving_soon_7d", "Resolving soon"),
         ("resolving_soon_30d", "Resolving this month"),
         ("multi_source", "Multi-source"),

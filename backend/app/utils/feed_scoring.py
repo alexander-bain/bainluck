@@ -116,6 +116,8 @@ def compute_base_score(
     source_count: int | None = None,
     game_progress: float | None = None,
     ei_metadata: str | dict | None = None,
+    volume_24h: int | None = None,
+    volume_7d_avg: float | None = None,
 ) -> tuple[int, list[str]]:
     """Compute the base interestingness score for a feed event.
 
@@ -184,6 +186,29 @@ def compute_base_score(
             if leads >= 4:
                 score += 10
                 reasons.append("wild_swings")
+
+    # Volume scoring (prediction market trading activity)
+    if volume_24h is not None and volume_24h > 0:
+        if volume_24h >= 50_000:
+            score += 15
+            reasons.append("high_volume")
+        elif volume_24h >= 5_000:
+            score += 8
+            reasons.append("moderate_volume")
+
+    # Volume velocity (current vs 7-day average)
+    if (
+        volume_24h is not None
+        and volume_7d_avg is not None
+        and volume_7d_avg > 0
+    ):
+        velocity = volume_24h / volume_7d_avg
+        if velocity >= 3.0:
+            score += 12
+            reasons.append("volume_spike")
+        elif velocity >= 1.5:
+            score += 5
+            reasons.append("volume_uptick")
 
     # Content richness penalty for live events with thin/flat data
     richness_adj, richness_reasons = compute_content_richness_penalty(
