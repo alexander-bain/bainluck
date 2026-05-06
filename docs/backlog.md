@@ -259,17 +259,7 @@ Port the new sections to `LeagueView.swift`. Reuse existing card components wher
 
 ## Tier 1 — High Leverage, Do Next
 
-### 0. Mystery Shopper Critical Fixes — ALL SHIPPED (April 22)
-
-M1+M3: Golf 100%/0% + LIVE badges, M2: Mobile spinner, M4: Boring props filter,
-M11/M12: Period markets + spreads on event detail, Cross-sport prop contamination,
-Economics >100% distributions, Weather stale featured market.
-Full report: `Manus/mystery_shopper.md`.
-
 ---
-
-### ~~0e. Wire Manus audit results into /health skill~~ ✅ ALREADY DONE
-Section H of `/health` (`.claude/commands/health.md`) already reads `Manus/audit_results/latest/manifest.json`, scans `*.md` reports for findings, flags staleness >7 days, and suggests running the suite. Verified working April 29.
 
 ### 0e-3. GA4 Console Configuration — TODO (Phase 4)
 
@@ -281,11 +271,6 @@ Not code — configuration in the GA4 property (analytics.google.com):
 5. **Dashboards**: DAU by platform, top sports by engagement time, feed CTR, onboarding completion rate
 
 **Parallel Safety:** Green (no code changes)
-
-### 0f. Polymarket CLOB V2 migration — MONITOR (April 28, 2026)
-Manus flagged CLOB V2 migration. Investigated April 22: both Gamma and CLOB APIs still working with current field names. We use NO SDK — all raw httpx. CLOB is only used for price history backfill (not critical path). Real risk is if **Gamma API** (`gamma-api.polymarket.com`) changes field names or pagination. Monitor around April 28.
-**Action:** Re-test both endpoints on April 27. If Gamma breaks, update field mappings in `services/polymarket_api.py`.
-**Files:** `services/polymarket_api.py`, `tasks/polymarket.py`
 
 ### 0f-2. Futures Detail Page Data Quality — IN PROGRESS (April 25)
 Polymarket Cy Young (futures/132810) showed "player AA" garbage names. Root cause: (1) orphan outcomes with NULL external_id from old polling code, (2) Polymarket poll capped at 10K events but 10,542 exist — Cy Young market fell outside pagination. 
@@ -440,77 +425,9 @@ Backend adds `is_minimum_tick` flag on grid cells at exactly 0.01 from Kalshi-on
 
 ---
 
-### ~~0f-3a. Player Props: Team Filter Bug (SOX/YAN pills)~~ ✅ DEPLOYED (April 24)
-
-**Problem:** Clicking SOX or YAN team filter pills in the Player Props section causes ALL cards to disappear.
-
-**Root cause:** `PlayerPropsDashboard.tsx` `detectTeam()` parses the Kalshi market name prefix (e.g., "New York Y vs Boston") to determine which team a player is on. But BOTH team names appear in every market name. The position-based tiebreaker (`homeIdx < awayIdx`) always assigns ALL players to whichever team name appears first in the market string. For "New York Y vs Boston" → all players get `team="away"`. Clicking SOX (home filter) → zero matches → all cards disappear.
-
-**Fix (committed locally, not yet deployed):**
-1. **Backend** (`routes/events.py`): Headshot enrichment (step 10) now also determines team membership from roster data. Returns `player_team: "home" | "away"` per prop based on which team's roster contains the player. Works independently of headshot availability.
-2. **Frontend** (`PlayerPropsDashboard.tsx`, `PlayerPropsGrid.tsx`): Uses `player_team` from API when available, falls back to the (imperfect) market-name detection only when API doesn't provide team info.
-3. **Frontend type** (`lib/api.ts`): Added `player_team?: "home" | "away"` to `GameMarketsResponse.player_props`.
-
-**Tests:** 39 existing game-markets tests pass. No new TS errors introduced.
-**Files:** `backend/app/routes/events.py` (headshot enrichment rewrite), `frontend/components/PlayerPropsDashboard.tsx:363`, `frontend/components/PlayerPropsGrid.tsx:91-100`, `frontend/lib/api.ts:574`
-**Parallel Safety:** Yellow (touches events.py + 2 frontend components)
-
 ### 0f-3. Live Box Score Integration for Player Props
 Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but the matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
 **Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
-
-### ~~0f-X. Kalshi conference markets misclassified as wrong sport~~ ✅ RESOLVED (April 24)
-
-**Status:** RESOLVED. Verified April 24: both KXNHLEAST-26 and KXNHLWEST-26 showing correctly in NHL grid with `llm_sport_category=hockey`. The classification order fix + Kalshi poll cycle resolved it. Hotfix no longer needed.
-
-**The Problem:**
-Kalshi's NHL Eastern/Western Conference markets (`KXNHLEAST-26`, `KXNHLWEST-26`) were classified as `llm_sport_category='basketball'` instead of `'hockey'`. This made them invisible to the NHL championship grid. The NHL grid showed 0.1% for Bruins conference odds when Kalshi has them at 6%.
-
-**Root Cause Chain (3 bugs stacked):**
-1. **`status=None` filter** (FIXED in commit `d8872ed`): Kalshi neg-risk events have `status=None` on the API, not `"open"`. Our `_fetch_all_events_unfiltered()` filtered on `status="open"`, silently skipping these events. Fixed by passing `status=None` explicitly.
-
-2. **Default parameter override** (FIXED in commit `038e185`): `get_events()` has `status="open"` as default parameter. Even after removing the explicit `status="open"` in `_fetch_all_events_unfiltered`, the default was still applied. Fixed by passing `status=None` explicitly.
-
-3. **Pagination gap** (FIXED in commit `17b2341`): Without the status filter, the API returns ALL Kalshi events (7,400+). KXNHLEAST might not appear within the 50-page limit. Added supplementary fetch for known sports series tickers (`KXNBA`, `KXNHL`, `KXMLB`, `KXNFL` + conference variants).
-
-4. **Sport misclassification** (FIXED in commit `9786298`): `_categorize_kalshi_market()` checked name-based rules BEFORE ticker-based classification. "Eastern Conference Finals Winner?" matched a basketball rule first. KXNHLEAST ticker is unambiguously hockey, but the ticker check was step 3 instead of step 1. Fixed by moving ticker check to step 1.
-
-5. **Upsert not updating llm_sport_category** (DEBUGGING — not yet confirmed fixed): Even after fix #4, the poll doesn't seem to update the stored `llm_sport_category` from `basketball` to `hockey`. The `on_conflict_do_update` at line 432 should update it when `sport_category != "other"`. Possible causes:
-   - The Celery worker may not be picking up the queued `poll_kalshi_markets` task (observed: task queued but never executed, worker was busy with `discover_events`, `sync_mm_bracket`, `sync_statpal_schedules`)
-   - The worker may have stale code despite restart (Celery preforking can cache imports)
-   - The `heroku run` one-off dyno successfully fetched 7,463 events including KXNHLEAST-26 with markets, but no evidence the poll task ran to completion on the scheduled worker
-
-**Hotfix Applied:**
-Direct SQL: `UPDATE futures_markets SET llm_sport_category = 'hockey' WHERE external_id IN ('KXNHLEAST-26', 'KXNHLWEST-26')` — fixes the grid immediately.
-
-**What Still Needs Debugging:**
-1. Run `heroku logs -a bainluck --ps worker-background -n 500 | grep -i "kalshi"` after the next scheduled Kalshi poll (runs at :45 past every 4th hour) to confirm the task actually executes
-2. Verify the classification fix works by checking `llm_sport_category` after the poll: `heroku pg:psql -a bainluck -c "SELECT external_id, llm_sport_category FROM futures_markets WHERE external_id LIKE 'KXNHL%' AND source='kalshi';"`
-3. If still `basketball`, add explicit logging to `_categorize_kalshi_market()` for KXNHL tickers to trace the classification path
-4. Check if there are OTHER misclassified conference markets across sports: `heroku pg:psql -a bainluck -c "SELECT external_id, name, llm_sport_category FROM futures_markets WHERE source='kalshi' AND (name LIKE '%Conference%' OR name LIKE '%Eastern%' OR name LIKE '%Western%') AND external_id NOT LIKE 'KXNBA%';"`
-
-**Also discovered:** `sync_mm_bracket` task is still running (March Madness ended weeks ago) — wastes worker capacity. Disable it.
-
-**Files:**
-- `backend/app/services/kalshi_api.py` — `_fetch_all_events_unfiltered()` (status filter + supplementary fetch)
-- `backend/app/tasks/kalshi.py` — `_categorize_kalshi_market()` (classification order), `poll_kalshi_markets` (upsert logic)
-- `backend/app/config/league_configs.py` — NHL_CONFIG conference matching rules
-- `backend/app/tasks/__init__.py` — Celery beat schedule (disable `sync_mm_bracket`)
-
-**Key commands for debugging:**
-```bash
-# Check classification
-heroku pg:psql -a bainluck -c "SELECT external_id, name, llm_sport_category FROM futures_markets WHERE source='kalshi' AND external_id LIKE 'KXNHL%';"
-
-# Trigger poll
-heroku ps:restart worker-background -a bainluck && sleep 30 && curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=$ADMIN_TOKEN"
-
-# Check worker logs
-heroku logs -a bainluck --ps worker-background -n 300 | grep -i "kalshi\|Fetched.*unique\|supplement"
-
-# Verify grid
-curl -s "https://api.bainluck.com/api/playoffs/nhl?debug=true" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'  {m.get(\"source\"):12s} {m.get(\"external_id\")[:25]}') for m in d.get('_debug_column_markets',{}).get('conference',[])]"
-```
 
 ### 0f-4. Sport Hierarchy Page Data Quality (Manus audit April 22)
 
@@ -525,13 +442,7 @@ Two issues reported by Manus league page audit. May be transient data issues —
 
 ### 0f-3d. Event Detail Market Completeness — 5 ISSUES (April 22 audit)
 
-**Context:** Audited event 14523747 (Red Sox vs Yankees, April 22) to check if we're showing ALL available markets. Found 21 linked markets (all Kalshi), but several data quality issues.
-
-#### Issue 2: Zero Polymarket game-specific markets linked
-~20 Polymarket markets exist mentioning Red Sox/Yankees (NRFI, win markets), but ALL have `sport_id=None` and `llm_sport_category=None`. They're never considered for linking because the matching task requires sport identification.
-
-**Fix:** Improve Polymarket sport classification. These markets have team names in their titles ("New York Yankees vs. Boston Red Sox") — the matching task should detect the sport from team names even without explicit sport metadata.
-**Files:** `tasks/polymarket.py` (sport classification), `tasks/prediction_market_matching.py`
+**Context:** Audited event 14523747 (Red Sox vs Yankees). Issues 1, 2, 3, 5 all resolved. Only Issue 4 remains.
 
 #### Issue 4: Series markets not surfaced on event detail pages
 Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series. Example: Bruins vs Sabres NHL playoff game (April 28) — Kalshi has "BUF wins 4-1 62%", series spread -2.5, series total games — none of this appears on bainluck.com for any game in that series.
@@ -547,29 +458,13 @@ Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series 
 - Add "Series Context" section to event detail page between Bigger Picture and Related Futures
 **Files:** `utils/prediction_market_matching.py` (ticker extraction), `tasks/prediction_market_matching.py` (linking), `frontend/app/events/[id]/page.tsx` (display)
 
-#### ~~Issue 5: Game props have market_tier=1 (should be tier 5)~~ ✅ ALREADY FIXED
-
-Code ordering fix already shipped: `is_game_prop()` runs BEFORE `compute_market_tier()` in `kalshi.py`, and tier 5 is force-set for game props. Backfill script `scripts/backfill_market_tiers.py` exists and has been run.
-
 ---
 
-### 0f. Event Detail Below-the-Fold Redesign (from Claude Design prototype)
-
-Design prototype: `handoffs/Event Detail Below-the-Fold.html`
-Brief: `docs/design-brief-event-detail-v2.md`
+### 0f. Event Detail Below-the-Fold Redesign
 
 Steps 1-5 shipped April 22. Remaining:
 6. **TradeWatch rethink** — one-sided, highest-prob destination only (partially done — disclaimer added, layout fix needed)
-
-**Parallel Safety:** Yellow (frontend only, no backend changes)
-
----
-
-### ~~0g. Kalshi API base URL migration~~ — FALSE ALARM
-Already using `api.elections.kalshi.com`. Verified April 22.
-
-### ~~0h. DataGolf deprecated endpoint~~ — FALSE ALARM
-We don't use `live-strokes-gained`. We use `preds/in-play`. Verified April 22.
+**Parallel Safety:** Yellow (frontend only)
 
 ---
 
@@ -837,7 +732,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 Dedicated pass to make everything faster, more reliable, and higher quality.
 
-**Status (April 25-26): 11 of 12 items SHIPPED.**
+**Status: ALL 12 items SHIPPED.**
 
 | # | Item | Status |
 |---|------|--------|
@@ -891,8 +786,8 @@ Dedicated pass to make everything faster, more reliable, and higher quality.
 
 **Parallel Safety:** Green (new routes, new pages, no conflicts)
 
-#### 18a. Economics Page — **DESIGN READY, HIGHEST PRIORITY**
-9 sub-themes (Inflation/CPI, Federal Reserve, Jobs, GDP/Recession, Markets/Indices, Energy, Housing, Trade/Tariffs, Government/Fiscal). Calendar integration opportunity (data release dates).
+#### ~~18a. Economics Page~~ ✅ SHIPPED
+Live at `/economics` with 1,641 markets across 9 sub-themes. Backend: `routes/economics.py`. Frontend: `app/economics/page.tsx`. Fed heatmap, CPI releases, GDP quarters, typed API client.
 
 #### 18b. Politics & Elections Page
 Sub-themes: Presidential 2028, Congressional 2026, Gubernatorial, Policy/Legislation, Supreme Court, International. Lifecycle concern: market expiry at election dates.
@@ -1344,14 +1239,9 @@ New feed mode: "Discover" tab alongside the existing sports feed. Or interleave 
 
 ## Housekeeping
 
-### WrestleMania — **DONE (April 21)**
-Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB tables preserved.
-
-### Other
-- **May 1**: Delete `frontend/_to-delete/` if nothing broke
+### Other Housekeeping
 - **Monthly**: Update `QUOTA_GUARD_EXPIRY` in `redis_state.py`
 - Clean up ~90 remote git branches
-- Code review reference: `.claude/plans/mutable-cooking-ember.md`
 
 ### 0f-9. Kalshi Win Probability Mismatched Market — DATA BUG (April 28)
 
@@ -1364,11 +1254,7 @@ Archive: `docs/archive/wrestlemania-reference.md`. All runtime code deleted. DB 
 **Files:** `backend/app/tasks/live_prediction_markets.py`, `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### ~~0f-10. Player Props All Showing "0 so far" and "—" Probabilities~~ ✅ FIXED (April 29)
-
-**Root cause (confirmed):** Two stacked bugs: (1) `espn_id` was not persisting due to ORM/Core SQL mixing (gotcha #46), so `box_score_data` never populated. (2) When `box_score_data` is null, the frontend's "done" mode assumed `actual=0` for all stats, showing "0 so far" and "—" everywhere. **Fixes:** espn_id now written via Core SQL update. Frontend falls back to "pre" mode (shows probabilities) when box score is unavailable. Threshold dedup added for same-source duplicates.
-
-### 0f-10b. Cross-Source Player Prop Merging (follow-up)
+### 0f-10b. Cross-Source Player Prop Merging
 
 **Problem:** Now that both Kalshi and Polymarket player props surface on the same event, duplicate thresholds appear when both sources have the same player+stat. Currently the frontend deduplicates by keeping the higher probability — but the right approach is to merge across sources with weighted averaging, same as `compute_aggregate_probability()` does for win probability.
 
