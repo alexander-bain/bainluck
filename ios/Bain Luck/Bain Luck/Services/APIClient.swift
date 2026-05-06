@@ -437,6 +437,24 @@ actor APIClient {
         ])
     }
 
+    // MARK: - Weather
+
+    func fetchWeatherFeatured() async throws -> [WeatherFeaturedItem] {
+        return try await fetch("/api/weather/featured", cacheTTL: 120)
+    }
+
+    func fetchWeatherCities() async throws -> [WeatherCity] {
+        return try await fetch("/api/weather/cities", cacheTTL: 120)
+    }
+
+    // MARK: - Economics
+
+    func fetchEconomics() async throws -> EconomicsResponse {
+        return try await fetch("/api/economics", cacheTTL: 120)
+    }
+
+    // MARK: - Auth
+
     func signInWithGoogle(accessToken: String) async throws -> AppleAuthResponse {
         return try await post("/api/auth/google-access-token", body: [
             "access_token": accessToken,

@@ -86,6 +86,14 @@ final class NavigationCoordinator: ObservableObject {
             navigate(to: .preferences, tab: .myStuff)
             return true
 
+        case "weather":
+            navigate(to: .weather, tab: .feed)
+            return true
+
+        case "economics":
+            navigate(to: .economics, tab: .feed)
+            return true
+
         case "category":
             if pathComponents.count >= 2 {
                 let key = pathComponents[1]

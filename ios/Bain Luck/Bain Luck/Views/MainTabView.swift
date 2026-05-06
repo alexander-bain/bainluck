@@ -31,6 +31,8 @@ struct MainTabView: View {
                         case .eventDetail(let id): EventDetailView(eventId: id)
                         case .futuresDetail(let id): FuturesDetailView(marketId: id)
                         case .predictionStats: PredictionStatsView()
+                        case .weather: WeatherView()
+                        case .economics: EconomicsView()
                         case .about: Text("About")
                         default: EmptyView()
                         }
@@ -114,6 +116,12 @@ struct MainTabView: View {
                     NavigationLink(value: Route.futuresList) {
                         Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
                     }
+                    NavigationLink(value: Route.weather) {
+                        Label("Weather", systemImage: "cloud.sun.fill")
+                    }
+                    NavigationLink(value: Route.economics) {
+                        Label("Economics", systemImage: "chart.bar.fill")
+                    }
                     NavigationLink(value: Route.eiRankings) {
                         Label("EI Rankings", systemImage: "trophy.fill")
                     }
@@ -150,6 +158,10 @@ struct MainTabView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .weather:
+                    WeatherView()
+                case .economics:
+                    EconomicsView()
                 case .about:
                     Text("About")
                 }

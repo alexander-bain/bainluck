@@ -252,6 +252,10 @@ struct SearchView: View {
                     TeamDetailView(slug: slug)
                 case .predictionStats:
                     PredictionStatsView()
+                case .weather:
+                    WeatherView()
+                case .economics:
+                    EconomicsView()
                 case .about:
                     AboutView()
                 }

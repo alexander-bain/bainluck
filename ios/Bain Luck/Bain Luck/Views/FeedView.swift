@@ -196,6 +196,10 @@ struct FeedView: View {
                     Text("Team")
                 case .predictionStats:
                     PredictionStatsView()
+                case .weather:
+                    WeatherView()
+                case .economics:
+                    EconomicsView()
                 case .about:
                     Text("About")
                 }
