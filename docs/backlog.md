@@ -475,13 +475,9 @@ Removed EI badge, sportsbook spread warning, prediction market divergence bubble
 
 Removed `standingsSection` call and method from iOS `EventDetailView.swift`. Redundant with Championship Path card.
 
-#### 0f-13g. Player Prop Cards Not Fixed on NATIVE
+#### ~~0f-13g. Player Prop Cards Default to Points (NATIVE)~~ ✅ SHIPPED (May 6)
 
-**Problem:** Web player props now default to Points only with per-card "+N more stats" expansion. Native still shows both Points AND Three Pointers side by side for every player, with no way to collapse.
-
-**Fix:** Port the web fix to iOS: default to Points stat only, add per-card expansion for other stats.
-
-**Files:** `ios/.../Components/PlayerPropsCardView.swift` (or equivalent)
+Replaced global "All stats" toggle with per-card `expandedCards` Set and "+N more stats" expansion link, defaulting to Points only.
 
 #### 0f-13h. Player Award Headshots Missing on WEB
 
@@ -514,36 +510,21 @@ Fixed: MarketMap now renders a positioned "0" label at the actual zero position 
 
 ### Bug Report #4 — Player Props Layout (HOU 3 - BOS 1, May 5)
 
-#### BR4-1. Wasted space in Player Props header (iOS)
+#### ~~BR4-1. Wasted space in Player Props header (iOS)~~ ✅ SHIPPED (May 6)
 
-**Problem:** Large empty grey area to the right of the Player Props header. The "KALSHI" badge + "All stats" link + team filter tabs ("All", "Sox", "Astros") don't fill the available width, leaving a visible gap on the right side.
-
-**Fix:** Either make the filter tabs fill the width, or tighten the header layout so the gap isn't visible.
-
-**Files:** `ios/.../Components/PlayerPropsCardView.swift` or equivalent player props header
-**Parallel Safety:** Green
+Team filter tabs now use `.frame(maxWidth: .infinity)` to fill available width, eliminating header dead space.
 
 ---
 
 ### Bug Report #5 — Baseball Period Markets Misclassified (HOU 3 - BOS 1, May 5)
 
-#### BR5-1. "First 5 Innings" should get market map treatment, not "Other Markets"
+#### ~~BR5-1. "First 5 Innings" classified as half-market~~ ✅ SHIPPED (May 6)
 
-**Problem:** "Houston vs Boston: First 5 Innings" appears under "Additional Markets → Other Markets" as a raw outcome list. This is the baseball equivalent of a 1st half market — it should be classified as `half_total` or `half_spread` and rendered as a market map (like 1st half spread/total maps in basketball and football).
+`_classify_game_market()` now recognizes "first 5 innings", "f5 innings", and "f5" as half-period patterns alongside existing basketball/football half patterns. Renders as market maps instead of raw "Other Markets" dump.
 
-**Fix:** Update `_classify_game_market()` in `backend/app/routes/events.py` to recognize "First 5 Innings" / "F5" as a half-game market. Add regex pattern for baseball-specific period names.
+#### ~~BR5-2. "First Inning Run" classified as game_prop~~ ✅ SHIPPED (May 6)
 
-**Files:** `backend/app/routes/events.py` (`_classify_game_market`, `_is_half_market` or similar)
-**Parallel Safety:** Yellow
-
-#### BR5-2. "First Inning Run" should not be in "Other Markets"
-
-**Problem:** "Houston vs Boston: First Inning Run" (Yes 50%) is in "Other Markets" but is a well-known baseball prop. Could be shown as a binary prop card or integrated into the game markets section with better UI.
-
-**Fix:** Classify as `game_prop` or `period_market` rather than `other`. Consider a dedicated binary prop display.
-
-**Files:** `backend/app/routes/events.py` (`_classify_game_market`)
-**Parallel Safety:** Yellow
+"First Inning Run" / "1st Inning Run" now returns `game_prop` instead of `other`.
 
 ---
 
@@ -625,11 +606,9 @@ Fixed: Skip SWR fetch for invalid/NaN market IDs, show back navigation during lo
 **Files:** Backend outcome ingestion, `backend/app/routes/events.py` (game-markets threshold logic)
 **Parallel Safety:** Yellow
 
-#### MS-May4-7. NBA Duplicated Player Awards in Futures Section
+#### ~~MS-May4-7. NBA Duplicated Player Awards in Futures Section~~ ✅ SHIPPED (May 6)
 
-**Problem:** Awards appearing multiple times on event detail page. Likely a dedup issue in related-futures endpoint.
-**Files:** `backend/app/routes/events.py` (related-futures), `frontend/app/events/[id]/page.tsx`
-**Parallel Safety:** Yellow
+Root cause: merge rules used strict `^DPOY$` anchors, so "NBA DPOY" didn't merge with "DPOY". Fixed merge rules to accept optional league prefix (NBA/NHL/MLB/NFL). Same fix for Finals MVP, 6MOY, MIP, ROY, Clutch Player. Also added "6th Man of the Year" → 6moy alias.
 
 ---
 
@@ -646,10 +625,9 @@ Banner uses `bottom-16` on mobile to sit above the tab bar.
 #### ~~MS-3. Missing team logos on event detail (pink/grey placeholders)~~ ✅ SHIPPED (April 28)
 ESPN CDN fallback when team_data.logo_large missing + onError handler shows initials if image fails.
 
-#### MS-4. Game props missing team names
-**Problem:** Game props section shows "Team 199.5 84%" instead of "Hawks 199.5 84%". Team name not being passed through.
-**Fix:** Check game-markets API response — `team_name` may be null for some market types. File: `frontend/components/PlayerPropsDashboard.tsx`, `backend/app/routes/events.py` (game-markets endpoint).
-**Parallel Safety:** Yellow
+#### ~~MS-4. Game props missing team names~~ ✅ SHIPPED (May 6)
+
+Added `team_name` and `team_side` fields to `team_total` items in game-markets response. Parses team name from market name by matching 4+ char words against event team names.
 
 #### ~~MS-5. NYC rainfall listed 8 times~~ ✅ SHIPPED (April 27)
 Monthly rain deduplicates by city name, keeps latest resolution date.
@@ -791,11 +769,9 @@ Fixed: Ticker-derived sport prefix now hard-rejects cross-sport matches in `_sco
 **Fix:** Improve Polymarket sport classification. These markets have team names in their titles ("New York Yankees vs. Boston Red Sox") — the matching task should detect the sport from team names even without explicit sport metadata.
 **Files:** `tasks/polymarket.py` (sport classification), `tasks/prediction_market_matching.py`
 
-#### Issue 3: Tomorrow's game markets linked to today's event
-6 Kalshi markets with APR23 tickers (tomorrow's game) are linked to today's event. The matching task linked them based on team name + time window without distinguishing the game date embedded in the ticker.
+#### ~~Issue 3: Tomorrow's game markets linked to today's event~~ ✅ SHIPPED (May 6)
 
-**Fix:** Extract game date from Kalshi ticker (e.g., `KXMLBHIT-26APR23NYYBOS` → April 23) and compare to event `commence_time` date. Reject if dates differ by >1 day.
-**Files:** `tasks/prediction_market_matching.py`, `utils/prediction_market_matching.py` (`extract_game_date_from_ticker`)
+Root cause: ±7-day time window even when ticker has a parseable game date. Fixed: when `extract_game_date_from_ticker()` succeeds, window tightens to ±36h (timezone slack only). The 7-day fallback remains for tickers without parseable dates.
 
 #### Issue 4: Series markets not surfaced on event detail pages
 Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series. Example: Bruins vs Sabres NHL playoff game (April 28) — Kalshi has "BUF wins 4-1 62%", series spread -2.5, series total games — none of this appears on bainluck.com for any game in that series.
@@ -811,17 +787,9 @@ Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series 
 - Add "Series Context" section to event detail page between Bigger Picture and Related Futures
 **Files:** `utils/prediction_market_matching.py` (ticker extraction), `tasks/prediction_market_matching.py` (linking), `frontend/app/events/[id]/page.tsx` (display)
 
-#### Issue 5: Game props have market_tier=1 (should be tier 5) — CODE ORDERING BUG
-85/136 outcomes in related-futures are game props with `market_tier=1`. Root cause is a code ordering bug in `kalshi.py`:
-1. Line 287: `_kalshi_category_to_internal()` returns `"championship"` for all sports categories
-2. Line 336-338: `compute_market_tier()` sees `category=="championship"` → returns tier 1
-3. Line 364-366: `is_game_prop()` correctly updates `category = "game_prop"` — but AFTER tier was already computed
+#### ~~Issue 5: Game props have market_tier=1 (should be tier 5)~~ ✅ ALREADY FIXED
 
-**Impact:** Game props leak into the season-long query (Pass 1 of related-futures, which loads tiers 1-4) instead of being restricted to Pass 2 (game-prop query, `event_id == event_id`). This means game props from OTHER games could appear on the wrong event page.
-
-**Fix:** Move `is_game_prop()` check and `category = "game_prop"` assignment to BEFORE `compute_market_tier()`, OR add game prop detection inside `compute_market_tier()`. Then backfill existing market_tier values.
-**Files:** `tasks/kalshi.py:336-366`, `utils/market_label_normalization.py:737-792` (`compute_market_tier`)
-**Parallel Safety:** Yellow (affects market ingestion + grid/futures display)
+Code ordering fix already shipped: `is_game_prop()` runs BEFORE `compute_market_tier()` in `kalshi.py`, and tier 5 is force-set for game props. Backfill script `scripts/backfill_market_tiers.py` exists and has been run.
 
 ---
 
@@ -1370,12 +1338,9 @@ Major iOS overhaul April 22 evening (~30 commits). Core event detail now has: he
 ### ~~iOS-7/8/9/10~~ — SHIPPED (April 22)
 Period markers on score diff chart, championship card filter fix, ChampionshipPathView from team-progression endpoint, PlayerPropsCardView from game-markets endpoint.
 
-### iOS-11. Sections Disappear on Auto-Refresh — CRITICAL BUG
+### ~~iOS-11. Sections Disappear on Auto-Refresh~~ ✅ SHIPPED (May 6)
 
-**Problem:** Player Props, Championship Path, and other sections vanish after ~30 seconds. The auto-refresh re-runs `load()` which overwrites existing data with `nil` when a fetch fails transiently.
-
-**Fix:** Only update `@Published` properties when the new value is non-nil. Already coded (April 22 evening), needs push.
-**Files:** `EventDetailView.swift`
+Secondary data (gameMarkets, relatedFutures, teamProgression) now only overwrites when the new response has meaningful content.
 
 ### iOS-12. Score Diff Actual Line Cuts Off Mid-Game — BACKEND BUG
 
@@ -1386,19 +1351,13 @@ Period markers on score diff chart, championship card filter fix, ChampionshipPa
 **Fix:** Debug the ESPN sync score extraction: `ee.home_score` is None when writing ESPNSnapshot. Check what the ESPN API returns and how it's parsed. The `_sync_espn_live_events` function at line 493 sets `event.home_score = ee.home_score` — this path works for Event updates but the snapshot write at line 541 may be running before scores are available.
 **Files:** `backend/app/tasks/espn_sync.py` (ESPN API response parsing), `backend/app/services/espn_api.py`
 
-### iOS-13. Score Diff X-Axis Doesn't Match Win Prob
+### ~~iOS-13. Score Diff X-Axis Mismatch~~ ✅ SHIPPED (May 6)
 
-**Problem:** Win prob chart shows 4:11-6:11 PM, score diff shows 4:00-6:00 PM. Both use `commenceTime` → `completedAt+2min` for domain, but the tick labels differ because Swift Charts auto-picks different nice-number intervals for different data densities.
+ScoreDifferentialChartView now uses the same stride-based tick calculation as OddsChartView.
 
-**Fix:** Both charts need identical x-axis domain. Options: (a) pass OddsChart domain down to ScoreDiffChart via state binding, or (b) use the raw `commenceTime` and `completedAt` strings parsed identically. Current code may have different Date precision (OddsChart may round/filter start differently).
-**Files:** `ScoreDifferentialChartView.swift`, `OddsChartView.swift`, `EventDetailView.swift`
+### ~~iOS-14. Player Prop Threshold Monotonicity~~ ✅ SHIPPED (May 6)
 
-### iOS-14. Player Prop Threshold Monotonicity
-
-**Problem:** Goldschmidt shows 3+ Hits at 6% but 2+ Hits at 72%. Probabilities should be monotonically decreasing (P(3+) ≤ P(2+)). Root cause: likely mixing HITS and HITS+RUNS+RBIS stat types under the same player's card.
-
-**Fix:** In `PlayerPropsCardView`, group rungs strictly by `marketName` (not just player name). The stat type label (HITS vs HITS+RUNS+RBIS) must scope each ladder independently.
-**Files:** `PlayerPropsCardView.swift`
+Player prop rungs now group by full `marketName` instead of suffix after colon, preventing cross-stat-type mixing.
 
 ### ~~iOS-15. Bigger Picture Section Redesign~~ ✅ DONE (April 23)
 
@@ -1412,25 +1371,9 @@ iOS-side reclassification: expanded `isDivisionOrPlayoff` regex to catch "NL Eas
 
 Roster sync fixed (moved to 10 AM UTC, 3,261 players loaded). Backend returns `player_headshot` + `player_team` on game-markets endpoint. iOS `PlayerPropsCardView` updated to show AsyncImage headshots with initials fallback, plus uses `playerTeam` from API instead of guessing from name.
 
-### iOS-18. Prevent Screen Sleep While App Is Foreground
+### ~~iOS-18. Prevent Screen Sleep While App Is Foreground~~ ✅ SHIPPED (May 6)
 
-**Problem:** The phone auto-locks / screen dims while using the app. When you're watching a game and glancing at live probabilities, the phone shouldn't go to sleep.
-
-**Fix:** Set `UIApplication.shared.isIdleTimerDisabled = true` when the app is in the foreground, and re-enable it when backgrounded. In SwiftUI, apply this in the root `App` struct using `.onChange(of: scenePhase)`:
-
-```swift
-@Environment(\.scenePhase) var scenePhase
-
-.onChange(of: scenePhase) { newPhase in
-    UIApplication.shared.isIdleTimerDisabled = (newPhase == .active)
-}
-```
-
-This keeps the screen on while the app is visible and restores normal sleep behavior when the user switches away.
-
-**Files:** `ios/Bain Luck/Bain Luck/Bain_LuckApp.swift`
-**Parallel Safety:** Green (one line, no conflicts)
-**Effort:** 5 minutes
+Added `scenePhase` observer to disable idle timer when active, re-enable on background.
 
 ### iOS-4. Dead/Stale Views Cleanup
 
@@ -1464,11 +1407,9 @@ This keeps the screen on while the app is visible and restores normal sleep beha
 
 Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 
-#### iOS-GD1. Mystery "8" icon between teams in hero
-**Problem:** Unlabeled value (likely EI badge) appears between team logos in the hero section. No context for what it means.
-**Approach:** Confirm what the value represents in `EIBadgeView`. Label it clearly, or hide it for completed games since EI is a pre-game/live concept — showing it post-final is meaningless.
-**Files:** `ios/.../Components/EIBadgeView.swift`, `EventDetailView.swift` (hero section)
-**Parallel Safety:** Green
+#### ~~iOS-GD1. Mystery "8" icon between teams in hero~~ ✅ SHIPPED (May 6)
+
+EI badge hidden on completed game cards via `!isFinished` guard.
 
 #### ~~iOS-GD2. Records visually merge with score~~ ✅ SHIPPED (May 5)
 **Problem:** Team records ("10-17" / "13-14") sit directly under scores ("17 / 1") with similar font weight and color, making them hard to distinguish at a glance.
@@ -1488,11 +1429,9 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `backend/app/config/win_prob_sources.py`, `ios/.../Components/OddsChartView.swift`
 **Parallel Safety:** Yellow (touches backend config + iOS)
 
-#### iOS-GD5. Game-state indicators cluttered on chart
-**Problem:** Inning numbers above the chart frame are cramped and hard to read.
-**Approach:** KEEP x-axis time-based (do NOT make innings/periods the primary tick units — breaks for sports with few phases). Drop the cramped strip of inning numbers above the chart frame. Replace with light vertical gridlines at inning-boundary timestamps and small floating chips ("1"…"9") tied to each gridline near the top of the plot area. Degrade gracefully to "1H/2H" for soccer/basketball halves. Time labels at the bottom remain the only x-axis ticks.
-**Files:** `ios/.../Components/OddsChartView.swift`
-**Parallel Safety:** Green
+#### ~~iOS-GD5. Game-state indicators: floating chips~~ ✅ SHIPPED (May 6)
+
+Replaced cramped `.annotation(position: .top)` period markers with dashed gridlines + `chartOverlay` floating chips.
 
 #### ~~iOS-GD6. Sources row renamed~~ ✅ SHIPPED (May 5)
 **Problem:** Non-functional UI row in the chart section. No interaction, wastes vertical space.
@@ -1506,17 +1445,13 @@ Findings from iOS event detail page review (BOS @ BAL, Apr 25, final 17–1).
 **Files:** `ios/.../Components/OddsChartView.swift`
 **Parallel Safety:** Green
 
-#### iOS-GD8. Player props show initials instead of headshots
-**Problem:** Player prop cards use colored-initial chips instead of headshots, even when headshot URLs are available.
-**Approach:** Replace colored-initial chips in `PlayerPropsCardView` with the headshot pattern Awards uses in `RelatedFuturesView`. Initials are the fallback when no headshot URL is available. Reuse the existing image-loading helper.
-**Files:** `ios/.../Components/PlayerPropsCardView.swift`, `ios/.../Components/RelatedFuturesView.swift` (reference)
-**Parallel Safety:** Green
+#### ~~iOS-GD8. Player props headshots~~ ✅ SHIPPED (May 6)
 
-#### iOS-GD9. Championship Path shows wrong league rows
-**Problem:** "AL / NL Champ" row appears for AL-only matchups (e.g., two AL teams). Should show only the relevant pennant.
-**Approach:** Make the row league-aware in `ChampionshipPathView`: when both teams share a league/conference, show only that pennant ("AL Pennant"); otherwise keep "AL / NL Champ" for cross-league matchups. Apply same logic for NBA/NHL/NFL conference finals. League is already on the team record.
-**Files:** `ios/.../Components/ChampionshipPathView.swift`
-**Parallel Safety:** Green
+Headshot URL search now checks all props for a player. Loading state shows subtle color placeholder instead of flashing initials.
+
+#### ~~iOS-GD9. Championship Path conference filtering~~ ✅ SHIPPED (May 6)
+
+Hide opposing-conference championship path stages when both teams share a conference.
 
 #### ~~iOS-GD10. Prose summary removed~~ ✅ SHIPPED (May 5)
 **Problem:** Related futures section shows a text summary blob instead of the card-based design the web app uses.
