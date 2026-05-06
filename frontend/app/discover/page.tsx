@@ -409,36 +409,27 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {/* Daily Challenge — expands to show a guess card inline */}
-        {!isLoading && processedItems.length > 0 && (() => {
-          const guessCandidate = processedItems.find(
-            (gi) => gi.type === "single" && (gi.item?.type === "futures" || gi.item?.type === "event")
-          );
-          return (
-            <div className="mb-4">
-              <DailyChallengeCard
-                guessesToday={dailyGuesses}
-                guessItem={guessCandidate?.item ?? undefined}
-                onGuessCompleted={() => {
-                  const today = new Date().toISOString().slice(0, 10);
-                  const next = dailyGuesses + 1;
-                  setDailyGuesses(next);
-                  localStorage.setItem(`daily_guesses_${today}`, next.toString());
-                }}
-              />
-            </div>
-          );
-        })()}
+        {/* Daily Challenge — passive progress tracker, counts guesses from feed */}
+        {!isLoading && processedItems.length > 0 && (
+          <div className="mb-4">
+            <DailyChallengeCard guessesToday={dailyGuesses} />
+          </div>
+        )}
 
         <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
-            const isGuessSlot = gi.type === "single" && (idx + 1) % 2 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
+            const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
 
             return (
               <div key={key} className="break-inside-avoid mb-4">
                 {isGuessSlot ? (
-                  <GuessCard item={gi.item!} />
+                  <GuessCard item={gi.item!} onGuessCompleted={() => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    const next = dailyGuesses + 1;
+                    setDailyGuesses(next);
+                    localStorage.setItem(`daily_guesses_${today}`, next.toString());
+                  }} />
                 ) : (
                   <DiscoverCard
                     groupedItem={gi}

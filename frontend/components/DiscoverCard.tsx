@@ -138,7 +138,7 @@ function isTrending(item: FeedItem): boolean {
 }
 
 function MovementBadge({ m }: { m: number | null | undefined }) {
-  if (!m || Math.abs(m) < 0.01) return null;
+  if (!m || Math.abs(m) < 0.02) return null;
   const up = m > 0;
   return (
     <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}>
@@ -452,25 +452,28 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
   const prob = leader?.probability ?? 0;
   const headline = data.hook_description || item.headline || "";
   const resolveText = resolvesLabel(data.resolution_date);
+  const hasImage = !!data.image_url;
+  const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
-      <div className="relative h-44 flex flex-col items-center justify-center bg-cover bg-center" style={{
-        background: data.image_url
+      <div className={`relative ${hasImage ? "h-44" : "h-32"} flex flex-col items-center justify-center bg-cover bg-center`} style={{
+        background: hasImage
           ? `linear-gradient(to bottom, rgba(0,0,0,0.25), rgba(0,0,0,0.75)), url(${data.image_url}) center/cover`
           : CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
       }}>
         <div className={`absolute top-3 left-3 ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {category}</div>
+        {!hasImage && <span className="absolute inset-0 flex items-center justify-center text-[80px] opacity-[0.08] select-none pointer-events-none">{catStyle.emoji}</span>}
         {leader && (
           <>
             <AnimatedProbability value={Math.round(prob * 100)} className="text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-lg" />
             <div className="text-white/70 text-sm mt-1 font-medium max-w-[85%] text-center line-clamp-2">{leader.name}</div>
             <div className="mt-2 flex items-center gap-2">
               <MovementBadge m={leader.movement} />
-              {resolveText && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
+              {resolveText && !outcomesAreDate && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
             </div>
           </>
         )}
@@ -483,7 +486,6 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
 
         {headline && <p className="text-sm text-text-secondary mt-1 leading-relaxed">{headline}</p>}
 
-        {/* Expandable: show all outcomes */}
         {data.top_outcomes.length > 1 && (
           <>
             <div className="mt-3 space-y-1.5">
@@ -500,15 +502,11 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
             </div>
             {data.outcome_count > 3 && (
               <button onClick={() => setShowContext(!showContext)} className="text-xs text-blue-600 hover:text-blue-700 mt-2 font-medium">
-                {showContext ? "Show less" : `Show all ${data.outcome_count} outcomes`}
+                {showContext ? "Show less" : data.outcome_count > 10 ? "Show more" : `Show all ${data.outcome_count} outcomes`}
               </button>
             )}
           </>
         )}
-
-        <div className="flex items-center gap-2 mt-2 text-[10px] text-text-muted">
-          {data.source && <span className="font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated">{data.source}</span>}
-        </div>
 
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
       </div>
@@ -562,7 +560,7 @@ function generateThreshold(actualProb: number): number {
   return Math.round(threshold * 100);
 }
 
-export function GuessCard({ item }: { item: FeedItem }) {
+export function GuessCard({ item, onGuessCompleted }: { item: FeedItem; onGuessCompleted?: () => void }) {
   const isEvent = item.type === "event";
   const futuresData = isEvent ? null : (item.data as FeedFuturesData);
   const eventData = isEvent ? (item.data as FeedEventData) : null;
@@ -594,6 +592,7 @@ export function GuessCard({ item }: { item: FeedItem }) {
   const submitGuess = async (g: "higher" | "lower") => {
     setGuess(g);
     const isCorrect = g === "higher" ? actualPct > threshold : actualPct < threshold;
+    onGuessCompleted?.();
     try {
       await fetch("/api/predictions", {
         method: "POST",
@@ -705,21 +704,15 @@ export function GuessCard({ item }: { item: FeedItem }) {
 
 const DAILY_GOAL = 5;
 
-export function DailyChallengeCard({ guessesToday, onGuessCompleted, guessItem }: {
+export function DailyChallengeCard({ guessesToday }: {
   guessesToday: number;
-  onGuessCompleted: () => void;
-  guessItem?: FeedItem;
 }) {
   const completed = guessesToday >= DAILY_GOAL;
   const progress = Math.min(guessesToday / DAILY_GOAL, 1);
-  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md`}>
-      <div
-        className={`px-4 py-3 flex items-center gap-3 ${completed ? "" : "cursor-pointer hover:bg-surface-elevated transition-colors"}`}
-        onClick={() => { if (!completed) setExpanded((e) => !e); }}
-      >
+      <div className="px-4 py-3 flex items-center gap-3">
         <span className="text-2xl">{completed ? "🏆" : "🎯"}</span>
         <div className="flex-1">
           <div className="text-sm font-bold">
@@ -743,11 +736,6 @@ export function DailyChallengeCard({ guessesToday, onGuessCompleted, guessItem }
           </div>
         )}
       </div>
-      {expanded && guessItem && !completed && (
-        <div className="px-4 pb-4">
-          <GuessCard item={guessItem} />
-        </div>
-      )}
     </div>
   );
 }
