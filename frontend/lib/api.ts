@@ -1328,3 +1328,76 @@ export async function fetchResolutions(): Promise<{ resolutions: ResolutionItem[
   return apiFetch<{ resolutions: ResolutionItem[] }>("/api/predictions/resolutions");
 }
 
+export interface EconMarketRow {
+  q: string;
+  prob: number;
+  src: string;
+  delta: number | null;
+  market_id: number;
+}
+
+export interface EconThemeFed {
+  count: number;
+  fomc_meetings: { date: string; mo: string; dist: number[][]; resolved: boolean; market_id: number }[];
+  rate_cuts: number[][];
+  side_markets: EconMarketRow[];
+}
+
+export interface EconThemeInflation {
+  count: number;
+  cpi_releases: { mo: string; brackets: number[][]; upcoming: boolean; peakIs: number; market_id: number }[];
+  side_markets: EconMarketRow[];
+}
+
+export interface EconThemeRecession {
+  count: number;
+  main_prob: number | null;
+  gdp_quarters: { q: string; dist: number[][]; market_id: number }[];
+  side_markets: EconMarketRow[];
+}
+
+export interface EconThemeMarkets {
+  count: number;
+  today: { sym: string; prob: number; dir: string; range: string; src: string }[];
+  stocks: { sym: string; prob: number; delta: number | null; src: string }[];
+  side_markets: EconMarketRow[];
+}
+
+export interface EconThemeEnergy {
+  count: number;
+  gas: { label: string; val: string; prob: number; brackets: number[][]; src: string }[];
+  oil: { sym?: string; prob: number; range?: string; src: string; q?: string }[];
+}
+
+export interface EconThemeSimple {
+  count: number;
+  markets: EconMarketRow[];
+}
+
+export interface EconThemeHousing {
+  count: number;
+  mortgage_brackets: number[][];
+  markets: EconMarketRow[];
+}
+
+export interface EconData {
+  total_markets: number;
+  updated_at: string;
+  themes: {
+    fed: EconThemeFed;
+    inflation: EconThemeInflation;
+    jobs: EconThemeSimple;
+    recession: EconThemeRecession;
+    markets: EconThemeMarkets;
+    energy: EconThemeEnergy;
+    housing: EconThemeHousing;
+    trade: EconThemeSimple;
+    government: EconThemeSimple;
+  };
+  by_source: { kalshi: number; polymarket: number };
+}
+
+export async function fetchEconomics(): Promise<EconData> {
+  return apiFetch<EconData>("/api/economics");
+}
+

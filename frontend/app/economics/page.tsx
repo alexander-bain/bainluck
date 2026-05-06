@@ -6,32 +6,8 @@ import {
   SectionHeader, Card, SourceChip, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor,
 } from "@/components/economics/atoms";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const fetcher = (url: string) => fetch(url).then(r => r.json());
-
-interface EconTheme {
-  count: number;
-  fomc_meetings?: any[];
-  rate_cuts?: [number, string][];
-  side_markets?: any[];
-  cpi_releases?: any[];
-  markets?: any[];
-  main_prob?: number | null;
-  gdp_quarters?: any[];
-  today?: any[];
-  stocks?: any[];
-  gas?: any[];
-  oil?: any[];
-  mortgage_brackets?: [number, string][];
-}
-
-interface EconData {
-  total_markets: number;
-  updated_at: string;
-  themes: Record<string, EconTheme>;
-  by_source: { kalshi: number; polymarket: number };
-}
+import { fetchEconomics } from "@/lib/api";
+import type { EconData } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Fed Heatmap Section
@@ -140,7 +116,7 @@ export default function EconomicsPage() {
   useScrollDepth({ pageType: "economics" });
   useEngagementTime({ pageType: "economics" });
 
-  const { data, error } = useSWR<EconData>(`${API}/api/economics`, fetcher, { refreshInterval: 60000 });
+  const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 
   if (error) return (
     <div className="max-w-5xl mx-auto py-20 text-center text-text-muted text-sm">
