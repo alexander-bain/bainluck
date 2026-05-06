@@ -1401,3 +1401,54 @@ export async function fetchEconomics(): Promise<EconData> {
   return apiFetch<EconData>("/api/economics");
 }
 
+export interface PoliticsMarketRow {
+  q: string;
+  prob: number;
+  src: string;
+  market_id: number;
+  top_outcomes: { name: string; prob: number }[];
+  outcome_count: number;
+}
+
+export interface PoliticsHeadline {
+  q: string;
+  market_id: number;
+  src: string;
+  candidates: { name: string; prob: number }[];
+  outcome_count: number;
+}
+
+export interface PoliticsThemePresidential {
+  count: number;
+  headline: PoliticsHeadline | null;
+  side_markets: PoliticsMarketRow[];
+}
+
+export interface PoliticsThemeSimple {
+  count: number;
+  markets: PoliticsMarketRow[];
+}
+
+export interface PoliticsData {
+  total_markets: number;
+  updated_at: string;
+  themes: {
+    presidential: PoliticsThemePresidential;
+    congressional: PoliticsThemeSimple;
+    gubernatorial: PoliticsThemeSimple;
+    policy: PoliticsThemeSimple;
+    scotus: PoliticsThemeSimple;
+    international: PoliticsThemeSimple;
+    other: PoliticsThemeSimple;
+  };
+  by_source: { kalshi: number; polymarket: number };
+}
+
+export async function fetchPolitics(): Promise<PoliticsData> {
+  return apiFetch<PoliticsData>("/api/politics");
+}
+
+export async function fetchTrendingSearches(): Promise<{ trending: { query: string; count: number }[] }> {
+  return apiFetch<{ trending: { query: string; count: number }[] }>("/api/events/search/trending");
+}
+

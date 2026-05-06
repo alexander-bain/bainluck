@@ -56,6 +56,7 @@ export interface PageViewParams {
     | 'wrestlemania'
     | 'weather'
     | 'economics'
+    | 'politics'
     | 'team';
   page_path: string;
   page_title: string;
@@ -238,7 +239,8 @@ export interface ScrollDepthParams {
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'wrestlemania'
     | 'weather'
-    | 'economics';
+    | 'economics'
+    | 'politics';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -258,7 +260,8 @@ export interface TimeOnPageParams {
     | 'sport_hub' | 'sport_league' | 'sport_event'
     | 'wrestlemania'
     | 'weather'
-    | 'economics';
+    | 'economics'
+    | 'politics';
   seconds: number;
   page_path: string;
   event_id?: number;
