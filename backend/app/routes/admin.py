@@ -5834,6 +5834,36 @@ async def taxonomy_enrichment_status(
     }
 
 
+@router.get("/hook-coverage")
+async def hook_coverage(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hook description and image coverage stats for open markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from sqlalchemy import text
+    result = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(hook_description) AS with_hook,
+            COUNT(image_url) AS with_image,
+            MAX(hook_generated_at) AS latest_hook,
+            COUNT(*) FILTER (WHERE hook_generated_at > NOW() - INTERVAL '24 hours') AS hooks_last_24h
+        FROM futures_markets WHERE status = 'open'
+    """))
+    r = result.first()
+    return {
+        "total_open": r.total,
+        "with_hook": r.with_hook,
+        "with_image": r.with_image,
+        "hook_pct": round(r.with_hook / r.total * 100, 1) if r.total else 0,
+        "image_pct": round(r.with_image / r.total * 100, 1) if r.total else 0,
+        "latest_hook_generated_at": r.latest_hook.isoformat() if r.latest_hook else None,
+        "hooks_generated_last_24h": r.hooks_last_24h,
+    }
+
+
 # ── Duplicate event detection + merge ──────────────────────────────────
 
 
