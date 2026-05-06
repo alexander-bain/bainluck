@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
+import { format as fmtDate } from "date-fns";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { TeamProgressionResponse } from "@/lib/types";
@@ -467,9 +468,7 @@ export default function EventPage({ params }: EventPageProps) {
     for (let i = 0; i < tickCount; i++) {
       const t = new Date(start.getTime() + i * stepMin * 60000);
       t.setSeconds(0, 0);
-      ticks.push(
-        t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-      );
+      ticks.push(fmtDate(t, "h:mm a"));
     }
 
     return { start: start.toISOString(), end: end.toISOString(), ticks };
