@@ -281,11 +281,11 @@ function PlayerHeadshot({
         alt={name}
         width={size}
         height={size}
-        loading="lazy"
+        loading="eager"
+        fetchPriority="high"
         className="rounded-full object-cover flex-shrink-0"
         style={{ width: size, height: size }}
         onError={(e) => {
-          // On error, hide the image — initials already render as sibling
           (e.target as HTMLImageElement).style.display = "none";
         }}
       />
