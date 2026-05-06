@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { fetchTypeahead } from "@/lib/api";
+import { fetchTypeahead, fetchTrendingSearches } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
@@ -51,14 +51,18 @@ export default function SearchBar({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [trendingSearches, setTrendingSearches] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load recent searches on mount
+  // Load recent + trending searches on mount
   useEffect(() => {
     setRecentSearches(getRecentSearches());
+    fetchTrendingSearches()
+      .then((data) => setTrendingSearches(data.trending.map((t) => t.query).slice(0, 5)))
+      .catch(() => {});
   }, []);
 
   // Cmd+K / Ctrl+K global shortcut
@@ -231,7 +235,7 @@ export default function SearchBar({
   const handleFocus = () => {
     if (suggestions.length > 0) {
       setIsOpen(true);
-    } else if (!query && recentSearches.length > 0) {
+    } else if (!query && (recentSearches.length > 0 || trendingSearches.length > 0)) {
       setShowRecent(true);
       setSelectedIndex(-1);
     }
@@ -274,31 +278,56 @@ export default function SearchBar({
         </div>
       </div>
 
-      {/* Recent searches dropdown */}
-      {showRecent && !isOpen && recentSearches.length > 0 && (
+      {/* Recent + trending searches dropdown */}
+      {showRecent && !isOpen && (recentSearches.length > 0 || trendingSearches.length > 0) && (
         <div
           ref={dropdownRef}
           className="absolute z-50 w-full min-w-[360px] sm:min-w-[480px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
-          <div className="px-4 py-2 text-xs text-text-muted font-medium uppercase tracking-wide">
-            Recent
-          </div>
-          {recentSearches.map((s, idx) => (
-            <button
-              key={s}
-              onClick={() => {
-                setQuery(s);
-                setShowRecent(false);
-              }}
-              onMouseEnter={() => setSelectedIndex(idx)}
-              className={`w-full text-left px-4 py-2 flex items-center gap-3 text-sm transition-colors ${
-                idx === selectedIndex ? "bg-surface-elevated" : "hover:bg-surface-elevated/50"
-              }`}
-            >
-              <span className="text-text-muted text-xs">{"\u{1F552}"}</span>
-              <span className="text-text-primary">{s}</span>
-            </button>
-          ))}
+          {recentSearches.length > 0 && (
+            <>
+              <div className="px-4 py-2 text-xs text-text-muted font-medium uppercase tracking-wide">
+                Recent
+              </div>
+              {recentSearches.map((s, idx) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setQuery(s);
+                    setShowRecent(false);
+                  }}
+                  onMouseEnter={() => setSelectedIndex(idx)}
+                  className={`w-full text-left px-4 py-2 flex items-center gap-3 text-sm transition-colors ${
+                    idx === selectedIndex ? "bg-surface-elevated" : "hover:bg-surface-elevated/50"
+                  }`}
+                >
+                  <span className="text-text-muted text-xs">{"\u{1F552}"}</span>
+                  <span className="text-text-primary">{s}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {trendingSearches.length > 0 && (
+            <>
+              <div className="px-4 py-2 text-xs text-text-muted font-medium uppercase tracking-wide border-t border-surface-border">
+                Trending
+              </div>
+              <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                {trendingSearches.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      setQuery(t);
+                      setShowRecent(false);
+                    }}
+                    className="px-3 py-1 text-xs font-medium rounded-full bg-surface-elevated text-text-secondary hover:text-text-primary hover:bg-surface-border transition-colors"
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 

@@ -1257,7 +1257,36 @@ async def typeahead_search(
     result: dict = {"suggestions": suggestions, "query": q}
     if did_you_mean:
         result["did_you_mean"] = did_you_mean
+
+    # Track query for trending searches (fire-and-forget, no PII)
+    try:
+        from app.tasks.redis_state import get_redis_client
+        rc = get_redis_client()
+        normalized = q.strip().lower()
+        if len(normalized) >= 3:
+            rc.zincrby("search:trending:24h", 1, normalized)
+            rc.expire("search:trending:24h", 86400)
+    except Exception:
+        pass
+
     return result
+
+
+@router.get("/search/trending")
+async def get_trending_searches():
+    """Return top 5 search queries from the last 24 hours."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+        rc = get_redis_client()
+        top = rc.zrevrange("search:trending:24h", 0, 4, withscores=True)
+        return {
+            "trending": [
+                {"query": q.decode() if isinstance(q, bytes) else q, "count": int(score)}
+                for q, score in top
+            ]
+        }
+    except Exception:
+        return {"trending": []}
 
 
 @router.get("/search-suggestions")
