@@ -319,6 +319,22 @@ export default function MarketMap({
           <span>{axisLabels.mid}</span>
           <span>{axisLabels.right}</span>
         </div>
+        {/* Zero label positioned at actual zero on the rail */}
+        {zeroPct != null && zeroPct > 5 && zeroPct < 95 && Math.abs(zeroPct - 50) > 3 && (
+          <span
+            style={{
+              position: "absolute",
+              left: `${zeroPct}%`,
+              top: 68,
+              transform: "translateX(-50%)",
+              fontSize: 11,
+              fontWeight: 950,
+              color: "#64748b",
+            }}
+          >
+            0
+          </span>
+        )}
       </div>
 
       {/* Hover/tap popover — detail ladder, NOT constrained to card width */}
