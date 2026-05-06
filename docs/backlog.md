@@ -1128,6 +1128,10 @@ iOS Discover (`DiscoverView.swift`) has category chips, event/futures cards, gue
 
 ---
 
+### D-11. Hook Description Coverage — ACTIVE (May 5)
+Only **6% of feed markets** have LLM-generated context snippets (`hook_description`). Enrichment task now prioritizes missing hooks over stale regenerations, runs 12x daily at 200/batch (was 8x at 100). Goal: >80% of feed-visible markets have hooks within 48h. Monitor via: `curl api.bainluck.com/api/feed?limit=200 | python3 -c "..."` (count hook_description non-null).
+**Files:** `backend/app/tasks/enrich_markets.py`, `backend/app/tasks/__init__.py`
+
 ### D-4a. Full Click/View Tracking (REMAINING)
 `user_interactions` table logging event/futures detail views. Backend middleware for zero-frontend-work implicit tracking. View-weighted sport affinities.
 **Files:** New migration, `backend/app/main.py`, `backend/app/utils/personalization.py`

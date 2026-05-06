@@ -151,6 +151,7 @@ async def enrich_market_hooks(limit: int = 50):
     blurbs = _load_polymarket_blurbs()
 
     async with get_task_session() as session:
+        # Prioritize markets missing hooks entirely over stale regenerations
         result = await session.execute(
             select(FuturesMarket)
             .where(
@@ -162,10 +163,11 @@ async def enrich_market_hooks(limit: int = 50):
                 ),
             )
             .order_by(
+                FuturesMarket.hook_description.is_(None).desc(),
                 FuturesMarket.market_tier.asc().nullslast(),
                 FuturesMarket.resolution_date.asc().nullslast(),
             )
-            .limit(limit * 2)
+            .limit(limit * 3)
         )
         candidates = result.scalars().all()
 

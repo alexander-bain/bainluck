@@ -2,6 +2,16 @@
 
 ## May 6, 2026
 
+### Discover Feed Design Polish (VP-of-Design Pass)
+- ✅ **Guess density 50% → 20%** — Every 5th card instead of every 2nd. Content-first feed.
+- ✅ **Today's Challenge UX** — Removed confusing inline expansion + auto-scroll. Now passive progress tracker that counts feed guesses.
+- ✅ **Source badges removed** — KALSHI/POLYMARKET labels meant nothing to casual users.
+- ✅ **Movement badge threshold** — Suppressed <2% moves (noise, not signal).
+- ✅ **"Show all N outcomes"** — Shows "Show more" when N > 10 (less intimidating).
+- ✅ **Redundant resolution dates** — Suppressed "Resolves May 14" when outcomes are already date-named.
+- ✅ **Imageless card treatment** — Shorter hero (h-32) with category emoji watermark for visual character.
+- ✅ **Hook enrichment boost** — Prioritize missing hooks, 12x daily at 200/batch (was 8x at 100). Coverage was 6%.
+
 ### Mixed Bag — 6 Items Shipped (Discover, Search, Frontend, Matching)
 
 **Frontend Fixes:**
