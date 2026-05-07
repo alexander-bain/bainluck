@@ -157,6 +157,8 @@ struct MainTabView: View {
                     WeatherView()
                 case .economics:
                     EconomicsView()
+                case .eiRankings:
+                    Text("EI Rankings")
                 case .about:
                     Text("About")
                 }
