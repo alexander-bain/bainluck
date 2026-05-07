@@ -145,6 +145,7 @@ _STOPWORDS = {
 class MarketQuality:
     quality_class: QualityClass
     family_key: str
+    story_key: str | None = None
     reasons: list[str] = field(default_factory=list)
     is_ladder_or_bucket: bool = False
     is_narrow_range: bool = False
@@ -196,6 +197,33 @@ def _has_named_salient_entity(name: str) -> bool:
     return len(filtered) >= 2 or bool(
         _COMPELLING_RE.search(name) or _OUTBREAK_RE.search(name)
     )
+
+
+def _story_key(name: str, category: str) -> str | None:
+    lower = name.lower()
+
+    if re.search(
+        r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza)\b",
+        lower,
+    ):
+        return "story:middle_east_conflict"
+
+    if "russia" in lower and "ukraine" in lower:
+        return "story:russia_ukraine"
+
+    if "2028" in lower and re.search(r"\b(president|presidential|nominee|election)\b", lower):
+        return "story:us_2028_election"
+
+    if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
+        return "story:macro_rates"
+
+    if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):
+        return "story:ai"
+
+    if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):
+        return "story:drake_iceman"
+
+    return None
 
 
 def classify_market_quality(
@@ -280,10 +308,12 @@ def classify_market_quality(
         family_key = re.sub(r"<num>", "<num>", family_key)
     if not family_key:
         family_key = "unknown"
+    story_key = _story_key(name, category)
 
     return MarketQuality(
         quality_class=quality,
         family_key=family_key,
+        story_key=story_key,
         reasons=reasons,
         is_ladder_or_bucket=ladder_or_bucket,
         is_narrow_range=is_narrow,
@@ -351,4 +381,48 @@ def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
                 continue
             counts[family] = count + 1
         kept.append(item)
+    return kept
+
+
+def diversify_quality_families(
+    items: list[dict],
+    *,
+    exact_family_cap: int = 1,
+    story_family_cap: int = 5,
+) -> list[dict]:
+    """Cap repeated market/story families after scoring.
+
+    This is intentionally separate from low-quality suppression: a hot story
+    can still have several cards, but not enough near-duplicates to consume the
+    whole first screen.
+    """
+    sorted_items = sorted(
+        items,
+        key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
+        reverse=True,
+    )
+    exact_counts: dict[str, int] = {}
+    story_counts: dict[str, int] = {}
+    kept: list[dict] = []
+
+    for item in sorted_items:
+        family = item.get("_quality_family_key")
+        story = item.get("_quality_story_key")
+
+        if family and exact_family_cap > 0:
+            count = exact_counts.get(family, 0)
+            if count >= exact_family_cap:
+                continue
+
+        if story and story_family_cap > 0:
+            count = story_counts.get(story, 0)
+            if count >= story_family_cap:
+                continue
+
+        if family:
+            exact_counts[family] = exact_counts.get(family, 0) + 1
+        if story:
+            story_counts[story] = story_counts.get(story, 0) + 1
+        kept.append(item)
+
     return kept

@@ -4,6 +4,7 @@ from app.utils.feed_market_quality import (
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
+    diversify_quality_families,
     quality_score_adjustment,
 )
 from app.utils.futures_highlights import compute_futures_highlight
@@ -139,6 +140,23 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "compelling"
         assert "compelling_topic" in quality.reasons
+        assert quality.story_key == "story:middle_east_conflict"
+
+    def test_story_key_groups_related_variants(self):
+        examples = [
+            "Iran closes its airspace by...?",
+            "Israel x Iran permanent peace deal by...?",
+            "Iran agrees to surrender enriched uranium stockpile by...?",
+            "Will the Iranian regime fall by May 31?",
+            "US-Iran nuclear deal?",
+        ]
+
+        story_keys = {
+            classify_market_quality(name, sport_category="geopolitics").story_key
+            for name in examples
+        }
+
+        assert story_keys == {"story:middle_east_conflict"}
 
     def test_numeric_outcome_ladder_detected(self):
         quality = classify_market_quality(
@@ -231,3 +249,59 @@ class TestLowQualityFamilyCap:
         capped = cap_low_quality_families(items, cap=1)
 
         assert len(capped) == 2
+
+
+class TestQualityFamilyDiversity:
+    def test_diversify_caps_exact_duplicate_families(self):
+        items = [
+            {
+                "score": 100,
+                "_quality_class": "compelling",
+                "_quality_family_key": "russia x ukraine ceasefire by <month> <num> <num>",
+                "_quality_story_key": "story:russia_ukraine",
+            },
+            {
+                "score": 95,
+                "_quality_class": "compelling",
+                "_quality_family_key": "russia x ukraine ceasefire by <month> <num> <num>",
+                "_quality_story_key": "story:russia_ukraine",
+            },
+            {
+                "score": 94,
+                "_quality_class": "normal",
+                "_quality_family_key": "pga tour top 20",
+                "_quality_story_key": None,
+            },
+        ]
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        assert len(capped) == 2
+        assert capped[0]["score"] == 100
+        assert any(i["_quality_family_key"] == "pga tour top 20" for i in capped)
+
+    def test_diversify_caps_hot_story_without_removing_all_cards(self):
+        items = [
+            {
+                "score": 100 - i,
+                "_quality_class": "compelling",
+                "_quality_family_key": f"middle east variant {i}",
+                "_quality_story_key": "story:middle_east_conflict",
+            }
+            for i in range(6)
+        ]
+        items.append({
+            "score": 80,
+            "_quality_class": "compelling",
+            "_quality_family_key": "openai valuation",
+            "_quality_story_key": "story:ai",
+        })
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=3)
+
+        middle_east = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:middle_east_conflict"
+        ]
+        assert len(middle_east) == 3
+        assert any(i["_quality_story_key"] == "story:ai" for i in capped)

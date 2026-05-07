@@ -40,6 +40,7 @@ from app.utils.feed_market_quality import (
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
+    diversify_quality_families,
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
 from app.utils.name_normalization import names_match as _team_name_matches
@@ -1233,6 +1234,7 @@ async def _score_futures(
             "_sort_time": sort_time,
             "_quality_class": quality.quality_class,
             "_quality_family_key": quality.family_key,
+            "_quality_story_key": quality.story_key,
         }
 
         if p_result.is_personalized:
@@ -1244,9 +1246,15 @@ async def _score_futures(
         scored_items.append(item)
 
     scored_items = cap_low_quality_families(scored_items, cap=1)
+    scored_items = diversify_quality_families(
+        scored_items,
+        exact_family_cap=1,
+        story_family_cap=5,
+    )
     for item in scored_items:
         item.pop("_quality_class", None)
         item.pop("_quality_family_key", None)
+        item.pop("_quality_story_key", None)
 
     return scored_items
 
