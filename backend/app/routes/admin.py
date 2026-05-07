@@ -3795,6 +3795,7 @@ async def _golf_compliance(db: AsyncSession) -> dict:
             WHERE fm.source = 'datagolf'
               AND fm.status = 'open'
               AND fm.external_id LIKE :win_suffix
+              AND fm.status != 'resolved'
             ORDER BY fm.name
         """), {"win_suffix": "%:win"})
         dg_tournaments = result.fetchall()
