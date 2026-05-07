@@ -131,6 +131,17 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "compelling"
         assert "health_outbreak" in quality.reasons
+        assert quality_score_adjustment(quality) >= 24
+
+    def test_sports_personnel_story_gets_extra_boost(self):
+        quality = classify_market_quality(
+            "Will Mike Vrabel be fired before the Patriots' next game?",
+            sport_category="football",
+        )
+
+        assert quality.quality_class == "compelling"
+        assert "sports_personnel_story" in quality.reasons
+        assert quality_score_adjustment(quality) >= 22
 
     def test_major_geopolitics_not_suppressed(self):
         quality = classify_market_quality(

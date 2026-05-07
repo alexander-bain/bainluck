@@ -331,7 +331,12 @@ def classify_market_quality(
 def quality_score_adjustment(quality: MarketQuality) -> int:
     """Score adjustment applied after highlight scoring."""
     if quality.quality_class == "compelling":
-        return 12
+        boost = 12
+        if "health_outbreak" in quality.reasons:
+            boost += 12
+        if "sports_personnel_story" in quality.reasons:
+            boost += 10
+        return boost
     if quality.quality_class == "low_quality":
         penalty = -35
         if quality.is_narrow_range:
