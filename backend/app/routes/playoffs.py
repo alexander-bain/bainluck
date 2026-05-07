@@ -2411,7 +2411,7 @@ async def get_playoff_grid(
         select(FuturesMarket)
         .where(
             market_filter,
-            FuturesMarket.status.in_(("open", "closed")),
+            FuturesMarket.status.in_(("open", "closed", "resolved")),
         )
         .options(selectinload(FuturesMarket.outcomes))
     )
@@ -2492,7 +2492,7 @@ async def get_playoff_grid(
             continue
 
         for outcome in market.outcomes:
-            if outcome.last_updated and outcome.last_updated < _stale_cutoff:
+            if market.status != "resolved" and outcome.last_updated and outcome.last_updated < _stale_cutoff:
                 _stale_skipped += 1
                 continue
             if outcome.current_probability is not None:
@@ -2505,7 +2505,7 @@ async def get_playoff_grid(
                 prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
             else:
                 continue
-            if prob <= 0 or prob >= 1.0:
+            if market.status != "resolved" and (prob <= 0 or prob >= 1.0):
                 continue
             # Skip non-team outcome names (thresholds, dates, generic)
             oname = outcome.name or ""
