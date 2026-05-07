@@ -71,7 +71,7 @@ nonisolated struct FOMCMeeting: Decodable, Identifiable, Sendable {
     var id: String { date }
     let date: String
     let mo: String
-    let dist: [[AnyCodable]]
+    let dist: [[WeatherAnyCodable]]
     let resolved: Bool
     let marketId: Int?
     let sortKey: Int?
@@ -86,7 +86,7 @@ nonisolated struct EconomicsInflationTheme: Decodable, Sendable {
 nonisolated struct CPIRelease: Decodable, Identifiable, Sendable {
     var id: String { mo }
     let mo: String
-    let brackets: [[AnyCodable]]?
+    let brackets: [[WeatherAnyCodable]]?
     let upcoming: Bool?
     let peakIs: String?
     let marketId: Int?
@@ -106,7 +106,7 @@ nonisolated struct EconomicsMarket: Decodable, Identifiable, Sendable {
     let marketId: Int?
 }
 
-nonisolated struct AnyCodable: Decodable, Sendable {
+nonisolated struct WeatherAnyCodable: Decodable, Sendable {
     let value: Any
 
     var doubleValue: Double? {
