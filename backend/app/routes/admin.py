@@ -3782,67 +3782,85 @@ async def tier1_source_compliance(
 
 
 async def _golf_compliance(db: AsyncSession) -> dict:
-    """Check PGA compliance: each active tournament should have DataGolf + Kalshi + Polymarket."""
+    """PGA compliance: active PGA tournament must have all market types from all 3 sources."""
     from sqlalchemy import text as _text
 
+    _REQUIRED_TYPES = ["win", "top_5", "top_10", "top_20", "make_cut"]
+    _REQUIRED_SOURCES = ["datagolf", "kalshi", "polymarket"]
+
     try:
+        # Find active PGA tournaments from DataGolf (tour = 'pga', status != 'resolved')
         result = await db.execute(_text("""
-            SELECT
-                fm.name,
-                fm.external_id,
-                COALESCE(fm.market_metadata->>'tour', 'unknown') AS tour
+            SELECT DISTINCT
+                fm.market_metadata->>'datagolf_event_id' AS event_id,
+                SPLIT_PART(fm.name, ' - ', 1) AS tournament_name
             FROM futures_markets fm
             WHERE fm.source = 'datagolf'
               AND fm.status IN ('open', 'closed')
-              AND fm.external_id LIKE :win_suffix
-            ORDER BY fm.name
-        """), {"win_suffix": "%:win"})
-        dg_tournaments = result.fetchall()
+              AND COALESCE(fm.market_metadata->>'tour', '') = 'pga'
+            ORDER BY tournament_name
+        """))
+        pga_tournaments = result.fetchall()
 
-        golf_events = []
-        for t in dg_tournaments:
-            tour = t.tour or "unknown"
-            event_name = t.name.replace(" - Winner", "").replace(" - Win", "").strip()
-            search_term = event_name.split(" - ")[0].split("(")[0].strip()[:30].lower()
+        tournaments = []
+        for t in pga_tournaments:
+            event_id = t.event_id
+            name = t.tournament_name
+            search_term = name.strip()[:30].lower()
             if not search_term:
                 continue
 
-            kalshi_result = await db.execute(_text(
-                "SELECT COUNT(*) FROM futures_markets"
-                " WHERE source = 'kalshi' AND llm_sport_category = 'golf'"
-                " AND status = 'open' AND lower(name) LIKE :pattern"
-            ), {"pattern": f"%{search_term}%"})
-            has_kalshi = kalshi_result.scalar() > 0
+            by_source = {}
+            for source in _REQUIRED_SOURCES:
+                if source == "datagolf":
+                    type_result = await db.execute(_text(
+                        "SELECT SPLIT_PART(external_id, ':', 4) AS mtype"
+                        " FROM futures_markets"
+                        " WHERE source = 'datagolf' AND status IN ('open', 'closed')"
+                        "   AND market_metadata->>'datagolf_event_id' = :eid"
+                    ), {"eid": event_id})
+                else:
+                    type_result = await db.execute(_text(
+                        "SELECT CASE"
+                        "   WHEN lower(name) LIKE :win THEN 'win'"
+                        "   WHEN lower(name) LIKE :cut THEN 'make_cut'"
+                        "   WHEN lower(name) LIKE :t5 THEN 'top_5'"
+                        "   WHEN lower(name) LIKE :t10 THEN 'top_10'"
+                        "   WHEN lower(name) LIKE :t20 THEN 'top_20'"
+                        "   ELSE 'other' END AS mtype"
+                        " FROM futures_markets"
+                        " WHERE source = :source AND llm_sport_category = 'golf'"
+                        "   AND status = 'open' AND lower(name) LIKE :pattern"
+                    ), {
+                        "source": source, "pattern": f"%{search_term}%",
+                        "win": "%winner%", "cut": "%make%cut%",
+                        "t5": "%top 5%", "t10": "%top 10%", "t20": "%top 20%",
+                    })
+                found_types = {row.mtype for row in type_result.fetchall()} - {"other"}
+                by_source[source] = sorted(found_types)
 
-            poly_result = await db.execute(_text(
-                "SELECT COUNT(*) FROM futures_markets"
-                " WHERE source = 'polymarket' AND llm_sport_category = 'golf'"
-                " AND status = 'open' AND lower(name) LIKE :pattern"
-            ), {"pattern": f"%{search_term}%"})
-            has_polymarket = poly_result.scalar() > 0
+            missing = {}
+            for source in _REQUIRED_SOURCES:
+                missing_types = [mt for mt in _REQUIRED_TYPES if mt not in by_source.get(source, [])]
+                if missing_types:
+                    missing[source] = missing_types
 
-            missing = []
-            if not has_kalshi:
-                missing.append("kalshi")
-            if not has_polymarket:
-                missing.append("polymarket")
-
-            golf_events.append({
-                "tournament": event_name,
-                "tour": tour,
-                "datagolf": True,
-                "kalshi": has_kalshi,
-                "polymarket": has_polymarket,
-                "compliant": not missing,
+            tournaments.append({
+                "tournament": name,
+                "event_id": event_id,
+                "by_source": by_source,
                 "missing": missing,
+                "compliant": not missing,
             })
 
-        compliant_count = sum(1 for e in golf_events if e["compliant"])
+        compliant_count = sum(1 for t in tournaments if t["compliant"])
         return {
-            "total": len(golf_events),
+            "total": len(tournaments),
             "compliant": compliant_count,
-            "compliance_pct": round(compliant_count / max(len(golf_events), 1) * 100, 1),
-            "tournaments": golf_events,
+            "compliance_pct": round(compliant_count / max(len(tournaments), 1) * 100, 1),
+            "required_types": _REQUIRED_TYPES,
+            "required_sources": _REQUIRED_SOURCES,
+            "tournaments": tournaments,
         }
     except Exception as e:
         return {"error": str(e), "total": 0, "compliant": 0, "compliance_pct": 0, "tournaments": []}
