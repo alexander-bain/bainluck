@@ -115,13 +115,11 @@ Full reports: `Manus/audit_results/2026-05-06/`. 9 modules completed.
 
 **Still open (2 items):**
 
-#### NBA/NHL Division column missing from grids
-Make Playoffs column now shows (staleness fix + SQL filter optimization). Division column still missing — resolved market backfill runs but doesn't find them. Next step: trace the backfill query with the specific tickers (KXNBAATLANTIC-25, KXNHLATLANTIC-26) to find where they drop out.
-**Files:** `backend/app/routes/playoffs.py` (resolved backfill ~line 2575), `backend/app/utils/playoff_grid.py`
+#### ~~NBA/NHL Division column missing from grids~~ — FIXED (May 7)
+Three root causes fixed: (1) `is_winner` check was always True (defaults False, never None), (2) resolved ticker-prefixed markets excluded from main query, (3) 7-day stale cutoff too aggressive. All 4 columns verified for NBA (30 teams each) and NHL (32 teams each), matching Manus ground truth.
 
-#### Chart/hero probability mismatch on completed soccer events
-Completed events (e.g., Bayern 1-1 PSG) show stale pre-game betting odds (39.9%) instead of final result. The `win_probability_sources` only has `betting` — no resolved probability is written for non-sportsbook events. Broader fix needed: `transition_event_statuses` should write final probabilities based on score outcome for all completed events, not just those with Kalshi/PM markets.
-**Files:** `backend/app/tasks/espn_sync.py` (status transition), `backend/app/utils/aggregation.py`
+#### ~~Chart/hero probability mismatch on completed events~~ — FIXED (May 7)
+Added `final_result` source to `win_probability_sources` with weight 5.0. Written on all game completions: home win → 1.0, away win → 0.0, draw/tie → 0.5. Dominates stale sources in aggregation.
 
 ### 0e-3. GA4 Console Configuration
 
@@ -252,17 +250,9 @@ Not code — configuration in the GA4 property (analytics.google.com):
 **Files:** `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### 1c. Sport Key Extraction Validation
+### ~~1c. Sport Key Extraction Validation~~ — FIXED (May 7)
 
-**Root cause:** When sport key extraction fails from a Kalshi market, the code falls back to generic time-based matching with NO sport filtering. This can cause cross-sport mismatches.
-
-**Fix:** Always extract sport key from ticker in Pass 1. Add sport filtering to the generic fallback in `_find_event_by_sport_and_time()`. Add stats counter `sport_key_extraction_failed`.
-
-**Expected impact:** +3-5% link rate, eliminates cross-sport mismatches.
-
-**Files:** `backend/app/tasks/prediction_market_matching.py`
-**Effort:** 1-2 hours
-**Parallel Safety:** Yellow
+Added -5 score penalty when sport_prefix is None. Reject matches below score 10 without sport validation. Counter `sport_key_extraction_failed` already existed.
 
 ### macOS Polish (7 items)
 
