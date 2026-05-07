@@ -37,6 +37,7 @@ from app.utils import (
 from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_market_quality import (
+    apply_explanation_quality_score,
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
@@ -1072,6 +1073,12 @@ async def _score_futures(
             continue
 
         base_score = apply_quality_score(highlight_result.score, quality)
+        base_score = apply_explanation_quality_score(
+            base_score,
+            hook_description=market.hook_description,
+            headline=highlight_result.primary_reason,
+            quality=quality,
+        )
         if quality.reasons:
             highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 

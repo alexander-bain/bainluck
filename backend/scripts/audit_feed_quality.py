@@ -21,16 +21,10 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.utils.feed_market_quality import classify_market_quality  # noqa: E402
-
-
-GENERIC_REASONS = {
-    "Resolving soon",
-    "Resolving this month",
-    "Multi-source",
-    None,
-    "",
-}
+from app.utils.feed_market_quality import (  # noqa: E402
+    classify_market_quality,
+    has_specific_explanation,
+)
 
 
 def _load_ground_truth_names() -> set[str]:
@@ -84,8 +78,12 @@ def main() -> int:
             outcome_names=[o.get("name") for o in outcomes if o.get("name")],
         )
         hook = data.get("hook_description")
-        reason = item.get("headline") or item.get("reason")
-        explanation_ok = bool(hook) or reason not in GENERIC_REASONS
+        headline = item.get("headline")
+        explanation_ok = has_specific_explanation(
+            hook_description=hook,
+            headline=headline,
+            quality=quality,
+        )
         classified.append({
             "rank": idx,
             "score": item.get("score"),

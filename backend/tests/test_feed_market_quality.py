@@ -1,10 +1,13 @@
 """Tests for Discover futures market quality classification."""
 
 from app.utils.feed_market_quality import (
+    apply_explanation_quality_score,
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
     diversify_quality_families,
+    has_specific_explanation,
+    has_strong_hook,
     quality_score_adjustment,
 )
 from app.utils.futures_highlights import compute_futures_highlight
@@ -245,6 +248,57 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "low_quality"
         assert apply_quality_score(100, quality) <= 70
+
+    def test_strong_hook_boosts_score(self):
+        quality = classify_market_quality(
+            "Will GameStop acquire eBay?",
+            sport_category="economics",
+        )
+        hook = "A surprise acquisition would reshape the meme-stock story and signal a much bigger retail strategy."
+
+        assert has_strong_hook(hook)
+        assert apply_explanation_quality_score(
+            88,
+            hook_description=hook,
+            headline="Multi-source",
+            quality=quality,
+        ) == 93
+
+    def test_generic_explanation_caps_normal_market(self):
+        quality = classify_market_quality(
+            "PGA Tour: Truist Championship Top 20",
+            sport_category="golf",
+        )
+
+        assert not has_specific_explanation(
+            hook_description=None,
+            headline="New favorite",
+            quality=quality,
+        )
+        assert apply_explanation_quality_score(
+            94,
+            hook_description=None,
+            headline="New favorite",
+            quality=quality,
+        ) == 90
+
+    def test_health_outbreak_counts_as_specific_without_hook(self):
+        quality = classify_market_quality(
+            "Hantavirus pandemic in 2026?",
+            sport_category="health",
+        )
+
+        assert has_specific_explanation(
+            hook_description=None,
+            headline="Multi-source",
+            quality=quality,
+        )
+        assert apply_explanation_quality_score(
+            100,
+            hook_description=None,
+            headline="Multi-source",
+            quality=quality,
+        ) == 100
 
 
 class TestLowQualityFamilyCap:

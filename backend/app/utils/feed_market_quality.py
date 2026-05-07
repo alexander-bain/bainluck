@@ -140,6 +140,19 @@ _STOPWORDS = {
     "over", "under", "than", "next", "this", "month", "week", "day",
 }
 
+_GENERIC_HEADLINES = {
+    None,
+    "",
+    "Big odds movement",
+    "Odds moving",
+    "Odds shifted",
+    "Big shift from opening",
+    "New favorite",
+    "Resolving soon",
+    "Resolving this month",
+    "Multi-source",
+}
+
 
 @dataclass(frozen=True)
 class MarketQuality:
@@ -368,6 +381,66 @@ def apply_quality_score(raw_score: float, quality: MarketQuality) -> float:
 
     ceiling = 94 if quality.has_named_salient_entity else 88
     return min(ceiling, adjusted)
+
+
+def has_strong_hook(hook_description: str | None) -> bool:
+    """Return whether a hook is specific enough to improve a feed card."""
+    hook = (hook_description or "").strip()
+    if len(hook) < 48:
+        return False
+    words = re.findall(r"\b[\w'-]+\b", hook)
+    if len(words) < 8:
+        return False
+    weak_phrases = (
+        "this market is interesting",
+        "this is interesting",
+        "prediction market",
+    )
+    return not any(phrase in hook.lower() for phrase in weak_phrases)
+
+
+def has_specific_explanation(
+    *,
+    hook_description: str | None,
+    headline: str | None,
+    quality: MarketQuality,
+) -> bool:
+    """Return whether a card has enough explanation to stand on its own."""
+    if has_strong_hook(hook_description):
+        return True
+    if "health_outbreak" in quality.reasons or "sports_personnel_story" in quality.reasons:
+        return True
+    return headline not in _GENERIC_HEADLINES
+
+
+def apply_explanation_quality_score(
+    raw_score: float,
+    *,
+    hook_description: str | None,
+    headline: str | None,
+    quality: MarketQuality,
+) -> float:
+    """Boost strong hooks and cap weakly explained cards.
+
+    The market can still appear without a hook, but generic "Big movement" or
+    "New favorite" labels should not tie richly contextualized cards unless the
+    topic is self-explanatory enough to carry itself.
+    """
+    if has_strong_hook(hook_description):
+        return min(100, raw_score + 5)
+
+    if has_specific_explanation(
+        hook_description=hook_description,
+        headline=headline,
+        quality=quality,
+    ):
+        return raw_score
+
+    if quality.quality_class == "compelling":
+        return min(96, raw_score)
+    if quality.quality_class == "normal":
+        return min(90, raw_score)
+    return min(65, raw_score)
 
 
 def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
