@@ -177,50 +177,79 @@ async def get_detailed_stats(request: Request):
     identity = _identity_filter(user_id, session_id)
 
     async with get_session() as session:
-        # All predictions with market info
-        result = await session.execute(
+        # 1. Totals (SQL)
+        totals_result = await session.execute(
+            select(
+                func.count(UserPrediction.id).label("total"),
+                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
+            ).where(identity)
+        )
+        totals = totals_result.one()
+        total = totals.total or 0
+        correct = totals.correct or 0
+        accuracy = correct / total if total > 0 else 0
+
+        # 2. Category breakdown (SQL)
+        cat_result = await session.execute(
+            select(
+                func.coalesce(FuturesMarket.llm_sport_category, "other").label("cat"),
+                func.count(UserPrediction.id).label("total"),
+                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
+            )
+            .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
+            .where(identity)
+            .group_by(func.coalesce(FuturesMarket.llm_sport_category, "other"))
+        )
+        by_category = {}
+        for r in cat_result.all():
+            by_category[r.cat] = {
+                "total": r.total, "correct": r.correct,
+                "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0,
+            }
+
+        # 3. 14-day trend (SQL)
+        from sqlalchemy import Date
+        trend_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        day_col = cast(UserPrediction.created_at, Date)
+        trend_result = await session.execute(
+            select(
+                day_col.label("day"),
+                func.count(UserPrediction.id).label("total"),
+                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
+            )
+            .where(identity, UserPrediction.created_at >= trend_cutoff)
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+        trend = [
+            {"date": r.day.isoformat(), "total": r.total, "correct": r.correct,
+             "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0}
+            for r in trend_result.all()
+        ]
+
+        # 4. Streaks (load booleans only, capped)
+        streak_result = await session.execute(
+            select(UserPrediction.correct)
+            .where(identity)
+            .order_by(desc(UserPrediction.created_at))
+            .limit(1000)
+        )
+        preds_ordered = [r.correct for r in streak_result.all()]
+        current_streak, best_streak = _compute_streaks(preds_ordered)
+
+        # 5. Badges
+        badges = _compute_badges(total, correct, best_streak)
+
+        # 6. Recent predictions (LIMIT 20)
+        recent_result = await session.execute(
             select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
             .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
             .where(identity)
             .order_by(desc(UserPrediction.created_at))
+            .limit(20)
         )
-        rows = result.all()
-
-        total = len(rows)
-        correct = sum(1 for r in rows if r[0].correct)
-        accuracy = correct / total if total > 0 else 0
-
-        preds_ordered = [r[0].correct for r in rows]
-        current_streak, best_streak = _compute_streaks(preds_ordered)
-
-        # Category breakdown
-        by_category: dict[str, dict] = defaultdict(lambda: {"total": 0, "correct": 0})
-        for pred, name, cat in rows:
-            c = cat or "other"
-            by_category[c]["total"] += 1
-            if pred.correct:
-                by_category[c]["correct"] += 1
-        for v in by_category.values():
-            v["accuracy"] = round(v["correct"] / v["total"], 3) if v["total"] > 0 else 0
-
-        # Trend (daily accuracy for last 14 days)
-        trend = []
-        now = datetime.now(timezone.utc)
-        for days_ago in range(13, -1, -1):
-            day = (now - timedelta(days=days_ago)).date()
-            day_preds = [r for r in rows if r[0].created_at and r[0].created_at.date() == day]
-            if day_preds:
-                day_total = len(day_preds)
-                day_correct = sum(1 for r in day_preds if r[0].correct)
-                trend.append({"date": day.isoformat(), "total": day_total, "correct": day_correct, "accuracy": round(day_correct / day_total, 3)})
-
-        # Badges
-        badges = _compute_badges(total, correct, best_streak)
-
-        # Recent predictions
-        recent = []
-        for pred, name, cat in rows[:20]:
-            recent.append({
+        recent = [
+            {
                 "market_name": name or f"Market #{pred.market_id}",
                 "category": cat,
                 "guess": pred.guess,
@@ -228,12 +257,14 @@ async def get_detailed_stats(request: Request):
                 "actual": round(float(pred.actual_probability) * 100),
                 "correct": pred.correct,
                 "created_at": pred.created_at.isoformat() if pred.created_at else None,
-            })
+            }
+            for pred, name, cat in recent_result.all()
+        ]
 
     return {
         "total": total, "correct": correct, "accuracy": round(accuracy, 3),
         "current_streak": current_streak, "best_streak": best_streak,
-        "by_category": dict(by_category),
+        "by_category": by_category,
         "trend": trend,
         "badges": badges,
         "recent": recent,

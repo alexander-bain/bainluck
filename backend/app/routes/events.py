@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select, and_, or_, func, case, cast, Integer, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -4108,6 +4108,7 @@ async def get_team_progression(
 async def get_event_odds_history(
     event_id: int,
     hours: int = Query(24, description="Hours of history to return"),
+    response: Response = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -4134,6 +4135,9 @@ async def get_event_odds_history(
     now = datetime.now(timezone.utc)
     is_finished = event.status in ("completed", "closed")
 
+    if response and is_finished:
+        response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=300"
+
     if is_finished:
         # Return snapshots up to 30 min after game end to exclude stale
         # prediction market data from hours/days after completion.
@@ -4149,7 +4153,7 @@ async def get_event_odds_history(
         query = select(OddsSnapshot).where(OddsSnapshot.event_id == event_id)
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
-        result = await db.execute(query.order_by(OddsSnapshot.captured_at))
+        result = await db.execute(query.order_by(OddsSnapshot.captured_at).limit(3000))
         cutoff = None
     else:
         # Include snapshots where:
