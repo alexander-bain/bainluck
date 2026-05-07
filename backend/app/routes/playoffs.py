@@ -2409,8 +2409,10 @@ async def get_playoff_grid(
     category_conditions = []
     if config.league_name_patterns:
         for pattern_str in config.league_name_patterns:
-            # Convert regex to SQL ILIKE: \bNBA\b → %NBA%
-            sql_pattern = re.sub(r"\\[bs]|\\s\+|[()]|\?", "", pattern_str)
+            # Convert regex to SQL ILIKE: \bNBA\b → %NBA%, \bPro\s+Basketball\b → %Pro%Basketball%
+            sql_pattern = re.sub(r"\\[bs]", "", pattern_str)
+            sql_pattern = re.sub(r"\\s\+|\\s\*", "%", sql_pattern)
+            sql_pattern = re.sub(r"[()?\[\]^$]", "", sql_pattern)
             sql_pattern = sql_pattern.replace("\\", "").strip()
             if sql_pattern:
                 category_conditions.append(
