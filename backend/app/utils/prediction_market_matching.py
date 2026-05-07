@@ -789,9 +789,11 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "det_mlb": "Tigers", "cle_mlb": "Guardians", "min_mlb": "Twins",
     "kc_mlb": "Royals", "stl_mlb": "Cardinals", "mil_mlb": "Brewers",
     "cin_mlb": "Reds", "pit_mlb": "Pirates", "sf_mlb": "Giants",
-    "sea_mlb": "Mariners", "oak": "Athletics", "col_mlb": "Rockies",
+    "sea_mlb": "Mariners", "oak": "Athletics", "ath": "Athletics",
+    "ath_mlb": "Athletics", "col_mlb": "Rockies",
     "tb_mlb": "Rays", "bal_mlb": "Orioles", "tor_mlb": "Blue Jays",
-    "mia_mlb": "Marlins", "was_mlb": "Nationals", "laa": "Angels",
+    "mia_mlb": "Marlins", "was_mlb": "Nationals", "wsh_mlb": "Nationals",
+    "laa": "Angels",
 }
 
 # Sport-specific abbreviation subsets (no suffix needed for primary sport)
@@ -941,11 +943,16 @@ def extract_matchup_with_ticker_fallback(
     """
     matchup = extract_matchup(market_name, external_id=external_id)
 
-    if matchup and matchup.format_type == "game_prop" and external_id:
+    if matchup and external_id:
         ticker_teams = extract_teams_from_ticker(external_id)
         if ticker_teams:
+            # Ticker-derived team names (mascots like "Athletics", "Phillies")
+            # are more reliable for ILIKE matching than Kalshi's market names
+            # which use abbreviations ("A's", "Chicago WS").
             matchup.team_a = ticker_teams[0]
             matchup.team_b = ticker_teams[1]
+            if matchup.format_type != "game_prop":
+                matchup.format_type = "ticker_parsed"
 
     if matchup:
         return matchup
@@ -989,10 +996,22 @@ _CITY_ABBREV_TO_NAME: dict[str, str] = {
 }
 
 
+_KALSHI_NAME_ALIASES: dict[str, list[str]] = {
+    "a's": ["Athletics"],
+    "chicago ws": ["White Sox"],
+    "los angeles a": ["Angels"],
+    "los angeles d": ["Dodgers"],
+    "ny yankees": ["Yankees"],
+    "ny mets": ["Mets"],
+    "chi cubs": ["Cubs"],
+}
+
+
 def _expand_team_search_terms(team: str) -> list[str]:
     """Generate multiple ILIKE-friendly search terms from a team name.
 
     Handles:
+    - Kalshi name aliases ("A's" → "Athletics", "Chicago WS" → "White Sox")
     - Abbreviated names ("WSH Capitals" → also search "Capitals")
     - City abbreviations ("MIN" → also search "Minnesota")
     - City-only names ("Pittsburgh" → already matches "Pittsburgh Pirates")
@@ -1000,6 +1019,12 @@ def _expand_team_search_terms(team: str) -> list[str]:
     Returns [original] plus expanded terms.
     """
     terms = [team]
+
+    # Kalshi-specific name aliases
+    alias_terms = _KALSHI_NAME_ALIASES.get(team.lower())
+    if alias_terms:
+        terms.extend(alias_terms)
+
     words = team.split()
 
     # Multi-word: extract mascot (last word) if long enough

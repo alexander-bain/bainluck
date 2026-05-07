@@ -1566,15 +1566,15 @@ class TestExtractTeamsFromTicker:
 class TestExtractMatchupWithTickerFallback:
     """Test the combined name + ticker matchup extraction."""
 
-    def test_name_extraction_preferred(self):
-        """When name works, should use it (not ticker)."""
+    def test_ticker_teams_preferred_over_name(self):
+        """When ticker parses, its team names should be used (more reliable for ILIKE)."""
         result = extract_matchup_with_ticker_fallback(
             "Celtics at Warriors",
             external_id="KXNBAGAME-26FEB19BOSGSW",
         )
         assert result is not None
-        assert result.format_type == "bare_matchup"
-        assert result.team_a == "Celtics"
+        assert result.format_type == "ticker_parsed"
+        assert result.team_a == "Celtics"  # ticker maps BOS → Celtics
 
     def test_ticker_fallback_for_generic_name(self):
         """When name is generic, fall back to ticker abbreviations."""
@@ -1613,7 +1613,7 @@ class TestExtractMatchupWithTickerFallback:
             external_id="KXNBAGAME-26FEB19BOSGSW",
         )
         assert result is not None
-        assert result.format_type == "bare_matchup"  # Name extraction worked
+        assert result.format_type == "ticker_parsed"  # Ticker teams preferred
 
     def test_nhl_ticker_fallback(self):
         """NHL ticker with generic name."""
@@ -2104,15 +2104,15 @@ class TestGamePropTickerFallback:
         assert matchup.team_a is not None
         assert matchup.team_b is not None
 
-    def test_bare_matchup_not_overridden(self):
-        """Non-game-prop formats should NOT have team names overridden."""
+    def test_ticker_overrides_name_teams(self):
+        """Ticker team names should override name-based teams for ILIKE reliability."""
         matchup = extract_matchup_with_ticker_fallback(
             "Phoenix vs Oklahoma City",
             external_id="KXNBAGAME-26APR22PHXOKC",
         )
         assert matchup is not None
-        assert matchup.format_type == "bare_matchup"
-        assert matchup.team_a == "Phoenix"
+        assert matchup.format_type == "ticker_parsed"
+        assert matchup.team_a == "Suns"  # ticker maps PHX → Suns
 
 
 # =============================================================================
