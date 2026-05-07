@@ -8,18 +8,18 @@ import { format as fmtDate } from "date-fns";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { TeamProgressionResponse } from "@/lib/types";
-const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false });
-const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
+const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
+const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
+const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
-// SeasonOutlook removed — Playoff Path card in RelatedFutures now uses LeagueContextService
 const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
-const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false });
+const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false, loading: ChartSkeleton });
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
-const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false });
+const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -311,21 +311,21 @@ export default function EventPage({ params }: EventPageProps) {
     isLoading: historyLoading,
     mutate: refreshHistory,
   } = useSWR(
-    event ? ["history", eventId] : null,
+    ["history", eventId],
     () => fetchEventHistory(eventId, 48),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
   // Game-level markets (totals spectrum, player props)
   const { data: gameMarkets } = useSWR(
-    event ? ["game-markets", eventId] : null,
+    ["game-markets", eventId],
     () => fetchGameMarkets(eventId),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
   // Team championship progression (playoff path from grid data — always available for both teams)
   const { data: teamProgression } = useSWR<TeamProgressionResponse>(
-    event ? ["team-progression", eventId] : null,
+    ["team-progression", eventId],
     () => fetchTeamProgression(eventId),
     { revalidateOnFocus: false, dedupingInterval: 300000 }
   );

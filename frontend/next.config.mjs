@@ -9,6 +9,9 @@ const nextConfig = {
     // production deploys.
     ignoreBuildErrors: true,
   },
+  experimental: {
+    optimizePackageImports: ['recharts', 'date-fns'],
+  },
   images: {
     remotePatterns: [
       {

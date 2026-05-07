@@ -93,14 +93,14 @@ app.add_middleware(
 
 CACHE_RULES: list[tuple[str, int]] = [
     ("/api/feed", 10),
-    ("/api/playoffs/", 60),
+    ("/api/playoffs/", 300),
     ("/api/sports", 120),
-    ("/api/golf", 60),
-    ("/api/weather", 60),
-    ("/api/economics", 60),
-    ("/api/politics", 60),
-    ("/api/entertainment", 60),
-    ("/api/categories", 60),
+    ("/api/golf", 300),
+    ("/api/weather", 300),
+    ("/api/economics", 120),
+    ("/api/politics", 120),
+    ("/api/entertainment", 120),
+    ("/api/categories", 120),
 ]
 
 
@@ -123,7 +123,7 @@ async def request_timing(request: Request, call_next):
         if "/admin" not in path:
             for prefix, max_age in CACHE_RULES:
                 if path.startswith(prefix):
-                    response.headers["Cache-Control"] = f"public, max-age={max_age}"
+                    response.headers["Cache-Control"] = f"public, max-age={max_age}, stale-while-revalidate=60"
                     break
             # Event detail: longer cache for completed events
             if path.startswith("/api/events/") and "/history" in path:

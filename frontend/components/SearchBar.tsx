@@ -57,11 +57,24 @@ export default function SearchBar({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load recent + trending searches on mount
+  // Load recent searches on mount; trending cached for 5 min
   useEffect(() => {
     setRecentSearches(getRecentSearches());
+    const TRENDING_CACHE_KEY = "bainluck:trending";
+    const TRENDING_TTL = 300_000;
+    const cached = sessionStorage.getItem(TRENDING_CACHE_KEY);
+    if (cached) {
+      try {
+        const { data, ts } = JSON.parse(cached);
+        if (Date.now() - ts < TRENDING_TTL) { setTrendingSearches(data); return; }
+      } catch {}
+    }
     fetchTrendingSearches()
-      .then((data) => setTrendingSearches(data.trending.map((t) => t.query).slice(0, 5)))
+      .then((res) => {
+        const top = res.trending.map((t) => t.query).slice(0, 5);
+        setTrendingSearches(top);
+        sessionStorage.setItem(TRENDING_CACHE_KEY, JSON.stringify({ data: top, ts: Date.now() }));
+      })
       .catch(() => {});
   }, []);
 
