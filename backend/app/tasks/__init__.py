@@ -863,13 +863,13 @@ celery_app.conf.beat_schedule = {
     # },
     "enrich-market-hooks": {
         "task": "app.tasks.enrich_market_hooks",
-        "schedule": crontab(minute=40, hour="*/2"),  # 12x daily — generate LLM hooks, prioritize missing over stale
-        "kwargs": {"limit": 200},
+        "schedule": crontab(minute=40),  # 24x daily — burning through 53K backlog at 500/run
+        "kwargs": {"limit": 500},
     },
     "enrich-market-images": {
         "task": "app.tasks.enrich_market_images",
-        "schedule": crontab(minute=50, hour="*/6"),  # 4x daily — fetch Pexels images
-        "kwargs": {"limit": 100},
+        "schedule": crontab(minute=50, hour="*/4"),  # 6x daily — fetch Pexels images
+        "kwargs": {"limit": 200},
     },
     "check-aggregation-quality": {
         "task": "app.tasks.check_aggregation_quality",
@@ -941,17 +941,8 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
     },
-    # Discover feed enrichment — runs at 3am and 3pm UTC daily
-    "enrich-market-images": {
-        "task": "app.tasks.enrich_market_images",
-        "schedule": crontab(hour="3,15", minute=30),
-        "kwargs": {"limit": 100},
-    },
-    "enrich-market-hooks-regen": {
-        "task": "app.tasks.enrich_market_hooks",
-        "schedule": crontab(hour="3,15", minute=45),
-        "kwargs": {"limit": 100},
-    },
+    # Note: enrich-market-hooks and enrich-market-images schedules above
+    # already handle both initial generation and regeneration.
     # Note: update_event_tags, enrich_taxonomy_llm, and DataGolf polls are
     # piggybacked on discover_events and poll_all_odds respectively.
     # With dual workers (realtime + background), these could be split out
