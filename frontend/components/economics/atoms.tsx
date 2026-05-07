@@ -43,9 +43,9 @@ export function SectionHeader({ kicker, title, meta, count }: {
   );
 }
 
-export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+export function Card({ children, className = "", style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return (
-    <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-5 ${className}`}>
+    <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-5 ${className}`} style={style}>
       {children}
     </div>
   );
