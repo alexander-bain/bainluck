@@ -3590,13 +3590,18 @@ async def prediction_market_link_rate(
 
     grand_total = kalshi_totals["total"] + poly_totals["total"]
     grand_linked = kalshi_totals["linked"] + poly_totals["linked"]
+    grand_open_total = kalshi_totals["open_total"] + poly_totals["open_total"]
+    grand_open_linked = kalshi_totals["open_linked"] + poly_totals["open_linked"]
 
     return {
         "overall": {
             "total_game_markets": grand_total,
             "linked": grand_linked,
-            "link_rate_pct": round(grand_linked / grand_total * 100, 1) if grand_total else 0,
-            "denominator_note": "Kalshi: game ticker prefixes + already-linked. Polymarket: matchup name patterns.",
+            "link_rate_pct": round(grand_open_linked / grand_open_total * 100, 1) if grand_open_total else 0,
+            "link_rate_all_pct": round(grand_linked / grand_total * 100, 1) if grand_total else 0,
+            "open_total": grand_open_total,
+            "open_linked": grand_open_linked,
+            "denominator_note": "Headline rate uses open markets only. link_rate_all_pct includes all statuses.",
         },
         "kalshi": {
             "totals": {
@@ -5849,7 +5854,9 @@ async def hook_coverage(
             COUNT(hook_description) AS with_hook,
             COUNT(image_url) AS with_image,
             MAX(hook_generated_at) AS latest_hook,
-            COUNT(*) FILTER (WHERE hook_generated_at > NOW() - INTERVAL '24 hours') AS hooks_last_24h
+            COUNT(*) FILTER (WHERE hook_generated_at > NOW() - INTERVAL '24 hours') AS hooks_last_24h,
+            COUNT(*) FILTER (WHERE market_tier <= 3) AS tier_1_3_total,
+            COUNT(*) FILTER (WHERE market_tier <= 3 AND hook_description IS NOT NULL) AS tier_1_3_with_hook
         FROM futures_markets WHERE status = 'open'
     """))
     r = result.first()
@@ -5861,6 +5868,9 @@ async def hook_coverage(
         "image_pct": round(r.with_image / r.total * 100, 1) if r.total else 0,
         "latest_hook_generated_at": r.latest_hook.isoformat() if r.latest_hook else None,
         "hooks_generated_last_24h": r.hooks_last_24h,
+        "tier_1_3_total": r.tier_1_3_total,
+        "tier_1_3_with_hook": r.tier_1_3_with_hook,
+        "tier_1_3_hook_pct": round(r.tier_1_3_with_hook / r.tier_1_3_total * 100, 1) if r.tier_1_3_total else 0,
     }
 
 

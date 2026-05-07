@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_, func as sqlfunc
+from sqlalchemy import select, or_, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -871,21 +871,20 @@ async def _compute_movers(
     if not earliest_times:
         return {}
 
-    # Get probabilities at those earliest times
-    old_probs: dict[int, float] = {}
-    for oid, t in earliest_times.items():
-        snap_stmt = (
-            select(FuturesOddsSnapshot.probability)
-            .where(
-                FuturesOddsSnapshot.outcome_id == oid,
-                FuturesOddsSnapshot.captured_at == t,
-            )
-            .limit(1)
+    # Get probabilities at those earliest times in a single query
+    time_pairs = list(earliest_times.items())
+    from sqlalchemy import tuple_
+    snap_stmt = (
+        select(FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.probability)
+        .where(
+            tuple_(FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.captured_at).in_(time_pairs),
         )
-        snap_result = await session.execute(snap_stmt)
-        row = snap_result.first()
-        if row and row.probability is not None:
-            old_probs[oid] = float(row.probability)
+    )
+    snap_result = await session.execute(snap_stmt)
+    old_probs: dict[int, float] = {}
+    for row in snap_result:
+        if row.probability is not None:
+            old_probs[row.outcome_id] = float(row.probability)
 
     return old_probs
 
@@ -920,6 +919,7 @@ async def _build_trend_chart(
             FuturesOddsSnapshot.probability.isnot(None),
         )
         .order_by(FuturesOddsSnapshot.captured_at)
+        .limit(5000)
     )
     result = await session.execute(stmt)
     rows = result.all()
@@ -2345,6 +2345,8 @@ async def get_playoff_grid(
     Each team row shows probabilities of reaching each playoff stage,
     sourced from Odds API, Kalshi, and Polymarket.
     """
+    await db.execute(text("SET LOCAL statement_timeout = '20s'"))
+
     config = get_league_config(league_slug)
     if not config:
         available = get_all_league_slugs()
@@ -2409,7 +2411,7 @@ async def get_playoff_grid(
         select(FuturesMarket)
         .where(
             market_filter,
-            FuturesMarket.status.in_(("open", "closed", "resolved")),
+            FuturesMarket.status.in_(("open", "closed")),
         )
         .options(selectinload(FuturesMarket.outcomes))
     )

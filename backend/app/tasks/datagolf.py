@@ -366,8 +366,8 @@ async def _poll_datagolf_live() -> dict:
                         stats[f"{tour}_market_statuses"] = list({m.status for m in markets})
 
                     if not markets:
-                        # Auto-create markets from schedule + in-play data
-                        logger.info("DataGolf live: no markets for tour=%s, auto-creating from schedule", tour)
+                        # Auto-create (or reopen) markets from schedule + in-play data
+                        logger.info("DataGolf live: no open markets for tour=%s, checking schedule", tour)
                         stats["markets_created"] = 0
                         try:
                             schedule = await service.get_schedule(tour=tour)
@@ -380,38 +380,53 @@ async def _poll_datagolf_live() -> dict:
                                 for market_type, category in MARKET_TYPES:
                                     ext_id = _external_id(tour, current_event.event_id, market_type)
                                     market_name = f"{current_event.event_name} - {_market_label(market_type)}"
-                                    market = FuturesMarket(
-                                        source="datagolf",
-                                        external_id=ext_id,
-                                        name=market_name,
-                                        category=category,
-                                        llm_sport_category="golf",
-                                        status="open",
-                                        mutually_exclusive=(market_type == "win"),
-                                        market_metadata={
-                                            "datagolf_event_id": current_event.event_id,
-                                            "course": current_event.course,
-                                            "tour": tour,
-                                        },
+
+                                    existing = await session.execute(
+                                        select(FuturesMarket).where(
+                                            FuturesMarket.source == "datagolf",
+                                            FuturesMarket.external_id == ext_id,
+                                        )
                                     )
-                                    if current_event.start_date:
-                                        try:
-                                            market.commence_time = datetime.strptime(
-                                                current_event.start_date, "%Y-%m-%d"
-                                            ).replace(tzinfo=timezone.utc)
-                                        except ValueError:
-                                            pass
-                                    if current_event.end_date:
-                                        try:
-                                            market.resolution_date = datetime.strptime(
-                                                current_event.end_date, "%Y-%m-%d"
-                                            ).replace(tzinfo=timezone.utc)
-                                        except ValueError:
-                                            pass
-                                    session.add(market)
-                                    stats["markets_created"] += 1
+                                    market = existing.scalar_one_or_none()
+
+                                    if market:
+                                        market.status = "open"
+                                        market.name = market_name
+                                    else:
+                                        market = FuturesMarket(
+                                            source="datagolf",
+                                            external_id=ext_id,
+                                            name=market_name,
+                                            category=category,
+                                            llm_sport_category="golf",
+                                            status="open",
+                                            mutually_exclusive=(market_type == "win"),
+                                        )
+                                        if current_event.start_date:
+                                            try:
+                                                market.commence_time = datetime.strptime(
+                                                    current_event.start_date, "%Y-%m-%d"
+                                                ).replace(tzinfo=timezone.utc)
+                                            except ValueError:
+                                                pass
+                                        if current_event.end_date:
+                                            try:
+                                                market.resolution_date = datetime.strptime(
+                                                    current_event.end_date, "%Y-%m-%d"
+                                                ).replace(tzinfo=timezone.utc)
+                                            except ValueError:
+                                                pass
+                                        session.add(market)
+                                        stats["markets_created"] += 1
+
+                                    market.market_metadata = {
+                                        **(market.market_metadata or {}),
+                                        "datagolf_event_id": current_event.event_id,
+                                        "course": current_event.course,
+                                        "tour": tour,
+                                    }
                                 await session.flush()
-                                # Re-query to get the newly created markets
+                                # Re-query to get all open markets
                                 market_result = await session.execute(
                                     select(FuturesMarket).where(
                                         FuturesMarket.source == "datagolf",
