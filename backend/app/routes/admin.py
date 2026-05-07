@@ -3785,61 +3785,67 @@ async def _golf_compliance(db: AsyncSession) -> dict:
     """Check PGA compliance: each active tournament should have DataGolf + Kalshi + Polymarket."""
     from sqlalchemy import text as _text
 
-    result = await db.execute(_text("""
-        SELECT
-            fm.name,
-            fm.external_id,
-            fm.market_metadata->>'tour' AS tour
-        FROM futures_markets fm
-        WHERE fm.source = 'datagolf'
-          AND fm.status = 'open'
-          AND fm.external_id LIKE '%:win'
-        ORDER BY fm.name
-    """))
-    dg_tournaments = result.fetchall()
+    try:
+        result = await db.execute(_text("""
+            SELECT
+                fm.name,
+                fm.external_id,
+                COALESCE(fm.market_metadata->>'tour', 'unknown') AS tour
+            FROM futures_markets fm
+            WHERE fm.source = 'datagolf'
+              AND fm.status = 'open'
+              AND fm.external_id LIKE '%%:win'
+            ORDER BY fm.name
+        """))
+        dg_tournaments = result.fetchall()
 
-    golf_events = []
-    for t in dg_tournaments:
-        tour = t.tour or "unknown"
-        event_name = t.name.replace(" - Win", "").replace(" - Winner", "").strip()
+        golf_events = []
+        for t in dg_tournaments:
+            tour = t.tour or "unknown"
+            event_name = t.name.replace(" - Win", "").replace(" - Winner", "").strip()
+            search_term = event_name.split(" - ")[0].split("(")[0].strip()[:30].lower()
+            if not search_term:
+                continue
 
-        kalshi_result = await db.execute(_text("""
-            SELECT COUNT(*) FROM futures_markets
-            WHERE source = 'kalshi' AND llm_sport_category = 'golf'
-              AND status = 'open' AND lower(name) LIKE :pattern
-        """), {"pattern": f"%{event_name.lower().split(' - ')[0].split('(')[0].strip()[:30]}%"})
-        has_kalshi = kalshi_result.scalar() > 0
+            kalshi_result = await db.execute(_text(
+                "SELECT COUNT(*) FROM futures_markets"
+                " WHERE source = 'kalshi' AND llm_sport_category = 'golf'"
+                " AND status = 'open' AND lower(name) LIKE :pattern"
+            ), {"pattern": f"%{search_term}%"})
+            has_kalshi = kalshi_result.scalar() > 0
 
-        poly_result = await db.execute(_text("""
-            SELECT COUNT(*) FROM futures_markets
-            WHERE source = 'polymarket' AND llm_sport_category = 'golf'
-              AND status = 'open' AND lower(name) LIKE :pattern
-        """), {"pattern": f"%{event_name.lower().split(' - ')[0].split('(')[0].strip()[:30]}%"})
-        has_polymarket = poly_result.scalar() > 0
+            poly_result = await db.execute(_text(
+                "SELECT COUNT(*) FROM futures_markets"
+                " WHERE source = 'polymarket' AND llm_sport_category = 'golf'"
+                " AND status = 'open' AND lower(name) LIKE :pattern"
+            ), {"pattern": f"%{search_term}%"})
+            has_polymarket = poly_result.scalar() > 0
 
-        missing = []
-        if not has_kalshi:
-            missing.append("kalshi")
-        if not has_polymarket:
-            missing.append("polymarket")
+            missing = []
+            if not has_kalshi:
+                missing.append("kalshi")
+            if not has_polymarket:
+                missing.append("polymarket")
 
-        golf_events.append({
-            "tournament": event_name,
-            "tour": tour,
-            "datagolf": True,
-            "kalshi": has_kalshi,
-            "polymarket": has_polymarket,
-            "compliant": not missing,
-            "missing": missing,
-        })
+            golf_events.append({
+                "tournament": event_name,
+                "tour": tour,
+                "datagolf": True,
+                "kalshi": has_kalshi,
+                "polymarket": has_polymarket,
+                "compliant": not missing,
+                "missing": missing,
+            })
 
-    compliant_count = sum(1 for e in golf_events if e["compliant"])
-    return {
-        "total": len(golf_events),
-        "compliant": compliant_count,
-        "compliance_pct": round(compliant_count / max(len(golf_events), 1) * 100, 1),
-        "tournaments": golf_events,
-    }
+        compliant_count = sum(1 for e in golf_events if e["compliant"])
+        return {
+            "total": len(golf_events),
+            "compliant": compliant_count,
+            "compliance_pct": round(compliant_count / max(len(golf_events), 1) * 100, 1),
+            "tournaments": golf_events,
+        }
+    except Exception as e:
+        return {"error": str(e), "total": 0, "compliant": 0, "compliance_pct": 0, "tournaments": []}
 
 
 @router.get("/prediction-markets/game-diagnostics")
