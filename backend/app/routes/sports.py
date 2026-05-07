@@ -1,6 +1,8 @@
 """Sports API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
@@ -8,6 +10,11 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Sport
 from app.services import get_db, OddsAPIService
 from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
+
+
+def _check_admin_secret(secret: str) -> bool:
+    expected = os.environ.get("ADMIN_TOKEN") or os.environ.get("ADMIN_SECRET")
+    return bool(expected and secret == expected)
 
 router = APIRouter()
 
@@ -38,13 +45,10 @@ async def list_sports(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/available")
-async def list_available_sports():
-    """
-    List all sports available from The Odds API.
-
-    Useful for discovering new sports to add.
-    Note: This hits the external API, so use sparingly.
-    """
+async def list_available_sports(secret: str = Query(..., description="Admin secret")):
+    """List all sports available from The Odds API. Requires admin auth (burns API quota)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     try:
         service = OddsAPIService()
         sports = await service.get_sports()
@@ -72,16 +76,13 @@ async def list_available_sports():
 
 
 @router.post("/sync")
-@router.get("/sync")
-async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
-    """
-    Sync all sports from The Odds API to the database.
-
-    This fetches all available sports and upserts them.
-    Call this to ensure rugby, cricket, AFL etc. are in the database.
-
-    Supports both GET and POST for compatibility.
-    """
+async def sync_sports_from_api(
+    secret: str = Query(..., description="Admin secret"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync all sports from The Odds API to the database. Requires admin auth."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     try:
         service = OddsAPIService()
         sports_data = await service.get_sports()

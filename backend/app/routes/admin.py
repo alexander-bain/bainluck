@@ -6800,10 +6800,10 @@ async def get_matching_review(
     Surfaces:
     - Cross-source divergences (>15% between sources for same team+column)
     - Existing overrides (team aliases, exclusions, etc.)
-    - Teams in grid without data for most columns (might not belong)
-
-    This is the "Google Photos face matching" review UI for grid matching.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.config.league_configs import get_league_config
     from app.routes.playoffs import (
         _normalize_team_name,
@@ -7023,6 +7023,8 @@ async def add_matching_override(
     - source_trust: source_name is "source:column", marks trust level
     - dismiss: mark a divergence as reviewed/acceptable (no grid effect)
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     from app.config.league_configs import get_league_config
     config = get_league_config(league_slug)
     if not config:
@@ -7081,6 +7083,8 @@ async def delete_matching_override(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a matching override."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     stmt = select(MatchingOverride).where(
         MatchingOverride.id == override_id,
         MatchingOverride.league_slug == league_slug,
@@ -7104,6 +7108,8 @@ async def get_eval_decisions(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all eval decisions. Used by frontend to check 'already seen' across devices."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     stmt = select(MatchingOverride).where(
         MatchingOverride.override_type.in_(["eval_grid", "eval_futures"])
     )
@@ -7139,6 +7145,8 @@ async def save_eval_decision(
     db: AsyncSession = Depends(get_db),
 ):
     """Save an eval decision to the database. Replaces localStorage persistence."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     valid_decisions = {"correct", "wrong", "interesting", "skip", "never"}
     if decision not in valid_decisions:
         raise HTTPException(400, f"Invalid decision. Must be one of: {valid_decisions}")
@@ -7221,10 +7229,9 @@ async def scrape_playoffstatus(
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ):
-    """Scrape playoffstatus.com for reference team list and probabilities.
-
-    Creates team_include overrides for all teams found on playoffstatus.
-    """
+    """Scrape playoffstatus.com for reference team list and probabilities."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
     import httpx
     import re
     from app.config.league_configs import get_league_config
@@ -9192,7 +9199,6 @@ async def list_bug_reports(
                 "session_id": r.session_id,
                 "description": r.description,
                 "has_screenshot": r.screenshot_base64 is not None,
-                "screenshot_base64": r.screenshot_base64,
                 "app_state": r.app_state,
                 "status": r.status,
                 "admin_notes": r.admin_notes,
@@ -9216,16 +9222,23 @@ async def update_bug_report(
     if not await _check_admin_auth(secret, request, db):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
+    _VALID_STATUSES = {"new", "reviewed", "in_progress", "fixed", "wont_fix", "duplicate"}
     values = {}
     if status:
+        if status not in _VALID_STATUSES:
+            raise HTTPException(400, f"Invalid status. Must be one of: {sorted(_VALID_STATUSES)}")
         values["status"] = status
     if admin_notes is not None:
+        if len(admin_notes) > 5000:
+            raise HTTPException(400, "Admin notes too long (max 5000 chars)")
         values["admin_notes"] = admin_notes
 
     if values:
-        await db.execute(
+        result = await db.execute(
             update(BugReport).where(BugReport.id == report_id).values(**values)
         )
+        if result.rowcount == 0:
+            raise HTTPException(404, f"Bug report {report_id} not found")
         await db.commit()
 
     return {"status": "ok"}
@@ -9250,5 +9263,9 @@ async def get_bug_screenshot(
 
     import base64
     from fastapi.responses import Response
-    image_data = base64.b64decode(b64)
-    return Response(content=image_data, media_type="image/jpeg")
+    try:
+        image_data = base64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "Invalid screenshot data")
+    media_type = "image/png" if image_data[:4] == b"\x89PNG" else "image/jpeg"
+    return Response(content=image_data, media_type=media_type)

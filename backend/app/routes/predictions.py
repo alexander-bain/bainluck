@@ -7,11 +7,14 @@ Records guesses, returns stats (streak, accuracy, category breakdown, badges, tr
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, cast, Integer, case
 from app.services import get_db as get_session
-from app.models.models import UserPrediction, FuturesMarket
+from app.models.models import UserPrediction, FuturesMarket, FuturesOutcome, User
+from app.dependencies.auth import get_optional_user
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
@@ -97,17 +100,41 @@ def _compute_badges(total: int, correct: int, best_streak: int) -> list[dict]:
 
 
 @router.post("")
-async def submit_prediction(body: PredictionSubmission, request: Request):
-    user_id, session_id = _get_identity(request)
+async def submit_prediction(
+    body: PredictionSubmission,
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    user_id = user.id if user else None
+    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
+
+    actual_probability = body.actual_probability
+    correct = body.correct
+
     async with get_session() as session:
+        outcome_result = await session.execute(
+            select(FuturesOutcome.current_probability)
+            .where(FuturesOutcome.market_id == body.market_id)
+            .order_by(FuturesOutcome.current_probability.desc())
+            .limit(1)
+        )
+        server_prob = outcome_result.scalar()
+        if server_prob is not None:
+            actual_probability = float(server_prob)
+            actual_pct = int(actual_probability * 100)
+            correct = (
+                (body.guess == "higher" and actual_pct > body.threshold)
+                or (body.guess == "lower" and actual_pct < body.threshold)
+            )
+
         pred = UserPrediction(
             user_id=user_id,
             session_id=session_id,
             market_id=body.market_id,
             guess=body.guess,
             threshold=body.threshold,
-            actual_probability=body.actual_probability,
-            correct=body.correct,
+            actual_probability=actual_probability,
+            correct=correct,
         )
         session.add(pred)
         await session.commit()

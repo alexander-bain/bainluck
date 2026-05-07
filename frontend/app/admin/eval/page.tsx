@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+let _adminSecret = "";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -123,7 +124,7 @@ interface Override {
 
 async function fetchEvalDecisions(category?: "grid" | "futures"): Promise<EvalDecision[]> {
   try {
-    const params = new URLSearchParams({ secret: "any" });
+    const params = new URLSearchParams({ secret: _adminSecret });
     if (category) params.set("category", category);
     const res = await fetch(`${API_URL}/api/admin/eval/decisions?${params}`);
     if (!res.ok) return [];
@@ -146,7 +147,7 @@ async function saveEvalDecision(
   reason: string,
 ) {
   const params = new URLSearchParams({
-    secret: "any",
+    secret: _adminSecret,
     source_name: sourceName,
     decision,
     category,
@@ -174,7 +175,7 @@ async function createOverride(
   decision: string = "approved",
 ) {
   const params = new URLSearchParams({
-    secret: "any",
+    secret: _adminSecret,
     override_type: overrideType,
     source_name: sourceName,
     decision,
@@ -190,7 +191,7 @@ async function createOverride(
 
 async function fetchOverrides(league: string): Promise<Override[]> {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}?secret=any`,
+    `${API_URL}/api/admin/matching-review/${league}?secret=${encodeURIComponent(_adminSecret)}`,
   );
   if (!res.ok) return [];
   const data = await res.json();
@@ -199,7 +200,7 @@ async function fetchOverrides(league: string): Promise<Override[]> {
 
 async function deleteOverride(league: string, id: number) {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=any`,
+    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=${encodeURIComponent(_adminSecret)}`,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error(`Delete override error: ${res.status}`);
@@ -1507,8 +1508,30 @@ export default function EvalPage() {
   useScrollDepth({ pageType: "admin_eval" });
   useEngagementTime({ pageType: "admin_eval" });
 
+  const [secretInput, setSecretInput] = useState("");
+  const [secret, setSecret] = useState<string | null>(null);
   const [tab, setTab] = useState<"grid" | "futures" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
+
+  if (!secret) {
+    return (
+      <div style={{ maxWidth: 400, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
+        <h2 style={{ marginBottom: 16 }}>Admin Secret Required</h2>
+        <form onSubmit={(e) => { e.preventDefault(); _adminSecret = secretInput; setSecret(secretInput); }}>
+          <input
+            type="password"
+            value={secretInput}
+            onChange={(e) => setSecretInput(e.target.value)}
+            placeholder="Enter admin secret"
+            style={{ width: "100%", padding: 8, marginBottom: 12, borderRadius: 6, border: "1px solid #444", background: "#1a1a2e", color: "#e2e8f0" }}
+          />
+          <button type="submit" style={{ padding: "8px 24px", borderRadius: 6, background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer" }}>
+            Enter
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   // Refresh decision count from backend
   useEffect(() => {

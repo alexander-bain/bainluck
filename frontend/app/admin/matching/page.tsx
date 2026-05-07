@@ -9,6 +9,7 @@ import {
 } from "@/hooks";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+let _adminSecret = "";
 
 const LEAGUES = [
   { slug: "nba", label: "NBA" },
@@ -65,9 +66,9 @@ interface ReviewData {
   sparse_count: number;
 }
 
-async function fetchReview(league: string): Promise<ReviewData> {
+async function fetchReview(league: string, secret: string = _adminSecret): Promise<ReviewData> {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}?secret=any`
+    `${API_URL}/api/admin/matching-review/${league}?secret=${encodeURIComponent(secret)}`
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -84,7 +85,7 @@ async function postOverride(
   }
 ) {
   const params = new URLSearchParams({
-    secret: "any",
+    secret: _adminSecret,
     override_type: body.override_type,
     source_name: body.source_name,
   });
@@ -101,7 +102,7 @@ async function postOverride(
 
 async function deleteOverride(league: string, id: number) {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=any`,
+    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=${encodeURIComponent(_adminSecret)}`,
     { method: "DELETE" }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -600,10 +601,32 @@ export default function MatchingReviewPage() {
   useScrollDepth({ pageType: "admin_matching" });
   useEngagementTime({ pageType: "admin_matching" });
 
+  const [secretInput, setSecretInput] = useState("");
+  const [secret, setSecret] = useState<string | null>(null);
   const [league, setLeague] = useState("nba");
 
-  const swrKey = `matching-review-${league}`;
-  const { data, error, isLoading } = useSWR(swrKey, () => fetchReview(league), {
+  if (!secret) {
+    return (
+      <div style={{ maxWidth: 400, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
+        <h2 style={{ marginBottom: 16 }}>Admin Secret Required</h2>
+        <form onSubmit={(e) => { e.preventDefault(); _adminSecret = secretInput; setSecret(secretInput); }}>
+          <input
+            type="password"
+            value={secretInput}
+            onChange={(e) => setSecretInput(e.target.value)}
+            placeholder="Enter admin secret"
+            style={{ width: "100%", padding: 8, marginBottom: 12, borderRadius: 6, border: "1px solid #444", background: "#1a1a2e", color: "#e2e8f0" }}
+          />
+          <button type="submit" style={{ padding: "8px 24px", borderRadius: 6, background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer" }}>
+            Enter
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  const swrKey = `matching-review-${league}-${secret}`;
+  const { data, error, isLoading } = useSWR(swrKey, () => fetchReview(league, secret), {
     refreshInterval: 0,
     revalidateOnFocus: false,
   });
