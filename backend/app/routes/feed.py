@@ -36,6 +36,11 @@ from app.utils import (
 )
 from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
+from app.utils.feed_market_quality import (
+    cap_low_quality_families,
+    classify_market_quality,
+    quality_score_adjustment,
+)
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
@@ -848,34 +853,131 @@ async def _score_futures(
 
     # Pool 1: sports futures (capped — tier-ordered so best surface first)
     sports_query = (
-        select(FuturesMarket)
-        .options(*base_options)
+        select(FuturesMarket.id)
         .where(
             *id_filters,
             FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
         )
-        .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.resolution_date.asc().nulls_last(),
+        )
         .limit(50)
     )
 
-    # Pool 2: non-sports futures — volume-ordered for actively-traded markets
+    non_sports_filter = or_(
+        ~FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
+        FuturesMarket.llm_sport_category.is_(None),
+    )
+
+    # Pool 2a: non-sports futures by liquidity. Good for markets people are
+    # actively trading, but too narrow on its own because commodities/weather
+    # ladders dominate volume.
     nonsports_query = (
-        select(FuturesMarket)
-        .options(*base_options)
+        select(FuturesMarket.id)
         .where(
             *id_filters,
+            non_sports_filter,
+        )
+        .order_by(
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.market_tier.asc().nulls_last(),
+        )
+        .limit(180)
+    )
+
+    movement_expr = (
+        select(func.max(func.abs(FuturesOutcome.probability_change_24h)))
+        .where(FuturesOutcome.market_id == FuturesMarket.id)
+        .correlate(FuturesMarket)
+        .scalar_subquery()
+    )
+
+    # Pool 2b: non-sports by actual movement. This surfaces stories that are
+    # changing quickly even if their absolute volume is lower.
+    nonsports_movement_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+        )
+        .order_by(
+            movement_expr.desc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        )
+        .limit(160)
+    )
+
+    # Pool 2c: enriched markets. Hook/image enrichment is a useful prior that a
+    # market is feed-shaped, and it helps lower-volume good stories enter the
+    # scoring stage.
+    nonsports_enriched_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
             or_(
-                ~FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
-                FuturesMarket.llm_sport_category.is_(None),
+                FuturesMarket.hook_description.isnot(None),
+                FuturesMarket.image_url.isnot(None),
             ),
         )
-        .order_by(FuturesMarket.volume_24h.desc().nulls_last(), FuturesMarket.market_tier.asc().nulls_last())
-        .limit(150)
+        .order_by(
+            FuturesMarket.hook_generated_at.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(160)
+    )
+
+    # Pool 2d: soon-resolving markets. Timeliness matters, but this pool is
+    # still scored and quality-capped later, so routine ladders do not get a
+    # free pass.
+    nonsports_timely_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            FuturesMarket.resolution_date.isnot(None),
+        )
+        .order_by(
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+        )
+        .limit(120)
     )
 
     sports_result = await db.execute(sports_query)
     nonsports_result = await db.execute(nonsports_query)
-    markets = list(sports_result.scalars().unique().all()) + list(nonsports_result.scalars().unique().all())
+    nonsports_movement_result = await db.execute(nonsports_movement_query)
+    nonsports_enriched_result = await db.execute(nonsports_enriched_query)
+    nonsports_timely_result = await db.execute(nonsports_timely_query)
+
+    candidate_market_ids = (
+        list(sports_result.scalars().all())
+        + list(nonsports_result.scalars().all())
+        + list(nonsports_movement_result.scalars().all())
+        + list(nonsports_enriched_result.scalars().all())
+        + list(nonsports_timely_result.scalars().all())
+    )
+    seen_market_ids: set[int] = set()
+    market_ids: list[int] = []
+    for market_id in candidate_market_ids:
+        if market_id in seen_market_ids:
+            continue
+        seen_market_ids.add(market_id)
+        market_ids.append(market_id)
+
+    if not market_ids:
+        return []
+
+    markets_result = await db.execute(
+        select(FuturesMarket)
+        .options(*base_options)
+        .where(FuturesMarket.id.in_(market_ids))
+    )
+    markets_by_id = {
+        market.id: market for market in markets_result.scalars().unique().all()
+    }
+    markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
 
     if not markets:
         return []
@@ -960,7 +1062,17 @@ async def _score_futures(
             volume_24h=market.volume_24h,
         )
 
-        base_score = highlight_result.score
+        quality = classify_market_quality(
+            market_name=market.name,
+            sport_category=market.llm_sport_category,
+            outcome_names=[o.name for o in market.outcomes if o.name],
+        )
+        if quality.quality_class == "suppress":
+            continue
+
+        base_score = max(0, highlight_result.score + quality_score_adjustment(quality))
+        if quality.reasons:
+            highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 
         # Apply personalization multiplier
         outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
@@ -1119,6 +1231,8 @@ async def _score_futures(
             "headline": highlight_result.primary_reason,
             "data": futures_data,
             "_sort_time": sort_time,
+            "_quality_class": quality.quality_class,
+            "_quality_family_key": quality.family_key,
         }
 
         if p_result.is_personalized:
@@ -1128,6 +1242,11 @@ async def _score_futures(
             item["personalization_reasons"] = p_result.reasons
 
         scored_items.append(item)
+
+    scored_items = cap_low_quality_families(scored_items, cap=1)
+    for item in scored_items:
+        item.pop("_quality_class", None)
+        item.pop("_quality_family_key", None)
 
     return scored_items
 
