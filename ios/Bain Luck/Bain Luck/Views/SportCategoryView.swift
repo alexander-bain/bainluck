@@ -16,6 +16,7 @@ final class SportCategoryViewModel: ObservableObject {
     @Published var error: String?
     @Published var loadingMore = false
     @Published var hasMore = true
+    @Published var leagueMarkets: LeagueMarketsResponse?
 
     let categoryKey: String
     private let pageSize = 50
@@ -28,7 +29,10 @@ final class SportCategoryViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: 0)
+            async let feedTask = APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: 0)
+            async let marketsTask = loadLeagueMarkets()
+            let feed = try await feedTask
+            _ = await marketsTask
             items = feed.items
             hasMore = feed.hasMore
             error = nil
@@ -78,6 +82,15 @@ final class SportCategoryViewModel: ObservableObject {
 
     var topMarkets: [FeedItem] {
         items.filter { $0.type == "futures" }
+    }
+
+    private func loadLeagueMarkets() async {
+        do {
+            leagueMarkets = try await APIClient.shared.fetchLeagueMarkets(sportKey: categoryKey)
+            logger.info("League markets for \(self.categoryKey): \(self.leagueMarkets?.totalMarkets ?? 0) total")
+        } catch {
+            logger.debug("League markets not available for \(self.categoryKey): \(error)")
+        }
     }
 }
 
@@ -193,6 +206,37 @@ struct SportCategoryView: View {
             if !vm.topMarkets.isEmpty {
                 feedSection(title: "Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
             }
+
+            // League market sections (awards, series, playoff props)
+            if let lm = vm.leagueMarkets {
+                let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
+                let sectionLabels: [String: String] = [
+                    "series": "Playoff Series",
+                    "awards": "Awards",
+                    "playoff_props": "Playoff Props",
+                    "season_stats": "Season Stats",
+                    "novelty": "More Markets",
+                ]
+                ForEach(sectionOrder, id: \.self) { key in
+                    if let markets = lm.sections[key], !markets.isEmpty {
+                        Section {
+                            ForEach(markets.prefix(6)) { market in
+                                NavigationLink(value: Route.futuresDetail(id: market.id)) {
+                                    leagueMarketRow(market)
+                                }
+                            }
+                            if markets.count > 6 {
+                                Text("+\(markets.count - 6) more")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } header: {
+                            Label(sectionLabels[key] ?? key, systemImage: key == "awards" ? "trophy.fill" : key == "series" ? "sportscourt.fill" : "chart.line.uptrend.xyaxis")
+                        }
+                    }
+                }
+            }
+
             if vm.hasMore {
                 Section {
                     if vm.loadingMore {
@@ -255,6 +299,47 @@ struct SportCategoryView: View {
                     .clipShape(Capsule())
             }
         }
+    }
+
+    private func leagueMarketRow(_ market: LeagueMarketItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(market.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .lineLimit(2)
+
+            if let outcomes = market.topOutcomes, !outcomes.isEmpty {
+                ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                    HStack(spacing: 4) {
+                        Text(o.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(o.prob))%")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                    }
+                }
+            }
+
+            HStack(spacing: 4) {
+                Text(market.source)
+                    .font(.caption2)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
+                    .clipShape(Capsule())
+                if let count = market.outcomeCount, count > 3 {
+                    Text("+\(count - 3) more")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
