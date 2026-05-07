@@ -232,6 +232,137 @@ Our DB (after decomposition):
 
 ---
 
+## Category Pages Architecture (May 6, 2026)
+
+Three themed landing pages aggregate prediction markets from Kalshi + Polymarket into consumable dashboards: Weather (shipped April 19-20), Politics (shipped May 6), and Entertainment (shipped May 6).
+
+### Common Pattern
+
+All category pages follow the same architecture:
+1. **Backend route** (`routes/{category}.py`) — queries `futures_markets` by `llm_sport_category`, filters by data quality rules, groups into sub-themes
+2. **Frontend page** (`app/{category}/page.tsx`) — themed hero, SWR data fetch, category-specific styling
+3. **Quality filters** — skip resolved markets (≥95% leader for binary, resolution_date past), filter garbage outcomes (pattern matching), sort by interestingness
+
+### Politics Page (`/politics`)
+
+**Backend:** `GET /api/politics` in `routes/politics.py`
+
+**Sub-themes:** Elections (presidential, congressional, gubernatorial), Policy & Legislation, Governance, International Politics
+
+**Quality filters:**
+- Skip markets with "Yes/No" leader ≥95% (resolved binary markets)
+- Skip markets with resolution_date in the past
+- Filter garbage outcomes via pattern matching
+- Sort by probability decisiveness (prefer 15-85% range)
+
+**Frontend:** `app/politics/page.tsx` — purple theme (#9333ea), Capitol building imagery, election countdown timers
+
+### Entertainment Page (`/entertainment`)
+
+**Backend:** `GET /api/entertainment` in `routes/entertainment.py`
+
+**Sub-themes:** Awards (Oscars, Grammys, Emmys), Box Office, Music & Culture, Reality TV, Celebrity & Pop Culture
+
+**Quality filters:**
+- Same pattern as politics (resolved markets, garbage outcomes, past resolution dates)
+- Filter "player A/AB/L" garbage outcomes (Polymarket data quality issue)
+- Sort by cultural relevance + probability decisiveness
+
+**Frontend:** `app/entertainment/page.tsx` — pink/magenta theme (#ec4899), spotlight imagery, award season context
+
+### Weather Page (`/weather`) — Shipped April 19-20
+
+**Backend:** 6 endpoints in `routes/weather.py`:
+- `GET /api/weather/featured` — Hero rotator (top 5)
+- `GET /api/weather/cities` — 49 cities global temperature map
+- `GET /api/weather/rain` — NYC 7-day rain forecast
+- `GET /api/weather/events` — Hurricane season, tornado markets
+- `GET /api/weather/climate` — 2026/2030/2050 horizons
+- `GET /api/weather/wildcards` — Rare events (supervolcano, solar storms)
+
+**Data sources:** 521 weather markets from Kalshi + Polymarket
+
+**Frontend:** `app/weather/page.tsx` — interactive map with collision-resolved pins, histogram distribution, continent SVGs
+
+### Key Design Principles
+
+1. **No hardcoded market lists** — Programmatic discovery via `llm_sport_category` + sub-theme patterns
+2. **Data quality first** — Aggressive filtering of resolved/stale/garbage data before display
+3. **Probability-first UI** — Never show American odds or gambling terminology
+4. **Light mode only** — Consistent with site-wide design system
+5. **SWR with fallback** — Client fetches live data, falls back to static JSON if API fails
+
+**Files:**
+- Backend: `backend/app/routes/{politics,entertainment,weather}.py`
+- Frontend: `frontend/app/{politics,entertainment,weather}/page.tsx`
+- Shared components: `CombinedMarketCard.tsx` (cross-source comparison), `FuturesCard.tsx` (market display)
+
+---
+
+## Infrastructure & Observability (May 6, 2026)
+
+### Request Observability
+
+Every API request now has a unique `request_id` and logs duration. Request ID middleware (`app/middleware/request_id.py`) generates UUIDs, adds to both response headers and structured logs. Duration logging happens in FastAPI's request hook with millisecond precision.
+
+**Key benefits:**
+- Trace requests across services (frontend → backend → DB)
+- Identify slow endpoints via log aggregation
+- Debug specific user issues by request ID
+
+**Headers:**
+- `X-Request-ID` — UUID for request tracing
+- Response includes `X-Request-ID` for client correlation
+
+**Logs:**
+```json
+{"timestamp": "2026-05-06T10:30:00Z", "request_id": "abc123", "path": "/api/feed", "duration_ms": 1234}
+```
+
+### Sentry Error Filtering
+
+**PendingRollbackError filtering** — Database transaction conflicts (usually from Celery task concurrency) now filtered from Sentry to preserve 5K/mo free tier quota. These errors are transient and automatically retried by Celery — they were consuming 40% of monthly quota.
+
+**Filter location:** `app/main.py` `before_send` hook checks exception type and message patterns.
+
+### 404 Sport Key Caching
+
+**Problem:** Malformed sport keys (typos in API calls, stale client code) were triggering ~37K unnecessary Odds API quota burns per day — each 404 lookup counted against quota.
+
+**Solution:** Redis cache at `bainluck:404_sport_keys:{key}` with 24h TTL. After first 404, subsequent lookups skip the API entirely.
+
+**Impact:** Saves ~1.1M quota/month (~22% of total monthly quota).
+
+**Files:** `backend/app/tasks/odds_polling.py` (cache check before API call)
+
+### Hook Enrichment Pipeline
+
+**Coverage boost:** 500 markets/batch hourly (was 200 every 2h). Prioritizes markets missing `hook_description` over stale regenerations. Cost ~$1/day for GPT-4o-mini.
+
+**Monitoring:** `GET /api/admin/hook-coverage` shows tier breakdown (feed-visible, important, all), missing hook counts, batch limits, last run timestamp.
+
+**Quality:** Upgraded from 120-char generic sentences to 250-char contextual blurbs using Polymarket email few-shot examples. Tracks `hook_generated_at` + leader probabilities to avoid unnecessary regenerations.
+
+**Files:** `backend/app/tasks/enrich_markets.py`, `backend/app/routes/admin.py` (coverage endpoint)
+
+### Aggregation Quality Monitoring
+
+**Daily task:** Samples 50 live events, logs source diversity metrics. Alerts when >20% of events rely on single source (indicates upstream source outage or matching failure).
+
+**Structured logs:** JSON format with `source_count`, `sources_present`, `aggregate_used` fields for each event.
+
+**Files:** `backend/app/tasks/monitoring.py` (new)
+
+### Source Ingestion Metrics
+
+**Kalshi + Polymarket polling:** Structured logging with `markets_found`, `markets_matched`, `markets_classified`, `markets_rejected` counts per poll.
+
+**Purpose:** Detect regressions in matching/classification logic by comparing run-to-run metrics.
+
+**Files:** `backend/app/tasks/kalshi.py`, `backend/app/tasks/polymarket.py`
+
+---
+
 ## ESPN Box Score Pipeline (`tasks/espn_sync.py`)
 
 Box score data (player stats for completed/live games) flows through 4 passes in the ESPN sync task, all in a single session:

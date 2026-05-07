@@ -285,8 +285,13 @@ When fixing ANY data quality, matching, or display issue:
 | Prediction stats | https://bainluck.com/discover/stats |
 | Admin dashboard | https://bainluck.com/admin |
 | Weather page | https://bainluck.com/weather |
+| Politics page | https://bainluck.com/politics |
+| Entertainment page | https://bainluck.com/entertainment |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
+| Politics API | `GET /api/politics` |
+| Entertainment API | `GET /api/entertainment` |
 | League markets API | `GET /api/leagues/{sport_key}` (series, awards, props by league) |
+| Hook coverage | `GET /api/admin/hook-coverage` |
 | Grid health audit | `GET /api/admin/audit/all?secret=$ADMIN_TOKEN` |
 | Link rate health | `GET /api/admin/prediction-markets/link-rate` |
 | API docs | https://api.bainluck.com/docs |

@@ -2,7 +2,56 @@
 
 ## May 6, 2026
 
-### Discover Feed Design Polish (VP-of-Design Pass)
+### New Category Pages: Politics + Entertainment
+- ✅ **`/politics`** — Political prediction markets dashboard with elections, policy, and governance markets. Themed design, data quality filtering (no resolved markets, no garbage outcomes), sorted by interestingness.
+- ✅ **`/entertainment`** — Entertainment and culture prediction markets dashboard (Oscars, box office, awards, pop culture). Same quality filters as politics.
+- Backend: `routes/politics.py`, `routes/entertainment.py` with filtered market queries
+- Frontend: `app/politics/page.tsx`, `app/entertainment/page.tsx` with category-specific styling
+- Both pages follow same pattern: filtered API response, themed hero, quality-checked markets
+
+### Infrastructure & Observability
+- ✅ **Sentry PendingRollbackError filtering** — Filtered from Sentry to preserve 5K/mo free quota (resets May 20). Prevents noise from transient DB conflicts.
+- ✅ **404 sport key caching** — Cache unknown sport keys in Redis for 24h. Saves ~37K wasted Odds API calls/day from malformed sport key lookups.
+- ✅ **DataGolf UniqueViolation fix** — 3,557 consecutive failures since April 22 resolved. Postgres advisory lock prevents duplicate tournament insertions.
+- ✅ **Championship grid timeouts fixed** — N+1 query elimination, statement_timeout increase to 30s, resolved market filtering. Grid loads reliably now.
+- ✅ **Hook enrichment boost** — 500 markets/batch hourly (was 200 every 2h). Prioritizes missing hooks over regenerations. Cost ~$1/day.
+- ✅ **Hook coverage endpoint** — `/api/admin/hook-coverage` shows tier breakdown, missing hook count, batch limits. Diagnostic tool for enrichment pipeline.
+- ✅ **Request observability** — Request ID middleware + duration logging for every API request. Structured logs show `request_id` and `duration_ms`.
+- ✅ **Aggregation quality monitoring task** — Daily check of source diversity across live events. Logs warning when >20% are single-source.
+- ✅ **Source ingestion metrics** — Structured logging for Kalshi + Polymarket polling with markets_found, markets_matched, markets_classified counts.
+
+### Data Quality (0f Items)
+- ✅ **0f-2: Futures detail garbage outcomes** — Filter "player A/AB/L" garbage names from futures detail page. Polymarket Cy Young now clean.
+- ✅ **0f-9: PM probabilities resolve on completion** — `transition_event_statuses` writes 1.0/0.0 to kalshi/polymarket win_probability_sources when game completes.
+- ✅ **0f-10b: Cross-source player prop dedup** — Server-side merge of same player+stat+threshold from multiple sources. Added `source_count` field.
+- ✅ **0f-12: Monotonicity enforcement** — Game totals and period totals (half/quarter) drop violating points where P(Over X+1) > P(Over X).
+- ✅ **0f-4c: Opening player prop probabilities** — `opening_over_probability` field added to player props for pre-game comparison. Backend shipped.
+- ✅ **0f-4: Event detail verified clean** — Live Yankees vs Red Sox audit confirms all market types showing.
+- ✅ **0f-3d-1: Sport validation in matching** — Ticker-derived sport prefix now hard-rejects cross-sport matches. KXNBA can't match baseball_mlb events.
+- ✅ **1d: Non-NHL hockey markets** — KHL/AHL/DEL/PWHL markets now detected and filtered from link rate denominator. Hockey link rate adjusted accordingly.
+- ✅ **1f: Kalshi team aliases** — Verified not needed. MLB (30 teams, 0 cells missing Kalshi), NHL (32 teams, 0 cells missing).
+
+### iOS/macOS Fixes (15+ items)
+- ✅ **iOS-12: Score diff chart fallback** — When ESPN history has null scores, fallback to win_prob_history game_state data for score differential chart.
+- ✅ **iOS-GD3: Win prob chart clipping** — Charts now clip at game end time (last data point + 5min buffer) instead of extending with stale post-game data.
+- ✅ **iOS-5: Native Weather + Economics** — New WeatherView.swift and EconomicsView.swift matching web pages. Full API integration with themed styling.
+- ✅ **MAC-4: Toolbar refresh button** — Native toolbar refresh button with countdown ring for scheduled games. Replaces menu-only refresh.
+- ✅ **MAC-7: Hover states** — Feed cards show hover background on macOS. Subtle visual feedback for mouse users.
+- ✅ **MAC-8: Right-click context menus** — All card types support context menu: Open, Pin, Share, Copy Link.
+- ✅ **SN-5: Cmd+K shortcut** — Navigate menu Cmd+K shortcut focuses search bar on macOS.
+- ✅ **iOS-GD1, GD2, GD4, GD5, GD6, GD7, GD8, GD9, GD10, GD11, GD13, GD14** — 12 event detail polish items from iOS game detail audit.
+
+### Web Frontend
+- ✅ **0f-13g: Player props default to Points** — Player prop cards default to Points category with per-card expand/collapse for other stats.
+- ✅ **0f-13h + 0f-4e: Eager headshot loading** — Player award headshots and player prop headshots use eager loading with `loading="eager"` to prevent 60s delay.
+- ✅ **0t-2 + 0t-3: Chart alignment** — Chart domains use shared ticks, period markers aligned, x-axis labels match between win prob and score diff.
+- ✅ **BR3-1: Market map zero labeling** — MarketMap always renders positioned "0" label at actual zero point when offset from center.
+- ✅ **SEARCH-P1d: Widen search dropdown** — Both typeahead and recent search dropdowns now `min-w-[480px]` on sm+ to prevent truncation.
+- ✅ **Trending searches** — Redis tracking of search queries with zero-state chips showing top searches. Weighted by recency.
+- ✅ **D-3a: Volume-weighted feed scoring** — Added volume_24h, volume_7d_avg, velocity scoring (3x avg = +12, 1.5x = +5), surprise factor (+15 for >=20pp moves).
+- ✅ **D-10: Resolution notifications** — Wired `/api/predictions/resolutions` to Discover page. Shows up to 3 resolved prediction cards at top.
+
+### Discover Feed Polish (VP-of-Design Pass)
 - ✅ **Guess density 50% → 20%** — Every 5th card instead of every 2nd. Content-first feed.
 - ✅ **Today's Challenge UX** — Removed confusing inline expansion + auto-scroll. Now passive progress tracker that counts feed guesses.
 - ✅ **Source badges removed** — KALSHI/POLYMARKET labels meant nothing to casual users.
@@ -10,7 +59,6 @@
 - ✅ **"Show all N outcomes"** — Shows "Show more" when N > 10 (less intimidating).
 - ✅ **Redundant resolution dates** — Suppressed "Resolves May 14" when outcomes are already date-named.
 - ✅ **Imageless card treatment** — Shorter hero (h-32) with category emoji watermark for visual character.
-- ✅ **Hook enrichment boost** — Prioritize missing hooks, 12x daily at 200/batch (was 8x at 100). Coverage was 6%.
 
 ### Mixed Bag — 6 Items Shipped (Discover, Search, Frontend, Matching)
 

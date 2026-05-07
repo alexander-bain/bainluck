@@ -1009,15 +1009,52 @@ Bespoke category page for golf at `/categories/golf`. Aggregates tournament odds
 - Static data: `frontend/lib/golfData.ts` (major tournaments, venues, emoji)
 - Types: `GolfResponse`, `GolfTournament`, `GolfGolfer`, `GolfMover`, `GolfCurrentEvent` in `frontend/lib/types.ts`
 
+### Politics Page
+Political prediction markets dashboard at `/politics` aggregating elections, policy, and governance markets from Kalshi + Polymarket.
+
+**Backend:** `GET /api/politics` in `routes/politics.py` — queries markets where `llm_sport_category IN ('politics', 'elections')`, filters resolved markets (≥95% binary Yes/No or past resolution_date), sorts by interestingness.
+
+**Sub-themes:** Elections (presidential, congressional, gubernatorial), Policy & Legislation, Governance & Approval, International Politics
+
+**Quality filters:**
+- Skip binary markets with Yes/No leader ≥95% (resolved)
+- Skip markets with resolution_date in the past
+- Filter garbage outcomes via pattern matching
+- Sort by probability decisiveness (15-85% range preferred)
+
+**Frontend:** `app/politics/page.tsx` — purple theme (#9333ea), Capitol building hero image, election countdown timers, responsive grid layout
+
+**Data sources:** 500+ political markets from Kalshi + Polymarket
+
+### Entertainment Page
+Entertainment and culture prediction markets dashboard at `/entertainment` covering awards, box office, music, and pop culture.
+
+**Backend:** `GET /api/entertainment` in `routes/entertainment.py` — queries markets where `llm_sport_category IN ('entertainment', 'culture')`, same data quality filters as politics page.
+
+**Sub-themes:** Awards Season (Oscars, Grammys, Emmys, Golden Globes), Box Office, Music & Culture, Reality TV, Celebrity & Pop Culture
+
+**Quality filters:**
+- Same pattern as politics (resolved markets, garbage outcomes, past dates)
+- Additional filter for "player A/AB/L" Polymarket garbage data
+
+**Frontend:** `app/entertainment/page.tsx` — pink/magenta theme (#ec4899), spotlight imagery, award season context
+
+**Data sources:** 300+ entertainment markets from Kalshi + Polymarket
+
+**Common architecture:** Both politics and entertainment pages follow the same pattern — themed backend route with quality filtering, themed frontend with SWR data fetch, probability-first UI with no gambling language, light mode only.
+
 ### Category Pages Infrastructure
 Generic category landing pages at `/categories/[slug]`. Each category page shows a feed of events and futures filtered to that sport/category.
 
 **Routes:**
 - `/categories/golf` — Custom bespoke golf page (see above)
-- `/categories/[slug]` — Generic category page for any sport slug (e.g., `basketball`, `soccer`, `politics`)
+- `/categories/[slug]` — Generic category page for any sport slug (e.g., `basketball`, `soccer`)
 - `/categories` — Category index page
+- `/politics` — Themed politics dashboard (not under `/categories`)
+- `/entertainment` — Themed entertainment dashboard (not under `/categories`)
+- `/weather` — Themed weather dashboard (not under `/categories`)
 
-**Frontend:** Uses the feed API with category filtering. Reuses `EventCard` and `FuturesCard` components. iOS category pages navigate from filter chips via `SportCategoryView.swift`.
+**Frontend:** Generic categories use the feed API with category filtering, reusing `EventCard` and `FuturesCard` components. Themed pages (politics, entertainment, weather) have custom routes and components. iOS category pages navigate from filter chips via `SportCategoryView.swift`.
 
 ### Odds Chart Redesign
 Multiple chart improvements shipped across web and iOS:
