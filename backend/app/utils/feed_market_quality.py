@@ -306,6 +306,29 @@ def quality_score_adjustment(quality: MarketQuality) -> int:
     return 0
 
 
+def apply_quality_score(raw_score: float, quality: MarketQuality) -> float:
+    """Apply quality adjustment plus feed-facing score ceilings.
+
+    The upstream futures scorer intentionally finds any market with a live
+    signal, but many candidates saturate at 100. Discover needs more headroom:
+    compelling stories can still max out, ordinary salient stories sit below
+    them, and low-quality bucket families cannot tie the best cards.
+    """
+    if quality.quality_class == "suppress":
+        return 0
+
+    adjusted = max(0, raw_score + quality_score_adjustment(quality))
+
+    if quality.quality_class == "compelling":
+        return min(100, adjusted)
+
+    if quality.quality_class == "low_quality":
+        return min(70, adjusted)
+
+    ceiling = 94 if quality.has_named_salient_entity else 88
+    return min(ceiling, adjusted)
+
+
 def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
     """Cap low-quality ladder/bucket families after scoring.
 

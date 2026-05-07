@@ -37,9 +37,9 @@ from app.utils import (
 from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_market_quality import (
+    apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
-    quality_score_adjustment,
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
 from app.utils.name_normalization import names_match as _team_name_matches
@@ -1070,7 +1070,7 @@ async def _score_futures(
         if quality.quality_class == "suppress":
             continue
 
-        base_score = max(0, highlight_result.score + quality_score_adjustment(quality))
+        base_score = apply_quality_score(highlight_result.score, quality)
         if quality.reasons:
             highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 

@@ -1,6 +1,7 @@
 """Tests for Discover futures market quality classification."""
 
 from app.utils.feed_market_quality import (
+    apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
     quality_score_adjustment,
@@ -179,6 +180,29 @@ class TestMarketQualityClassification:
 
         assert oil_highlight.score > hantavirus_highlight.score
         assert oil_score < hantavirus_score
+
+    def test_quality_score_ceiling_prevents_normal_market_saturation(self):
+        normal = classify_market_quality(
+            "PGA Tour: Truist Championship Top 20",
+            sport_category="golf",
+        )
+        compelling = classify_market_quality(
+            "Will Israel and Iran agree to a ceasefire before July?",
+            sport_category="geopolitics",
+        )
+
+        assert normal.quality_class == "normal"
+        assert apply_quality_score(100, normal) < 100
+        assert apply_quality_score(100, compelling) == 100
+
+    def test_low_quality_score_ceiling_prevents_bucket_saturation(self):
+        quality = classify_market_quality(
+            "Treasury 10-year yield on May 8, 2026?",
+            sport_category="economics",
+        )
+
+        assert quality.quality_class == "low_quality"
+        assert apply_quality_score(100, quality) <= 70
 
 
 class TestLowQualityFamilyCap:
