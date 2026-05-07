@@ -125,3 +125,4 @@ backend/scripts/audit_results/
 
 # iOS build artifacts
 ios/Bain Luck/build/
+docs/designs/
