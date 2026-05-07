@@ -4135,12 +4135,21 @@ async def get_event_odds_history(
     is_finished = event.status in ("completed", "closed")
 
     if is_finished:
-        # Return all snapshots for finished events
-        result = await db.execute(
-            select(OddsSnapshot)
-            .where(OddsSnapshot.event_id == event_id)
-            .order_by(OddsSnapshot.captured_at)
-        )
+        # Return snapshots up to 30 min after game end to exclude stale
+        # prediction market data from hours/days after completion.
+        end_cap = None
+        if event.completed_at:
+            end_cap = event.completed_at + timedelta(minutes=30)
+        elif event.commence_time:
+            from app.tasks.odds_polling import get_max_duration_for_sport
+            sport_key = event.sport.key if event.sport else ""
+            max_hours = get_max_duration_for_sport(sport_key)
+            end_cap = event.commence_time + timedelta(hours=max_hours + 0.5)
+
+        query = select(OddsSnapshot).where(OddsSnapshot.event_id == event_id)
+        if end_cap:
+            query = query.where(OddsSnapshot.captured_at <= end_cap)
+        result = await db.execute(query.order_by(OddsSnapshot.captured_at))
         cutoff = None
     else:
         # Include snapshots where:
@@ -4325,6 +4334,8 @@ async def get_event_odds_history(
         )
         if cutoff is not None:
             wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
+        if is_finished and end_cap:
+            wp_query = wp_query.where(WinProbSnapshot.captured_at <= end_cap)
         wp_result = await db.execute(
             wp_query.order_by(WinProbSnapshot.captured_at)
         )

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, GolfTournament } from "@/lib/types";
@@ -250,10 +251,10 @@ function ThumbButtons({
 // ============================================================================
 
 function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean; sport?: string | null }) {
-  // Try primary URL, then ESPN fallback
+  const [imgError, setImgError] = useState(false);
   const resolvedUrl = url || (!isFlag ? espnTeamLogoByName(name, sport) : null);
-  
-  if (resolvedUrl) {
+
+  if (resolvedUrl && !imgError) {
     return (
       <Image
         src={resolvedUrl}
@@ -262,6 +263,7 @@ function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | un
         height={isFlag ? 15 : 20}
         className={`flex-shrink-0 ${isFlag ? "rounded-sm" : "rounded-sm"}`}
         unoptimized
+        onError={() => setImgError(true)}
       />
     );
   }

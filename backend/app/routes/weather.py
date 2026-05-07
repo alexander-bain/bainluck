@@ -78,6 +78,7 @@ def _market_source(market: FuturesMarket) -> str:
 def _open_weather_query():
     """Return a base select for open weather markets with outcomes eagerly loaded."""
     now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(days=7)
     return (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -86,8 +87,9 @@ def _open_weather_query():
             FuturesMarket.status == "open",
             or_(
                 FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= now,
+                FuturesMarket.resolution_date >= now - timedelta(hours=6),
             ),
+            FuturesMarket.updated_at >= stale_cutoff,
         )
     )
 
