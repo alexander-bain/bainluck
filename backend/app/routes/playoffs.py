@@ -2550,9 +2550,10 @@ async def get_playoff_grid(
         )
 
     # Backfill empty columns from resolved markets (e.g., make_playoffs after
-    # regular season ends). Light query: only outcome name + is_winner.
+    # regular season ends). Non-critical — grid works without it.
     empty_cols = [c for c in config.columns if not column_data.get(c.key)]
     if empty_cols:
+      try:
         resolved_stmt = (
             select(FuturesMarket)
             .where(
@@ -2586,6 +2587,8 @@ async def get_playoff_grid(
         if resolved_markets:
             logger.info("Playoff grid %s: backfilled %d resolved markets for empty columns %s",
                         league_slug, len(resolved_markets), [c.key for c in empty_cols])
+      except Exception as e:
+        logger.warning("Playoff grid %s: resolved backfill failed (non-critical): %s", league_slug, e)
 
     # Log column coverage + per-market breakdown for debugging
     for col in config.columns:
