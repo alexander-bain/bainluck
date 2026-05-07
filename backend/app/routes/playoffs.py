@@ -2558,9 +2558,10 @@ async def get_playoff_grid(
             .where(
                 market_filter,
                 FuturesMarket.status == "resolved",
+                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
             )
             .options(selectinload(FuturesMarket.outcomes))
-            .limit(200)
+            .limit(50)
         )
         resolved_result = await db.execute(resolved_stmt)
         resolved_markets = resolved_result.scalars().unique().all()
