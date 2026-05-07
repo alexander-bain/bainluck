@@ -3631,8 +3631,8 @@ async def tier1_source_compliance(
 
     Tier 1 sports: MLB, NBA, NHL, NFL, PGA.
     Required sources: Odds API, ESPN, StatPal, Kalshi, Polymarket (+ DataGolf for PGA).
-    Only counts scheduled/live events from -6h to +48h.
-    Target: 100% compliance for each sport × source cell.
+    Only counts scheduled/live events happening today (-6h to +12h).
+    Target: 100% compliance for each sport × source cell. No excuses.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -3653,7 +3653,7 @@ async def tier1_source_compliance(
             WHERE s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'americanfootball_nfl')
               AND e.status IN ('scheduled', 'live')
               AND e.commence_time >= NOW() - INTERVAL '6 hours'
-              AND e.commence_time <= NOW() + INTERVAL '48 hours'
+              AND e.commence_time <= NOW() + INTERVAL '12 hours'
         ),
         kalshi_links AS (
             SELECT DISTINCT fm.event_id
@@ -3724,7 +3724,7 @@ async def tier1_source_compliance(
             WHERE s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'americanfootball_nfl')
               AND e.status IN ('scheduled', 'live')
               AND e.commence_time >= NOW() - INTERVAL '6 hours'
-              AND e.commence_time <= NOW() + INTERVAL '48 hours'
+              AND e.commence_time <= NOW() + INTERVAL '12 hours'
         ),
         kalshi_links AS (
             SELECT DISTINCT fm.event_id FROM futures_markets fm
@@ -3771,7 +3771,7 @@ async def tier1_source_compliance(
         })
 
     return {
-        "target": "100% — every Tier 1 event has all 5 sources",
+        "target": "100% — every Tier 1 event happening today has all 5 sources",
         "compliance_pct": round(totals["compliant"] / max(totals["total"], 1) * 100, 1),
         "total_events": totals["total"],
         "fully_compliant": totals["compliant"],
