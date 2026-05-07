@@ -3802,7 +3802,7 @@ async def _golf_compliance(db: AsyncSession) -> dict:
         golf_events = []
         for t in dg_tournaments:
             tour = t.tour or "unknown"
-            event_name = t.name.replace(" - Win", "").replace(" - Winner", "").strip()
+            event_name = t.name.replace(" - Winner", "").replace(" - Win", "").strip()
             search_term = event_name.split(" - ")[0].split("(")[0].strip()[:30].lower()
             if not search_term:
                 continue
