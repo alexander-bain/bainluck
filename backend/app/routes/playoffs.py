@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_, text, func as sqlfunc
+from sqlalchemy import select, or_, and_, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -2399,13 +2399,30 @@ async def get_playoff_grid(
     for sk in config.sport_keys:
         sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
 
-    # Path B: Match by llm_sport_category (Kalshi/Polymarket markets)
-    # These sources use non-sport-key external IDs (tickers, numeric IDs).
-    # We filter by category, then use league_name_patterns in Python to
-    # separate leagues that share a category (NBA vs NCAAB both = "basketball").
-    category_condition = FuturesMarket.llm_sport_category == config.sport_category
+    # Path B.1: Match by external_id ticker prefix (Kalshi markets like KXNBA%)
+    if config.external_id_prefixes:
+        for pfx in config.external_id_prefixes:
+            sport_conditions.append(FuturesMarket.external_id.ilike(f"{pfx}%"))
 
-    market_filter = or_(*sport_conditions, category_condition)
+    # Path B.2: Match by llm_sport_category + league name patterns (Polymarket).
+    # Push league name filter to SQL via ILIKE to avoid loading ALL category markets.
+    category_conditions = []
+    if config.league_name_patterns:
+        for pattern_str in config.league_name_patterns:
+            # Convert regex to SQL ILIKE: \bNBA\b → %NBA%
+            sql_pattern = re.sub(r"\\[bs]|\\s\+|[()]|\?", "", pattern_str)
+            sql_pattern = sql_pattern.replace("\\", "").strip()
+            if sql_pattern:
+                category_conditions.append(
+                    and_(
+                        FuturesMarket.llm_sport_category == config.sport_category,
+                        FuturesMarket.name.ilike(f"%{sql_pattern}%"),
+                    )
+                )
+    if not category_conditions:
+        category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
+
+    market_filter = or_(*sport_conditions, *category_conditions)
 
     stmt = (
         select(FuturesMarket)
