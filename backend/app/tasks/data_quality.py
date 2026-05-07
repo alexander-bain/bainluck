@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import sentry_sdk
-from sqlalchemy import func, select, case, and_
+from sqlalchemy import func, select, case, and_, or_
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
@@ -51,13 +51,19 @@ async def _check_data_quality() -> dict:
     }
 
     async with get_task_session() as session:
-        # ── Check 1: Classification distribution (last 24h markets) ──
+        # ── Check 1: Classification distribution (last 24h sports markets) ──
         tier_dist = await session.execute(
             select(
                 FuturesMarket.market_tier,
                 func.count(FuturesMarket.id),
             )
-            .where(FuturesMarket.updated_at >= since)
+            .where(
+                FuturesMarket.updated_at >= since,
+                or_(
+                    FuturesMarket.llm_sport_category.is_(None),
+                    FuturesMarket.llm_sport_category.notin_(_NON_SPORT_CATEGORIES),
+                ),
+            )
             .group_by(FuturesMarket.market_tier)
         )
         tier_counts = {str(row[0]): row[1] for row in tier_dist.all()}
@@ -71,6 +77,7 @@ async def _check_data_quality() -> dict:
             "tier_distribution": tier_counts,
             "unclassified_count": tier_5_count,
             "unclassified_rate": round(tier_5_rate, 3),
+            "scope": "sports_only",
         }
 
         if tier_5_rate > _UNCLASSIFIED_RATE_CRIT and total_markets >= 10:

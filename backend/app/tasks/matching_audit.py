@@ -670,12 +670,18 @@ async def _compute_matching_metrics_impl() -> dict:
         kalshi = sum(r.kalshi_matched for r in rows)
         poly = sum(r.poly_matched for r in rows)
 
-        # Major sports breakdown
+        # Major sports breakdown — only count sports where PM markets exist
+        # (sports with 0 matches have no PM coverage, making 100% impossible)
         major_total = sum(r.total for r in rows if r.sport_key in _MAJOR_SPORTS)
         major_matched = sum(r.matched for r in rows if r.sport_key in _MAJOR_SPORTS)
+        major_matchable = sum(
+            r.total for r in rows
+            if r.sport_key in _MAJOR_SPORTS and (r.kalshi_matched > 0 or r.poly_matched > 0)
+        )
 
         by_sport = []
         for r in rows:
+            has_pm_coverage = r.kalshi_matched > 0 or r.poly_matched > 0
             by_sport.append({
                 "sport": r.sport_key,
                 "total": r.total,
@@ -684,6 +690,7 @@ async def _compute_matching_metrics_impl() -> dict:
                 "kalshi": r.kalshi_matched,
                 "polymarket": r.poly_matched,
                 "is_major": r.sport_key in _MAJOR_SPORTS,
+                "has_pm_coverage": has_pm_coverage,
             })
 
         # Unmatched major sport events (the ones we should NEVER miss)

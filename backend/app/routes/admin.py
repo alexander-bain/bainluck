@@ -3539,10 +3539,10 @@ async def prediction_market_link_rate(
             "league": row.league,
             "total": row.total,
             "linked": row.linked,
-            "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
+            "link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
             "open_total": row.open_total,
             "open_linked": row.open_linked,
-            "open_link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
+            "link_rate_all": round(row.linked / row.total * 100, 1) if row.total else 0,
         }
         kalshi_by_sport.append(sport_data)
         for k in kalshi_totals:
@@ -3579,10 +3579,10 @@ async def prediction_market_link_rate(
             "league": row.league,
             "total": row.total,
             "linked": row.linked,
-            "link_rate": round(row.linked / row.total * 100, 1) if row.total else 0,
+            "link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
             "open_total": row.open_total,
             "open_linked": row.open_linked,
-            "open_link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
+            "link_rate_all": round(row.linked / row.total * 100, 1) if row.total else 0,
         }
         poly_by_sport.append(sport_data)
         for k in poly_totals:
@@ -3606,16 +3606,16 @@ async def prediction_market_link_rate(
         "kalshi": {
             "totals": {
                 **kalshi_totals,
-                "link_rate_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
-                "open_link_rate_pct": round(kalshi_totals["open_linked"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
+                "link_rate_pct": round(kalshi_totals["open_linked"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
+                "link_rate_all_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
             },
             "by_sport": kalshi_by_sport,
         },
         "polymarket": {
             "totals": {
                 **poly_totals,
-                "link_rate_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
-                "open_link_rate_pct": round(poly_totals["open_linked"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
+                "link_rate_pct": round(poly_totals["open_linked"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
+                "link_rate_all_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
             },
             "by_sport": poly_by_sport,
         },
@@ -3625,6 +3625,7 @@ async def prediction_market_link_rate(
 @router.get("/prediction-markets/game-diagnostics")
 async def prediction_market_game_diagnostics(
     secret: str = Query(..., description="Admin secret for authorization"),
+    sport: str = Query(None, description="Filter to prefixes for a sport (e.g. 'mlb', 'nba')"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -3632,18 +3633,24 @@ async def prediction_market_game_diagnostics(
 
     Shows counts of game-level markets by ticker prefix, their link status,
     and sample unlinked markets to identify matching failures.
+    Pass ?sport=mlb to filter to MLB prefixes only.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import func, case
+    from sqlalchemy import func, case, text as _text
     from app.models.models import FuturesMarket
     from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
+    await db.execute(_text("SET LOCAL statement_timeout = '20s'"))
+
     results = {}
 
-    # Check each game ticker prefix
-    for prefix in KALSHI_GAME_TICKER_PREFIXES:
+    prefixes = KALSHI_GAME_TICKER_PREFIXES
+    if sport:
+        prefixes = [p for p in prefixes if sport.lower() in p.lower()]
+
+    for prefix in prefixes:
         pattern = f"{prefix}%"
         stats_result = await db.execute(
             select(
@@ -7340,16 +7347,22 @@ async def operations_dashboard(
         heartbeat_age = None
         worker_status = "error"
 
+    _ESSENTIAL_TASKS = {
+        "poll_odds", "espn_sync", "statpal_livescores", "statpal_schedules",
+        "prediction_market_match", "prediction_market_live", "mlb_sync",
+        "discover_events", "transition_statuses",
+    }
     critical_tasks = [t for t in tasks if t.get("health") == "critical"]
     degraded_tasks = [t for t in tasks if t.get("health") == "degraded"]
+    essential_critical = [t for t in critical_tasks if t.get("task") in _ESSENTIAL_TASKS]
 
     worker_section = {
         "worker_status": worker_status,
         "heartbeat_age_seconds": round(heartbeat_age) if heartbeat_age else None,
         "overall_health": (
             "worker_down" if worker_status != "healthy"
-            else "critical" if critical_tasks
-            else "degraded" if degraded_tasks
+            else "critical" if essential_critical
+            else "degraded" if critical_tasks or degraded_tasks
             else "healthy" if tasks
             else "no_data"
         ),
