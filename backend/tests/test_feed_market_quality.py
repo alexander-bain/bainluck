@@ -58,6 +58,20 @@ class TestMarketQualityClassification:
         assert quality.quality_class == "low_quality"
         assert quality.is_ladder_or_bucket is True
 
+    def test_dated_finance_and_commodity_markets_are_low_quality(self):
+        examples = [
+            "Live cattle price on May 01, 2026 at 1:05 PM EDT?",
+            "Treasury 10-year yield on May 8, 2026?",
+            "USD/JPY price on May 4, 2026 at 10am EDT?",
+            "EUR/USD price range on May 4, 2026 at 10am EDT?",
+            "PPI YoY in April",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="economics")
+            assert quality.quality_class == "low_quality", name
+            assert quality.is_ladder_or_bucket is True, name
+
     def test_social_filler_is_suppressed(self):
         quality = classify_market_quality(
             'Will Trump post "tariffs" this week on Truth?',
@@ -66,6 +80,35 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "suppress"
         assert "social_filler" in quality.reasons
+
+    def test_conversation_and_endorsement_filler_is_suppressed(self):
+        examples = [
+            "Who will Donald Trump talk to in Apr 2026?",
+            "How many people will Trump endorse on Truth Social this week? (5/3-5/9)",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="politics")
+            assert quality.quality_class == "suppress", name
+            assert "social_filler" in quality.reasons
+
+    def test_music_metric_markets_are_low_quality_and_family_capped(self):
+        examples = [
+            "GREENGREEN: Album Equivalent Units (May 01-May 07, 2026)",
+            "Friday Night Lights streams up this week?",
+            "Top USA Artist on Spotify on Apr 29, 2026?",
+            "#2 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
+            "Where will 'Ordinary' by Alex Warren rank on the Billboard Hot 100 chart dated May 9?",
+        ]
+
+        qualities = [
+            classify_market_quality(name, sport_category="entertainment")
+            for name in examples
+        ]
+
+        assert all(q.quality_class == "low_quality" for q in qualities)
+        assert all("entertainment_metric" in q.reasons for q in qualities)
+        assert len({q.family_key for q in qualities}) <= 3
 
     def test_sports_personnel_story_is_compelling(self):
         quality = classify_market_quality(

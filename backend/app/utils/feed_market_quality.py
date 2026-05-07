@@ -25,7 +25,9 @@ _NUMBER_RE = re.compile(r"[-+]?\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
 _PRICE_BUCKET_RE = re.compile(
     r"\b("
     r"oil|crude|brent|wti|gas|natural gas|gold|silver|copper|"
+    r"cattle|livestock|corn|wheat|soybeans?|coffee|cocoa|"
     r"s&p|s\s*&\s*p|nasdaq|dow|russell|stock|shares?|"
+    r"treasury|yield|usd/jpy|eur/usd|gbp/usd|currency|forex|"
     r"bitcoin|btc|ethereum|eth|solana|sol|crypto|"
     r"cpi|inflation|fed funds|interest rate|mortgage rate"
     r")\b.*\b("
@@ -36,8 +38,18 @@ _PRICE_BUCKET_RE = re.compile(
 )
 
 _COMMODITY_DATED_PRICE_RE = re.compile(
-    r"\b(oil|crude|brent|wti|natural gas|gasoline)\b.*\b"
+    r"\b("
+    r"oil|crude|brent|wti|natural gas|gasoline|cattle|livestock|"
+    r"corn|wheat|soybeans?|coffee|cocoa|treasury|yield|"
+    r"usd/jpy|eur/usd|gbp/usd"
+    r")\b.*\b"
     r"(price|hit|close|settle)\b.*\b(on|in|this week|next week|by)\b",
+    re.IGNORECASE,
+)
+
+_DATED_FINANCE_METRIC_RE = re.compile(
+    r"\b(treasury|yield|inflation|cpi|ppi|usd/jpy|eur/usd|gbp/usd)\b"
+    r".*\b(on|in|this week|next week|by)\b",
     re.IGNORECASE,
 )
 
@@ -61,12 +73,24 @@ _SOCIAL_FILLER_RE = re.compile(
     r"|white house #"
     r"|what will .+ (say|post) (during|this week|on truth)"
     r"|will .+ (say|post) \".+\""
+    r"|who will .+ (talk to|speak to)"
+    r"|how many people will .+ endorse"
     r"|weekly streams"
     r"|runner-up .+ on spotify"
     r"|net worth on ("
     + _MONTH_RE +
     r")"
     r")",
+    re.IGNORECASE,
+)
+
+_ENTERTAINMENT_METRIC_RE = re.compile(
+    r"\b("
+    r"streams up this week|weekly streams|album equivalent units|"
+    r"billboard hot 100|billboard 200|weekly top (songs|albums)|"
+    r"top usa artist on spotify|top album on weekly|top song on weekly|"
+    r"rank on the billboard|#\d+ on the billboard"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -190,10 +214,13 @@ def classify_market_quality(
     is_narrow = _is_narrow_range(name)
 
     price_bucket = bool(
-        _PRICE_BUCKET_RE.search(name) or _COMMODITY_DATED_PRICE_RE.search(name)
+        _PRICE_BUCKET_RE.search(name)
+        or _COMMODITY_DATED_PRICE_RE.search(name)
+        or _DATED_FINANCE_METRIC_RE.search(name)
     )
     weather_bucket = bool(_WEATHER_BUCKET_RE.search(name))
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
+    entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
 
     ladder_or_bucket = price_bucket or weather_bucket
@@ -203,6 +230,8 @@ def classify_market_quality(
         reasons.append("narrow_range")
     if social_filler:
         reasons.append("social_filler")
+    if entertainment_metric:
+        reasons.append("entertainment_metric")
     if obscure:
         reasons.append("obscure_procedural")
 
@@ -229,6 +258,8 @@ def classify_market_quality(
 
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
+    elif entertainment_metric:
+        quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
     elif personnel or outbreak or compelling:
@@ -237,6 +268,13 @@ def classify_market_quality(
         quality = "normal"
 
     family_key = normalized
+    if entertainment_metric:
+        if re.search(r"streams up this week|weekly streams", name, re.IGNORECASE):
+            family_key = "entertainment:streaming_metric"
+        elif re.search(r"billboard|weekly top|spotify", name, re.IGNORECASE):
+            family_key = "entertainment:chart_metric"
+        else:
+            family_key = "entertainment:metric"
     if ladder_or_bucket:
         family_key = re.sub(r"<num>(?:\s*(?:to|and|-)\s*<num>)+", "<range>", normalized)
         family_key = re.sub(r"<num>", "<num>", family_key)
