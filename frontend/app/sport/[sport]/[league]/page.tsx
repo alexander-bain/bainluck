@@ -385,7 +385,15 @@ export default function LeagueShowcasePage() {
         {/* Championship Grid (inline) */}
         {grid && grid.teams && grid.teams.length > 0 && (
           <section>
-            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Championship Odds</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
+              <Link
+                href={`/playoffs/${leagueSlug}`}
+                className="text-xs font-medium text-accent-brand hover:underline"
+              >
+                View full grid &rarr;
+              </Link>
+            </div>
             <TournamentProgressionTable
               data={gridToProgression(grid)}
               pageType="sport_league"
