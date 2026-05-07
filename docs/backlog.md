@@ -93,6 +93,14 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ## Tier 1 — High Leverage, Do Next
 
+### Production Observability — Latency, Crash Rate, Quality Indicators
+
+We measure per-request latency (X-Response-Time header, slow-request logging >500ms/>1s) but have no aggregation, dashboards, or percentile tracking. Can't answer "what's our p50/p95?" or "which endpoints are slowest?" or "what's our crash rate over time?"
+
+**Need:** A solution that tracks latency percentiles (p50/p95/p99), error/crash rates, endpoint-level breakdown, and trends over time. Options range from free (sample + store in Redis/Postgres, build admin dashboard) to paid (Sentry Performance, Datadog, New Relic). Evaluate tradeoffs and pick one.
+
+**Parallel Safety:** Green
+
 ### Manus Sweep May 6 — 9 Modules, Multiple Critical Issues
 
 Full reports: `Manus/audit_results/2026-05-06/`. All 9 modules completed.
