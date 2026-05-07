@@ -3133,9 +3133,6 @@ async def get_playoff_grid(
     # 9. Build response
     # -----------------------------------------------------------------------
 
-    # Debug: market counts per column for diagnostics
-    _debug_col_counts = {col.key: len(column_data.get(col.key, [])) for col in config.columns}
-
     # Only include columns that have data, with per-column market_id
     active_columns = []
     for col in config.columns:
@@ -3223,9 +3220,6 @@ async def get_playoff_grid(
         "last_updated": datetime.now(timezone.utc).isoformat(),
         "sources_available": sorted(sources_seen),
         "championship_market_id": championship_market_id,
-        "_debug_markets_loaded": len(all_markets),
-        "_debug_markets_filtered": len(markets),
-        "_debug_col_counts": _debug_col_counts,
     }
 
     # Debug mode: include which markets feed each column
