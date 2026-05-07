@@ -2484,6 +2484,11 @@ async def get_playoff_grid(
     # column_key -> list of (market, outcome) tuples
     column_data: dict[str, list[tuple]] = defaultdict(list)
     _stale_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    # Settled columns (make_playoffs, division) stop trading after regular
+    # season ends — prices stay at 99.5%/0.5% with no updates for weeks.
+    # Use a much longer cutoff for these columns.
+    _settled_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
+    _SETTLED_COLUMNS = {"make_playoffs", "division"}
     _stale_skipped = 0
 
     for market in markets:
@@ -2491,8 +2496,9 @@ async def get_playoff_grid(
         if not col_key:
             continue
 
+        cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
         for outcome in market.outcomes:
-            if outcome.last_updated and outcome.last_updated < _stale_cutoff:
+            if outcome.last_updated and outcome.last_updated < cutoff:
                 _stale_skipped += 1
                 continue
             if outcome.current_probability is not None:
