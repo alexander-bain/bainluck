@@ -150,8 +150,11 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
         rows = []
         for m in markets:
             row = _market_row(m)
-            if row and row["prob"] < 99:
-                rows.append(row)
+            if not row:
+                continue
+            if row["outcome_count"] <= 2 and row["prob"] > 95:
+                continue
+            rows.append(row)
         rows.sort(key=lambda r: -abs(r["prob"] - 50))
         return rows[:limit]
 
@@ -180,7 +183,7 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
                 }
         else:
             row = _market_row(m)
-            if row and row["prob"] < 99:
+            if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
                 pres_side.append(row)
     pres_side.sort(key=lambda r: -abs(r["prob"] - 50))
 

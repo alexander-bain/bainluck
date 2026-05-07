@@ -157,8 +157,13 @@ async def get_entertainment(db: AsyncSession = Depends(get_db)):
         rows = []
         for m in markets:
             row = _market_row(m)
-            if row and row["prob"] < 99:
-                rows.append(row)
+            if not row:
+                continue
+            # Binary Yes/No markets above 95% are boring; multi-outcome
+            # markets (awards, rankings) are interesting even at 90%+
+            if row["outcome_count"] <= 2 and row["prob"] > 95:
+                continue
+            rows.append(row)
         rows.sort(key=lambda r: -abs(r["prob"] - 50))
         return rows[:limit]
 
