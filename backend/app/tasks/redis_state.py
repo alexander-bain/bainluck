@@ -23,16 +23,28 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
 def get_redis_client():
-    """Get Redis client with proper SSL handling for Heroku."""
+    """Get sync Redis client with proper SSL handling for Heroku."""
     import ssl
 
     if REDIS_URL.startswith("rediss://"):
-        # Heroku Redis with SSL
         return redis.from_url(
             REDIS_URL,
             ssl_cert_reqs=ssl.CERT_NONE
         )
     return redis.from_url(REDIS_URL)
+
+
+def get_async_redis_client():
+    """Get async Redis client for use in FastAPI route handlers."""
+    import ssl
+    import redis.asyncio as aioredis
+
+    if REDIS_URL.startswith("rediss://"):
+        return aioredis.from_url(
+            REDIS_URL,
+            ssl_cert_reqs=ssl.CERT_NONE
+        )
+    return aioredis.from_url(REDIS_URL)
 
 
 def compute_odds_hash(events_data: list) -> str:

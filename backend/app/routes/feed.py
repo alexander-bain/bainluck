@@ -101,14 +101,16 @@ async def get_feed(
     """
     # --- PREQ-6: Redis response cache for anonymous users ---
     _cache_key = None
+    _async_redis = None
     if user is None and not my_teams_only:
         try:
-            from app.tasks.redis_state import get_redis_client
-            _redis = get_redis_client()
+            from app.tasks.redis_state import get_async_redis_client
+            _async_redis = get_async_redis_client()
             _parts = f"feed:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
-            cached = _redis.get(_cache_key)
+            cached = await _async_redis.get(_cache_key)
             if cached:
+                await _async_redis.aclose()
                 return _json_module.loads(cached)
         except Exception:
             _cache_key = None  # Redis down — fall through to DB
@@ -320,11 +322,10 @@ async def get_feed(
         }
 
     # --- PREQ-6: Write to cache for anonymous users ---
-    if _cache_key and not ctx.is_authenticated:
+    if _cache_key and not ctx.is_authenticated and _async_redis:
         try:
-            from app.tasks.redis_state import get_redis_client
-            _redis = get_redis_client()
-            _redis.setex(_cache_key, 15, _json_module.dumps(response, default=str))
+            await _async_redis.setex(_cache_key, 15, _json_module.dumps(response, default=str))
+            await _async_redis.aclose()
         except Exception:
             pass
 
@@ -843,7 +844,7 @@ async def _score_futures(
             FuturesMarket.market_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
 
-    # Pool 1: sports futures (capped at 150)
+    # Pool 1: sports futures (capped — tier-ordered so best surface first)
     sports_query = (
         select(FuturesMarket)
         .options(*base_options)
@@ -852,10 +853,10 @@ async def _score_futures(
             FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
         )
         .order_by(FuturesMarket.market_tier.asc().nulls_last(), FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(150)
+        .limit(50)
     )
 
-    # Pool 2: non-sports futures — sort by volume to surface actively-traded markets
+    # Pool 2: non-sports futures — volume-ordered for actively-traded markets
     nonsports_query = (
         select(FuturesMarket)
         .options(*base_options)
@@ -867,7 +868,7 @@ async def _score_futures(
             ),
         )
         .order_by(FuturesMarket.volume_24h.desc().nulls_last(), FuturesMarket.market_tier.asc().nulls_last())
-        .limit(500)
+        .limit(150)
     )
 
     sports_result = await db.execute(sports_query)
