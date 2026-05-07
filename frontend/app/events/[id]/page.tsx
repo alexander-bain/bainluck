@@ -460,15 +460,29 @@ export default function EventPage({ params }: EventPageProps) {
     const start = chartTimeRange === "live" ? liveStart : allStart;
     start.setSeconds(0, 0);
     end.setSeconds(0, 0);
-    // Compute explicit X-axis ticks so both charts use identical labels
-    const durationMin = (end.getTime() - start.getTime()) / 60000;
-    const tickCount = Math.min(8, Math.max(2, Math.floor(durationMin / 15)));
-    const stepMin = durationMin / (tickCount - 1);
+    // Compute explicit X-axis ticks at clean time boundaries so both charts
+    // render identical tick labels. Uses 30-min intervals for games <3h,
+    // 60-min for longer games, snapped to round clock times (:00, :30).
+    const durationMs = end.getTime() - start.getTime();
+    const durationMin = durationMs / 60000;
+    let intervalMin = durationMin < 180 ? 30 : 60;
+    while (durationMin / intervalMin > 10) intervalMin *= 2;
+
     const ticks: string[] = [];
-    for (let i = 0; i < tickCount; i++) {
-      const t = new Date(start.getTime() + i * stepMin * 60000);
-      t.setSeconds(0, 0);
-      ticks.push(fmtDate(t, "h:mm a"));
+    ticks.push(fmtDate(start, "h:mm a"));
+
+    const cursor = new Date(start);
+    const curMins = cursor.getMinutes();
+    const nextBoundary = Math.ceil((curMins + 1) / intervalMin) * intervalMin;
+    cursor.setMinutes(nextBoundary, 0, 0);
+    while (cursor < end) {
+      ticks.push(fmtDate(cursor, "h:mm a"));
+      cursor.setMinutes(cursor.getMinutes() + intervalMin);
+    }
+
+    const endLabel = fmtDate(end, "h:mm a");
+    if (ticks[ticks.length - 1] !== endLabel) {
+      ticks.push(endLabel);
     }
 
     return { start: start.toISOString(), end: end.toISOString(), ticks };

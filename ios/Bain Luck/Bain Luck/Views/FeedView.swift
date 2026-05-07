@@ -177,7 +177,7 @@ struct FeedView: View {
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
                 case .eiRankings:
-                    EIRankingsView()
+                    EmptyView()
                 case .preferences:
                     PreferencesView()
                 case .sportCategory(let key, let name):
@@ -187,7 +187,7 @@ struct FeedView: View {
                 case .golfCategory:
                     GolfCategoryView()
                 case .golfLeaderboard:
-                    MastersLiveView()
+                    GolfCategoryView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:

@@ -122,9 +122,6 @@ struct MainTabView: View {
                     NavigationLink(value: Route.economics) {
                         Label("Economics", systemImage: "chart.bar.fill")
                     }
-                    NavigationLink(value: Route.eiRankings) {
-                        Label("EI Rankings", systemImage: "trophy.fill")
-                    }
                     NavigationLink(value: Route.preferences) {
                         Label("Preferences", systemImage: "gearshape")
                     }
@@ -138,8 +135,6 @@ struct MainTabView: View {
                     EventDetailView(eventId: id)
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
-                case .eiRankings:
-                    EIRankingsView()
                 case .preferences:
                     PreferencesView()
                 case .sportCategory(let key, let name):
@@ -149,7 +144,7 @@ struct MainTabView: View {
                 case .golfCategory:
                     GolfCategoryView()
                 case .golfLeaderboard:
-                    MastersLiveView()
+                    GolfCategoryView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:

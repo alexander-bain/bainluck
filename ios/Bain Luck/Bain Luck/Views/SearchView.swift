@@ -233,7 +233,7 @@ struct SearchView: View {
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
                 case .eiRankings:
-                    EIRankingsView()
+                    EmptyView()
                 case .preferences:
                     PreferencesView()
                 case .sportCategory(let key, let name):
@@ -243,7 +243,7 @@ struct SearchView: View {
                 case .golfCategory:
                     Text("Golf Category")
                 case .golfLeaderboard:
-                    MastersLiveView()
+                    GolfCategoryView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:

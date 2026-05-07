@@ -131,7 +131,7 @@ struct MyStuffView: View {
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
                 case .eiRankings:
-                    EIRankingsView()
+                    EmptyView()
                 case .preferences:
                     PreferencesView()
                         .environmentObject(authManager)
@@ -142,7 +142,7 @@ struct MyStuffView: View {
                 case .golfCategory:
                     Text("Golf Category")
                 case .golfLeaderboard:
-                    MastersLiveView()
+                    GolfCategoryView()
                 case .golfTournament(_, let name):
                     SportCategoryView(categoryKey: "golf", categoryName: name)
                 case .futuresList:
