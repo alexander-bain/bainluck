@@ -6125,6 +6125,38 @@ async def hook_coverage(
     }
 
 
+@router.get("/market-lookup")
+async def market_lookup(
+    secret: str = Query(...),
+    ticker: str = Query(None),
+    name: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Look up futures markets by external_id prefix or name pattern."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.models import FuturesMarket
+    query = select(
+        FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.name,
+        FuturesMarket.status, FuturesMarket.source, FuturesMarket.market_tier,
+        FuturesMarket.llm_sport_category,
+    )
+    if ticker:
+        query = query.where(FuturesMarket.external_id.ilike(f"{ticker}%"))
+    elif name:
+        query = query.where(FuturesMarket.name.ilike(f"%{name}%"))
+    else:
+        raise HTTPException(status_code=400, detail="Provide ticker or name")
+    query = query.limit(20)
+    result = await db.execute(query)
+    return [
+        {"id": r.id, "external_id": r.external_id, "name": r.name,
+         "status": r.status, "source": r.source, "tier": r.market_tier,
+         "category": r.llm_sport_category}
+        for r in result.all()
+    ]
+
+
 # ── Duplicate event detection + merge ──────────────────────────────────
 
 
