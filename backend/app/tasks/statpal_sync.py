@@ -877,7 +877,16 @@ async def _sync_statpal_rosters(sport_key: Optional[str] = None) -> dict:
 
 def _fixture_match_key(home: str, away: str) -> str:
     """Create a normalized key for matching fixtures to events."""
-    return f"{home.lower().strip()}|{away.lower().strip()}"
+    import unicodedata
+
+    def _normalize(s: str) -> str:
+        s = "".join(
+            c for c in unicodedata.normalize("NFD", s)
+            if unicodedata.category(c) != "Mn"
+        )
+        return s.lower().strip()
+
+    return f"{_normalize(home)}|{_normalize(away)}"
 
 
 async def _find_matching_event(session, Event, sport_id: int, fixture) -> Optional:
