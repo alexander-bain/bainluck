@@ -2411,7 +2411,7 @@ async def get_playoff_grid(
         select(FuturesMarket)
         .where(
             market_filter,
-            FuturesMarket.status.in_(("open", "closed", "resolved")),
+            FuturesMarket.status.in_(("open", "closed")),
         )
         .options(selectinload(FuturesMarket.outcomes))
     )
@@ -2492,7 +2492,7 @@ async def get_playoff_grid(
             continue
 
         for outcome in market.outcomes:
-            if market.status != "resolved" and outcome.last_updated and outcome.last_updated < _stale_cutoff:
+            if outcome.last_updated and outcome.last_updated < _stale_cutoff:
                 _stale_skipped += 1
                 continue
             if outcome.current_probability is not None:
@@ -2505,7 +2505,7 @@ async def get_playoff_grid(
                 prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
             else:
                 continue
-            if market.status != "resolved" and (prob <= 0 or prob >= 1.0):
+            if prob <= 0 or prob >= 1.0:
                 continue
             # Skip non-team outcome names (thresholds, dates, generic)
             oname = outcome.name or ""
@@ -2548,6 +2548,44 @@ async def get_playoff_grid(
             "Playoff grid %s: skipped %d stale outcomes (>7 days old)",
             league_slug, _stale_skipped,
         )
+
+    # Backfill empty columns from resolved markets (e.g., make_playoffs after
+    # regular season ends). Light query: only outcome name + is_winner.
+    empty_cols = [c for c in config.columns if not column_data.get(c.key)]
+    if empty_cols:
+        resolved_stmt = (
+            select(FuturesMarket)
+            .where(
+                market_filter,
+                FuturesMarket.status == "resolved",
+            )
+            .options(selectinload(FuturesMarket.outcomes))
+            .limit(200)
+        )
+        resolved_result = await db.execute(resolved_stmt)
+        resolved_markets = resolved_result.scalars().unique().all()
+        for market in resolved_markets:
+            if league_patterns and not any(p.search(market.name or "") for p in league_patterns):
+                continue
+            if league_exclude and any(p.search(market.name or "") for p in league_exclude):
+                continue
+            col_key = _match_market_to_column(market, config)
+            if col_key and col_key in [c.key for c in empty_cols]:
+                for outcome in market.outcomes:
+                    if outcome.is_winner is not None:
+                        outcome.current_probability = 1.0 if outcome.is_winner else 0.0
+                    if outcome.current_probability is None or float(outcome.current_probability) <= 0:
+                        continue
+                    oname = outcome.name or ""
+                    if _NON_PLAYOFF_MARKET_RE.search(oname):
+                        continue
+                    if oname.lower().strip() in ("yes", "no", "over", "under"):
+                        continue
+                    column_data[col_key].append((market, outcome))
+        if resolved_markets:
+            logger.info("Playoff grid %s: backfilled %d resolved markets for empty columns %s",
+                        league_slug, len(resolved_markets), [c.key for c in empty_cols])
+
     # Log column coverage + per-market breakdown for debugging
     for col in config.columns:
         entries = column_data.get(col.key, [])
