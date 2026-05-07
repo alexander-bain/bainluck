@@ -2577,6 +2577,7 @@ async def get_playoff_grid(
     # Backfill empty columns from resolved markets (e.g., make_playoffs after
     # regular season ends). Non-critical — grid works without it.
     empty_cols = [c for c in config.columns if not column_data.get(c.key)]
+    logger.info("Grid %s: empty columns=%s", league_slug, [c.key for c in empty_cols])
     if empty_cols:
       try:
         resolved_stmt = (
@@ -2591,12 +2592,18 @@ async def get_playoff_grid(
         )
         resolved_result = await db.execute(resolved_stmt)
         resolved_markets = resolved_result.scalars().unique().all()
+        logger.info("Grid %s: resolved backfill found %d markets", league_slug, len(resolved_markets))
         for market in resolved_markets:
             if league_patterns and not any(p.search(market.name or "") for p in league_patterns):
+                logger.debug("Grid %s backfill: %s rejected by league_patterns", league_slug, market.name[:40])
                 continue
             if league_exclude and any(p.search(market.name or "") for p in league_exclude):
+                logger.debug("Grid %s backfill: %s rejected by league_exclude", league_slug, market.name[:40])
                 continue
             col_key = _match_market_to_column(market, config)
+            logger.info("Grid %s backfill: %s (id=%d, tier=%s) → col=%s (empty=%s)",
+                        league_slug, market.name[:40], market.id, market.market_tier,
+                        col_key, [c.key for c in empty_cols])
             if col_key and col_key in [c.key for c in empty_cols]:
                 for outcome in market.outcomes:
                     if outcome.is_winner is True:
