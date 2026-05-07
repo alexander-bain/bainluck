@@ -387,9 +387,9 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
 | iOS-4 | Dead/stale views cleanup | ~~MastersLiveView, EIRankingsView~~ REMOVED May 6. TournamentChartView/CardView — audit for staleness | `ios/.../Views/` | Green |
-| **iOS-NP1** | **Native Politics page** | API ready at `/api/politics`. Need `PoliticsView.swift` consuming same JSON as web | New view + Route + MainTabView | **High** |
-| **iOS-NP2** | **Native Entertainment page** | API ready at `/api/entertainment`. Need `EntertainmentView.swift` consuming same JSON as web | New view + Route + MainTabView | **High** |
-| **iOS-NP3** | **League market sections on native** | Web shows awards, series, props below championship grid. API ready at `/api/leagues/{sport_key}`. Native league pages don't render these sections | `SportCategoryView.swift`, new section components | **Medium** |
+| ~~iOS-NP1~~ | ~~Native Politics page~~ | ✅ SHIPPED May 7 — PoliticsView.swift + Route + sidebar | | |
+| ~~iOS-NP2~~ | ~~Native Entertainment page~~ | ✅ SHIPPED May 7 — EntertainmentView.swift + Route + sidebar | | |
+| ~~iOS-NP3~~ | ~~League market sections~~ | ✅ SHIPPED May 7 — Awards, series, props in SportCategoryView | | |
 | iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
 | iOS-GD12 | Trevor Story missing headshot | Verify if URL missing in API or not loading. Add generic silhouette fallback | `RelatedFuturesView.swift`, backend roster | Green |
 
