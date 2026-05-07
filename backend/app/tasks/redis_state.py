@@ -4,10 +4,13 @@ Redis-based adaptive polling state management.
 
 import hashlib
 import json
+import logging
 import os
 import time
 
 import redis
+
+logger = logging.getLogger(__name__)
 
 from app.tasks.config import (
     POLL_STATE_KEY,
@@ -112,7 +115,7 @@ def should_poll_now() -> tuple[bool, str]:
 
     except Exception as e:
         # If Redis fails, default to polling
-        print(f"Redis error in should_poll_now: {e}")
+        logger.warning("Redis error in should_poll_now: %s", e)
         return True, "redis_error"
 
 
@@ -140,7 +143,7 @@ def update_poll_state(data_changed: bool, has_live_games: bool, new_hash: str):
         r.expire(POLL_STATE_KEY, 3600)  # 1 hour
 
     except Exception as e:
-        print(f"Redis error in update_poll_state: {e}")
+        logger.warning("Redis error in update_poll_state: %s", e)
 
 
 # =============================================================================

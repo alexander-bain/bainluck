@@ -551,7 +551,7 @@ class KalshiAPIService(BaseAPIClient):
                 markets=markets,
             )
         except Exception as e:
-            print(f"Error parsing Kalshi event: {e}")
+            logger.warning("Error parsing Kalshi event: %s", e)
             return None
 
     def _parse_market(self, market_data: dict) -> Optional[KalshiMarket]:
@@ -638,7 +638,7 @@ class KalshiAPIService(BaseAPIClient):
                 result=market_data.get("result"),
             )
         except Exception as e:
-            print(f"Error parsing Kalshi market: {e}")
+            logger.warning("Error parsing Kalshi market: %s", e)
             return None
 
     def _parse_timestamp(self, ts: Optional[str]) -> Optional[datetime]:

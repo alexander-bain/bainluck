@@ -5,11 +5,14 @@ Handles fetching odds from the-odds-api.com and transforming
 the data for storage.
 """
 
+import logging
 import os
 from datetime import datetime
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from app.services.base_api import BaseAPIClient
 from pydantic import BaseModel
@@ -230,7 +233,7 @@ class OddsAPIService(BaseAPIClient):
                 all_snapshots.extend(snapshots)
             except httpx.HTTPStatusError as e:
                 # Log but continue with other sports
-                print(f"Error fetching {sport_key}: {e}")
+                logger.warning("Error fetching %s: %s", sport_key, e)
                 continue
         
         return all_snapshots
@@ -432,7 +435,7 @@ class OddsAPIService(BaseAPIClient):
                 markets = self._parse_futures(api_response, sport_key)
                 all_markets.extend(markets)
             except httpx.HTTPStatusError as e:
-                print(f"Error fetching futures for {sport_key}: {e}")
+                logger.warning("Error fetching futures for %s: %s", sport_key, e)
                 continue
 
         return all_markets

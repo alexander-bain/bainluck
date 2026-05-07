@@ -114,7 +114,7 @@ async def _enrich_events_metadata(limit: int = 50):
                 except Exception as e:
                     stats["errors"] += 1
                     if stats["errors"] <= 5:
-                        print(f"Error enriching event {event.id}: {e}")
+                        logger.warning("Error enriching event %s: %s", event.id, e)
 
                 stats["processed"] += 1
 
@@ -128,7 +128,7 @@ async def _enrich_events_metadata(limit: int = 50):
             stats["remaining"] = len(remaining_result.all())
 
     except Exception as e:
-        print(f"Enrichment task error: {e}")
+        logger.warning("Enrichment task error: %s", e)
         stats["errors"] += 1
 
     return stats
@@ -1097,7 +1097,7 @@ async def _sync_espn_live_events():
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
-        print(f"ESPN sync task error: {e}\n{traceback.format_exc()}")
+        logger.warning("ESPN sync task error: %s", e, exc_info=True)
 
     return stats
 
@@ -1231,7 +1231,7 @@ async def _backfill_team_logos():
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
-        print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
+        logger.warning("Team logo backfill error: %s", e, exc_info=True)
 
     return stats
 

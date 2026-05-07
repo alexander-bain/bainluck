@@ -561,7 +561,7 @@ async def _discover_events():
 
                 except Exception as e:
                     # Log but continue with other sports
-                    print(f"Error discovering events for {sport_key}: {e}")
+                    logger.warning("Error discovering events for %s: %s", sport_key, e)
                     continue
 
             await session.commit()
