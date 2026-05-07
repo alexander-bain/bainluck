@@ -71,30 +71,43 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
     }
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 15000);
+  const timeoutMs = options?.timeoutMs ?? 20000;
+  const maxRetries = 2;
 
-  try {
-    const res = await fetch(`${API_URL}${endpoint}`, {
-      ...options,
-      headers,
-      signal: controller.signal,
-    });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-      throw new Error(error.detail || `API error: ${res.status}`);
+    try {
+      const res = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(error.detail || `API error: ${res.status}`);
+      }
+
+      return res.json();
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      const isTimeout = err instanceof DOMException && err.name === "AbortError";
+      const isNetworkError = err instanceof TypeError && (err.message.includes("fetch") || err.message.includes("network"));
+      if ((isTimeout || isNetworkError) && attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+        continue;
+      }
+      if (isTimeout) {
+        throw new Error(`Request timeout: ${endpoint}`);
+      }
+      throw err;
     }
-
-    return res.json();
-  } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timeout: ${endpoint}`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
   }
+  throw new Error(`Request failed after ${maxRetries + 1} attempts: ${endpoint}`);
 }
 
 /**
