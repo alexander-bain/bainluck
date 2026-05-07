@@ -158,6 +158,19 @@ class TestMarketQualityClassification:
 
         assert story_keys == {"story:middle_east_conflict"}
 
+    def test_story_key_groups_repeated_company_stake_and_tournament_props(self):
+        stake = classify_market_quality(
+            "Will the US federal government take a stake in Lockheed Martin Corporation?",
+            sport_category="politics",
+        )
+        golf = classify_market_quality(
+            "Will Harry Hall finish in the Top 5 at the 2026 Truist Championship?",
+            sport_category="golf",
+        )
+
+        assert stake.story_key == "story:us_government_stakes"
+        assert golf.story_key == "story:golf_truist_championship"
+
     def test_numeric_outcome_ladder_detected(self):
         quality = classify_market_quality(
             "What will CPI be in June?",
@@ -305,3 +318,36 @@ class TestQualityFamilyDiversity:
         ]
         assert len(middle_east) == 3
         assert any(i["_quality_story_key"] == "story:ai" for i in capped)
+
+    def test_diversify_uses_tighter_caps_for_some_story_families(self):
+        items = [
+            {
+                "score": 100 - i,
+                "_quality_class": "compelling",
+                "_quality_family_key": f"2028 election variant {i}",
+                "_quality_story_key": "story:us_2028_election",
+            }
+            for i in range(4)
+        ]
+        items.extend([
+            {
+                "score": 90 - i,
+                "_quality_class": "normal",
+                "_quality_family_key": f"government stake variant {i}",
+                "_quality_story_key": "story:us_government_stakes",
+            }
+            for i in range(4)
+        ])
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        election = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:us_2028_election"
+        ]
+        stakes = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:us_government_stakes"
+        ]
+        assert len(election) == 2
+        assert len(stakes) == 2

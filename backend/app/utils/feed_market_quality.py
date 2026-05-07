@@ -223,6 +223,12 @@ def _story_key(name: str, category: str) -> str | None:
     if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):
         return "story:drake_iceman"
 
+    if re.search(r"\bfederal government\b.*\btake a stake\b", lower):
+        return "story:us_government_stakes"
+
+    if "truist championship" in lower:
+        return "story:golf_truist_championship"
+
     return None
 
 
@@ -404,6 +410,16 @@ def diversify_quality_families(
     exact_counts: dict[str, int] = {}
     story_counts: dict[str, int] = {}
     kept: list[dict] = []
+    per_story_caps = {
+        "story:middle_east_conflict": 4,
+        "story:russia_ukraine": 2,
+        "story:us_2028_election": 2,
+        "story:macro_rates": 3,
+        "story:ai": 2,
+        "story:drake_iceman": 1,
+        "story:us_government_stakes": 2,
+        "story:golf_truist_championship": 3,
+    }
 
     for item in sorted_items:
         family = item.get("_quality_family_key")
@@ -416,7 +432,8 @@ def diversify_quality_families(
 
         if story and story_family_cap > 0:
             count = story_counts.get(story, 0)
-            if count >= story_family_cap:
+            cap = min(story_family_cap, per_story_caps.get(story, story_family_cap))
+            if count >= cap:
                 continue
 
         if family:
