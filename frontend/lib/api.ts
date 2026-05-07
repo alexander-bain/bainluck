@@ -1448,6 +1448,24 @@ export async function fetchPolitics(): Promise<PoliticsData> {
   return apiFetch<PoliticsData>("/api/politics");
 }
 
+// Entertainment types reuse the same market row shape as politics
+export interface EntertainmentSection {
+  label: string;
+  count: number;
+  markets: PoliticsMarketRow[];
+}
+
+export interface EntertainmentData {
+  total_markets: number;
+  updated_at: string;
+  sections: Record<string, EntertainmentSection>;
+  by_source: { kalshi: number; polymarket: number };
+}
+
+export async function fetchEntertainment(): Promise<EntertainmentData> {
+  return apiFetch<EntertainmentData>("/api/entertainment");
+}
+
 export async function fetchTrendingSearches(): Promise<{ trending: { query: string; count: number }[] }> {
   return apiFetch<{ trending: { query: string; count: number }[] }>("/api/events/search/trending");
 }

@@ -75,8 +75,28 @@ def _source(market: FuturesMarket) -> str:
     return (market.source or "").lower()
 
 
+_GARBAGE_OUTCOME_RE = re.compile(
+    r"^(?:player|person|candidate|option|party)\s+[A-Z]{1,3}$", re.I
+)
+
+
+def _is_resolved(market: FuturesMarket) -> bool:
+    """A market is effectively resolved if the top outcome is >= 99%."""
+    for o in market.outcomes:
+        prob = float(o.current_probability or 0)
+        if prob >= 0.99:
+            return True
+    return False
+
+
+def _clean_outcomes(outcomes: list) -> list:
+    """Filter garbage placeholder outcomes."""
+    return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
+
+
 def _market_row(market: FuturesMarket) -> dict | None:
-    outcomes = sorted(market.outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
+    outcomes = _clean_outcomes(market.outcomes)
+    outcomes = sorted(outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
     if not outcomes:
         return None
     top = outcomes[:3]
@@ -121,6 +141,8 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
 
     themed: dict[str, list] = defaultdict(list)
     for m in all_markets:
+        if _is_resolved(m):
+            continue
         theme = _classify_theme(m)
         themed[theme].append(m)
 
@@ -128,9 +150,9 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
         rows = []
         for m in markets:
             row = _market_row(m)
-            if row:
+            if row and row["prob"] < 99:
                 rows.append(row)
-        rows.sort(key=lambda r: r["prob"], reverse=True)
+        rows.sort(key=lambda r: -abs(r["prob"] - 50))
         return rows[:limit]
 
     # Presidential — find the headline "who wins 2028" market
@@ -139,7 +161,8 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
     pres_side = []
     for m in pres_markets:
         name_lower = (m.name or "").lower()
-        outcomes = sorted(m.outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
+        outcomes = _clean_outcomes(m.outcomes)
+        outcomes = sorted(outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
         if ("2028" in name_lower or "next president" in name_lower or "presidential election" in name_lower) and len(outcomes) >= 3:
             if pres_headline is None or len(outcomes) > (pres_headline.get("outcome_count") or 0):
                 pres_headline = {
@@ -157,9 +180,9 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
                 }
         else:
             row = _market_row(m)
-            if row:
+            if row and row["prob"] < 99:
                 pres_side.append(row)
-    pres_side.sort(key=lambda r: r["prob"], reverse=True)
+    pres_side.sort(key=lambda r: -abs(r["prob"] - 50))
 
     total = len(all_markets)
 

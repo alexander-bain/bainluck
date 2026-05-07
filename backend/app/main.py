@@ -14,7 +14,7 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, league_futures, predictions, og_image, teams, feedback
+from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -99,6 +99,7 @@ CACHE_RULES: list[tuple[str, int]] = [
     ("/api/weather", 60),
     ("/api/economics", 60),
     ("/api/politics", 60),
+    ("/api/entertainment", 60),
     ("/api/categories", 60),
 ]
 
@@ -149,6 +150,7 @@ app.include_router(playoffs.router, prefix="/api/playoffs", tags=["Playoffs"])
 app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 app.include_router(economics.router, prefix="/api/economics", tags=["Economics"])
 app.include_router(politics.router, prefix="/api/politics", tags=["Politics"])
+app.include_router(entertainment.router, prefix="/api/entertainment", tags=["Entertainment"])
 app.include_router(league_futures.router, prefix="/api/leagues", tags=["Leagues"])
 app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
 app.include_router(predictions.router)
