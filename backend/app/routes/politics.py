@@ -10,14 +10,14 @@ Single endpoint returns the full response consumed by the frontend.
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,41 @@ def _classify_theme(market: FuturesMarket) -> str:
         if pat.search(name):
             return theme
     return "other"
+
+
+# ---------------------------------------------------------------------------
+# Party detection for presidential candidates
+# ---------------------------------------------------------------------------
+
+_R_NAMES = {
+    "trump", "vance", "desantis", "haley", "ramaswamy", "pence", "scott",
+    "youngkin", "christie", "burgum", "rubio", "cotton", "cruz", "noem",
+    "lake", "stefanik", "hawley", "paul", "pompeo", "hutchinson", "elder",
+    "hurd", "mccarthy", "mcconnell", "ernst", "thune", "sununu", "kemp",
+    "abbott", "vivek",
+}
+_D_NAMES = {
+    "biden", "harris", "newsom", "whitmer", "pritzker", "buttigieg",
+    "shapiro", "warnock", "booker", "klobuchar", "warren", "sanders",
+    "ocasio-cortez", "beshear", "moore", "kelly", "ossoff", "fetterman",
+    "schiff", "pelosi", "schumer", "cortez masto", "duckworth", "aoc",
+    "pete", "kamala", "gavin", "gretchen", "josh shapiro", "wes moore",
+}
+
+
+def _detect_party(name: str) -> str:
+    name_lower = name.lower().strip()
+    if "republican" in name_lower or "(r)" in name_lower:
+        return "R"
+    if "democrat" in name_lower or "(d)" in name_lower:
+        return "D"
+    for r in _R_NAMES:
+        if r in name_lower:
+            return "R"
+    for d in _D_NAMES:
+        if d in name_lower:
+            return "D"
+    return "I"
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +151,305 @@ def _market_row(market: FuturesMarket) -> dict | None:
     }
 
 
+def _normalize_q(q: str) -> str:
+    """Normalize a question for cross-source matching."""
+    return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
+
+
+def _is_headline_market(name_lower: str) -> bool:
+    return (
+        ("2028" in name_lower or "next president" in name_lower
+         or "presidential election" in name_lower)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Presidential — merge candidates across Kalshi + Polymarket
+# ---------------------------------------------------------------------------
+
+def _build_presidential(
+    pres_markets: list[FuturesMarket],
+) -> tuple[dict, dict[int, str]]:
+    """Returns (response_dict, outcome_id_to_candidate_key)."""
+    kalshi_headline = None
+    poly_headline = None
+    side_markets: list[dict] = []
+
+    for m in pres_markets:
+        name_lower = (m.name or "").lower()
+        outcomes = _clean_outcomes(m.outcomes)
+        outcomes = sorted(
+            outcomes,
+            key=lambda o: float(o.current_probability or 0),
+            reverse=True,
+        )
+
+        if _is_headline_market(name_lower) and len(outcomes) >= 3:
+            src = _source(m)
+            entry = {"market_id": m.id, "q": m.name, "outcomes": outcomes}
+            if src == "kalshi":
+                if kalshi_headline is None or len(outcomes) > len(kalshi_headline["outcomes"]):
+                    kalshi_headline = entry
+            elif src == "polymarket":
+                if poly_headline is None or len(outcomes) > len(poly_headline["outcomes"]):
+                    poly_headline = entry
+        else:
+            row = _market_row(m)
+            if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
+                side_markets.append(row)
+
+    side_markets.sort(key=lambda r: -abs(r["prob"] - 50))
+
+    # Merge candidates by normalized name + build outcome_id → candidate map
+    candidates_by_key: dict[str, dict] = {}
+    outcome_id_map: dict[int, str] = {}
+    headline_q = None
+
+    for src_key, headline in [("kalshi", kalshi_headline), ("poly", poly_headline)]:
+        if not headline:
+            continue
+        if headline_q is None:
+            headline_q = headline["q"]
+        for o in headline["outcomes"]:
+            name = (o.name or "").strip()
+            name_key = name.lower()
+            prob_val = round(float(o.current_probability or 0) * 100, 1)
+            outcome_id_map[o.id] = name_key
+            if name_key not in candidates_by_key:
+                candidates_by_key[name_key] = {
+                    "name": name,
+                    "party": _detect_party(name),
+                    "kalshi": None,
+                    "poly": None,
+                }
+            candidates_by_key[name_key][src_key] = prob_val
+
+    candidates = []
+    for c in candidates_by_key.values():
+        probs = [p for p in [c["kalshi"], c["poly"]] if p is not None]
+        c["merged"] = round(sum(probs) / len(probs), 1) if probs else 0
+        c["change_7d"] = None
+        c["history"] = []
+        candidates.append(c)
+
+    candidates.sort(key=lambda c: -c["merged"])
+
+    has_dual = kalshi_headline is not None and poly_headline is not None
+
+    response = {
+        "count": len(pres_markets),
+        "headline_q": headline_q,
+        "candidates": candidates[:14],
+        "has_dual_source": has_dual,
+        "kalshi_market_id": kalshi_headline["market_id"] if kalshi_headline else None,
+        "poly_market_id": poly_headline["market_id"] if poly_headline else None,
+        "side_markets": side_markets[:8],
+    }
+    return response, outcome_id_map
+
+
+# ---------------------------------------------------------------------------
+# Chamber control — find Senate/House control binary markets
+# ---------------------------------------------------------------------------
+
+_SENATE_CONTROL_RE = re.compile(
+    r"\b(?:senate\s+control|control\s+(?:of\s+)?(?:the\s+)?senate|"
+    r"republican.*senate|democrat.*senate|gop.*senate)\b", re.I
+)
+_HOUSE_CONTROL_RE = re.compile(
+    r"\b(?:house\s+control|control\s+(?:of\s+)?(?:the\s+)?house|"
+    r"republican.*house\b|democrat.*house\b|gop.*house)\b", re.I
+)
+
+
+def _extract_control_probs(market: FuturesMarket) -> dict | None:
+    """Extract GOP/Dem probabilities from a control market."""
+    outcomes = _clean_outcomes(market.outcomes)
+    if not outcomes:
+        return None
+
+    gop_prob = None
+    dem_prob = None
+
+    for o in outcomes:
+        name_lower = (o.name or "").lower()
+        prob = round(float(o.current_probability or 0) * 100, 1)
+        if any(w in name_lower for w in ["republican", "gop", "red", "(r)"]):
+            gop_prob = prob
+        elif any(w in name_lower for w in ["democrat", "dem", "blue", "(d)"]):
+            dem_prob = prob
+        elif name_lower in ("yes", "no"):
+            # Binary market: "Will Republicans control the Senate?"
+            market_name = (market.name or "").lower()
+            if "republican" in market_name or "gop" in market_name:
+                gop_prob = prob if name_lower == "yes" else 100 - prob
+                dem_prob = 100 - gop_prob
+            elif "democrat" in market_name:
+                dem_prob = prob if name_lower == "yes" else 100 - prob
+                gop_prob = 100 - dem_prob
+
+    if gop_prob is not None and dem_prob is not None:
+        return {"gop": gop_prob, "dem": dem_prob, "market_id": market.id}
+    if gop_prob is not None:
+        return {"gop": gop_prob, "dem": round(100 - gop_prob, 1), "market_id": market.id}
+    if dem_prob is not None:
+        return {"gop": round(100 - dem_prob, 1), "dem": dem_prob, "market_id": market.id}
+    return None
+
+
+def _find_chamber_control(congressional_markets: list[FuturesMarket]) -> dict:
+    senate = None
+    house = None
+
+    for m in congressional_markets:
+        if _is_resolved(m):
+            continue
+        name = m.name or ""
+        if _SENATE_CONTROL_RE.search(name) and senate is None:
+            senate = _extract_control_probs(m)
+        elif _HOUSE_CONTROL_RE.search(name) and house is None:
+            house = _extract_control_probs(m)
+
+    return {
+        "senate": senate,
+        "house": house,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Senate map — per-state Dem win probability
+# ---------------------------------------------------------------------------
+
+_STATE_ABBREV: dict[str, str] = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
+}
+
+_SENATE_STATE_TICKER_RE = re.compile(r"kxsenate[-_]?\d{2}[-_]([a-z]{2})", re.I)
+
+_SENATE_CONTROL_KEYWORDS = re.compile(
+    r"\b(?:control|majority|flip|which party)\b", re.I
+)
+
+
+def _extract_senate_state(market: FuturesMarket) -> str | None:
+    ext = (market.external_id or "")
+    m = _SENATE_STATE_TICKER_RE.search(ext)
+    if m:
+        return m.group(1).upper()
+    name_lower = (market.name or "").lower()
+    for full, abbr in _STATE_ABBREV.items():
+        if full in name_lower:
+            return abbr
+    for abbr in _STATE_ABBREV.values():
+        if re.search(rf"\b{abbr}\b", market.name or ""):
+            return abbr
+    return None
+
+
+def _extract_dem_prob(market: FuturesMarket) -> float | None:
+    outcomes = _clean_outcomes(market.outcomes)
+    if not outcomes:
+        return None
+    for o in outcomes:
+        name_lower = (o.name or "").lower()
+        if "(d)" in name_lower or "democrat" in name_lower:
+            return float(o.current_probability or 0)
+    market_name = (market.name or "").lower()
+    if len(outcomes) <= 2:
+        for o in outcomes:
+            oname = (o.name or "").lower()
+            prob = float(o.current_probability or 0)
+            if oname in ("yes", "true"):
+                if "republican" in market_name or "gop" in market_name:
+                    return 1.0 - prob
+                if "democrat" in market_name:
+                    return prob
+    for o in outcomes:
+        party = _detect_party(o.name or "")
+        if party == "D":
+            return float(o.current_probability or 0)
+    for o in outcomes:
+        party = _detect_party(o.name or "")
+        if party == "R":
+            return 1.0 - float(o.current_probability or 0)
+    return None
+
+
+def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, float]:
+    state_probs: dict[str, float] = {}
+    for m in congressional_markets:
+        if _is_resolved(m):
+            continue
+        name = (m.name or "").lower()
+        if "house" in name:
+            continue
+        if _SENATE_CONTROL_KEYWORDS.search(name):
+            continue
+        state = _extract_senate_state(m)
+        if not state or state in state_probs:
+            continue
+        dem_prob = _extract_dem_prob(m)
+        if dem_prob is not None:
+            state_probs[state] = round(dem_prob * 100, 1)
+    return state_probs
+
+
+# ---------------------------------------------------------------------------
+# Cross-source matching — find markets on both Kalshi & Polymarket
+# ---------------------------------------------------------------------------
+
+def _find_cross_source(all_markets: list[FuturesMarket]) -> list[dict]:
+    """Find markets that exist on both platforms, ranked by disagreement."""
+    by_norm: dict[str, dict[str, dict]] = defaultdict(dict)
+
+    for m in all_markets:
+        if _is_resolved(m):
+            continue
+        row = _market_row(m)
+        if not row:
+            continue
+        if row["outcome_count"] <= 2 and row["prob"] > 95:
+            continue
+        src = _source(m)
+        if src not in ("kalshi", "polymarket"):
+            continue
+        norm = _normalize_q(row["q"])
+        if norm and src not in by_norm[norm]:
+            by_norm[norm][src] = {**row, "theme": _classify_theme(m)}
+
+    matches = []
+    for norm, sources in by_norm.items():
+        if "kalshi" not in sources or "polymarket" not in sources:
+            continue
+        k = sources["kalshi"]
+        p = sources["polymarket"]
+        delta = round(abs(k["prob"] - p["prob"]), 1)
+        matches.append({
+            "q": k["q"],
+            "kalshi": k["prob"],
+            "poly": p["prob"],
+            "delta": delta,
+            "category": k["theme"],
+            "kalshi_market_id": k["market_id"],
+            "poly_market_id": p["market_id"],
+        })
+
+    matches.sort(key=lambda x: -x["delta"])
+    return matches[:8]
+
+
 # ---------------------------------------------------------------------------
 # Main endpoint
 # ---------------------------------------------------------------------------
@@ -158,34 +492,58 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
         rows.sort(key=lambda r: -abs(r["prob"] - 50))
         return rows[:limit]
 
-    # Presidential — find the headline "who wins 2028" market
-    pres_markets = themed.get("presidential", [])
-    pres_headline = None
-    pres_side = []
-    for m in pres_markets:
-        name_lower = (m.name or "").lower()
-        outcomes = _clean_outcomes(m.outcomes)
-        outcomes = sorted(outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
-        if ("2028" in name_lower or "next president" in name_lower or "presidential election" in name_lower) and len(outcomes) >= 3:
-            if pres_headline is None or len(outcomes) > (pres_headline.get("outcome_count") or 0):
-                pres_headline = {
-                    "q": m.name,
-                    "market_id": m.id,
-                    "src": _source(m),
-                    "candidates": [
-                        {
-                            "name": o.name,
-                            "prob": round(float(o.current_probability or 0) * 100, 1),
-                        }
-                        for o in outcomes[:8]
-                    ],
-                    "outcome_count": len(outcomes),
-                }
-        else:
-            row = _market_row(m)
-            if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
-                pres_side.append(row)
-    pres_side.sort(key=lambda r: -abs(r["prob"] - 50))
+    # Presidential — dual-source merge
+    presidential, outcome_id_map = _build_presidential(
+        themed.get("presidential", [])
+    )
+
+    # ── Presidential candidate history (30d, downsampled to 50pts) ──
+    if outcome_id_map:
+        cutoff = now - timedelta(days=30)
+        hist_result = await db.execute(
+            select(FuturesOddsSnapshot)
+            .where(
+                FuturesOddsSnapshot.outcome_id.in_(list(outcome_id_map.keys())),
+                FuturesOddsSnapshot.captured_at >= cutoff,
+            )
+            .order_by(FuturesOddsSnapshot.captured_at)
+        )
+        hist_snaps = hist_result.scalars().all()
+
+        cand_raw: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
+        for snap in hist_snaps:
+            cand_key = outcome_id_map.get(snap.outcome_id)
+            if cand_key and snap.probability is not None:
+                cand_raw[cand_key].append(
+                    (snap.captured_at, round(float(snap.probability) * 100, 1))
+                )
+
+        seven_days_ago = now - timedelta(days=7)
+        for c in presidential["candidates"]:
+            key = c["name"].lower()
+            raw = cand_raw.get(key, [])
+            if raw:
+                past = [p for t, p in raw if t <= seven_days_ago]
+                c["change_7d"] = (
+                    round(raw[-1][1] - past[-1], 1) if past else None
+                )
+                if len(raw) > 50:
+                    step = len(raw) / 50
+                    idx = sorted(
+                        set(int(i * step) for i in range(50)) | {len(raw) - 1}
+                    )
+                    raw = [raw[i] for i in idx]
+                c["history"] = [
+                    {"t": t.isoformat(), "p": p} for t, p in raw
+                ]
+
+    # Congressional — with chamber control + senate map
+    congressional_markets = themed.get("congressional", [])
+    chamber_control = _find_chamber_control(congressional_markets)
+    senate_map = _build_senate_map(congressional_markets)
+
+    # Cross-source spotlight
+    cross_source = _find_cross_source(list(all_markets))
 
     total = len(all_markets)
 
@@ -193,14 +551,12 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
         "total_markets": total,
         "updated_at": now.isoformat(),
         "themes": {
-            "presidential": {
-                "count": len(pres_markets),
-                "headline": pres_headline,
-                "side_markets": pres_side[:8],
-            },
+            "presidential": presidential,
             "congressional": {
-                "count": len(themed.get("congressional", [])),
-                "markets": build_section(themed.get("congressional", [])),
+                "count": len(congressional_markets),
+                "markets": build_section(congressional_markets),
+                "chamber_control": chamber_control,
+                "senate_map": senate_map if senate_map else None,
             },
             "gubernatorial": {
                 "count": len(themed.get("gubernatorial", [])),
@@ -223,6 +579,7 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
                 "markets": build_section(themed.get("other", []), 6),
             },
         },
+        "cross_source": cross_source,
         "by_source": {
             "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
             "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),

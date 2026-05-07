@@ -1423,18 +1423,40 @@ export interface PoliticsMarketRow {
   outcome_count: number;
 }
 
-export interface PoliticsHeadline {
-  q: string;
-  market_id: number;
-  src: string;
-  candidates: { name: string; prob: number }[];
-  outcome_count: number;
+export interface PoliticsCandidate {
+  name: string;
+  party: "R" | "D" | "I";
+  kalshi: number | null;
+  poly: number | null;
+  merged: number;
+  change_7d: number | null;
+  history: { t: string; p: number }[];
 }
 
 export interface PoliticsThemePresidential {
   count: number;
-  headline: PoliticsHeadline | null;
+  headline_q: string | null;
+  candidates: PoliticsCandidate[];
+  has_dual_source: boolean;
+  kalshi_market_id: number | null;
+  poly_market_id: number | null;
   side_markets: PoliticsMarketRow[];
+}
+
+export interface ChamberControl {
+  gop: number;
+  dem: number;
+  market_id: number;
+}
+
+export interface PoliticsThemeCongressional {
+  count: number;
+  markets: PoliticsMarketRow[];
+  chamber_control: {
+    senate: ChamberControl | null;
+    house: ChamberControl | null;
+  };
+  senate_map: Record<string, number> | null;
 }
 
 export interface PoliticsThemeSimple {
@@ -1442,18 +1464,29 @@ export interface PoliticsThemeSimple {
   markets: PoliticsMarketRow[];
 }
 
+export interface CrossSourceMatch {
+  q: string;
+  kalshi: number;
+  poly: number;
+  delta: number;
+  category: string;
+  kalshi_market_id: number;
+  poly_market_id: number;
+}
+
 export interface PoliticsData {
   total_markets: number;
   updated_at: string;
   themes: {
     presidential: PoliticsThemePresidential;
-    congressional: PoliticsThemeSimple;
+    congressional: PoliticsThemeCongressional;
     gubernatorial: PoliticsThemeSimple;
     policy: PoliticsThemeSimple;
     scotus: PoliticsThemeSimple;
     international: PoliticsThemeSimple;
     other: PoliticsThemeSimple;
   };
+  cross_source: CrossSourceMatch[];
   by_source: { kalshi: number; polymarket: number };
 }
 

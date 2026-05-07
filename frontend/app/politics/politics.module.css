@@ -1,0 +1,734 @@
+/* Politics page — adapted from Claude Design v1 prototype */
+
+/* ── Sub-theme nav ── */
+.subnav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgba(245, 245, 247, 0.92);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--surface-border, #E5E7EB);
+}
+
+.subnavInner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 8px 20px;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.subnavInner::-webkit-scrollbar {
+  display: none;
+}
+
+.subnavChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 12px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.12s;
+  flex-shrink: 0;
+}
+
+.subnavChip:hover {
+  background: #F0F0F2;
+  color: #111827;
+}
+
+.subnavChipActive {
+  composes: subnavChip;
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+.subnavCount {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #F0F0F2;
+}
+
+.subnavChipActive .subnavCount {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ── Page layout ── */
+.page {
+  min-height: 100vh;
+  background: #F5F5F7;
+}
+
+.pageContent {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 20px 96px;
+}
+
+.pageHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.pageTitle {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 4px;
+  color: #111827;
+}
+
+.pageSub {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0;
+}
+
+.pageMeta {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #9CA3AF;
+  letter-spacing: 0.02em;
+}
+
+.metaNum {
+  color: #111827;
+  font-weight: 600;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section ── */
+.section {
+  margin-top: 36px;
+  scroll-margin-top: 120px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #111827;
+}
+
+.sectionEmoji {
+  font-size: 16px;
+}
+
+.sectionCount {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9CA3AF;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.sectionActions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sectionLink {
+  font-size: 12px;
+  color: #6B7280;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.sectionLink:hover {
+  color: #111827;
+}
+
+/* ── Card grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+/* ── Cards ── */
+.card {
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  transition: background 0.2s ease-out, box-shadow 0.2s ease-out, transform 0.2s ease-out;
+  cursor: pointer;
+}
+
+.card:hover {
+  background: #F0F0F2;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transform: scale(1.005);
+}
+
+/* ── Source badges ── */
+.srcBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.srcKalshi {
+  composes: srcBadge;
+  background: rgba(34, 197, 94, 0.12);
+  color: #16A34A;
+}
+
+.srcPolymarket {
+  composes: srcBadge;
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563EB;
+}
+
+.srcBoth {
+  composes: srcBadge;
+  background: linear-gradient(90deg, rgba(34, 197, 94, 0.12) 0% 50%, rgba(59, 130, 246, 0.12) 50% 100%);
+  color: #374151;
+}
+
+.srcDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ── Probability numerals ── */
+.probNum {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ── Movement chips ── */
+.moveChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.moveUp {
+  composes: moveChip;
+  color: #16A34A;
+}
+
+.moveDown {
+  composes: moveChip;
+  color: #EF4444;
+}
+
+.moveFlat {
+  composes: moveChip;
+  color: #9CA3AF;
+}
+
+/* ── Presidential hero ── */
+.presHero {
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 22px 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.presHeroHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.presHeroQ {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: #111827;
+}
+
+.presHeroMeta {
+  font-size: 11px;
+  color: #9CA3AF;
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+}
+
+.presHeroActions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Source toggle */
+.sourceToggle {
+  display: inline-flex;
+  background: #F0F0F2;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.sourceToggleBtn {
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.sourceToggleBtnActive {
+  composes: sourceToggleBtn;
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Bar race rows */
+.barRaceHeader {
+  display: grid;
+  grid-template-columns: 18px 18px 130px 1fr 60px 56px 42px;
+  gap: 10px;
+  font-size: 10px;
+  color: #9CA3AF;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.barRaceRow {
+  display: grid;
+  grid-template-columns: 18px 18px 130px 1fr 60px 56px 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.barRaceRow:last-child {
+  border-bottom: none;
+}
+
+.rank {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  color: #9CA3AF;
+  font-weight: 600;
+  text-align: right;
+}
+
+.partyBadge {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.candidateName {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barWrap {
+  height: 10px;
+  background: #F0F0F2;
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.barStack {
+  display: flex;
+  height: 100%;
+}
+
+.barKalshi {
+  composes: barFill;
+  background: #22C55E;
+  opacity: 0.6;
+}
+
+.barPoly {
+  composes: barFill;
+  background: #3B82F6;
+  opacity: 0.6;
+}
+
+.pct {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: right;
+  color: #111827;
+}
+
+/* Source legend */
+.sourceLegend {
+  margin-top: 10px;
+  font-size: 10px;
+  color: #9CA3AF;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.legendDot {
+  width: 10px;
+  height: 6px;
+  border-radius: 3px;
+  opacity: 0.6;
+}
+
+/* ── Side markets ── */
+.sideGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.sideCard {
+  background: #F5F5F7;
+  border-radius: 8px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.sideCard:hover {
+  background: #ECECEF;
+}
+
+.sideQ {
+  font-size: 12px;
+  color: #6B7280;
+  line-height: 1.3;
+  min-height: 30px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Chamber control ── */
+.chamberGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.chamberCard {
+  composes: card;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 2px solid #8B5CF6;
+}
+
+.chamberCard:hover {
+  transform: none;
+}
+
+.binaryBar {
+  display: flex;
+  height: 6px;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.binaryR {
+  background: #DC2626;
+}
+
+.binaryD {
+  background: #2563EB;
+}
+
+/* ── Cross-source card ── */
+.crossCard {
+  composes: card;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.crossCard:hover {
+  transform: none;
+}
+
+.spreadBadge {
+  background: rgba(245, 158, 11, 0.15);
+  color: #B45309;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sourceCell {
+  background: #F5F5F7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 3px solid transparent;
+}
+
+.sourceCellKalshi {
+  composes: sourceCell;
+  border-left-color: #22C55E;
+}
+
+.sourceCellPoly {
+  composes: sourceCell;
+  border-left-color: #3B82F6;
+}
+
+/* ── Market cards ── */
+.marketCard {
+  composes: card;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.marketCardInner {
+  padding: 12px 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Senate map ── */
+.senateGrid {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 4px;
+}
+
+.senateCell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  border-radius: 4px;
+  color: rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.senateCell:hover {
+  transform: scale(1.08);
+  z-index: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.senateCellEmpty {
+  composes: senateCell;
+  background: #F0F0F2;
+  color: #9CA3AF;
+  opacity: 0.45;
+  cursor: default;
+}
+
+.senateCellEmpty:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── Evolution chart ── */
+.evoWrap {
+  margin-top: 14px;
+}
+
+.evoLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+.evoLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.evoSwatch {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+/* ── Range tabs ── */
+.rangeTabs {
+  display: inline-flex;
+  background: #F0F0F2;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.rangeTab {
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+}
+
+.rangeTabActive {
+  composes: rangeTab;
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Hero variant toggle ── */
+.heroVariantToggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.heroVariantBtn {
+  background: transparent;
+  border: 1px solid #E5E7EB;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+}
+
+.heroVariantBtnActive {
+  composes: heroVariantBtn;
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+/* ── Footer ── */
+.footer {
+  margin-top: 48px;
+  font-size: 11px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+/* ── Mobile ── */
+@media (max-width: 720px) {
+  .pageContent {
+    padding: 16px 14px 96px;
+  }
+
+  .pageTitle {
+    font-size: 24px;
+  }
+
+  .pageHead {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .presHero {
+    padding: 16px;
+    border-radius: 10px;
+  }
+
+  .barRaceHeader,
+  .barRaceRow {
+    grid-template-columns: 14px 14px 1fr 42px;
+    gap: 8px;
+  }
+
+  .hideOnMobile {
+    display: none;
+  }
+
+  .chamberGrid {
+    grid-template-columns: 1fr;
+  }
+}
