@@ -3622,6 +3622,164 @@ async def prediction_market_link_rate(
     }
 
 
+@router.get("/prediction-markets/tier1-compliance")
+async def tier1_source_compliance(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hill-climb metric: every Tier 1 event must have ALL sources linked.
+
+    Tier 1 sports: MLB, NBA, NHL, NFL, PGA.
+    Required sources: Odds API, ESPN, StatPal, Kalshi, Polymarket (+ DataGolf for PGA).
+    Only counts scheduled/live events from -6h to +48h.
+    Target: 100% compliance for each sport × source cell.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text as _text
+    await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
+
+    result = await db.execute(_text("""
+        WITH tier1_events AS (
+            SELECT e.id, s.key AS sport_key,
+                   e.home_team_name, e.away_team_name,
+                   e.external_id AS odds_api_id,
+                   e.espn_id,
+                   e.statpal_fixture_id,
+                   e.commence_time, e.status
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            WHERE s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'americanfootball_nfl')
+              AND e.status IN ('scheduled', 'live')
+              AND e.commence_time >= NOW() - INTERVAL '6 hours'
+              AND e.commence_time <= NOW() + INTERVAL '48 hours'
+        ),
+        kalshi_links AS (
+            SELECT DISTINCT fm.event_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi' AND fm.event_id IS NOT NULL
+        ),
+        poly_links AS (
+            SELECT DISTINCT fm.event_id
+            FROM futures_markets fm
+            WHERE fm.source = 'polymarket' AND fm.event_id IS NOT NULL
+        )
+        SELECT
+            te.sport_key,
+            COUNT(*) AS total,
+            COUNT(te.odds_api_id) AS has_odds_api,
+            COUNT(te.espn_id) AS has_espn,
+            COUNT(te.statpal_fixture_id) AS has_statpal,
+            COUNT(kl.event_id) AS has_kalshi,
+            COUNT(pl.event_id) AS has_polymarket,
+            COUNT(CASE WHEN te.odds_api_id IS NOT NULL
+                        AND te.espn_id IS NOT NULL
+                        AND te.statpal_fixture_id IS NOT NULL
+                        AND kl.event_id IS NOT NULL
+                        AND pl.event_id IS NOT NULL
+                       THEN 1 END) AS fully_compliant
+        FROM tier1_events te
+        LEFT JOIN kalshi_links kl ON kl.event_id = te.id
+        LEFT JOIN poly_links pl ON pl.event_id = te.id
+        GROUP BY te.sport_key
+        ORDER BY te.sport_key
+    """))
+
+    by_sport = []
+    totals = {"total": 0, "compliant": 0}
+    for row in result.fetchall():
+        t = row.total
+        sport_data = {
+            "sport": row.sport_key,
+            "total": t,
+            "odds_api": row.has_odds_api,
+            "espn": row.has_espn,
+            "statpal": row.has_statpal,
+            "kalshi": row.has_kalshi,
+            "polymarket": row.has_polymarket,
+            "fully_compliant": row.fully_compliant,
+            "compliance_pct": round(row.fully_compliant / max(t, 1) * 100, 1),
+            "gaps": {
+                "odds_api": t - row.has_odds_api,
+                "espn": t - row.has_espn,
+                "statpal": t - row.has_statpal,
+                "kalshi": t - row.has_kalshi,
+                "polymarket": t - row.has_polymarket,
+            },
+        }
+        by_sport.append(sport_data)
+        totals["total"] += t
+        totals["compliant"] += row.fully_compliant
+
+    # Per-event gaps for non-compliant events (show what's missing)
+    gap_result = await db.execute(_text("""
+        WITH tier1_events AS (
+            SELECT e.id, s.key AS sport_key,
+                   e.home_team_name, e.away_team_name,
+                   e.external_id AS odds_api_id, e.espn_id, e.statpal_fixture_id,
+                   e.commence_time, e.status
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            WHERE s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'americanfootball_nfl')
+              AND e.status IN ('scheduled', 'live')
+              AND e.commence_time >= NOW() - INTERVAL '6 hours'
+              AND e.commence_time <= NOW() + INTERVAL '48 hours'
+        ),
+        kalshi_links AS (
+            SELECT DISTINCT fm.event_id FROM futures_markets fm
+            WHERE fm.source = 'kalshi' AND fm.event_id IS NOT NULL
+        ),
+        poly_links AS (
+            SELECT DISTINCT fm.event_id FROM futures_markets fm
+            WHERE fm.source = 'polymarket' AND fm.event_id IS NOT NULL
+        )
+        SELECT te.id, te.sport_key,
+               te.away_team_name || ' @ ' || te.home_team_name AS matchup,
+               te.commence_time, te.status,
+               te.odds_api_id IS NULL AS missing_odds_api,
+               te.espn_id IS NULL AS missing_espn,
+               te.statpal_fixture_id IS NULL AS missing_statpal,
+               kl.event_id IS NULL AS missing_kalshi,
+               pl.event_id IS NULL AS missing_polymarket
+        FROM tier1_events te
+        LEFT JOIN kalshi_links kl ON kl.event_id = te.id
+        LEFT JOIN poly_links pl ON pl.event_id = te.id
+        WHERE te.odds_api_id IS NULL
+           OR te.espn_id IS NULL
+           OR te.statpal_fixture_id IS NULL
+           OR kl.event_id IS NULL
+           OR pl.event_id IS NULL
+        ORDER BY te.commence_time
+        LIMIT 30
+    """))
+    gaps = []
+    for row in gap_result.fetchall():
+        missing = []
+        if row.missing_odds_api: missing.append("odds_api")
+        if row.missing_espn: missing.append("espn")
+        if row.missing_statpal: missing.append("statpal")
+        if row.missing_kalshi: missing.append("kalshi")
+        if row.missing_polymarket: missing.append("polymarket")
+        gaps.append({
+            "id": row.id,
+            "sport": row.sport_key,
+            "matchup": row.matchup,
+            "time": row.commence_time.isoformat() if row.commence_time else None,
+            "status": row.status,
+            "missing": missing,
+        })
+
+    return {
+        "target": "100% — every Tier 1 event has all 5 sources",
+        "compliance_pct": round(totals["compliant"] / max(totals["total"], 1) * 100, 1),
+        "total_events": totals["total"],
+        "fully_compliant": totals["compliant"],
+        "by_sport": by_sport,
+        "non_compliant_events": gaps,
+    }
+
+
 @router.get("/prediction-markets/game-diagnostics")
 async def prediction_market_game_diagnostics(
     secret: str = Query(..., description="Admin secret for authorization"),
