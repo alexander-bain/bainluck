@@ -39,9 +39,24 @@ def normalize_column_sums(
         )
         if col_sum > expected * 2.5:
             logger.warning(
-                "Column %s sum=%.1f%% exceeds 2.5x expected %.0f%% for %s",
+                "Column %s sum=%.1f%% exceeds 2.5x expected %.0f%% for %s — likely a matching bug",
                 col_key, col_sum * 100, expected * 100, league_slug,
             )
+        elif col_sum > expected * 1.05:
+            # Moderate overshoot (5-150%) — typically from prediction market
+            # minimum tick sizes (0.5-1% floor on long-shot teams). Safe to
+            # normalize down proportionally.
+            scale = expected / col_sum
+            logger.info(
+                "Normalizing %s column from %.1f%% to %.0f%% (x%.2f) for %s (overshoot)",
+                col_key, col_sum * 100, expected * 100, scale, league_slug,
+            )
+            for t in teams:
+                cell = t["cells"].get(col_key)
+                if cell and cell.get("merged_probability") is not None:
+                    cell["merged_probability"] = round(cell["merged_probability"] * scale, 4)
+                    for src in cell.get("sources", []):
+                        src["probability"] = round(src["probability"] * scale, 4)
         elif 0 < col_sum < expected * 0.85:
             scale = expected / col_sum
             logger.info(

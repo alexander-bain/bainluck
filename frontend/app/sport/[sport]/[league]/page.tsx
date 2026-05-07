@@ -182,7 +182,22 @@ export default function LeagueShowcasePage() {
         // Championship grid + today's events + league markets (parallel, all supplementary)
         const sportKey = l.sport_keys[0];
         if (sportKey) {
-          const gridSlug = sportKey.split("_").slice(1).join("_") || sportKey;
+          // Map sport_key to grid slug — grid slugs don't always match sport key suffixes
+          const GRID_SLUG_MAP: Record<string, string> = {
+            "soccer_usa_mls": "mls",
+            "soccer_epl": "epl",
+            "soccer_uefa_champs_league": "champions-league",
+            "soccer_spain_la_liga": "la-liga",
+            "soccer_germany_bundesliga": "bundesliga",
+            "americanfootball_nfl": "nfl",
+            "americanfootball_ncaaf": "ncaa-football",
+            "basketball_nba": "nba",
+            "basketball_ncaab": "ncaa-basketball",
+            "basketball_wnba": "wnba",
+            "icehockey_nhl": "nhl",
+            "baseball_mlb": "mlb",
+          };
+          const gridSlug = GRID_SLUG_MAP[sportKey] || sportKey.split("_").slice(1).join("_") || sportKey;
           const [gridResult, feedResult, marketsResult] = await Promise.allSettled([
             fetchChampionshipGrid(gridSlug),
             fetchFeed({ sport: sportKey, include_futures: false, limit: 30 }),
