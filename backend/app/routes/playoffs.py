@@ -2437,14 +2437,6 @@ async def get_playoff_grid(
     result = await db.execute(stmt)
     all_markets = result.scalars().unique().all()
 
-    # Debug: check if key markets exist in the raw query results
-    _debug_tickers = {"KXNBAPLAYOFF", "KXNBAATLANTIC", "KXNHLPLAYOFF", "KXNHLATLANTIC"}
-    for m in all_markets:
-        eid = (m.external_id or "")[:14]
-        if any(eid.startswith(t) for t in _debug_tickers):
-            logger.info("Grid debug: found %s (id=%d, status=%s, tier=%s, outcomes=%d)",
-                        m.external_id, m.id, m.status, m.market_tier, len(m.outcomes))
-
     # Filter by league name patterns (Python-side) to separate e.g. NBA from NCAAB
     league_patterns = [
         re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
@@ -2522,12 +2514,6 @@ async def get_playoff_grid(
         col_key = _match_market_to_column(market, config)
         if not col_key:
             continue
-
-        if col_key in _SETTLED_COLUMNS:
-            logger.info(
-                "Grid %s: market %d (%s) → col=%s, %d outcomes",
-                league_slug, market.id, market.name[:40], col_key, len(market.outcomes),
-            )
 
         cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
         for outcome in market.outcomes:
