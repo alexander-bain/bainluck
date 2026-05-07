@@ -2424,13 +2424,25 @@ async def get_playoff_grid(
     if not category_conditions:
         category_conditions.append(FuturesMarket.llm_sport_category == config.sport_category)
 
-    market_filter = or_(*sport_conditions, *category_conditions)
+    # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g., division
+    # winners after regular season). Category-matched (Polymarket) stay open/closed
+    # to avoid loading thousands of resolved markets.
+    ticker_filter = or_(*sport_conditions) if sport_conditions else None
+    category_filter = or_(*category_conditions) if category_conditions else None
+
+    status_conditions = []
+    if ticker_filter is not None:
+        status_conditions.append(and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved"))))
+    if category_filter is not None:
+        status_conditions.append(and_(category_filter, FuturesMarket.status.in_(("open", "closed"))))
+    market_filter_with_status = or_(*status_conditions) if status_conditions else FuturesMarket.status.in_(("open", "closed"))
+    # Keep the original market_filter for the resolved backfill (which adds its own status filter)
+    market_filter = or_(*sport_conditions, *category_conditions) if sport_conditions or category_conditions else None
 
     stmt = (
         select(FuturesMarket)
         .where(
-            market_filter,
-            FuturesMarket.status.in_(("open", "closed")),
+            market_filter_with_status,
         )
         .options(selectinload(FuturesMarket.outcomes))
     )
