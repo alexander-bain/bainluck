@@ -2599,8 +2599,8 @@ async def get_playoff_grid(
             col_key = _match_market_to_column(market, config)
             if col_key and col_key in [c.key for c in empty_cols]:
                 for outcome in market.outcomes:
-                    if outcome.is_winner is not None:
-                        outcome.current_probability = 1.0 if outcome.is_winner else 0.0
+                    if outcome.is_winner is True:
+                        outcome.current_probability = 1.0
                     if outcome.current_probability is None or float(outcome.current_probability) <= 0:
                         continue
                     oname = outcome.name or ""

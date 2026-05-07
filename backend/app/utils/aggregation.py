@@ -27,6 +27,7 @@ from typing import Optional
 
 # Base weights per source — higher = more influence on the aggregate
 SOURCE_WEIGHTS: dict[str, float] = {
+    "final_result": 5.0,   # Resolved game outcome from score (always correct)
     "betting": 3.0,        # Sportsbook consensus (5-15 books)
     "espn": 1.5,           # ESPN proprietary model
     "stat_model": 1.0,     # Bain Luck statistical model

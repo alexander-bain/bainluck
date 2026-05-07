@@ -71,14 +71,9 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 **Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueView.swift`
 **Parallel Safety:** Yellow (backend endpoint exists; frontend touches league page)
 
-### 0q. Feed "Top Markets" Stale Data
+### ~~0q. Feed "Top Markets" Stale Data~~ — VERIFIED CLEAN (May 7)
 
-**Problem:** The "Top Markets" section on the feed sometimes shows resolved/stale markets instead of fresh high-interest ones.
-
-**Investigation needed:** Check feed scoring logic (`_score_futures()` in `feed.py`) to ensure resolved markets are filtered. Check if interestingness weighting is correct.
-
-**Files:** `backend/app/routes/feed.py`
-**Parallel Safety:** Yellow
+Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (1) all outcomes settled, (2) leader ≥97% with boring journey, (3) no updates 7+ days. Plus `status == "open"` and `resolution_date >= now` in base query. No gap found.
 
 ### 0r. Golf Data Quality Issues
 

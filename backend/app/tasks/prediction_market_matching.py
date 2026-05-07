@@ -1060,6 +1060,8 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
             if not event.sport.key.startswith(sport_prefix):
                 continue  # Wrong sport — skip this candidate
             score += 5  # Same sport confirmed
+        elif not sport_prefix:
+            score -= 5  # No sport validation — penalize to prefer validated matches
 
         if score > best_score:
             best_score = score
@@ -1071,6 +1073,13 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
                 "score": score,
                 "sport_id": event.sport_id,
             }
+
+    if best_match and not sport_prefix and best_match.get("score", 0) < 10:
+        logger.info(
+            "Rejecting low-confidence match (score=%d, no sport prefix) for %s",
+            best_match["score"], market.external_id,
+        )
+        return None
 
     return best_match
 
