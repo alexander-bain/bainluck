@@ -1,9 +1,27 @@
 # Completed Features (Shipped)
 
+## May 7, 2026
+
+### Politics Page v1 Design — Full Rewrite
+- ✅ **Presidential bar-race hero** — Ranked candidate table with party badges (R/D/I auto-detected from ~60 known names), dual Kalshi/Polymarket bars when both sources available, source toggle (Merged/Kalshi/Poly)
+- ✅ **Evolution chart** — SVG multi-line chart showing top 6 presidential candidates over time. Uses real FuturesOddsSnapshot data (30d, downsampled to 50pts). 7d/30d/All range toggle. Hero variant toggle switches between Rankings and Trends views
+- ✅ **Sparklines** — Per-candidate 7d trend lines from historical snapshot data, color-coded green/red by direction
+- ✅ **Movement chips** — ↑/↓ 7d change per candidate, computed from FuturesOddsSnapshot history
+- ✅ **Senate state map** — 11-column geographic grid (all 50 states) colored by Dem win probability (red→gray→blue). State extracted from Kalshi kxsenate tickers + market name parsing. Hover for detail
+- ✅ **Chamber control cards** — Senate + House R% vs D% with binary bars, detected from control markets
+- ✅ **Cross-source spotlight** — Markets where Kalshi and Polymarket disagree, ranked by delta. Shows side-by-side probabilities with disagreement badges (>5pp flagged)
+- ✅ **Category-themed market cards** — Colored top borders per theme (blue=presidential, purple=congressional, green=gubernatorial, amber=policy, red=SCOTUS, sky=international). Binary (yes/no bar) and multi-outcome (leader + runners-up) variants
+- ✅ **Sub-theme nav** — Sticky chip rail with per-section market counts, smooth-scroll jump links
+- ✅ **Source badges** — Kalshi (green), Polymarket (blue), Both (gradient)
+- ✅ **CSS module** — `politics.module.css` with full design system tokens, responsive mobile layout
+- Backend: `routes/politics.py` — dual-source merge, party detection, history query, senate map builder, chamber control, cross-source matching
+- Frontend: `app/politics/page.tsx` (1100+ lines), `politics.module.css`, updated types in `lib/api.ts`
+- Design source: `docs/designs/politics-v1/project/lib/` (Claude Design prototypes)
+
 ## May 6, 2026
 
 ### New Category Pages: Politics + Entertainment
-- ✅ **`/politics`** — Political prediction markets dashboard with elections, policy, and governance markets. Themed design, data quality filtering (no resolved markets, no garbage outcomes), sorted by interestingness.
+- ✅ **`/politics`** — Initial politics dashboard (superseded by May 7 v1 redesign above)
 - ✅ **`/entertainment`** — Entertainment and culture prediction markets dashboard (Oscars, box office, awards, pop culture). Same quality filters as politics.
 - Backend: `routes/politics.py`, `routes/entertainment.py` with filtered market queries
 - Frontend: `app/politics/page.tsx`, `app/entertainment/page.tsx` with category-specific styling

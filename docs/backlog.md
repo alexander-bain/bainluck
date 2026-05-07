@@ -28,19 +28,20 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ---
 
-## Tier 0.25 — Cross-Source Market Matching for Non-Sport Categories (NEW — May 6)
+## Tier 0.25 — Cross-Source Market Matching for Non-Sport Categories
 
-**Problem:** Non-sport markets (politics, entertainment, economics, weather) from Kalshi and Polymarket show as separate cards even when they're the same question. Example: "Trump wins 2024" appears twice with different probabilities instead of one unified view showing cross-source delta.
+**Problem:** Non-sport markets (politics, entertainment, economics, weather) from Kalshi and Polymarket show as separate cards even when they're the same question.
 
-**Current state:** `canonical_market_key` column exists but has incomplete coverage (many NULL values) and no dedup at display layer. `/politics` and `/entertainment` pages (shipped May 6) show duplicates.
+**Current state (May 7):** Politics page now has cross-source matching built in:
+- Presidential hero merges candidates across Kalshi + Polymarket by name
+- Cross-source spotlight section finds markets on both platforms (normalized question matching), ranked by disagreement
+- **Remaining:** Entertainment, economics, weather pages still show duplicates. Canonical market key coverage incomplete.
 
-**Approach:** (1) Measure baseline duplicate rate, (2) Fix biggest bucket (key assignment vs display dedup), (3) Re-measure, (4) Iterate to >90% dedup rate.
+**Remaining phases:** Apply same approach to entertainment/economics/weather → Audit script for coverage → Backfill NULL canonical keys.
 
-**Phases:** Key assignment enhancement → Detection audit script → Display dedup (CombinedMarketCard + backend grouping) → Backfill NULL keys.
+**Target:** <10% unmatched duplicates across all category pages.
 
-**Target:** <10% unmatched duplicates, 30-40% fewer cards on category pages, cross-source delta visible.
-
-**Files:** `tasks/kalshi.py`, `tasks/polymarket.py`, `scripts/audit_cross_source_matching.py` (new), `routes/politics.py`, `routes/entertainment.py`, `components/CombinedMarketCard.tsx`
+**Files:** `tasks/kalshi.py`, `tasks/polymarket.py`, `routes/politics.py` (done), `routes/entertainment.py`, `routes/economics.py`
 **Parallel Safety:** Yellow
 
 ---
