@@ -16,5 +16,7 @@ enum Route: Hashable {
     case predictionStats
     case weather
     case economics
+    case politics
+    case entertainment
     case about
 }

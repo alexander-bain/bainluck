@@ -453,6 +453,24 @@ actor APIClient {
         return try await fetch("/api/economics", cacheTTL: 120)
     }
 
+    // MARK: - Politics
+
+    func fetchPolitics() async throws -> PoliticsResponse {
+        return try await fetch("/api/politics", cacheTTL: 120)
+    }
+
+    // MARK: - Entertainment
+
+    func fetchEntertainment() async throws -> EntertainmentResponse {
+        return try await fetch("/api/entertainment", cacheTTL: 120)
+    }
+
+    // MARK: - League Markets
+
+    func fetchLeagueMarkets(sportKey: String) async throws -> LeagueMarketsResponse {
+        return try await fetch("/api/leagues/\(sportKey)", cacheTTL: 120)
+    }
+
     // MARK: - Auth
 
     func signInWithGoogle(accessToken: String) async throws -> AppleAuthResponse {

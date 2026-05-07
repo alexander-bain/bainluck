@@ -200,6 +200,10 @@ struct FeedView: View {
                     WeatherView()
                 case .economics:
                     EconomicsView()
+                case .politics:
+                    PoliticsView()
+                case .entertainment:
+                    EntertainmentView()
                 case .about:
                     Text("About")
                 }

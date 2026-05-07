@@ -122,6 +122,12 @@ struct MainTabView: View {
                     NavigationLink(value: Route.economics) {
                         Label("Economics", systemImage: "chart.bar.fill")
                     }
+                    NavigationLink(value: Route.politics) {
+                        Label("Politics", systemImage: "building.columns.fill")
+                    }
+                    NavigationLink(value: Route.entertainment) {
+                        Label("Entertainment", systemImage: "film.fill")
+                    }
                     NavigationLink(value: Route.preferences) {
                         Label("Preferences", systemImage: "gearshape")
                     }
@@ -157,6 +163,10 @@ struct MainTabView: View {
                     WeatherView()
                 case .economics:
                     EconomicsView()
+                case .politics:
+                    PoliticsView()
+                case .entertainment:
+                    EntertainmentView()
                 case .eiRankings:
                     Text("EI Rankings")
                 case .about:

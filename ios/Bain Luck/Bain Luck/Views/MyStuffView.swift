@@ -155,6 +155,10 @@ struct MyStuffView: View {
                     WeatherView()
                 case .economics:
                     EconomicsView()
+                case .politics:
+                    PoliticsView()
+                case .entertainment:
+                    EntertainmentView()
                 case .about:
                     AboutView()
                 }

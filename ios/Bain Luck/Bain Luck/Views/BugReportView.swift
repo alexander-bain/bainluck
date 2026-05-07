@@ -181,6 +181,8 @@ struct BugReportView: View {
                     case .predictionStats: currentPage = "Prediction Stats"
                     case .weather: currentPage = "Weather"
                     case .economics: currentPage = "Economics"
+                    case .politics: currentPage = "Politics"
+                    case .entertainment: currentPage = "Entertainment"
                     case .about: currentPage = "About"
                     }
                 }
