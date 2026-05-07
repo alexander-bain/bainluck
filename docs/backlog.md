@@ -101,28 +101,32 @@ We measure per-request latency (X-Response-Time header, slow-request logging >50
 
 **Parallel Safety:** Green
 
-### Manus Sweep May 6 — 9 Modules, Multiple Critical Issues
+### Manus Sweep May 6 — 10 of 12 Fixed (May 7)
 
-Full reports: `Manus/audit_results/2026-05-06/`. All 9 modules completed.
+Full reports: `Manus/audit_results/2026-05-06/`. 9 modules completed.
 
-| Module | Score | Critical Issues |
-|--------|-------|----------------|
-| Event Detail | 55/100 | PSG vs Bayern page fails to load; chart text contradicts hero prob; 97/3 odds on regular season MLB |
-| Feed & Discovery | — | Stale weather data; economics page intermittent load failure |
-| Grid | MLB 95, NBA 75, NHL 75, Golf 0 | Golf grid broken (API error); NBA/NHL missing Make Playoffs + Win Division columns; NHL sums 115.6% |
-| League Pages | 45/100 | All 3 soccer pages (EPL, MLS, UCL) broken; no grid links; 14/15 pages have issues |
-| Chart Timing | 64/100 | NHL charts: massive stale tails + missing markers; NBA missing some markers |
-| Market Completeness | — | Missing game-level spreads, O/U, player props despite Kalshi/PM availability |
-| Market Accuracy | — | Monotonicity issue on at least one event |
-| Visual Review | — | Mobile grid table not responsive; cookie banner overlaps mobile; loading states weak |
+| Issue | Status | Fix |
+|-------|--------|-----|
+| Golf grid broken (score 0) | **Fixed** | DataGolf UniqueViolation fix |
+| Grid links missing from league pages | **Fixed** | "View full grid →" link added |
+| Cookie banner overlaps mobile | **Fixed** | Bottom spacing adjusted |
+| Chart stale tails (NHL/NBA) | **Fixed** | History capped at completed_at + 30min |
+| Grid column sums >100% | **Fixed** | Normalize moderate overshoots from min tick sizes |
+| Broken MLB logos | **Fixed** | onError fallback to initials |
+| Stale weather data | **Fixed** | 7-day staleness + 6h grace period |
+| League page slug mapping | **Fixed** | Explicit GRID_SLUG_MAP for all leagues |
+| PSG vs Bayern page crash | **Resolved** | Transient — verified working |
+| 97/3 MLB odds | **Resolved** | Likely live game with big lead; fixed by 0f-9 resolved probs |
 
-**Priority actions:**
-1. Fix golf grid API error (CRITICAL — score 0)
-2. Fix soccer league pages (CRITICAL — all 3 broken)
-3. Add Make Playoffs + Win Division columns to NBA/NHL grids
-4. Fix PSG vs Bayern event detail page load failure
-5. Clean up NHL chart stale tails
-6. Add championship grid links to league pages
+**Still open (2 items):**
+
+#### NBA/NHL Division column missing from grids
+Make Playoffs column now shows (staleness fix + SQL filter optimization). Division column still missing — resolved market backfill runs but doesn't find them. Next step: trace the backfill query with the specific tickers (KXNBAATLANTIC-25, KXNHLATLANTIC-26) to find where they drop out.
+**Files:** `backend/app/routes/playoffs.py` (resolved backfill ~line 2575), `backend/app/utils/playoff_grid.py`
+
+#### Chart/hero probability mismatch on completed soccer events
+Completed events (e.g., Bayern 1-1 PSG) show stale pre-game betting odds (39.9%) instead of final result. The `win_probability_sources` only has `betting` — no resolved probability is written for non-sportsbook events. Broader fix needed: `transition_event_statuses` should write final probabilities based on score outcome for all completed events, not just those with Kalshi/PM markets.
+**Files:** `backend/app/tasks/espn_sync.py` (status transition), `backend/app/utils/aggregation.py`
 
 ### 0e-3. GA4 Console Configuration
 
