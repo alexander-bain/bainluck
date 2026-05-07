@@ -2496,6 +2496,12 @@ async def get_playoff_grid(
         if not col_key:
             continue
 
+        if col_key in _SETTLED_COLUMNS:
+            logger.info(
+                "Grid %s: market %d (%s) → col=%s, %d outcomes",
+                league_slug, market.id, market.name[:40], col_key, len(market.outcomes),
+            )
+
         cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
         for outcome in market.outcomes:
             if outcome.last_updated and outcome.last_updated < cutoff:
