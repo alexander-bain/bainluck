@@ -565,6 +565,25 @@ class TestDiscoverFirstPageMixer:
         assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
         assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
 
+    def test_mixer_repairs_top_10_non_political_texture(self):
+        items = [
+            self._item(i, "politics", 100 - i, name=f"2028 election variant {i}")
+            for i in range(7)
+        ] + [
+            self._item(100, "economics", 94, name="How many Fed rate cuts in 2026?"),
+            self._item(101, "entertainment", 93, name="Eurovision Winner 2026?"),
+            self._item(102, "tech", 92, name="Gemini 3.2 released by...?"),
+            self._item(103, "weather", 91, name="Hantavirus pandemic in 2026?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=11)
+        top10 = mixed[:10]
+
+        assert sum(
+            1 for item in top10
+            if item["data"]["llm_sport_category"] not in {"politics", "geopolitics"}
+        ) >= 4
+
     def test_mixer_pulls_strong_weird_news_into_first_page(self):
         items = [
             self._item(i, "politics", 100 - i, name=f"2028 election variant {i}")
@@ -584,7 +603,7 @@ class TestDiscoverFirstPageMixer:
             editorial_archetype(
                 item["data"]["name"],
                 item["data"]["llm_sport_category"],
-            ) == "weird_news"
+            ) == "absurd_but_real"
             for item in first_page
         )
 
@@ -593,11 +612,15 @@ class TestEditorialArchetypes:
     def test_editorial_archetype_detects_positive_story_roles(self):
         examples = {
             "Will China invade Taiwan by end of 2026?": "world_event",
+            "Next US x Iran diplomatic meeting on...?": "breaking_news",
             "OpenAI $1T+ valuation in 2026?": "tech_frontier",
             "How many Fed rate cuts in 2026?": "macro_signal",
             'Will "Super Bowl" be said on ICEMAN?': "culture_moment",
             "Hantavirus pandemic in 2026?": "health_weather_risk",
             "PGA Tour: Truist Championship Top 20": "sports_story",
+            "Will Mike Vrabel be fired before the Patriots' next game?": "sports_drama",
+            "Will Elon win his case against OpenAI?": "company_drama",
+            "Will the U.S. confirm that aliens exist before 2027?": "absurd_but_real",
         }
 
         for name, expected in examples.items():

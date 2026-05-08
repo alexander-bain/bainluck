@@ -16,14 +16,19 @@ from typing import Literal
 QualityClass = Literal["compelling", "normal", "low_quality", "suppress"]
 EditorialArchetype = Literal[
     "world_event",
+    "breaking_news",
     "tech_frontier",
     "macro_signal",
     "culture_moment",
     "health_weather_risk",
     "sports_story",
+    "sports_drama",
     "big_public_company",
+    "company_drama",
     "political_power",
+    "big_name",
     "weird_news",
+    "absurd_but_real",
     "other",
 ]
 
@@ -169,6 +174,39 @@ _WEIRD_NEWS_RE = re.compile(
     r"\b("
     r"apologize|arrested|aliens?|ufo|pope|nobel|jail|prison|pardon|"
     r"resign|fired|fire|scandal|banned"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_ABSURD_BUT_REAL_RE = re.compile(
+    r"\b("
+    r"aliens?|ufo|extraterrestrial|bigfoot|loch ness|simulation|"
+    r"will .+ apologize|will .+ say \"|what will .+ wear|"
+    r"hot dog|nathan's|meme|memecoin"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_BREAKING_NEWS_RE = re.compile(
+    r"\b("
+    r"diplomatic meeting|peace deal|nuclear deal|airspace|"
+    r"ceasefire talks?|hostage deal|summit|visit china|surrender"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_COMPANY_DRAMA_RE = re.compile(
+    r"\b("
+    r"lawsuit|case against|sue|sues|acquire|acquisition|merger|"
+    r"bankrupt|bankruptcy|ipo|take a stake|antitrust|sec investigation"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_BIG_NAME_RE = re.compile(
+    r"\b("
+    r"trump|biden|obama|musk|elon|sam altman|taylor swift|beyonce|"
+    r"drake|kardashian|pope|putin|zelensky|xi jinping|netanyahu"
     r")\b",
     re.IGNORECASE,
 )
@@ -408,10 +446,21 @@ def editorial_archetype(
     category = (sport_category or "").lower()
     text = f"{name} {category}"
 
+    if _ABSURD_BUT_REAL_RE.search(text):
+        return "absurd_but_real"
     if _OUTBREAK_RE.search(text) or re.search(r"\b(hurricane|tornado|earthquake|wildfire|flood|rain|snow)\b", text, re.I):
         return "health_weather_risk"
+    if _SPORTS_PERSONNEL_RE.search(text) and (
+        category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash", "mma"}
+        or re.search(r"\b(nba|nfl|mlb|nhl|ufc|pga|team|coach|player|next game|patriots|lakers|yankees)\b", text, re.I)
+    ):
+        return "sports_drama"
+    if _BREAKING_NEWS_RE.search(text) and re.search(r"\b(iran|israel|russia|ukraine|china|trump|gaza|taiwan|nuclear)\b", text, re.I):
+        return "breaking_news"
     if re.search(r"\b(war|invade|invasion|ceasefire|peace|regime|taiwan|ukraine|israel|iran|russia|china|cuba|venezuela)\b", text, re.I):
         return "world_event"
+    if _COMPANY_DRAMA_RE.search(text) and (_PUBLIC_COMPANY_RE.search(text) or re.search(r"\b(openai|spacex|anthropic|tesla|apple|google|meta|amazon|nvidia)\b", text, re.I)):
+        return "company_drama"
     if re.search(r"\b(openai|anthropic|claude|gpt|ai model|frontiermath|deepseek|gemini|nvidia|compute)\b", text, re.I):
         return "tech_frontier"
     if re.search(r"\b(fed|rate cut|recession|inflation|cpi|ppi|earnings|oil|wti|treasury|yield)\b", text, re.I):
@@ -424,6 +473,8 @@ def editorial_archetype(
         return "sports_story"
     if _PUBLIC_COMPANY_RE.search(text):
         return "big_public_company"
+    if _BIG_NAME_RE.search(text) and category not in {"politics", "geopolitics"}:
+        return "big_name"
     if category in {"politics", "geopolitics"} or re.search(r"\b(president|senate|house|governor|mayor|election|nominee|confirmed)\b", text, re.I):
         return "political_power"
     if _WEIRD_NEWS_RE.search(text):
@@ -458,14 +509,19 @@ _DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
 
 _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
     "world_event": 4,
+    "breaking_news": 3,
     "political_power": 3,
     "macro_signal": 4,
     "culture_moment": 3,
     "health_weather_risk": 2,
     "sports_story": 3,
+    "sports_drama": 2,
     "tech_frontier": 2,
     "big_public_company": 2,
+    "company_drama": 2,
+    "big_name": 2,
     "weird_news": 2,
+    "absurd_but_real": 2,
     "other": 3,
 }
 
@@ -542,6 +598,7 @@ def diversify_discover_first_page(
         selected.extend(fallback[:needed])
 
     _ensure_required_archetypes(selected, items)
+    _improve_strict_variety(selected, items)
 
     selected_keys = {_feed_item_key(item) for item in selected}
     remainder = [
@@ -559,7 +616,9 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         "culture_moment",
         "health_weather_risk",
         "sports_story",
+        "sports_drama",
         "weird_news",
+        "absurd_but_real",
     )
     selected_keys = {_feed_item_key(item) for item in selected}
 
@@ -600,6 +659,96 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         selected[replacement_idx] = candidate
         selected_keys.discard(_feed_item_key(removed))
         selected_keys.add(_feed_item_key(candidate))
+
+
+def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None:
+    """Repair strict first-page texture targets after the initial score pass."""
+    if len(selected) <= 1:
+        return
+
+    first_page_size = min(20, len(selected))
+
+    def swap_positions(a: int, b: int) -> None:
+        selected[a], selected[b] = selected[b], selected[a]
+
+    # Keep at least four non-politics/geopolitics cards in the top 10 when
+    # already-selected cards can satisfy that without dropping stronger stories.
+    top10_size = min(10, len(selected))
+    while top10_size >= 4:
+        top10 = selected[:top10_size]
+        non_political_count = sum(
+            1 for item in top10
+            if _discover_category_group(item) not in {"politics", "geopolitics"}
+        )
+        if non_political_count >= 4:
+            break
+
+        replacement_idx = next(
+            (
+                idx for idx in range(top10_size - 1, -1, -1)
+                if _discover_category_group(selected[idx]) in {"politics", "geopolitics"}
+            ),
+            None,
+        )
+        candidate_idx = next(
+            (
+                idx for idx in range(top10_size, first_page_size)
+                if _discover_category_group(selected[idx]) not in {"politics", "geopolitics"}
+                and selected[idx].get("score", 0) >= 90
+            ),
+            None,
+        )
+        if replacement_idx is None or candidate_idx is None:
+            break
+        swap_positions(replacement_idx, candidate_idx)
+
+    # Keep diplomatic clusters from exceeding the strict world-event cap in the
+    # first 20. Prefer replacements already selected for the first page, then
+    # pull a strong non-world candidate from the remainder if available.
+    while True:
+        first_page = selected[:first_page_size]
+        world_count = sum(
+            1 for item in first_page
+            if _discover_archetype_group(item) == "world_event"
+        )
+        if world_count <= 4:
+            break
+
+        replacement_idx = next(
+            (
+                idx for idx in range(first_page_size - 1, -1, -1)
+                if _discover_archetype_group(selected[idx]) == "world_event"
+            ),
+            None,
+        )
+        if replacement_idx is None:
+            break
+
+        selected_keys = {_feed_item_key(item) for item in selected}
+        candidate_idx = next(
+            (
+                idx for idx in range(first_page_size, len(selected))
+                if _discover_archetype_group(selected[idx]) != "world_event"
+                and selected[idx].get("score", 0) >= 88
+            ),
+            None,
+        )
+        if candidate_idx is not None:
+            swap_positions(replacement_idx, candidate_idx)
+            continue
+
+        candidate = next(
+            (
+                item for item in all_items
+                if _feed_item_key(item) not in selected_keys
+                and _discover_archetype_group(item) != "world_event"
+                and item.get("score", 0) >= 88
+            ),
+            None,
+        )
+        if candidate is None:
+            break
+        selected[replacement_idx] = candidate
 
 
 def _discover_archetype_group(item: dict) -> EditorialArchetype:

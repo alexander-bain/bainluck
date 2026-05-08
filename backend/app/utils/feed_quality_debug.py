@@ -168,13 +168,22 @@ def summarize_feed_diagnostics(
     ]
     top10_fun = [
         c for c in top10
-        if c["archetype"] in {"culture_moment", "weird_news", "sports_story"}
+        if c["archetype"] in {
+            "culture_moment",
+            "weird_news",
+            "absurd_but_real",
+            "sports_story",
+            "sports_drama",
+            "big_name",
+        }
     ]
     strict_targets = {
         "top10_non_politics_geopolitics>=4": len(top10_non_politics) >= 4,
         "top10_has_fun_item": bool(top10_fun),
         "top20_world_event<=4": archetypes.get("world_event", 0) <= 4,
-        "top20_has_weird_news": archetypes.get("weird_news", 0) >= 1,
+        "top20_has_weird_or_absurd": (
+            archetypes.get("weird_news", 0) + archetypes.get("absurd_but_real", 0)
+        ) >= 1,
         "top20_max_category<=5": max(categories.values(), default=0) <= 5,
     }
 
