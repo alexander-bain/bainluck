@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _outcomes_overlap
+from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _outcomes_overlap, _trace_search_tokens
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
@@ -353,6 +353,43 @@ class TestFeedQualityDebug:
             "candidate_recall_gap": 1,
             "game_market_noise": 1,
         }
+
+    def test_ground_truth_matching_normalizes_us_punctuation(self):
+        debug = build_feed_quality_debug(
+            [
+                {
+                    "type": "futures",
+                    "score": 93,
+                    "headline": "Yes side up 2.7 points today",
+                    "reason": "Yes side moved today",
+                    "data": {
+                        "id": 109435,
+                        "name": "Will the U.S. confirm that aliens exist before 2027?",
+                        "llm_sport_category": "tech",
+                        "source": "kalshi",
+                        "top_outcomes": [{"name": "Yes", "probability": 0.12}],
+                    },
+                }
+            ],
+            ground_truth_items=[
+                {
+                    "source": "polymarket",
+                    "category": "trending",
+                    "name": "Will the US confirm that aliens exist before 2027?",
+                    "probability": "Yes 12%, No 88%",
+                }
+            ],
+            top_n=1,
+        )
+
+        assert debug["summary"]["ground_truth_hit_count_50"] == 1
+        assert debug["missing_ground_truth"] == []
+
+    def test_trace_search_tokens_ignore_win_for_advance_markets(self):
+        tokens = _trace_search_tokens("Will the Boston Celtics win the 2026 NBA Finals?")
+
+        assert tokens[:3] == ["boston", "celtics", "nba"]
+        assert "win" not in tokens
 
     def test_missing_ground_truth_db_trace_explains_no_match(self):
         trace = summarize_missing_ground_truth_db_trace(

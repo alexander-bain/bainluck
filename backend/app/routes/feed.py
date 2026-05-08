@@ -70,6 +70,7 @@ def _check_admin_secret(secret: str | None) -> bool:
 _TRACE_STOPWORDS = {
     "will", "what", "when", "which", "with", "from", "that", "this",
     "before", "after", "market", "winner", "yes", "no", "the", "and",
+    "win", "wins", "won",
 }
 _DEDUP_NAME_STOPWORDS = _TRACE_STOPWORDS | {
     "who", "does", "have", "than", "then", "into", "onto", "over", "under",

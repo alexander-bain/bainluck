@@ -76,21 +76,27 @@ def load_default_ground_truth_items() -> list[dict[str, Any]]:
 
 def load_default_ground_truth_names() -> set[str]:
     """Load local Kalshi/Polymarket ground-truth market names when present."""
-    return {item["name"].lower().strip() for item in load_default_ground_truth_items()}
+    return {_normalize_match_name(item["name"]) for item in load_default_ground_truth_items()}
 
 
 def matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
     """Return whether a market name matches a curated ground-truth story."""
-    lower = name.lower().strip()
+    lower = _normalize_match_name(name)
     if lower in ground_truth:
         return True
     return any(lower in gt or gt in lower for gt in ground_truth)
 
 
 def _names_match(a: str, b: str) -> bool:
-    left = a.lower().strip()
-    right = b.lower().strip()
+    left = _normalize_match_name(a)
+    right = _normalize_match_name(b)
     return bool(left and right and (left in right or right in left))
+
+
+def _normalize_match_name(name: str) -> str:
+    """Normalize superficial punctuation differences for ground-truth matching."""
+    compact_initials = re.sub(r"\b([a-z])\.([a-z])\.", r"\1\2", name.lower())
+    return " ".join(re.findall(r"[a-z0-9]+", compact_initials))
 
 
 def _ground_truth_probably_resolved(probability: str | None) -> bool:
@@ -472,7 +478,7 @@ def build_feed_quality_debug(
 ) -> dict[str, Any]:
     """Return summary and per-item diagnostics for a feed response."""
     if ground_truth is None and ground_truth_items is not None:
-        ground_truth = {item["name"].lower().strip() for item in ground_truth_items}
+        ground_truth = {_normalize_match_name(item["name"]) for item in ground_truth_items}
     diagnosed = diagnose_feed_items(items, ground_truth=ground_truth)
     missing = find_missing_ground_truth_items(
         diagnosed,
