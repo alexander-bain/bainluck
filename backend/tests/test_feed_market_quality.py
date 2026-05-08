@@ -146,6 +146,14 @@ class TestMarketQualityClassification:
         assert "sports_personnel_story" in quality.reasons
         assert quality_score_adjustment(quality) >= 22
 
+    def test_trade_deal_is_not_sports_personnel_story(self):
+        quality = classify_market_quality(
+            "Will Trump announce a new trade deal in Apr 2026?",
+            sport_category="politics",
+        )
+
+        assert "sports_personnel_story" not in quality.reasons
+
     def test_major_geopolitics_not_suppressed(self):
         quality = classify_market_quality(
             "Will Israel and Iran agree to a ceasefire before July?",

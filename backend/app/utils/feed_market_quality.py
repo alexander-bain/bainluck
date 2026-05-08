@@ -107,7 +107,7 @@ _OBSCURE_PROCEDURAL_RE = re.compile(
 _SPORTS_PERSONNEL_RE = re.compile(
     r"\b("
     r"fired|fire|resign|resignation|step down|retire|retirement|"
-    r"hired|hire|traded|trade|suspended|suspension|benched|cut|released"
+    r"hired|hire|traded|suspended|suspension|benched|cut|released"
     r")\b",
     re.IGNORECASE,
 )

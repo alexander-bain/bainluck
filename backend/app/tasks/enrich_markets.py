@@ -138,7 +138,7 @@ async def enrich_market_hooks(limit: int = 50):
     import random
     from app.models.models import FuturesMarket, FuturesOutcome
     from app.services.llm import _get_client
-    from sqlalchemy import or_
+    from sqlalchemy import case, or_
 
     client = _get_client()
     if not client:
@@ -151,7 +151,29 @@ async def enrich_market_hooks(limit: int = 50):
     blurbs = _load_polymarket_blurbs()
 
     async with get_task_session() as session:
-        # Prioritize markets missing hooks entirely over stale regenerations
+        feed_category_priority = case(
+            (
+                FuturesMarket.llm_sport_category.in_([
+                    "politics",
+                    "geopolitics",
+                    "economics",
+                    "tech",
+                    "health",
+                    "entertainment",
+                    "weather",
+                ]),
+                0,
+            ),
+            else_=1,
+        )
+        liquidity_priority = case(
+            (FuturesMarket.volume_24h >= 5_000, 0),
+            else_=1,
+        )
+
+        # Prioritize feed-shaped markets missing hooks over stale regenerations.
+        # The old tier/date ordering spent too much work on broad backlog while
+        # current Discover cards still had generic explanations.
         result = await session.execute(
             select(FuturesMarket)
             .where(
@@ -164,6 +186,10 @@ async def enrich_market_hooks(limit: int = 50):
             )
             .order_by(
                 FuturesMarket.hook_description.is_(None).desc(),
+                feed_category_priority.asc(),
+                liquidity_priority.asc(),
+                FuturesMarket.volume_24h.desc().nullslast(),
+                FuturesMarket.updated_at.desc().nullslast(),
                 FuturesMarket.market_tier.asc().nullslast(),
                 FuturesMarket.resolution_date.asc().nullslast(),
             )
