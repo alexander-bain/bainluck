@@ -1129,10 +1129,28 @@ private struct SwipeToDismiss<Content: View>: View {
     @State private var removing = false
     @State private var isHorizontalDrag = false
 
+    private var overlayOpacity: Double {
+        min(abs(offset) / 150, 1.0)
+    }
+
     var body: some View {
         content()
             .offset(x: offset)
             .opacity(removing ? 0 : 1.0 - abs(offset) / 300)
+            .overlay(alignment: offset > 0 ? .leading : .trailing) {
+                if isHorizontalDrag && abs(offset) > 20 {
+                    ZStack {
+                        Circle()
+                            .fill(offset > 0 ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
+                            .frame(width: 64, height: 64)
+                        Image(systemName: offset > 0 ? "checkmark" : "xmark")
+                            .font(.title.weight(.bold))
+                            .foregroundStyle(offset > 0 ? .green : .red)
+                    }
+                    .opacity(overlayOpacity)
+                    .padding(.horizontal, 24)
+                }
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 20)
                     .onChanged { v in
