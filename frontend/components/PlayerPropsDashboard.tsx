@@ -466,15 +466,22 @@ export default function PlayerPropsDashboard({
         const sortedRungs = statData.rungs.sort((a, b) => a.threshold - b.threshold);
         const shape: "ladder" | "line" = sortedRungs.length >= 3 ? "ladder" : "line";
 
-        // Find actual from box score
+        // Find actual from box score — match by meaningful last name (skip Jr/Sr/III)
         let actual: number | null = null;
         const boxKey = STAT_TO_BOX_SCORE[statKey];
         if (boxKey && boxPlayers.length > 0) {
-          const match = boxPlayers.find(
-            (bp) => bp.name.toLowerCase().includes(entry.name.split(" ").pop()!.toLowerCase()),
-          );
-          if (match?.stats?.[boxKey] != null) {
-            actual = match.stats[boxKey];
+          const suffixes = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv"]);
+          const parts = entry.name.split(" ").filter(w => !suffixes.has(w.toLowerCase()));
+          const lastName = (parts.pop() || "").toLowerCase();
+          if (lastName.length >= 2) {
+            const match = boxPlayers.find((bp) => {
+              const bpParts = bp.name.split(" ").filter(w => !suffixes.has(w.toLowerCase()));
+              const bpLast = (bpParts.pop() || "").toLowerCase();
+              return bpLast === lastName;
+            });
+            if (match?.stats?.[boxKey] != null) {
+              actual = match.stats[boxKey];
+            }
           }
         }
 
