@@ -60,9 +60,22 @@ interface DebugItem {
   ground_truth: boolean;
 }
 
+interface MissingGroundTruthItem {
+  name: string;
+  source: string;
+  category: string;
+  probability: string | null;
+  quality_class: string;
+  archetype: string;
+  reasons: string[];
+  family_key: string;
+  story_key: string | null;
+}
+
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
+  missing_ground_truth: MissingGroundTruthItem[];
 }
 
 interface HookCoverage {
@@ -403,6 +416,56 @@ export default function DiscoverQualityPage() {
                 <div className="text-sm text-text-muted">Loading hook coverage...</div>
               )}
             </div>
+          </div>
+
+          <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
+            <div className="p-4 border-b border-surface-border">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Missing Ground Truth</h2>
+                  <p className="text-xs text-text-muted mt-1">
+                    Curated Kalshi/Polymarket examples not present in the current top 50.
+                  </p>
+                </div>
+                <span className="text-xs text-text-muted">
+                  {(data.missing_ground_truth || []).length} shown
+                </span>
+              </div>
+            </div>
+            {(data.missing_ground_truth || []).length > 0 ? (
+              <div className="divide-y divide-surface-border/60">
+                {data.missing_ground_truth.slice(0, 12).map((item) => (
+                  <div key={`${item.source}-${item.name}`} className="p-3 hover:bg-surface-elevated/40">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm text-text-primary">{item.name}</div>
+                        {item.probability && (
+                          <div className="text-xs text-text-muted mt-1">{item.probability}</div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-1 shrink-0 max-w-[45%]">
+                        <StatusPill tone="muted">{item.source}</StatusPill>
+                        <StatusPill tone="muted">{item.category}</StatusPill>
+                        <StatusPill tone={item.quality_class === "low_quality" ? "warn" : "ok"}>
+                          {formatTargetName(item.quality_class)}
+                        </StatusPill>
+                        <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
+                      </div>
+                    </div>
+                    {(item.story_key || item.reasons.length > 0) && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {item.story_key && <StatusPill tone="muted">{item.story_key}</StatusPill>}
+                        {item.reasons.slice(0, 4).map((reason) => (
+                          <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-sm text-text-muted">No missing ground-truth examples found in the current diagnostic set.</div>
+            )}
           </div>
 
           <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">

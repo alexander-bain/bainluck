@@ -7,6 +7,7 @@ numbers shown in-browser match the CLI output.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -17,14 +18,16 @@ from app.utils.feed_market_quality import (
     has_specific_explanation,
 )
 
+_NUMBER_RE = re.compile(r"[-+]?\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
 
-def load_default_ground_truth_names() -> set[str]:
-    """Load local Kalshi/Polymarket ground-truth market names when present."""
+
+def load_default_ground_truth_items() -> list[dict[str, Any]]:
+    """Load local curated Kalshi/Polymarket examples when present."""
     root = Path(__file__).resolve().parents[2]
-    names: set[str] = set()
-    for rel in (
-        "scripts/polymarket_browse_ground_truth.json",
-        "scripts/kalshi_ground_truth.json",
+    items: list[dict[str, Any]] = []
+    for source, rel in (
+        ("polymarket", "scripts/polymarket_browse_ground_truth.json"),
+        ("kalshi", "scripts/kalshi_ground_truth.json"),
     ):
         path = root / rel
         if not path.exists():
@@ -34,9 +37,22 @@ def load_default_ground_truth_names() -> set[str]:
         except Exception:
             continue
         for item in data:
-            if item.get("trending") and item.get("market_name"):
-                names.add(item["market_name"].lower().strip())
-    return names
+            name = (item.get("market_name") or "").strip()
+            if not item.get("trending") or not name:
+                continue
+            items.append({
+                "source": source,
+                "category": item.get("category") or "?",
+                "name": name,
+                "probability": item.get("probability"),
+                "sub_page": item.get("sub_page"),
+            })
+    return items
+
+
+def load_default_ground_truth_names() -> set[str]:
+    """Load local Kalshi/Polymarket ground-truth market names when present."""
+    return {item["name"].lower().strip() for item in load_default_ground_truth_items()}
 
 
 def matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
@@ -45,6 +61,71 @@ def matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
     if lower in ground_truth:
         return True
     return any(lower in gt or gt in lower for gt in ground_truth)
+
+
+def _names_match(a: str, b: str) -> bool:
+    left = a.lower().strip()
+    right = b.lower().strip()
+    return bool(left and right and (left in right or right in left))
+
+
+def _ground_truth_probably_resolved(probability: str | None) -> bool:
+    if not probability:
+        return False
+    vals: list[float] = []
+    for match in _NUMBER_RE.findall(probability):
+        cleaned = match.replace("$", "").replace(",", "").replace("%", "")
+        try:
+            vals.append(float(cleaned))
+        except ValueError:
+            continue
+    return len(vals) >= 2 and all(v <= 5 or v >= 95 for v in vals)
+
+
+def find_missing_ground_truth_items(
+    diagnosed: list[dict[str, Any]],
+    ground_truth_items: list[dict[str, Any]],
+    *,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Find curated examples that are not present in the diagnosed feed page."""
+    feed_names = [item.get("name") or "" for item in diagnosed]
+    seen: set[str] = set()
+    missing: list[dict[str, Any]] = []
+
+    for item in ground_truth_items:
+        name = (item.get("name") or "").strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        if _ground_truth_probably_resolved(item.get("probability")):
+            continue
+        if any(_names_match(name, feed_name) for feed_name in feed_names):
+            continue
+
+        quality = classify_market_quality(
+            market_name=name,
+            sport_category=item.get("category"),
+        )
+        if quality.quality_class == "suppress":
+            continue
+
+        missing.append({
+            "name": name,
+            "source": item.get("source") or "?",
+            "category": item.get("category") or "?",
+            "probability": item.get("probability"),
+            "quality_class": quality.quality_class,
+            "archetype": editorial_archetype(name, item.get("category")),
+            "reasons": quality.reasons,
+            "family_key": quality.family_key,
+            "story_key": quality.story_key,
+        })
+        if len(missing) >= limit:
+            break
+
+    return missing
 
 
 def diagnose_feed_items(
@@ -213,11 +294,19 @@ def build_feed_quality_debug(
     items: list[dict[str, Any]],
     *,
     ground_truth: set[str] | None = None,
+    ground_truth_items: list[dict[str, Any]] | None = None,
     top_n: int = 20,
 ) -> dict[str, Any]:
     """Return summary and per-item diagnostics for a feed response."""
+    if ground_truth is None and ground_truth_items is not None:
+        ground_truth = {item["name"].lower().strip() for item in ground_truth_items}
     diagnosed = diagnose_feed_items(items, ground_truth=ground_truth)
+    missing = find_missing_ground_truth_items(
+        diagnosed,
+        ground_truth_items or [],
+    )
     return {
         "summary": summarize_feed_diagnostics(diagnosed, top_n=top_n),
         "items": diagnosed,
+        "missing_ground_truth": missing,
     }

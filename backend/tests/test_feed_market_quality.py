@@ -298,7 +298,26 @@ class TestFeedQualityDebug:
 
         debug = build_feed_quality_debug(
             items,
-            ground_truth={"iran closes its airspace by...?"},
+            ground_truth_items=[
+                {
+                    "source": "kalshi",
+                    "category": "geopolitics",
+                    "name": "Iran closes its airspace by...?",
+                    "probability": "Yes 80%, No 20%",
+                },
+                {
+                    "source": "polymarket",
+                    "category": "Technology",
+                    "name": "Will OpenAI announce GPT-6 in 2026?",
+                    "probability": "Yes 35%, No 65%",
+                },
+                {
+                    "source": "polymarket",
+                    "category": "Sports",
+                    "name": "Lakers vs. Knicks",
+                    "probability": "Lakers 100%, Knicks 0%",
+                },
+            ],
             top_n=2,
         )
 
@@ -309,6 +328,9 @@ class TestFeedQualityDebug:
         assert debug["items"][0]["quality_class"] == "compelling"
         assert debug["items"][0]["ground_truth"] is True
         assert debug["items"][1]["quality_class"] == "low_quality"
+        assert [item["name"] for item in debug["missing_ground_truth"]] == [
+            "Will OpenAI announce GPT-6 in 2026?",
+        ]
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(

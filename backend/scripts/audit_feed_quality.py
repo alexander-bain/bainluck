@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
-    load_default_ground_truth_names,
+    load_default_ground_truth_items,
 )
 
 
@@ -39,9 +39,10 @@ def main() -> int:
     payload = resp.json()
     items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
 
+    ground_truth_items = load_default_ground_truth_items()
     debug = build_feed_quality_debug(
         items,
-        ground_truth=load_default_ground_truth_names(),
+        ground_truth_items=ground_truth_items,
         top_n=20,
     )
     classified = debug["items"]
@@ -96,6 +97,17 @@ def main() -> int:
             print(f"boring #{c['rank']:02d}: {c['name']} ({','.join(c['reasons'])})")
         for family, count in duplicate_families.items():
             print(f"duplicate family x{count}: {family}")
+
+    missing = debug.get("missing_ground_truth") or []
+    if missing:
+        print()
+        print("MISSING GROUND TRUTH")
+        print("-" * 72)
+        for item in missing[:20]:
+            print(
+                f"[{item['source']}:{item['category']}] "
+                f"{item['name'][:84]} ({item['archetype']}, {item['quality_class']})"
+            )
 
     return 0
 

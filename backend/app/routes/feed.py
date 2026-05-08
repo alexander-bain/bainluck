@@ -46,7 +46,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
-from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_names
+from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_items
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -321,9 +321,10 @@ async def get_feed(
 
     debug_payload = None
     if debug:
+        ground_truth_items = load_default_ground_truth_items()
         debug_payload = build_feed_quality_debug(
             paginated,
-            ground_truth=load_default_ground_truth_names(),
+            ground_truth_items=ground_truth_items,
             top_n=min(20, len(paginated)),
         )
 
@@ -360,6 +361,7 @@ async def get_feed(
     if debug_payload is not None:
         response["debug_summary"] = debug_payload["summary"]
         response["debug_items"] = debug_payload["items"]
+        response["missing_ground_truth"] = debug_payload["missing_ground_truth"]
 
     # --- Write to cache ---
     if _cache_key and _async_redis:
