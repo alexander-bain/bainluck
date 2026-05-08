@@ -1024,104 +1024,151 @@ private struct NativeGuessCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("🎯")
-                Text("WHAT ARE THE ODDS?")
-                    .font(.system(size: 11, weight: .heavy))
-                    .tracking(1)
-                    .foregroundStyle(.orange)
-                Spacer()
+        VStack(alignment: .leading, spacing: 16) {
+            guessHeader(category: data.llmSportCategory)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(data.name)
+                    .font(.headline.weight(.bold))
+                    .lineLimit(2)
+
+                if let leader {
+                    Text(leader.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
 
-            Text(data.name)
-                .font(.subheadline.weight(.bold))
+            if guess == nil {
+                questionPanel(subject: leader?.name ?? "This outcome")
+                guessButtons()
+            } else {
+                resultPanel(subject: leader?.name ?? data.name, detailRoute: .futuresDetail(id: data.id), detailLabel: "See full market")
+                    .sheet(isPresented: $showShare) {
+                        ShareSheet(text: shareText)
+                    }
+            }
+        }
+        .padding(16)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.orange.opacity(0.32), lineWidth: 1.5))
+        .shadow(color: .orange.opacity(0.08), radius: 12, x: 0, y: 5)
+        .onAppear { generateThreshold() }
+    }
+
+    private func guessHeader(category: String?) -> some View {
+        HStack {
+            Label("What are the odds?", systemImage: "target")
+                .font(.system(size: 11, weight: .heavy))
+                .tracking(0.8)
+                .foregroundStyle(.orange)
+                .textCase(.uppercase)
+            Spacer()
+            if let category {
+                Text(category.uppercased())
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+            }
+        }
+    }
+
+    private func questionPanel(subject: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Is the current probability higher or lower than")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(threshold)%")
+                    .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.primary)
+                Text(subject)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func guessButtons() -> some View {
+        HStack(spacing: 12) {
+            guessButton(label: "Higher", systemImage: "arrow.up", color: .green) {
+                submitGuess("higher")
+            }
+            guessButton(label: "Lower", systemImage: "arrow.down", color: .red) {
+                submitGuess("lower")
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func guessButton(label: String, systemImage: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: systemImage)
+                .font(.subheadline.weight(.heavy))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(color)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.28), lineWidth: 1))
+        }
+    }
+
+    private func resultPanel(subject: String, detailRoute: Route, detailLabel: String) -> some View {
+        VStack(spacing: 12) {
+            Text(correct ? "Correct" : "Not quite")
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(correct ? .green : .red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background((correct ? Color.green : Color.red).opacity(0.12), in: Capsule())
+
+            Text("\(displayPct)%")
+                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .contentTransition(.numericText())
+
+            Text(subject)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
                 .lineLimit(2)
 
-            if guess == nil {
-                if let leader {
-                    Text("\(leader.name) — higher or lower than \(threshold)%?")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            if let streak, streak > 1 {
+                Text("\(streak) correct in a row")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.orange)
+            }
 
-                HStack(spacing: 12) {
-                    Button { submitGuess("higher") } label: {
-                        Text("↑ Higher")
-                            .font(.caption.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.green.opacity(0.1))
-                            .foregroundStyle(.green)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.green.opacity(0.3)))
-                    }
-                    Button { submitGuess("lower") } label: {
-                        Text("↓ Lower")
-                            .font(.caption.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.red.opacity(0.1))
-                            .foregroundStyle(.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.3)))
-                    }
+            HStack(spacing: 10) {
+                NavigationLink(value: detailRoute) {
+                    Label(detailLabel, systemImage: "chart.xyaxis.line")
+                        .font(.caption.weight(.bold))
+                }
+                Button { showShare = true } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.caption.weight(.bold))
                 }
                 .buttonStyle(.plain)
-            } else {
-                VStack(spacing: 8) {
-                    Text(correct ? "✓ Correct!" : "✗ Not quite!")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(correct ? .green : .red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background((correct ? Color.green : Color.red).opacity(0.1))
-                        .clipShape(Capsule())
-
-                    Text("\(displayPct)%")
-                        .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                        .contentTransition(.numericText())
-                    if let leader { Text(leader.name).font(.caption).foregroundStyle(.secondary) }
-
-                    if let streak, streak > 1 {
-                        Text("🔥 \(streak) streak")
-                            .font(.caption.weight(.semibold))
+                if let onNextQuestion {
+                    Button { onNextQuestion() } label: {
+                        Label("Next", systemImage: "arrow.down")
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                     }
-
-                    HStack(spacing: 12) {
-                        NavigationLink(value: Route.futuresDetail(id: data.id)) {
-                            Text("See full market →")
-                                .font(.caption)
-                                .foregroundStyle(.blue)
-                        }
-                        Button { showShare = true } label: {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        if let onNextQuestion {
-                            Button { onNextQuestion() } label: {
-                                Text("Next question →")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .sheet(isPresented: $showShare) {
-                    ShareSheet(text: shareText)
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .padding()
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.orange.opacity(0.3), lineWidth: 2))
-        .onAppear { generateThreshold() }
+        .frame(maxWidth: .infinity)
+        .padding(14)
+        .background((correct ? Color.green : Color.red).opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func generateThreshold() {
@@ -1147,11 +1194,25 @@ private struct NativeEventGuessCard: View {
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil
+    @State private var showShare = false
 
     private var actualPct: Int { Int(((event.currentOdds?.homeProbability ?? 0.5) * 100).rounded()) }
     private var correct: Bool {
         guard let g = guess else { return false }
         return g == "higher" ? actualPct > threshold : actualPct < threshold
+    }
+
+    private var homeColor: Color {
+        Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+    }
+
+    private var awayColor: Color {
+        Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+    }
+
+    private var shareText: String {
+        let result = correct ? "Got it right" : "Missed it"
+        return "\(result)! \(event.homeTeam) was \(actualPct)% to win. Can you beat my streak? bainluck.com/discover"
     }
 
     private func submitGuess(_ g: String) {
@@ -1176,133 +1237,162 @@ private struct NativeEventGuessCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("🎯")
-                Text("WHAT ARE THE ODDS?")
+                Label("What are the odds?", systemImage: "target")
                     .font(.system(size: 11, weight: .heavy))
-                    .tracking(1)
+                    .tracking(0.8)
                     .foregroundStyle(.orange)
+                    .textCase(.uppercase)
                 Spacer()
+                Text((event.sportName ?? event.sport ?? "GAME").uppercased())
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
             }
 
-            HStack(spacing: 12) {
-                teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
-                         color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"))
-                VStack(spacing: 2) {
-                    if event.status == "live" {
-                        Text(event.espn?.period ?? "LIVE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.red)
-                    } else if event.status == "completed" || event.status == "closed" {
-                        Text("Final")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("vs")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let a = event.awayScore, let h = event.homeScore,
-                       (event.status == "live" || event.status == "completed" || event.status == "closed") {
-                        Text("\(a)-\(h)")
-                            .font(.system(size: 10, weight: .bold).monospacedDigit())
-                            .foregroundStyle(.primary)
-                    }
-                }
-                teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
-                         color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"))
-            }
+            matchupPanel()
 
             if guess == nil {
-                Text("\(event.homeTeam.split(separator: " ").last.map(String.init) ?? event.homeTeam) to win — higher or lower than \(threshold)%?")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Is \(shortName(event.homeTeam)) to win higher or lower than")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(threshold)%")
+                        .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
+                        .foregroundStyle(homeColor)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
 
                 HStack(spacing: 12) {
-                    Button { submitGuess("higher") } label: {
-                        Text("↑ Higher")
-                            .font(.caption.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.green.opacity(0.1))
-                            .foregroundStyle(.green)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.green.opacity(0.3)))
+                    guessButton(label: "Higher", systemImage: "arrow.up", color: .green) {
+                        submitGuess("higher")
                     }
-                    Button { submitGuess("lower") } label: {
-                        Text("↓ Lower")
-                            .font(.caption.weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.red.opacity(0.1))
-                            .foregroundStyle(.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.3)))
+                    guessButton(label: "Lower", systemImage: "arrow.down", color: .red) {
+                        submitGuess("lower")
                     }
                 }
                 .buttonStyle(.plain)
             } else {
-                VStack(spacing: 8) {
-                    Text(correct ? "✓ Correct!" : "✗ Not quite!")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(correct ? .green : .red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background((correct ? Color.green : Color.red).opacity(0.1))
-                        .clipShape(Capsule())
-
-                    Text("\(actualPct)%")
-                        .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                    Text(event.homeTeam)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if let streak, streak > 1 {
-                        Text("🔥 \(streak) streak")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.orange)
+                resultPanel()
+                    .sheet(isPresented: $showShare) {
+                        ShareSheet(text: shareText)
                     }
-
-                    HStack(spacing: 12) {
-                        NavigationLink(value: Route.eventDetail(id: event.id)) {
-                            Text("See full game →")
-                                .font(.caption)
-                                .foregroundStyle(.blue)
-                        }
-                        if let onNextQuestion {
-                            Button { onNextQuestion() } label: {
-                                Text("Next question →")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
             }
         }
-        .padding()
+        .padding(16)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.orange.opacity(0.3), lineWidth: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.orange.opacity(0.32), lineWidth: 1.5))
+        .shadow(color: .orange.opacity(0.08), radius: 12, x: 0, y: 5)
         .onAppear { generateThreshold() }
     }
 
+    private func matchupPanel() -> some View {
+        HStack(spacing: 10) {
+            teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall, color: awayColor)
+
+            VStack(spacing: 4) {
+                Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (event.status == "completed" || event.status == "closed" ? "FINAL" : "VS"))
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(event.status == "live" ? .red : .secondary)
+                if let a = event.awayScore, let h = event.homeScore,
+                   (event.status == "live" || event.status == "completed" || event.status == "closed") {
+                    Text("\(a)-\(h)")
+                        .font(.caption.weight(.black).monospacedDigit())
+                }
+            }
+            .frame(width: 42)
+
+            teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall, color: homeColor)
+        }
+    }
+
     private func teamBadge(name: String, logo: String?, color: Color) -> some View {
-        HStack(spacing: 6) {
+        VStack(spacing: 6) {
             if let logo, let url = URL(string: logo) {
                 AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
-                    .frame(width: 24, height: 24)
+                    .frame(width: 36, height: 36)
             } else {
-                RoundedRectangle(cornerRadius: 4).fill(color)
-                    .frame(width: 24, height: 24)
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(color)
+                    .frame(width: 36, height: 36)
             }
-            Text(name.split(separator: " ").last.map(String.init) ?? name)
+            Text(shortName(name))
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func guessButton(label: String, systemImage: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: systemImage)
+                .font(.subheadline.weight(.heavy))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(color)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.28), lineWidth: 1))
+        }
+    }
+
+    private func resultPanel() -> some View {
+        VStack(spacing: 12) {
+            Text(correct ? "Correct" : "Not quite")
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(correct ? .green : .red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background((correct ? Color.green : Color.red).opacity(0.12), in: Capsule())
+
+            Text("\(actualPct)%")
+                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(homeColor)
+
+            Text(event.homeTeam)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+
+            if let streak, streak > 1 {
+                Text("\(streak) correct in a row")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.orange)
+            }
+
+            HStack(spacing: 10) {
+                NavigationLink(value: Route.eventDetail(id: event.id)) {
+                    Label("See full game", systemImage: "chart.xyaxis.line")
+                        .font(.caption.weight(.bold))
+                }
+                Button { showShare = true } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.caption.weight(.bold))
+                }
+                .buttonStyle(.plain)
+                if let onNextQuestion {
+                    Button { onNextQuestion() } label: {
+                        Label("Next", systemImage: "arrow.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(14)
+        .background((correct ? Color.green : Color.red).opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func shortName(_ name: String) -> String {
+        name.split(separator: " ").last.map(String.init) ?? name
     }
 
     private func generateThreshold() {
