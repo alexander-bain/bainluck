@@ -119,6 +119,21 @@ struct Bain_LuckApp: App {
                 #endif
         }
         #if os(macOS)
+        MenuBarExtra {
+            MenuBarView()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                if navCoordinator.liveGameCount > 0 {
+                    Text("\(navCoordinator.liveGameCount)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
+        #endif
+
+        #if os(macOS)
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) { }
