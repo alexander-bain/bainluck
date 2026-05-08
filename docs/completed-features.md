@@ -33,6 +33,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Admin UI** — Frontend trace panel in `/admin/discover-quality` for per-market debugging.
 - ✅ **Missing ground truth trace** — Shows why Kalshi/Polymarket email-featured markets don't appear in Discover.
 - ✅ **Feed timing diagnostics** — `/api/feed` now emits `X-Feed-Elapsed-Ms`, and admin debug responses show per-stage timings for personalization, events, golf, futures, ranking, and debug tracing.
+- ✅ **Discover feed latency pass** — Futures-only feed path no longer scores golf tournaments; futures candidate pools have stage timing; source-count queries are scoped to candidates; feed-specific futures indexes were added; futures ORM hydration now loads only feed-used columns. Production futures-only header observed around **770ms** with quality metrics unchanged.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.
