@@ -92,6 +92,56 @@ enum AnalyticsService {
         ])
     }
 
+    // MARK: - Discover
+
+    nonisolated static func trackDiscoverCardImpression(
+        itemId: String,
+        itemType: String,
+        category: String,
+        rank: Int,
+        score: Int?
+    ) {
+        Analytics.logEvent("discover_card_impression", parameters: [
+            "item_id": itemId,
+            "item_type": itemType,
+            "category": category,
+            "rank": rank,
+            "score": score ?? 0,
+            "surface": "native",
+        ])
+    }
+
+    nonisolated static func trackDiscoverCardAction(
+        action: String,
+        itemId: String,
+        itemType: String,
+        category: String,
+        source: String
+    ) {
+        Analytics.logEvent("discover_card_action", parameters: [
+            "action": action,
+            "item_id": itemId,
+            "item_type": itemType,
+            "category": category,
+            "source": source,
+            "surface": "native",
+        ])
+    }
+
+    nonisolated static func trackDiscoverCategoryFilter(category: String) {
+        Analytics.logEvent("discover_category_filter", parameters: [
+            "category": category,
+            "surface": "native",
+        ])
+    }
+
+    nonisolated static func trackDiscoverTuningReset(affinityCount: Int) {
+        Analytics.logEvent("discover_tuning_reset", parameters: [
+            "affinity_count": affinityCount,
+            "surface": "native",
+        ])
+    }
+
     // MARK: - Onboarding Lifecycle
 
     nonisolated static func trackOnboardingStart(entryPoint: String) {

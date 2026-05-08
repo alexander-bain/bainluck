@@ -74,6 +74,7 @@ struct DiscoverView: View {
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
     @State private var resolutions: [Resolution] = []
     @State private var interactionProfile = NativeDiscoverProfile.load()
+    @State private var seenImpressions: Set<String> = []
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -122,6 +123,12 @@ struct DiscoverView: View {
         return UUID().uuidString
     }
 
+    private func itemType(_ item: FeedItem) -> String {
+        if item.event != nil { return "event" }
+        if item.futures != nil { return "futures" }
+        return item.type
+    }
+
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
@@ -154,8 +161,35 @@ struct DiscoverView: View {
         return result
     }
 
-    private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction) {
+    private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction, source: String = "card") {
         interactionProfile.record(category: itemCategory(item), action: action)
+        let actionName: String
+        switch action {
+        case .detailOpen: actionName = "open"
+        case .dismiss: actionName = "dismiss"
+        case .share: actionName = "share"
+        }
+        AnalyticsService.trackDiscoverCardAction(
+            action: actionName,
+            itemId: itemId(item),
+            itemType: itemType(item),
+            category: itemCategory(item),
+            source: source
+        )
+    }
+
+    private func trackImpression(for grouped: DiscoverGroupedItem, rank: Int) {
+        guard let item = primaryItem(grouped) else { return }
+        let impressionKey = "\(grouped.id)-\(rank)"
+        guard !seenImpressions.contains(impressionKey) else { return }
+        seenImpressions.insert(impressionKey)
+        AnalyticsService.trackDiscoverCardImpression(
+            itemId: itemId(item),
+            itemType: itemType(item),
+            category: itemCategory(item),
+            rank: rank,
+            score: item.score
+        )
     }
 
     private var filteredItems: [FeedItem] {
@@ -218,6 +252,7 @@ struct DiscoverView: View {
                         ForEach(categories, id: \.key) { cat in
                             Button {
                                 withAnimation(.easeInOut(duration: 0.15)) { categoryFilter = cat.key }
+                                AnalyticsService.trackDiscoverCategoryFilter(category: cat.key)
                             } label: {
                                 HStack(spacing: 3) {
                                     Text(cat.emoji)
@@ -271,7 +306,7 @@ struct DiscoverView: View {
                                             dismiss(itemId(item))
                                         } content: {
                                             NativeEventDiscoverCard(event: e, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen)
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
@@ -281,7 +316,7 @@ struct DiscoverView: View {
                                             dismiss(itemId(item))
                                         } content: {
                                             NativeFuturesDiscoverCard(data: f, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen)
+                                                recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
@@ -290,6 +325,7 @@ struct DiscoverView: View {
                             }
                             .id(gi.id)
                             .onAppear {
+                                trackImpression(for: gi, rank: idx + 1)
                                 if idx == pageGrouped.count - 3 && visibleCount < groupedItems.count {
                                     visibleCount += 20
                                 }
@@ -328,6 +364,7 @@ struct DiscoverView: View {
                     }
                     Divider()
                     Button(role: .destructive) {
+                        AnalyticsService.trackDiscoverTuningReset(affinityCount: interactionProfile.topAffinities(limit: 20).count)
                         interactionProfile.reset()
                     } label: {
                         Label("Reset Discover Tuning", systemImage: "arrow.counterclockwise")
@@ -427,7 +464,7 @@ struct DiscoverView: View {
                 }
             }
             Button {
-                recordInteraction(for: item, action: .share)
+                recordInteraction(for: item, action: .share, source: "copy_link")
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -456,7 +493,7 @@ struct DiscoverView: View {
                 }
             }
             Button {
-                recordInteraction(for: item, action: .share)
+                recordInteraction(for: item, action: .share, source: "copy_link")
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -472,7 +509,7 @@ struct DiscoverView: View {
         }
         Divider()
         Button(role: .destructive) {
-            recordInteraction(for: item, action: .dismiss)
+            recordInteraction(for: item, action: .dismiss, source: "context_menu")
             dismiss(itemId(item))
         } label: {
             Label("Dismiss", systemImage: "xmark")
