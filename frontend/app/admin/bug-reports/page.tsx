@@ -165,8 +165,18 @@ export default function BugReportsPage() {
     setShowPrompt(false);
     const report = reports.find(r => r.id === id);
     if (report && report.status === "new") {
-      updateStatus(id, "reviewed");
+      setReports(prev => prev.map(r => r.id === id ? { ...r, status: "reviewed" } : r));
+      updateStatusSilent(id, "reviewed");
     }
+  };
+
+  const updateStatusSilent = async (id: number, newStatus: string) => {
+    const headers = await getAuthHeaders();
+    const secretParam = secret ? `&secret=${secret}` : "";
+    await fetch(
+      `${API}/api/admin/bug-reports/${id}?status=${newStatus}${secretParam}`,
+      { method: "PATCH", headers }
+    );
   };
 
   const copyPrompt = (prompt: string) => {
