@@ -8,7 +8,7 @@ rain forecasts, natural disaster events, climate dashboards, and wildcards.
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
