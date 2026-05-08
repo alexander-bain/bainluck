@@ -140,7 +140,7 @@ def _clean_outcomes(outcomes: list) -> list:
     return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
 
 
-def _market_row(market: FuturesMarket) -> dict | None:
+def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
     """Enriched market row with all available fields."""
     outcomes = _clean_outcomes(market.outcomes)
     outcomes = sorted(
@@ -148,7 +148,7 @@ def _market_row(market: FuturesMarket) -> dict | None:
     )
     if not outcomes:
         return None
-    top = outcomes[:3]
+    top = outcomes[:max_outcomes]
     outcome_count = len(outcomes)
     return {
         "q": market.name,
@@ -305,11 +305,18 @@ def _build_music(themed: dict) -> dict:
     side_markets = []
 
     for m in music_markets:
-        row = _market_row(m)
+        kind = _classify_kind(m, len(_clean_outcomes(m.outcomes)))
+        if kind == "spotify":
+            row = _market_row(m, max_outcomes=8)
+        elif kind == "billboard":
+            row = _market_row(m, max_outcomes=8)
+        elif kind in ("multi",):
+            row = _market_row(m, max_outcomes=6)
+        else:
+            row = _market_row(m)
         if not row or not _is_interesting(row):
             continue
         all_rows.append(row)
-        kind = row["kind"]
         if kind == "spotify":
             spotify_race.append(row)
         elif kind == "billboard":
@@ -353,10 +360,15 @@ def _build_movies_tv(themed: dict) -> dict:
     side_markets = []
 
     for m in combined:
-        row = _market_row(m)
+        kind = _classify_kind(m, len(_clean_outcomes(m.outcomes)))
+        if kind in ("rt", "boxoffice"):
+            row = _market_row(m, max_outcomes=8)
+        elif kind == "reality":
+            row = _market_row(m, max_outcomes=6)
+        else:
+            row = _market_row(m)
         if not row or not _is_interesting(row):
             continue
-        kind = row["kind"]
         if kind == "rt":
             rt_markets.append(row)
         elif kind == "boxoffice":

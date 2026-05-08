@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { searchMovie, posterUrl, hasTMDBToken } from "@/lib/tmdb";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEntertainment } from "@/lib/api";
 import type {
@@ -70,17 +71,39 @@ const KIND_LABEL: Record<string, string> = {
 // Shared atoms
 // ─────────────────────────────────────────────────────────
 
+function useTMDBPoster(title: string, kind?: string): string | null {
+  const [poster, setPoster] = useState<string | null>(null);
+  const isMovie = kind === "rt" || kind === "boxoffice";
+
+  useEffect(() => {
+    if (!isMovie || !hasTMDBToken()) return;
+    let cancelled = false;
+    searchMovie(title).then((result) => {
+      if (!cancelled && result?.poster_path) {
+        setPoster(posterUrl(result.poster_path));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [title, isMovie]);
+
+  return poster;
+}
+
 function CoverTile({
   title,
   imageUrl,
   size = 44,
   big = false,
+  kind,
 }: {
   title: string;
   imageUrl?: string | null;
   size?: number;
   big?: boolean;
+  kind?: string;
 }) {
+  const tmdbPoster = useTMDBPoster(title, kind);
+  const src = imageUrl || tmdbPoster;
   const [base, tone] = tileColors(title);
   const words = (title || "").split(/\s+/).slice(0, 2);
   const initials =
@@ -97,9 +120,9 @@ function CoverTile({
         background: `linear-gradient(135deg, ${base} 0%, ${tone} 100%)`,
       }}
     >
-      {imageUrl ? (
-        <img src={imageUrl} alt="" className={s.coverImg} loading="lazy" />
-      ) : null}
+      {src && (
+        <img src={src} alt="" className={s.coverImg} loading="lazy" />
+      )}
       {initials.toUpperCase()}
     </div>
   );
@@ -307,6 +330,7 @@ function HeroCardContent({
           imageUrl={market.image_url}
           size={isLead ? 72 : 44}
           big={isLead}
+          kind={market.kind}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -563,7 +587,7 @@ function MusicSection({ data }: { data: EntThemeMusic }) {
         hasSpotify ? <SpotifyRace markets={data.spotify_race} /> : <MarketFallback markets={data.side_markets} />
       )}
       {tab === "billboard" && (
-        hasBillboard ? <MarketList markets={data.billboard_watch} /> : <MarketFallback markets={data.side_markets} />
+        hasBillboard ? <BillboardHeatmap markets={data.billboard_watch} /> : <MarketFallback markets={data.side_markets} />
       )}
       {tab === "albums" && (
         hasAlbums ? <AlbumGrid markets={data.album_drops} /> : <MarketFallback markets={data.side_markets} />
@@ -576,75 +600,54 @@ function MusicSection({ data }: { data: EntThemeMusic }) {
 }
 
 function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
-  const sorted = [...markets].sort((a, b) => b.prob - a.prob);
+  const best = markets.reduce(
+    (a, b) => (b.top_outcomes.length > a.top_outcomes.length ? b : a),
+    markets[0]
+  );
+  if (!best) return <MarketFallback markets={markets} />;
+
+  const contenders = best.top_outcomes;
+  if (contenders.length < 2) return <MarketFallback markets={markets} />;
+
   return (
-    <div className={s.card} style={{ padding: 18 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: 14,
-        }}
-      >
-        <div>
-          <div className={s.eyebrow}>🎧 Spotify Chart Race</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
-            {sorted[0]?.q || "Who's #1 on US Spotify this week?"}
+    <Link href={`/futures/${best.market_id}`}>
+      <div className={s.card} style={{ padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+          <div>
+            <div className={s.eyebrow}>🎧 Spotify Chart Race</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
+          <EntSourceChip source={best.src} />
         </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {sorted.map((m, i) => {
-          const isLeader = i === 0;
-          const leader = m.top_outcomes[0];
-          if (!leader) return null;
-          return (
-            <Link key={i} href={`/futures/${m.market_id}`}>
-              <div className={s.raceRow}>
-                <span className={isLeader ? s.raceRankLead : s.raceRank}>
-                  {i + 1}
-                </span>
-                <CoverTile title={leader.name} imageUrl={m.image_url} size={36} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {contenders.map((c, i) => {
+            const isLeader = i === 0;
+            return (
+              <div key={i} className={s.raceRow}>
+                <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>
+                <CoverTile title={c.name} size={36} />
                 <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "#111827",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {leader.name}
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {c.name}
                   </div>
                   <div style={{ marginTop: 5 }}>
-                    <EntProbBar
-                      value={m.prob}
-                      height={6}
-                      color={isLeader ? "#10B981" : "rgba(16, 185, 129, 0.3)"}
-                    />
+                    <EntProbBar value={c.prob} height={6} color={isLeader ? "#10B981" : "rgba(16, 185, 129, 0.3)"} />
                   </div>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    gap: 2,
-                  }}
-                >
-                  <ProbPct value={m.prob} size={16} />
-                  <EntDelta value={leader.delta_24h} />
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                  <ProbPct value={c.prob} size={16} />
+                  <EntDelta value={c.delta_24h} />
                 </div>
-                <EntSourceChip source={m.src} />
+                <span />
               </div>
-            </Link>
-          );
-        })}
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #E5E7EB" }}>
+          <MetaRow src={best.src} volume={best.volume_24h} resolves={best.resolution_date} />
+        </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -655,7 +658,7 @@ function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
         <Link key={i} href={`/futures/${m.market_id}`}>
           <div className={s.card} style={{ padding: 16, height: "100%" }}>
             <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-              <CoverTile title={m.q} imageUrl={m.image_url} size={56} big />
+              <CoverTile title={m.q} imageUrl={m.image_url} size={56} big kind={m.kind} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>{m.q}</div>
                 {m.hook && (
@@ -665,21 +668,20 @@ function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
                 )}
               </div>
             </div>
-            {m.top_outcomes.length > 2 && (
+            {m.top_outcomes.length > 2 ? (
               <EntHistogram
                 data={m.top_outcomes.map((o) => ({
                   range: o.name,
                   prob: o.prob / 100,
                 }))}
               />
+            ) : (
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, color: "#6B7280" }}>{m.top_outcomes[0]?.name || "Yes"}</span>
+                <ProbPct value={m.prob} size={20} />
+              </div>
             )}
-            <div
-              style={{
-                marginTop: 12,
-                paddingTop: 10,
-                borderTop: "1px solid #E5E7EB",
-              }}
-            >
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #E5E7EB" }}>
               <MetaRow src={m.src} volume={m.volume_24h} />
             </div>
           </div>
@@ -692,63 +694,123 @@ function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
 function StreamingGrid({ markets }: { markets: EntMarketRow[] }) {
   return (
     <div className={s.card} style={{ padding: 0, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "14px 18px",
-          borderBottom: "1px solid #E5E7EB",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-        }}
-      >
+      <div style={{ padding: "14px 18px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>
-            Streaming direction markets
-          </div>
-          <div style={{ fontSize: 11, color: "#9CA3AF" }}>
-            Weekly stream predictions
-          </div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Streaming & chart markets</div>
+          <div style={{ fontSize: 11, color: "#9CA3AF" }}>Weekly stream predictions</div>
         </div>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-        }}
-      >
-        {markets.map((m, i) => (
-          <Link key={i} href={`/futures/${m.market_id}`}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "32px 1fr auto",
-                gap: 10,
-                padding: "12px 16px",
-                alignItems: "center",
-                borderRight: "1px solid #E5E7EB",
-                borderBottom: "1px solid #E5E7EB",
-              }}
-            >
-              <CoverTile title={m.q} imageUrl={m.image_url} size={32} />
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {m.top_outcomes[0]?.name || m.q}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+        {markets.map((m, i) => {
+          const qLower = m.q.toLowerCase();
+          const isUp = qLower.includes("increase") || qLower.includes("above") || qLower.includes("over") || qLower.includes("up");
+          const isDown = qLower.includes("decrease") || qLower.includes("below") || qLower.includes("under") || qLower.includes("down");
+          const direction = isUp ? "up" : isDown ? "down" : null;
+          const dirColor = direction === "up" ? "#22C55E" : direction === "down" ? "#EF4444" : "#111827";
+
+          return (
+            <Link key={i} href={`/futures/${m.market_id}`}>
+              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr auto", gap: 10, padding: "12px 16px", alignItems: "center", borderRight: "1px solid #E5E7EB", borderBottom: "1px solid #E5E7EB" }}>
+                <CoverTile title={m.q} imageUrl={m.image_url} size={32} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {m.top_outcomes[0]?.name || m.q}
+                  </div>
+                  {m.hook && <div style={{ fontSize: 10, color: "#9CA3AF", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.hook}</div>}
                 </div>
+                <span className={s.probNum} style={{ fontSize: 13, color: dirColor }}>
+                  {direction === "up" ? "↑" : direction === "down" ? "↓" : ""} {Math.round(m.prob)}%
+                </span>
               </div>
-              <ProbPct value={m.prob} size={13} />
-            </div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Movies & TV section
+// ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// Heatmap grids — RT and Billboard
+// ─────────────────────────────────────────────────────────
+
+function cellColor(p: number): string {
+  const intensity = Math.min(1, p / 100);
+  return `rgba(16, 185, 129, ${(intensity * 0.7 + 0.05).toFixed(2)})`;
+}
+
+function RTHeatmap({ groups }: { groups: EntThresholdGroup[] }) {
+  if (groups.length === 0) return null;
+
+  const maxThresholds = Math.max(...groups.map((g) => g.thresholds.length));
+  const thresholdLabels = groups[0]?.thresholds.map((t) => t.label) || [];
+
+  return (
+    <div className={s.heatmapWrap}>
+      <div style={{ display: "grid", gridTemplateColumns: `minmax(180px, 1.3fr) repeat(${maxThresholds}, minmax(48px, 1fr))`, borderBottom: "1px solid #E5E7EB" }}>
+        <div className={s.heatmapHeader} style={{ justifyContent: "flex-start", borderRight: "1px solid #E5E7EB" }}>
+          Movie
+        </div>
+        {thresholdLabels.map((label, i) => (
+          <div key={i} className={s.heatmapHeader} style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", borderRight: i === maxThresholds - 1 ? "none" : "1px solid #E5E7EB", fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+            {label.replace(/^.*?(\d+).*$/, "≥$1").slice(0, 6)}
+          </div>
+        ))}
+      </div>
+      {groups.map((group, gi) => (
+        <div key={gi} style={{ display: "grid", gridTemplateColumns: `minmax(180px, 1.3fr) repeat(${maxThresholds}, minmax(48px, 1fr))` }}>
+          <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, borderRight: "1px solid #E5E7EB", borderBottom: gi === groups.length - 1 ? "none" : "1px solid #E5E7EB", cursor: "pointer" }}>
+            <CoverTile title={group.title} imageUrl={group.image_url} size={32} kind="rt" />
+            <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{group.title}</span>
+          </div>
+          {group.thresholds.map((t, ti) => (
+            <Link key={ti} href={`/futures/${t.market_id}`}>
+              <div className={s.heatmapCell} style={{ background: cellColor(t.prob), color: t.prob > 50 ? "#111827" : "#6B7280", borderRight: ti === maxThresholds - 1 ? "none" : undefined, borderBottom: gi === groups.length - 1 ? "none" : undefined }} title={`${group.title} ${t.label}: ${Math.round(t.prob)}%`}>
+                {Math.round(t.prob)}
+              </div>
+            </Link>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BillboardHeatmap({ markets }: { markets: EntMarketRow[] }) {
+  const best = markets.reduce(
+    (a, b) => (b.top_outcomes.length > a.top_outcomes.length ? b : a),
+    markets[0]
+  );
+  if (!best || best.top_outcomes.length < 2) return <MarketList markets={markets} />;
+
+  return (
+    <Link href={`/futures/${best.market_id}`}>
+      <div className={s.card} style={{ padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+          <div>
+            <div className={s.eyebrow}>📊 Billboard Hot 100</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
+          </div>
+          <EntSourceChip source={best.src} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {best.top_outcomes.map((o, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "#6B7280", minWidth: 0 }}>{o.name}</span>
+              <EntProbBar value={o.prob} height={4} />
+              <ProbPct value={o.prob} size={12} />
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #E5E7EB" }}>
+          <MetaRow src={best.src} volume={best.volume_24h} resolves={best.resolution_date} />
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -790,7 +852,11 @@ function MoviesTVSection({ data }: { data: EntThemeMoviesTV }) {
       </div>
 
       {tab === "rt" && (
-        data.rt_markets.length > 0 ? <MarketList markets={data.rt_markets} /> : <MarketFallback markets={data.side_markets} />
+        data.rt_groups && data.rt_groups.length > 0
+          ? <RTHeatmap groups={data.rt_groups} />
+          : data.rt_markets.length > 0
+            ? <MarketList markets={data.rt_markets} />
+            : <MarketFallback markets={data.side_markets} />
       )}
       {tab === "boxoffice" && (
         data.box_office.length > 0 ? <BoxOfficeCards markets={data.box_office} /> : <MarketFallback markets={data.side_markets} />
@@ -829,7 +895,7 @@ function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
                   marginBottom: 8,
                 }}
               >
-                <CoverTile title={m.q} imageUrl={m.image_url} size={40} />
+                <CoverTile title={m.q} imageUrl={m.image_url} size={40} kind={m.kind} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{m.q}</div>
                   {m.hook && (
@@ -866,7 +932,7 @@ function RealityCards({ markets }: { markets: EntMarketRow[] }) {
           <Link key={i} href={`/futures/${m.market_id}`}>
             <div className={s.card} style={{ padding: 16, height: "100%" }}>
               <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                <CoverTile title={m.q} imageUrl={m.image_url} size={44} big />
+                <CoverTile title={m.q} imageUrl={m.image_url} size={44} big kind={m.kind} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{m.q}</div>
                 </div>
