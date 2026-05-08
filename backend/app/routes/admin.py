@@ -3501,18 +3501,17 @@ async def prediction_market_link_rate(
     ]
 
     # Build game-level ticker filter for Kalshi.
-    # Only count markets that the matching task actually tries to link:
-    # game ticker prefixes (Pass 1) OR already linked via event_id (Pass 2).
+    # Only count markets with game ticker prefixes — these are the markets
+    # the matching task's Pass 1 scans. The old `event_id IS NOT NULL` clause
+    # pulled in season futures (awards, Stanley Cup, etc.) that were
+    # erroneously linked, inflating the denominator with unlinkable markets.
     _kalshi_ticker_conditions = [
         func.lower(FuturesMarket.external_id).like(f"{p}%")
         for p in KALSHI_GAME_TICKER_PREFIXES
     ]
-    _kalshi_game_filter = or_(
-        or_(*_kalshi_ticker_conditions),
-        FuturesMarket.event_id.isnot(None),
-    )
+    _kalshi_game_filter = or_(*_kalshi_ticker_conditions)
 
-    # Kalshi: game-level markets only (ticker match OR already linked)
+    # Kalshi: game-level markets only (ticker prefix match)
     kalshi_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),

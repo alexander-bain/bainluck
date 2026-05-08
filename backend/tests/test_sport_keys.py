@@ -346,3 +346,31 @@ class TestBackwardCompatReExports:
     def test_sport_prefix_to_llm_category_from_events(self):
         from app.routes.events import _SPORT_PREFIX_TO_LLM_CATEGORY
         assert _SPORT_PREFIX_TO_LLM_CATEGORY is SPORT_PREFIX_TO_LLM_CATEGORY
+
+
+class TestGameFuturesMapSeparation:
+    """Game-level and futures-level ticker maps must not overlap.
+
+    Series/award/season tickers in the game map inflate the link-rate
+    denominator with markets that can never link to individual game events.
+    """
+
+    def test_no_overlap_between_game_and_futures_maps(self):
+        overlap = set(KALSHI_TICKER_TO_SPORT_KEY.keys()) & set(KALSHI_FUTURES_TICKER_TO_SPORT_KEY.keys())
+        assert overlap == set(), f"Tickers in both game and futures maps: {overlap}"
+
+    def test_series_tickers_not_in_game_prefixes(self):
+        series_prefixes = [
+            "kxnbaseries", "kxnhlseries", "kxmlbseries",
+            "kxmlbseriesexact", "kxmlbseriesgametotal",
+            "kxwnbaseries", "kxnflseries",
+        ]
+        for prefix in series_prefixes:
+            assert prefix not in KALSHI_GAME_TICKER_PREFIXES, \
+                f"{prefix} must be in futures map only, not game-level"
+            assert is_kalshi_game_ticker(f"{prefix.upper()}-26FOOBAR") is False
+
+    def test_series_tickers_resolve_via_futures_map(self):
+        assert get_sport_key_from_ticker("KXNBASERIES-26MAY10BOSPHI") == "basketball_nba"
+        assert get_sport_key_from_ticker("KXNHLSERIES-26MAY10FLORNG") == "icehockey_nhl"
+        assert get_sport_key_from_ticker("KXMLBSERIES-26OCT15NYYATL") == "baseball_mlb"

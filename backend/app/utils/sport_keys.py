@@ -483,14 +483,6 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxsohockey": "fieldhockey_olympics",
     "kxsobasketball": "basketball_olympics",
     "kxsosoccer": "soccer_olympics",
-    # Playoff series (linked to game events for series context on event detail)
-    "kxnbaseries": "basketball_nba",
-    "kxnhlseries": "icehockey_nhl",
-    "kxmlbseries": "baseball_mlb",
-    "kxmlbseriesexact": "baseball_mlb",
-    "kxmlbseriesgametotal": "baseball_mlb",
-    "kxwnbaseries": "basketball_wnba",
-    "kxnflseries": "americanfootball_nfl",
 }
 
 
