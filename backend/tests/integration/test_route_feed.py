@@ -124,6 +124,7 @@ class TestFeedDebug:
         assert "debug_timing" in body
         assert body["debug_timing"]["total_ms"] >= 0
         assert any(stage["stage"] == "futures" for stage in body["debug_timing"]["stages"])
+        assert any(stage["stage"] == "futures.candidate_queries" for stage in body["debug_timing"]["stages"])
         assert "x-feed-elapsed-ms" in resp.headers
         assert body["debug_summary"]["items"] == 0
         assert body["debug_items"] == []

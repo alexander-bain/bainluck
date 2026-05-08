@@ -369,7 +369,18 @@ async def get_feed(
     # === SCORE FUTURES ===
     if include_futures:
         try:
-            futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
+            futures_items = await _score_futures(
+                db,
+                now,
+                sport,
+                ctx,
+                my_teams_only=my_teams_only,
+                my_team_names=my_team_names,
+                tag_filter=dynamic_tag_filter or None,
+                static_tag_filter=static_tag_filter or None,
+                timing_records=_timings,
+                timing_started_at=_started_at,
+            )
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
@@ -1590,6 +1601,8 @@ async def _score_futures(
     my_team_names: Optional[list] = None,
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
+    timing_records: Optional[list[dict[str, float | str]]] = None,
+    timing_started_at: float | None = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -1597,6 +1610,19 @@ async def _score_futures(
     sorted by resolution_date is dominated by crypto's 8,955 five-minute
     markets, so we query each category separately.
     """
+    timing_previous_at = time.perf_counter()
+
+    def mark_timing(stage: str) -> None:
+        nonlocal timing_previous_at
+        if timing_records is None or timing_started_at is None:
+            return
+        timing_previous_at = _record_feed_timing(
+            timing_records,
+            timing_started_at,
+            timing_previous_at,
+            f"futures.{stage}",
+        )
+
     # === BASE FILTERS ===
     base_filters = [
         FuturesMarket.status == "open",
@@ -1738,6 +1764,7 @@ async def _score_futures(
     nonsports_movement_result = await db.execute(nonsports_movement_query)
     nonsports_enriched_result = await db.execute(nonsports_enriched_query)
     nonsports_timely_result = await db.execute(nonsports_timely_query)
+    mark_timing("candidate_queries")
 
     candidate_market_ids = (
         list(sports_result.scalars().all())
@@ -1755,7 +1782,9 @@ async def _score_futures(
         market_ids.append(market_id)
 
     if not market_ids:
+        mark_timing("candidate_dedupe")
         return []
+    mark_timing("candidate_dedupe")
 
     markets_result = await db.execute(
         select(FuturesMarket)
@@ -1766,12 +1795,14 @@ async def _score_futures(
         market.id: market for market in markets_result.scalars().unique().all()
     }
     markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+    mark_timing("market_load")
 
     if not markets:
         return []
 
     # Build canonical key → source count map for cross-source scoring
     canonical_source_counts = await _get_canonical_source_counts(db)
+    mark_timing("canonical_counts")
 
     scored_items = []
     for market in markets:
@@ -2061,6 +2092,7 @@ async def _score_futures(
             item["personalization_reasons"] = p_result.reasons
 
         scored_items.append(item)
+    mark_timing("scoring_loop")
 
     scored_items = cap_low_quality_families(scored_items, cap=1)
     scored_items = diversify_quality_families(
@@ -2068,6 +2100,7 @@ async def _score_futures(
         exact_family_cap=1,
         story_family_cap=5,
     )
+    mark_timing("caps")
     for item in scored_items:
         item.pop("_quality_class", None)
         item.pop("_quality_family_key", None)
