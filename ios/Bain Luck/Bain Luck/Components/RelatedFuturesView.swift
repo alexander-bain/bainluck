@@ -2015,9 +2015,15 @@ private struct PlayerHeadshotView: View {
         ZStack {
             Circle()
                 .fill(teamColor.opacity(0.15))
-            Text(String(name.prefix(1)))
-                .font(.system(size: size * 0.35, weight: .semibold, design: .rounded))
-                .foregroundStyle(teamColor)
+            if player != nil {
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.4))
+                    .foregroundStyle(teamColor.opacity(0.6))
+            } else {
+                Text(String(name.prefix(1)))
+                    .font(.system(size: size * 0.35, weight: .semibold, design: .rounded))
+                    .foregroundStyle(teamColor)
+            }
         }
     }
 }
