@@ -191,6 +191,32 @@ These stack with the existing EI boost (+25 for EI ≥ 80, +15 for EI ≥ 60). A
 
 Uses `canonical_market_key`. When two markets share the same key, keeps the one with more outcomes.
 
+### Discover Quality Pipeline (`routes/feed.py`, `utils/feed_market_quality.py`)
+
+Discover mode is `/api/feed` with `event_pct=0.15`. It builds multiple candidate pools, scores futures/events, applies canonical dedupe, demotes routine events, then applies market-quality caps and first-page category/archetype/story mixing.
+
+Important invariants:
+- Deterministic headlines must make the first page understandable without waiting for OpenAI hook enrichment.
+- Hook enrichment is bounded to feed-shaped candidates; never run enrichment against the full open-market backlog.
+- Quality caps run before response serialization and are measured by `scripts/audit_feed_quality.py`.
+- First-page mixing should reorder, not mutate scores. Score mutation belongs in scoring/quality phases.
+
+### Discover Engagement and Personalization
+
+Web and native send first-party Discover events to `POST /api/feed/interactions`. Events are stored in `discover_interactions` with `surface`, `action`, `item_type`, `item_id`, `category`, `score`, `rank`, and `source`.
+
+Admin rollup:
+- `GET /api/admin/discover-engagement` groups engagement by surface/category/item type.
+- The endpoint also emits promote/investigate/downrank recommendations from open, dismiss, share, and impression rates.
+- `/admin/discover-quality` displays those metrics alongside feed quality traces.
+
+Personalization layering:
+- Authenticated feed scoring loads recent `discover_interactions` in `_load_personalization_context()`.
+- `PersonalizationContext.discover_category_affinities` stores category deltas derived from the last 30 days.
+- `compute_event_multiplier()` maps sport keys to Discover categories (`americanfootball_*` → `football`, `icehockey_*` → `hockey`).
+- `compute_futures_multiplier()` uses `llm_sport_category`.
+- Interaction-derived deltas are capped to `+0.18x` / `-0.15x`; favorites, pins, sport affinities, and quality filters remain the stronger signals.
+
 ---
 
 ## Polymarket Game Event Decomposition (`tasks/polymarket.py`)

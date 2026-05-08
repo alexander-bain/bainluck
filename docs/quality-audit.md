@@ -18,6 +18,13 @@ python3 scripts/audit_matching_quality.py --skip-event --grid nba --skip-llm
 python3 scripts/audit_matching_quality.py --skip-grid --event-id 12086896 --skip-llm
 ```
 
+`backend/scripts/audit_feed_quality.py` — Discover-specific quality audit for ranking, variety, and explanation coverage.
+
+```bash
+# Discover feed precision and variety:
+cd backend && python3 scripts/audit_feed_quality.py
+```
+
 ## Health Score
 
 - Starts at 100, penalized per finding: critical = -10, warning = -3, info = -1
@@ -51,6 +58,25 @@ python3 scripts/audit_matching_quality.py --skip-grid --event-id 12086896 --skip
 | `grid_monotonicity` | Deterministic | Grid | Later round prob > earlier round prob |
 | `grid_universal_decline` | Deterministic | Grid | >75% of teams trending same direction |
 | `grid_prob_sum` | Deterministic | Grid | Championship probs not summing to ~100% |
+
+## Discover Feed Quality Checks
+
+The Discover audit is mandatory before and after ranking, explanation, hook-enrichment, personalization, or card-display changes that affect `/discover`.
+
+Targets:
+- `boring-rate@20=0/20`
+- `ladder/bucket-rate@20=0/20`
+- `duplicate-family-rate@20=0/20`
+- `explanation-coverage@20=20/20`
+- `positive-archetypes@20>=5/6`
+- `strict-variety@20>=4/5`
+- `category-spread@20>=6`, max category count `<=5`
+
+Related admin surfaces:
+- `/admin/discover-quality` for feed audit, hook coverage, timing, ground-truth traces, engagement, and opportunity signals.
+- `/api/feed?debug=true&secret=...` for current feed stage timings and quality metadata.
+- `/api/admin/discover-quality/trace/{market_id}` for per-market ranking/quality trace.
+- `/api/admin/discover-engagement` for first-party impression/action rollups.
 
 ## Adding New Checks
 

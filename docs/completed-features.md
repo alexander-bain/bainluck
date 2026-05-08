@@ -47,6 +47,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Discover engagement admin panel** — `/admin/discover-quality` now includes first-party engagement totals, open/dismiss/share rates, category/surface opportunity lists, and top actioned cards alongside feed quality, timing, hook coverage, and trace diagnostics.
 - ✅ **Engagement-driven ranking opportunities** — `/api/admin/discover-engagement` now returns promote/investigate/downrank recommendations from first-party open, dismiss, share, and impression rates. The Discover quality admin page surfaces these as candidate ranking/design actions.
 - ✅ **Server-side Discover category personalization** — Authenticated feed scoring now derives tiny bounded category boosts/penalties from the user's recent first-party Discover opens, shares, likes, expands, and dismisses. This augments existing favorites/pins/sport-affinity personalization while preserving quality caps and anonymous local tuning fallback.
+- ✅ **Discover context snippet fallback + swipe guard** — Web grouped/futures/event cards now render context from `hook_description → reason → headline`, so deterministic explanations appear even when LLM hooks are absent. Mobile web swipe-to-dismiss now suppresses the follow-up link click that could accidentally open event/futures details. Native event/futures cards also use feed `reason/headline` as context fallback.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

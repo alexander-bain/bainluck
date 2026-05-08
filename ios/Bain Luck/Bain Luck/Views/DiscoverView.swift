@@ -345,7 +345,7 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeEventDiscoverCard(event: e, onOpen: {
+                                            NativeEventDiscoverCard(event: e, feedContext: item.reason ?? item.headline, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
@@ -355,7 +355,7 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeFuturesDiscoverCard(data: f, onOpen: {
+                                            NativeFuturesDiscoverCard(data: f, feedContext: item.reason ?? item.headline, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
@@ -614,6 +614,7 @@ final class DiscoverViewModel: ObservableObject {
 
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
+    let feedContext: String?
     var onOpen: (() -> Void)? = nil
 
     private var awayColor: Color {
@@ -642,6 +643,7 @@ private struct NativeEventDiscoverCard: View {
     }
 
     private var contextText: String? {
+        if let feedContext, !feedContext.isEmpty { return feedContext }
         if let label = event.highlight?.label, !label.isEmpty { return label }
         if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
             return "Excitement Index \(score): \(label)"
@@ -811,6 +813,7 @@ private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blu
 
 private struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
+    let feedContext: String?
     var onOpen: (() -> Void)? = nil
 
     private var gradient: (Color, Color) {
@@ -827,6 +830,12 @@ private struct NativeFuturesDiscoverCard: View {
 
     private var leaderProbability: Double {
         leader?.probability ?? 0
+    }
+
+    private var contextText: String? {
+        if let hook = data.hookDescription, !hook.isEmpty { return hook }
+        if let feedContext, !feedContext.isEmpty { return feedContext }
+        return nil
     }
 
     var body: some View {
@@ -888,8 +897,8 @@ private struct NativeFuturesDiscoverCard: View {
                         .font(.headline.weight(.bold))
                         .lineLimit(2)
 
-                    if let hook = data.hookDescription {
-                        Text(hook)
+                    if let contextText {
+                        Text(contextText)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)

@@ -143,6 +143,14 @@ function isTrending(item: FeedItem): boolean {
   return false;
 }
 
+function feedContextSnippet(item: FeedItem): string {
+  if (item.type === "futures") {
+    const data = item.data as FeedFuturesData;
+    return data.hook_description || item.reason || item.headline || "";
+  }
+  return item.reason || item.headline || "";
+}
+
 function MovementBadge({ m }: { m: number | null | undefined }) {
   if (!m || Math.abs(m) < 0.02) return null;
   const up = m > 0;
@@ -161,11 +169,13 @@ function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
   const startX = useRef(0);
   const currentX = useRef(0);
   const swiping = useRef(false);
+  const suppressClick = useRef(false);
   const [offset, setOffset] = useState(0);
   const [swipeAction, setSwipeAction] = useState<"like" | "dismiss" | null>(null);
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     startX.current = e.touches[0].clientX;
+    currentX.current = startX.current;
     swiping.current = true;
   }, []);
 
@@ -177,16 +187,30 @@ function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
     setSwipeAction(dx > 60 ? "like" : dx < -60 ? "dismiss" : null);
   }, []);
 
-  const onTouchEnd = useCallback(() => {
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
     swiping.current = false;
     const dx = currentX.current - startX.current;
-    if (dx > 80 && onSwipeRight) onSwipeRight();
-    else if (dx < -80 && onSwipeLeft) onSwipeLeft();
+    if (Math.abs(dx) > 80) {
+      suppressClick.current = true;
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 350);
+      e.preventDefault();
+      e.stopPropagation();
+      if (dx > 80 && onSwipeRight) onSwipeRight();
+      else if (dx < -80 && onSwipeLeft) onSwipeLeft();
+    }
     setOffset(0);
     setSwipeAction(null);
   }, [onSwipeLeft, onSwipeRight]);
 
-  return { ref, offset, swipeAction, handlers: { onTouchStart, onTouchMove, onTouchEnd } };
+  const onClickCapture = useCallback((e: React.MouseEvent) => {
+    if (!suppressClick.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  return { ref, offset, swipeAction, handlers: { onTouchStart, onTouchMove, onTouchEnd, onClickCapture } };
 }
 
 // ── Main Export ──
@@ -295,13 +319,13 @@ function GroupCard({ items, title, positionIndex }: { items: FeedItem[]; title: 
 
       {/* Primary item always visible */}
       <div className="px-4 py-3 border-b border-surface-border">
-        <FuturesCompactRow data={primary.data as FeedFuturesData} />
+        <FuturesCompactRow item={primary} data={primary.data as FeedFuturesData} />
       </div>
 
       {/* Rest shown on expand */}
       {expanded && rest.map((item, i) => (
         <div key={i} className="px-4 py-3 border-b border-surface-border last:border-0">
-          <FuturesCompactRow data={item.data as FeedFuturesData} />
+          <FuturesCompactRow item={item} data={item.data as FeedFuturesData} />
         </div>
       ))}
 
@@ -317,13 +341,14 @@ function GroupCard({ items, title, positionIndex }: { items: FeedItem[]; title: 
   );
 }
 
-function FuturesCompactRow({ data }: { data: FeedFuturesData }) {
+function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
   const leader = data.top_outcomes?.[0];
+  const context = feedContextSnippet(item);
   return (
     <Link href={`/futures/${data.id}`} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
-        {data.hook_description && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{data.hook_description}</div>}
+        {context && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{context}</div>}
       </div>
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
@@ -435,6 +460,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
   const sportCat = data.sport?.split("_")[0] || "sports";
 
   const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
+  const contextSnippet = item.reason || headline;
   const timeLabel = isLive ? (data.espn?.period || "Live") : isDone ? "Final" : (() => {
     const d = new Date(data.commence_time);
     const diffH = (d.getTime() - Date.now()) / 36e5;
@@ -501,7 +527,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
           </div>
         )}
 
-        {headline && <p className="text-sm text-text-secondary mt-2">{headline}</p>}
+        {contextSnippet && <p className="text-sm text-text-secondary mt-2">{contextSnippet}</p>}
 
         {/* Expandable context */}
         {contextLines.length > 0 && (
@@ -540,7 +566,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
   const category = data.sport_name || data.llm_sport_category || "Markets";
   const leader = data.top_outcomes?.[0];
   const prob = leader?.probability ?? 0;
-  const headline = data.hook_description || item.headline || "";
+  const contextSnippet = feedContextSnippet(item);
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
@@ -579,7 +605,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
 
-        {headline && <p className="text-sm text-text-secondary mt-1 leading-relaxed">{headline}</p>}
+        {contextSnippet && <p className="text-sm text-text-secondary mt-1 leading-relaxed">{contextSnippet}</p>}
 
         {data.top_outcomes.length > 1 && (
           <>

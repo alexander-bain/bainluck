@@ -46,26 +46,29 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ## Tier 0.5 — Feed & Navigation Quality
 
-### 0u. Discover Feed: Curated First Page Mixer + Positive Quality Eval — ACTIVE
+### 0u. Discover Feed Quality + Personalization — ACTIVE
 
-**Problem:** Recent ranking fixes removed the worst Discover failures, but the first page can still feel too same-textured: many important cards, not enough editorial variety.
+**Problem:** The worst Discover feed quality failures are now fixed, but the product should keep improving toward a world-class personalized prediction feed across web and native.
 
-**Current state (May 7-8):**
-- ✅ Production first-page quality: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`
-- ✅ Deterministic explanations moved `explanation-coverage@20` from **4/20 → 20/20** without OpenAI hook spend
-- ✅ Hook enrichment bounded to feed-shaped markets only; do **not** run hooks for all ~56K open markets
-- ✅ First-page category mixer added: score-preserving reorder with caps for politics/geopolitics/economics/etc.
-- ✅ Positive audit metrics added: archetype coverage, category spread/concentration, archetype distribution
-- ✅ Archetype/story caps added: first page now limits single-archetype and hot-story overload, with a required-texture pass for strong tech/culture/weather/sports/weird cards.
-- ✅ Strict variety metrics added: top-10 non-politics/geopolitics count, top-10 fun item, top-20 world-event cap, weird-news presence, max category cap.
+**Current production state (May 8):**
+- ✅ Audit quality is clean: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`, `explanation-coverage@20=20/20`, `positive-archetypes@20=6/6`, `strict-variety@20=5/5`.
+- ✅ Deterministic explanations are first-class and do not depend on LLM hooks for first-page comprehension.
+- ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
+- ✅ First-page category/archetype/story mixer caps politics/geopolitics/economics overload while preserving score order as much as possible.
+- ✅ Discover debug/admin viewer exists at `/admin/discover-quality`: feed quality metrics, timing, hook coverage, ground-truth traces, per-market trace, engagement rates, top actioned cards, and promote/investigate/downrank opportunity signals.
+- ✅ Web shareability shipped: stable UTM share URLs, card-specific share copy, generated OG images, shared-link CTAs, and share/open analytics.
+- ✅ Native parity pass shipped: redesigned event/futures/guess cards, fifth-card Higher/Lower cadence, share links, local category tuning, and Firebase analytics parity.
+- ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
+- ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
 
 **Next phases:**
-1. Tune strict variety thresholds from real production audits: target `positive-archetypes@20 >= 5/6`, `strict-variety@20 >= 4/5`, `category-spread@20 >= 6`, `max category count <= 5`.
-2. Expand editorial archetypes (`breaking_news`, `big_name`, `absurd_but_real`, `sports_drama`) once current archetypes expose remaining blind spots.
-3. Improve hook worker observability so queued enrichment reports ran/skipped/error without log streaming.
-4. Build an admin/debug viewer that compares current Discover feed against Kalshi/Polymarket/email ground-truth examples.
+1. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
+2. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+3. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
+4. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+5. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
 
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/scripts/audit_feed_quality.py`
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
 
 ### 0n. Navigation Redesign — NEEDS DESIGN BRIEF
@@ -367,12 +370,12 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
-| DN-9 | Swipe to dismiss (iOS) | Web has swipe left/right with like/dismiss overlays. **Rage Shake Bug #7 confirms.** | `ios/.../DiscoverView.swift` | Green |
-| DN-10 | Onboarding flow | "Build Your Feed" modal with category selection on first launch | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
-| DN-11 | Grouped market cards | Markets with name prefix collapse into single expandable card | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
-| D-4a | Click/view tracking | `user_interactions` table logging detail views. Backend middleware | New migration, `main.py`, `utils/personalization.py` | Yellow |
-| D-10a | Dismiss persistence | Persist dismissed IDs server-side (extend `user_seen_markets`) | `routes/predictions.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
-| D-10b | Like/dismiss → ranking | New `user_market_feedback` table. `_score_futures()` personalization multiplier | New migration, `routes/feed.py`, `utils/personalization.py` | Yellow |
+| ~~DN-9~~ | ~~Swipe to dismiss (iOS)~~ | ✅ SHIPPED May 8 — horizontal-only `SwipeToDismiss` no longer blocks vertical scroll; records local/server dismiss signals. | `ios/.../DiscoverView.swift` | |
+| DN-10 | Onboarding flow | "Build Your Feed" modal with category selection on first launch. Web has modal; native has first-launch onboarding. Remaining: make category selection affect server profile directly. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
+| ~~DN-11~~ | ~~Grouped market cards~~ | ✅ SHIPPED — markets with name prefix collapse into expandable cards on web/native. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | |
+| ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
+| D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
+| ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ PARTIALLY SHIPPED May 8 — interaction-derived category boosts/penalties affect authenticated backend ranking with tight caps; local web/native tuning remains anonymous fallback. Remaining entity/story-family scoring is tracked in 0u. | `routes/feed.py`, `utils/personalization.py` | |
 | D-6 | Push notifications for moves | Alert when pinned markets/categories move >10% in 1h. Firebase Cloud Messaging | New migration, `tasks/notifications.py`, FCM setup | Green |
 | D-7 | Live game companion mode | Full-screen second-screen mode. Giant win prob, play-by-play, sparkline, alerts | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
 | D-8 | Daily digest email | Morning email: movers, top markets, resolved predictions. Celery + SendGrid | `tasks/daily_digest.py` (new), email templates | Green |
