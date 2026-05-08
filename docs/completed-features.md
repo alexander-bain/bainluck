@@ -2,6 +2,19 @@
 
 ## May 7, 2026
 
+### Entertainment Page v1 Design — Full Rewrite
+- ✅ **Editorial trending hero** — Lead card (1.4fr, 2 rows) + 4 smaller cards with kind-specific card bodies (Spotify leader+runner-up, RT threshold+histogram, reality binary split, multi-outcome lists, Eurovision flags)
+- ✅ **Music section (tabbed)** — Spotify Race horse-race rows with cover tiles + delta chips | Billboard market list | Album drops 3-col grid with histograms | Artist streaming compact grid
+- ✅ **Movies & TV section (tabbed)** — Rotten Tomatoes market list | Box Office histogram cards with cover tiles | Reality TV cards with binary split bars and multi-outcome lists
+- ✅ **Cultural moments masonry feed** — 3-column CSS masonry layout with moment cards: tag chips, headlines, editorial hooks, yes/no bars or multi-outcome lists
+- ✅ **Tech & Culture sticky sidebar** — Compact market cards for social media, tech culture, and platform bets. Binary yes/no bars and multi-outcome lists
+- ✅ **Cover tiles** — Gradient + initials with optional image_url overlay (TMDB-ready). Deterministic color palette from title hash
+- ✅ **Filter chips** — All / Music / Movies / TV / Internet / Live Events with section visibility control
+- ✅ **Enriched backend** — Kind classification (spotify/billboard/boxoffice/rt/reality/eurovision/multi/binary), trending scoring with kind diversity, threshold market grouping, volume/delta/resolution/hook/image fields
+- Backend: `routes/entertainment.py` — enriched market rows, kind classification, themed sections, trending builder
+- Frontend: `app/entertainment/page.tsx` (1000+ lines), `entertainment.module.css`, updated types in `lib/api.ts`
+- Design source: Claude Design `entertainment-and-culture` prototype (Entertainment.html)
+
 ### Politics Page v1 Design — Full Rewrite
 - ✅ **Presidential bar-race hero** — Ranked candidate table with party badges (R/D/I auto-detected from ~60 known names), dual Kalshi/Polymarket bars when both sources available, source toggle (Merged/Kalshi/Poly)
 - ✅ **Evolution chart** — SVG multi-line chart showing top 6 presidential candidates over time. Uses real FuturesOddsSnapshot data (30d, downsampled to 50pts). 7d/30d/All range toggle. Hero variant toggle switches between Rankings and Trends views
