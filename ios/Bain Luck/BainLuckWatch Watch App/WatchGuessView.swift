@@ -15,7 +15,7 @@ struct WatchGuessView: View {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Retry") { Task { await vm.loadQuestions() } }
+                    Button("Retry") { Task { await vm.loadQuestions(force: true) } }
                         .font(.caption2)
                 }
             } else if let q = vm.currentQuestion {

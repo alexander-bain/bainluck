@@ -1,15 +1,16 @@
 import Combine
 import SwiftUI
+import WatchKit
 
 struct WatchGlancesView: View {
     @StateObject private var vm = WatchGlancesViewModel()
 
     var body: some View {
         ScrollView {
-            if vm.loading {
+            if vm.loading && vm.markets.isEmpty {
                 ProgressView()
                     .padding(.top, 20)
-            } else if let error = vm.error {
+            } else if let error = vm.error, vm.markets.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title3)
@@ -17,7 +18,7 @@ struct WatchGlancesView: View {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Retry") { Task { await vm.load() } }
+                    Button("Retry") { Task { await vm.load(force: true) } }
                         .font(.caption2)
                 }
                 .padding(.top, 20)
@@ -36,11 +37,18 @@ struct WatchGlancesView: View {
                     ForEach(vm.markets) { market in
                         glanceRow(market)
                     }
+                    if let ago = vm.lastUpdated {
+                        Text(ago)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 4)
+                    }
                 }
                 .padding(.horizontal, 4)
             }
         }
-        .navigationTitle("Following")
+        .navigationTitle("Trending")
         .task { await vm.load() }
     }
 
@@ -109,14 +117,15 @@ final class WatchGlancesViewModel: ObservableObject {
     @Published var markets: [WatchMarket] = []
     @Published var loading = true
     @Published var error: String?
+    @Published var lastUpdated: String?
 
-    func load() async {
-        loading = true
+    func load(force: Bool = false) async {
+        if markets.isEmpty { loading = true }
         error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8)
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
             markets = feed.items.compactMap { item -> WatchMarket? in
                 guard let f = item.futures,
                       let leader = f.topOutcomes?.first,
@@ -130,9 +139,15 @@ final class WatchGlancesViewModel: ObservableObject {
                     category: f.llmSportCategory
                 )
             }
+            if let t = await WatchAPIClient.shared.lastFetchTime {
+                let ago = Int(Date().timeIntervalSince(t))
+                lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
+            }
+            WKInterfaceDevice.current().play(.click)
         } catch {
-            self.error = "Couldn't load"
-            markets = []
+            if markets.isEmpty {
+                self.error = "Couldn't load"
+            }
         }
     }
 }

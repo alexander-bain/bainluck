@@ -1,15 +1,16 @@
 import Combine
 import SwiftUI
+import WatchKit
 
 struct WatchLiveView: View {
     @StateObject private var vm = WatchLiveViewModel()
 
     var body: some View {
         ScrollView {
-            if vm.loading {
+            if vm.loading && vm.games.isEmpty {
                 ProgressView()
                     .padding(.top, 20)
-            } else if let error = vm.error {
+            } else if let error = vm.error, vm.games.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title3)
@@ -17,7 +18,7 @@ struct WatchLiveView: View {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Retry") { Task { await vm.load() } }
+                    Button("Retry") { Task { await vm.load(force: true) } }
                         .font(.caption2)
                 }
                 .padding(.top, 20)
@@ -36,12 +37,25 @@ struct WatchLiveView: View {
                     ForEach(vm.games) { game in
                         liveGameCard(game)
                     }
+                    if let ago = vm.lastUpdated {
+                        Text(ago)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 4)
+                    }
                 }
                 .padding(.horizontal, 4)
             }
         }
         .navigationTitle("Live")
         .task { await vm.load() }
+        .task(id: "auto-refresh") {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                await vm.load()
+            }
+        }
     }
 
     private func liveGameCard(_ game: WatchLiveGame) -> some View {
@@ -127,15 +141,16 @@ final class WatchLiveViewModel: ObservableObject {
     @Published var games: [WatchLiveGame] = []
     @Published var loading = true
     @Published var error: String?
+    @Published var lastUpdated: String?
 
-    func load() async {
-        loading = true
+    func load(force: Bool = false) async {
+        if games.isEmpty { loading = true }
         error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8)
-            games = feed.items.compactMap { item -> WatchLiveGame? in
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
+            let newGames = feed.items.compactMap { item -> WatchLiveGame? in
                 guard let e = item.event, e.status == "live",
                       let homeProb = e.currentOdds?.homeProbability else { return nil }
                 let awayProb = 1.0 - homeProb
@@ -156,9 +171,18 @@ final class WatchLiveViewModel: ObservableObject {
                     sportLabel: e.sportName ?? e.sport ?? ""
                 )
             }
+            if !newGames.isEmpty || games.isEmpty {
+                games = newGames
+            }
+            if let t = await WatchAPIClient.shared.lastFetchTime {
+                let ago = Int(Date().timeIntervalSince(t))
+                lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
+            }
+            WKInterfaceDevice.current().play(.click)
         } catch {
-            self.error = "Couldn't load"
-            games = []
+            if games.isEmpty {
+                self.error = "Couldn't load"
+            }
         }
     }
 }

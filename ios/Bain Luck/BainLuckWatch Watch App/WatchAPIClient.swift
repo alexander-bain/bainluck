@@ -7,6 +7,10 @@ actor WatchAPIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
 
+    private var cachedFeed: FeedResponse?
+    private var cachedAt: Date?
+    private let cacheTTL: TimeInterval = 20
+
     private let sessionId: String = {
         let key = "bainluck_watch_session_id"
         if let existing = UserDefaults.standard.string(forKey: key) {
@@ -27,14 +31,24 @@ actor WatchAPIClient {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
     }
 
-    func fetchFeed(limit: Int = 20) async throws -> FeedResponse {
+    func fetchFeed(limit: Int = 20, forceRefresh: Bool = false) async throws -> FeedResponse {
+        if !forceRefresh, let cached = cachedFeed, let at = cachedAt,
+           Date().timeIntervalSince(at) < cacheTTL {
+            return cached
+        }
+
         let url = URL(string: "\(baseURL)/api/feed?limit=\(limit)&event_pct=0.3")!
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw WatchAPIError.httpError
         }
-        return try decoder.decode(FeedResponse.self, from: data)
+        let feed = try decoder.decode(FeedResponse.self, from: data)
+        cachedFeed = feed
+        cachedAt = Date()
+        return feed
     }
+
+    var lastFetchTime: Date? { cachedAt }
 
     func submitPrediction(
         marketId: Int,
