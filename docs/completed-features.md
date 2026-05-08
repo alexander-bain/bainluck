@@ -2,6 +2,20 @@
 
 ## May 7, 2026
 
+### Health Check + Security Hardening + CI
+- ✅ **DataGolf live fix** — 3,557 consecutive failures since Apr 22 (UniqueViolation). Fixed: check for existing markets before creating, reopen closed ones.
+- ✅ **Championship grid performance** — Endpoints were timing out. Fixed: statement_timeout, N+1 query collapse (150+ → 1), resolved market filter, snapshot LIMIT.
+- ✅ **MLB prediction market matching** — 22% → climbing. Root cause: Kalshi abbreviations ("A's", "Chicago WS") failing ILIKE. Fixed: prefer ticker-derived team names, added ATH/WSH_MLB to abbreviation map.
+- ✅ **Denominator pollution audit** — All admin metrics fixed so 100% is achievable: link rate uses open-only, matching coverage filters to sports with PM markets, overall_health only critical for essential tasks, unclassified_rate sports-only.
+- ✅ **Tier 1 compliance endpoint** — `GET /api/admin/prediction-markets/tier1-compliance`. Every MLB/NBA/NHL/NFL event must have all 5 sources. Per-event gap listing. Golf section for PGA tournaments.
+- ✅ **Security hardening (Codex review)** — Auth on 8 admin write endpoints, sports sync auth, server-side prediction verification, bug report validation, frontend secret gates.
+- ✅ **Performance** — Prediction stats SQL aggregation (was loading all rows), event history 3K cap + 1hr cache for completed games.
+- ✅ **CI: frontend build** — `npm run build` in GitHub Actions catches ESLint + TS errors before Vercel deploy.
+- ✅ **CI: alembic safety** — Tests for single head, migration count floor, revision chain integrity.
+- ✅ **62 TypeScript errors fixed** — Unblocked Vercel deploys (20+ failed builds).
+- ✅ **Vercel ESLint fix** — Hooks-after-early-return in admin pages.
+- ✅ **NHL StatPal unicode fix** — "Montréal" now matches "Montreal" via diacritics stripping.
+
 ### Entertainment Page v1 Design — Full Rewrite
 - ✅ **Editorial trending hero** — Lead card (1.4fr, 2 rows) + 4 smaller cards with kind-specific card bodies (Spotify leader+runner-up, RT threshold+histogram, reality binary split, multi-outcome lists, Eurovision flags)
 - ✅ **Music section (tabbed)** — Spotify Race horse-race rows with cover tiles + delta chips | Billboard market list | Album drops 3-col grid with histograms | Artist streaming compact grid

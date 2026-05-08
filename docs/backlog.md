@@ -6,15 +6,13 @@ All outstanding work items for Bain Luck. Shipped items live in `docs/completed-
 
 The product's magic depends on **perfectly understanding every event, market, and source** — then grouping and matching them so the user sees one unified view. This is the #1 technical priority and the area with the most measurable room for improvement.
 
-**Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + admin dashboard at `/admin`
+**Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + `GET /api/admin/prediction-markets/tier1-compliance`
 
-**Current state (April 25, 2026):** Kalshi: **61.9%** (7,991 / 12,917) | Polymarket: **72%** (3,467 / 4,814)
+**Current state (May 7, 2026):** Open link rate: **68.2%**. Kalshi baseball open: **95.5%**. Tier 1 compliance: **100%** for today's games (NHL). MLB Kalshi matching fixed (ticker abbreviation bug — ATH, WSH_MLB added).
 
-Key gaps: Basketball Kalshi 58.9% (target >85%), Hockey Kalshi 59% / PM 23.8% (target >80%). Grid Health: 94/100.
+**Target: 100%** Tier 1 compliance — every MLB/NBA/NHL/NFL/PGA event with all sources linked.
 
-**Target: 100%** for all sports where matching is possible.
-
-**Audit tooling:** `scripts/audit_grid_accuracy.py` (51/51, 100%), `scripts/audit_event_matching.py`
+**Audit tooling:** `scripts/audit_grid_accuracy.py` (51/51, 100%), `scripts/audit_event_matching.py`, Tier 1 compliance endpoint
 
 ---
 

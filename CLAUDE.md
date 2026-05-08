@@ -76,10 +76,12 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,350+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,370+ tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
+- **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest`
 - **Procfile validates imports**: Release phase runs `python3 -c "from app.main import app"` before Alembic. If the app can't import, the release fails and the broken code never reaches the web dyno.
+- **CI runs both**: GitHub Actions runs backend pytest + frontend `npm run build` on every push to master.
 
 ### Key Admin URLs
 ```
@@ -229,7 +231,21 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 24. **Kalshi dual markets cause probability oscillation** — Kalshi creates separate "Team A win?" and "Team B win?" markets for the same game. Both get linked to the same Event. Deduplicate by `(event_id, source)` before writing snapshots — one market per event per source.
 25. **`CurrentOdds.spread` is unsigned** — The API's `spread` field is just a number (e.g., 8.4) without direction. Use `home_spread` (signed from home team perspective) when available. Fall back to `closestToEvenMargin()` from spreads data, NOT to the unsigned `spread`.
 26. **Pexels rate limit is 200 req/hr** — Enrichment script hits this on large batches. Target feed-visible markets first via `enrich_feed_markets.py`, not random `updated_at` ordering.
-27. **Never delete a migration file that has already run on Heroku** — The `alembic_version` table stores the current revision ID. If you delete the `.py` file, `alembic upgrade heads` fails with "Can't locate revision," blocking ALL subsequent migrations. The Procfile's `|| echo` makes this silent. Caused a full site outage May 1-2, 2026.
+27. **Never delete a migration file that has already run on Heroku** — The `alembic_version` table stores the current revision ID. If you delete the `.py` file, `alembic upgrade heads` fails with "Can't locate revision," blocking ALL subsequent migrations. The Procfile's `|| echo` makes this silent. Caused a full site outage May 1-2, 2026. CI test `test_alembic.py` guards against this.
+28. **Vercel builds run ESLint, not just TypeScript** — `tsc --noEmit` passing does NOT mean the frontend will deploy. Vercel runs `next build` which includes ESLint rules-of-hooks checks. Always run `npm run build` locally before pushing frontend changes. Hooks called after early returns will pass `tsc` but fail `next build`. CI now catches this.
+29. **Kalshi market names use abbreviations that fail ILIKE matching** — "A's" doesn't match "Athletics", "Chicago WS" doesn't match "Chicago White Sox". The matching task now prefers ticker-derived team names (mascots) over market name-derived abbreviations. Missing ticker abbreviations (`ATH`, `WSH_MLB`) caused 67 unlinked MLB game markets.
+30. **Admin write endpoints need `_check_admin_secret`** — Several admin endpoints (matching override POST/DELETE, eval decision POST, playoffstatus scrape) were shipping without auth. Always add the check for any endpoint that mutates data or burns API quota.
+
+---
+
+## CI Test Coverage
+
+| Test File | What It Catches | Added |
+|-----------|----------------|-------|
+| `tests/test_startup.py` | Import errors that crash the web dyno | Original |
+| `tests/test_tasks_wiring.py` | Missing/duplicate Celery beat schedule entries | Apr 2026 |
+| `tests/test_alembic.py` | Multiple heads, deleted migrations, orphaned revisions | May 7 |
+| `.github/workflows/ci.yml` (frontend-build) | ESLint + TypeScript errors blocking Vercel | May 7 |
 
 ---
 
