@@ -125,6 +125,65 @@ class TestFeedDebug:
         assert body["debug_items"] == []
 
 
+class TestDiscoverQualityTrace:
+    async def test_trace_requires_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/admin/discover-quality/trace/123")
+
+        assert resp.status_code == 422
+
+    async def test_trace_rejects_bad_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/admin/discover-quality/trace/123?secret=bad")
+
+        assert resp.status_code == 403
+
+    async def test_trace_returns_404_for_missing_market(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/admin/discover-quality/trace/123?secret=test-admin")
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Market not found"
+
+    async def test_trace_returns_pipeline_shape(self, client, monkeypatch):
+        from app.routes import feed
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        async def _fake_trace(db, market_id):
+            return {
+                "market": {"id": market_id, "name": "Will this ship?"},
+                "base_eligibility": {"eligible": True, "blockers": [], "checks": {}},
+                "candidate_pools": {
+                    "included": True,
+                    "deduped_candidate_count": 1,
+                    "candidate_position": 1,
+                    "pools": [],
+                },
+                "score_trace": {
+                    "eligible_before_caps": True,
+                    "blockers": [],
+                    "scores": {"highlight": 90, "after_quality": 90, "after_explanation": 90, "final": 90},
+                },
+                "final_ranking": {"survived_final_caps": True, "final_futures_rank": 1},
+                "suggested_fix": "No immediate fix.",
+            }
+
+        monkeypatch.setattr(feed, "build_discover_market_trace", _fake_trace)
+
+        resp = await client.get("/api/admin/discover-quality/trace/123?secret=test-admin")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["market"]["id"] == 123
+        assert body["candidate_pools"]["included"] is True
+        assert body["final_ranking"]["survived_final_caps"] is True
+        assert "suggested_fix" in body
+
+
 class TestFeedMyTeamsAnonymous:
     """my_teams_only without auth returns early with requires_auth flag."""
 

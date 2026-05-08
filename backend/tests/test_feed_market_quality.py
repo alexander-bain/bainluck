@@ -1,5 +1,9 @@
 """Tests for Discover futures market quality classification."""
 
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+from app.routes.feed import _market_base_trace
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
@@ -398,6 +402,21 @@ class TestFeedQualityDebug:
 
         assert trace["trace_status"] == "blocked:event_linked_game_market"
         assert "event_linked_game_market" in trace["matches"][0]["blocked_reasons"]
+
+    def test_discover_market_base_trace_blocks_event_linked_games(self):
+        trace = _market_base_trace(
+            SimpleNamespace(
+                status="open",
+                event_id=55,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=1),
+                name="Pistons vs. Magic",
+            ),
+            datetime.now(timezone.utc),
+        )
+
+        assert trace["eligible"] is False
+        assert "event_linked_game_market" in trace["blockers"]
+        assert "game_name_filtered" in trace["blockers"]
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(
