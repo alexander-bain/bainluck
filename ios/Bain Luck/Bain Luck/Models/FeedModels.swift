@@ -2,6 +2,8 @@ import Foundation
 
 // MARK: - Feed Response
 
+private nonisolated struct SkipOne: Decodable, Sendable {}
+
 nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
     let total: Int
@@ -16,14 +18,13 @@ nonisolated struct FeedResponse: Decodable, Sendable {
         offset = try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0
         hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
 
-        // Decode items individually — skip any that fail rather than crashing the whole feed
         var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
         var decoded: [FeedItem] = []
         while !itemsContainer.isAtEnd {
             if let item = try? itemsContainer.decode(FeedItem.self) {
                 decoded.append(item)
             } else {
-                _ = try? itemsContainer.decode(AnyCodable.self)
+                _ = try? itemsContainer.decode(SkipOne.self)
             }
         }
         items = decoded
