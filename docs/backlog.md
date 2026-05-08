@@ -111,7 +111,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 
 16 reports filed via Rage Shake. 14 new items below (2 already tracked: DN-9, BR1-2). Grouped by theme.
 
-### RS-1. iPad Sidebar Navigation Gets Stuck (P1) — Bugs #14, #15
+### ~~RS-1. iPad Sidebar Navigation Gets Stuck (P1) — Bugs #14, #15~~ FIXED (May 8)
 
 **Problem:** After visiting Quick Links pages (Futures, Economics, Weather, Preferences), the iPad sidebar highlights the correct tab but the content area stays on the previous page. User cannot navigate away without force-closing.
 
@@ -142,7 +142,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Components/MarketMapSection/`, `ios/.../Views/EventDetailView.swift`
 **Parallel Safety:** Yellow
 
-### RS-4. iOS False Offline Detection + Preferences 401 (P2) — Bug #12
+### RS-4. iOS False Offline Detection + ~~Preferences 401~~ (P2) — Bug #12 (401 FIXED May 8)
 
 **Problem:** App reports `network: offline` in bug report metadata, but user has working WiFi. Preferences page shows "Request failed (401)" — the Preferences endpoint requires auth but anonymous users get a hard error instead of a graceful fallback.
 
@@ -162,7 +162,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Services/AuthService.swift`, Firebase console config
 **Parallel Safety:** Green
 
-### RS-6. Resolved/Past-Event Markets in Discover Feed (P2) — Bug #17
+### ~~RS-6. Resolved/Past-Event Markets in Discover Feed (P2) — Bug #17~~ FIXED (May 8)
 
 **Problem:** Met Gala 2026 red carpet market ("What will Bad Bunny wear?") still showing in Discover feed on May 7, but the Met Gala happened May 5. The market may not have `status=closed` yet on Kalshi/Polymarket, or the resolution date hasn't passed, so it slips through the existing staleness filters.
 
@@ -171,7 +171,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
 **Parallel Safety:** Yellow
 
-### RS-7. Discover Game Cards Need Game State Context (P2) — Bug #10
+### ~~RS-7. Discover Game Cards Need Game State Context (P2) — Bug #10~~ FIXED (May 8)
 
 **Problem:** A baseball game showing 99% probability in Discover has no context — is it live? Final? 8th inning? User explicitly says: do NOT hard-filter extreme probabilities (that's a lazy solution). Instead, add game state context to Discover cards: "Final: NYY 9 - TEX 2" or "Live: Bot 8th, NYY leads 7-2".
 
@@ -180,7 +180,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `backend/app/routes/feed.py`, `frontend/app/discover/page.tsx`, `ios/.../Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
 
-### RS-8. iOS Discover Card Headers Block Scroll (P2) — Bug #11
+### ~~RS-8. iOS Discover Card Headers Block Scroll (P2) — Bug #11~~ FIXED (May 8)
 
 **Problem:** On iPhone, enriched Discover cards with colored/image headers (the big green golf card, orange economics card) intercept touch gestures. If you touch anywhere on the header area, you can't scroll the feed — only touching the white card body below the header allows scrolling.
 
@@ -211,7 +211,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Views/SearchView.swift`, `backend/app/routes/events.py` (search endpoint)
 **Parallel Safety:** Green
 
-### RS-11. Baseball Inning Markets Misclassified as "Other" (P2) — Bug #5
+### ~~RS-11. Baseball Inning Markets Misclassified as "Other" (P2) — Bug #5~~ FIXED (May 8)
 
 **Problem:** "First Inning Run" and "First 5 Innings" markets appear in the generic "Other Markets" bucket on event detail. They should be classified alongside "1st Half" markets (basketball/football) as period-based markets with their own section.
 
@@ -220,7 +220,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `backend/app/routes/events.py` (`_classify_game_market`), `ios/.../Components/MarketMapSection/`
 **Parallel Safety:** Yellow
 
-### RS-12. Market Maps Don't Label Zero Baseline (P2) — Bug #3
+### ~~RS-12. Market Maps Don't Label Zero Baseline (P2) — Bug #3~~ FIXED (May 8)
 
 **Problem:** The "Runs map" and margin map visualizations show x-axis labels like "-9", "6", "22+" but don't explicitly label zero/the baseline. User says: "Where zero is ALWAYS has to be labeled."
 
