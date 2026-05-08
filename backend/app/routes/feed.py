@@ -563,6 +563,7 @@ async def get_feed(
         payload["personalization"] = {
             "team_count": len(ctx.team_relations),
             "sport_affinities_count": len(ctx.sport_affinities),
+            "discover_category_affinities_count": len(ctx.discover_category_affinities),
             "pinned_events": len(ctx.pinned_event_ids),
             "pinned_futures": len(ctx.pinned_futures_ids),
         }
@@ -1254,11 +1255,26 @@ async def _load_personalization_context(
     if not user:
         return PersonalizationContext()
 
-    # Load user favorites, preferences, and pins in parallel
-    favorites_result, prefs_result, pins_result = await asyncio.gather(
+    interaction_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+    # Load user favorites, preferences, pins, and recent Discover behavior in parallel
+    favorites_result, prefs_result, pins_result, interactions_result = await asyncio.gather(
         db.execute(select(UserFavorite).where(UserFavorite.user_id == user.id)),
         db.execute(select(UserPreference).where(UserPreference.user_id == user.id)),
         db.execute(select(UserPin).where(UserPin.user_id == user.id)),
+        db.execute(
+            select(
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+                func.count(DiscoverInteraction.id).label("count"),
+            )
+            .where(
+                DiscoverInteraction.user_id == user.id,
+                DiscoverInteraction.created_at >= interaction_cutoff,
+                DiscoverInteraction.category.isnot(None),
+            )
+            .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
+        ),
     )
 
     favorites = favorites_result.scalars().all()
@@ -1277,6 +1293,8 @@ async def _load_personalization_context(
     pins = pins_result.scalars().all()
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
+
+    category_affinities = _build_discover_category_affinities(interactions_result.all())
 
     # Load roster player names from followed teams for player-futures matching
     roster_player_names: set[str] = set()
@@ -1310,8 +1328,37 @@ async def _load_personalization_context(
         pinned_event_ids=pinned_event_ids,
         pinned_futures_ids=pinned_futures_ids,
         roster_player_names=roster_player_names,
+        discover_category_affinities=category_affinities,
         is_authenticated=True,
     )
+
+
+def _build_discover_category_affinities(rows) -> dict[str, float]:
+    """Convert recent Discover interaction counts into tiny category deltas."""
+    raw_scores: dict[str, float] = {}
+    action_counts: dict[str, int] = {}
+    weights = {
+        "detail_click": 1.5,
+        "open": 1.5,
+        "share": 3.0,
+        "like": 2.0,
+        "group_expand": 0.75,
+        "dismiss": -2.0,
+    }
+    for category, action, count in rows:
+        if not category or action not in weights:
+            continue
+        key = str(category).lower()
+        n = int(count or 0)
+        raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
+        action_counts[key] = action_counts.get(key, 0) + n
+
+    affinities: dict[str, float] = {}
+    for category, score in raw_scores.items():
+        if action_counts.get(category, 0) < 2:
+            continue
+        affinities[category] = max(-0.15, min(0.18, score / 20.0))
+    return affinities
 
 
 async def _score_events(

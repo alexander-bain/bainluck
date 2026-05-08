@@ -45,6 +45,8 @@ RIVAL_PLAYING_BONUS = 0.2  # Rival is playing (interest even if not losing)
 PINNED_BONUS = 0.3        # User has this item pinned
 MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
 ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
+CATEGORY_INTEREST_MAX_BONUS = 0.18  # Recent Discover opens/shares by category
+CATEGORY_DISMISS_MAX_PENALTY = -0.15  # Recent Discover dismisses by category
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -77,6 +79,8 @@ class PersonalizationContext:
     pinned_futures_ids: set[int] = field(default_factory=set)
     # Set of player names from followed teams' rosters (lowercased)
     roster_player_names: set[str] = field(default_factory=set)
+    # category → bounded multiplier delta from recent Discover interactions
+    discover_category_affinities: dict[str, float] = field(default_factory=dict)
     # Whether this is a real user context (vs anonymous)
     is_authenticated: bool = False
 
@@ -173,6 +177,11 @@ def compute_event_multiplier(
         elif affinity < LOW_AFFINITY_THRESHOLD:
             bonus += LOW_AFFINITY_PENALTY
             reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
+
+    category_bonus = _category_affinity_bonus(ctx, _category_from_sport_key(sport_key))
+    if category_bonus:
+        bonus += category_bonus
+        reasons.append(_category_affinity_reason(category_bonus))
 
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
@@ -292,6 +301,11 @@ def compute_futures_multiplier(
             bonus += LOW_AFFINITY_PENALTY
             reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
 
+    category_bonus = _category_affinity_bonus(ctx, sport_category)
+    if category_bonus:
+        bonus += category_bonus
+        reasons.append(_category_affinity_reason(category_bonus))
+
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:
         bonus += PINNED_BONUS
@@ -362,6 +376,32 @@ def _match_sport_affinity(
                 best_match = affinity
 
     return best_match
+
+
+def _category_from_sport_key(sport_key: str | None) -> str | None:
+    if not sport_key:
+        return None
+    root = sport_key.split("_")[0].lower()
+    if root == "americanfootball":
+        return "football"
+    if root == "icehockey":
+        return "hockey"
+    return root
+
+
+def _category_affinity_bonus(ctx: PersonalizationContext, category: str | None) -> float:
+    if not category or not ctx.discover_category_affinities:
+        return 0.0
+    value = ctx.discover_category_affinities.get(category.lower(), 0.0)
+    if abs(value) < 0.01:
+        return 0.0
+    return max(CATEGORY_DISMISS_MAX_PENALTY, min(CATEGORY_INTEREST_MAX_BONUS, value))
+
+
+def _category_affinity_reason(value: float) -> str:
+    if value > 0:
+        return f"discover_interest:{value:.2f}"
+    return f"discover_dismiss:{value:.2f}"
 
 
 def _lookup_sport_affinity(

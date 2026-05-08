@@ -46,6 +46,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **First-party Discover engagement capture** — Web and native now send Discover impressions/actions to `/api/feed/interactions`, stored in an append-only `discover_interactions` table. Admins can inspect `/api/admin/discover-engagement` for open/dismiss/share rates by surface, category, and item type.
 - ✅ **Discover engagement admin panel** — `/admin/discover-quality` now includes first-party engagement totals, open/dismiss/share rates, category/surface opportunity lists, and top actioned cards alongside feed quality, timing, hook coverage, and trace diagnostics.
 - ✅ **Engagement-driven ranking opportunities** — `/api/admin/discover-engagement` now returns promote/investigate/downrank recommendations from first-party open, dismiss, share, and impression rates. The Discover quality admin page surfaces these as candidate ranking/design actions.
+- ✅ **Server-side Discover category personalization** — Authenticated feed scoring now derives tiny bounded category boosts/penalties from the user's recent first-party Discover opens, shares, likes, expands, and dismisses. This augments existing favorites/pins/sport-affinity personalization while preserving quality caps and anonymous local tuning fallback.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

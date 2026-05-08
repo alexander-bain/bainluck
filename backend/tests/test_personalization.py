@@ -19,6 +19,8 @@ from app.utils.personalization import (
     LOW_AFFINITY_PENALTY,
     NAH_AFFINITY_PENALTY,
     NAH_AFFINITY_THRESHOLD,
+    CATEGORY_INTEREST_MAX_BONUS,
+    CATEGORY_DISMISS_MAX_PENALTY,
     MIN_MULTIPLIER,
     MAX_MULTIPLIER,
 )
@@ -40,6 +42,7 @@ def _basic_ctx(
     pinned_event_ids=None,
     pinned_futures_ids=None,
     roster_player_names=None,
+    discover_category_affinities=None,
 ) -> PersonalizationContext:
     """Authenticated context with optional overrides."""
     return PersonalizationContext(
@@ -49,6 +52,7 @@ def _basic_ctx(
         pinned_event_ids=pinned_event_ids or set(),
         pinned_futures_ids=pinned_futures_ids or set(),
         roster_player_names=roster_player_names or set(),
+        discover_category_affinities=discover_category_affinities or {},
         is_authenticated=True,
     )
 
@@ -706,3 +710,41 @@ class TestFuturesSportKeyLookup:
         # sport_key "basketball_obscure_league" not in affinities
         # Falls back to category "basketball" → matches "basketball_nba" → 0.8
         assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)
+
+
+# ============================================================================
+# Discover interaction category affinity tests
+# ============================================================================
+
+class TestDiscoverCategoryAffinity:
+    """Recent Discover behavior should add a small bounded category signal."""
+
+    def test_futures_category_interest_boost(self):
+        ctx = _basic_ctx(discover_category_affinities={"tech": 0.12})
+        result = compute_futures_multiplier(ctx, sport_category="tech", outcome_team_ids=[])
+        assert result.multiplier == pytest.approx(1.12)
+        assert any("discover_interest" in r for r in result.reasons)
+
+    def test_futures_category_dismiss_penalty(self):
+        ctx = _basic_ctx(discover_category_affinities={"politics": -0.1})
+        result = compute_futures_multiplier(ctx, sport_category="politics", outcome_team_ids=[])
+        assert result.multiplier == pytest.approx(0.9)
+        assert any("discover_dismiss" in r for r in result.reasons)
+
+    def test_category_signal_is_capped(self):
+        ctx = _basic_ctx(discover_category_affinities={"tech": 9.0, "politics": -9.0})
+        tech = compute_futures_multiplier(ctx, sport_category="tech", outcome_team_ids=[])
+        politics = compute_futures_multiplier(ctx, sport_category="politics", outcome_team_ids=[])
+        assert tech.multiplier == pytest.approx(1.0 + CATEGORY_INTEREST_MAX_BONUS)
+        assert politics.multiplier == pytest.approx(1.0 + CATEGORY_DISMISS_MAX_PENALTY)
+
+    def test_event_maps_sport_key_to_discover_category(self):
+        ctx = _basic_ctx(discover_category_affinities={"basketball": 0.08})
+        result = compute_event_multiplier(ctx, home_team_id=None, away_team_id=None, sport_key="basketball_nba")
+        assert result.multiplier == pytest.approx(1.08)
+        assert any("discover_interest" in r for r in result.reasons)
+
+    def test_event_maps_americanfootball_to_football(self):
+        ctx = _basic_ctx(discover_category_affinities={"football": 0.08})
+        result = compute_event_multiplier(ctx, home_team_id=None, away_team_id=None, sport_key="americanfootball_nfl")
+        assert result.multiplier == pytest.approx(1.08)
