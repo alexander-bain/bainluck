@@ -13,6 +13,57 @@ private enum DiscoverGroupedItem: Identifiable {
     }
 }
 
+private enum NativeDiscoverAction {
+    case detailOpen
+    case dismiss
+    case share
+}
+
+private struct NativeDiscoverProfile {
+    private static let storageKey = "discover_interaction_profile_native_v1"
+    var categoryScores: [String: Double]
+
+    static func load() -> NativeDiscoverProfile {
+        let raw = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: Double] ?? [:]
+        return NativeDiscoverProfile(categoryScores: raw)
+    }
+
+    mutating func record(category: String, action: NativeDiscoverAction) {
+        let key = category.lowercased()
+        let weight: Double
+        switch action {
+        case .detailOpen: weight = 1.5
+        case .dismiss: weight = -2.0
+        case .share: weight = 3.0
+        }
+        categoryScores[key] = min(30, max(-10, (categoryScores[key] ?? 0) + weight))
+        save()
+    }
+
+    func adjustment(for category: String) -> Double {
+        let score = categoryScores[category.lowercased()] ?? 0
+        guard abs(score) >= 2 else { return 0 }
+        return min(12, max(-8, score))
+    }
+
+    func topAffinities(limit: Int = 3) -> [(String, Double)] {
+        categoryScores
+            .filter { abs($0.value) >= 2 }
+            .sorted { abs($0.value) > abs($1.value) }
+            .prefix(limit)
+            .map { ($0.key, $0.value) }
+    }
+
+    mutating func reset() {
+        categoryScores = [:]
+        save()
+    }
+
+    private func save() {
+        UserDefaults.standard.set(categoryScores, forKey: Self.storageKey)
+    }
+}
+
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var categoryFilter = "all"
@@ -22,6 +73,7 @@ struct DiscoverView: View {
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
     @State private var resolutions: [Resolution] = []
+    @State private var interactionProfile = NativeDiscoverProfile.load()
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -68,6 +120,42 @@ struct DiscoverView: View {
         if let e = item.event { return "event-\(e.id)" }
         if let f = item.futures { return "futures-\(f.id)" }
         return UUID().uuidString
+    }
+
+    private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
+        switch grouped {
+        case .single(let item): return item
+        case .group(_, let items): return items.first
+        }
+    }
+
+    private func applyLocalPersonalization(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        guard items.count > 6 else { return items }
+
+        let pinnedLead = Array(items.prefix(3))
+        let rest = Array(items.dropFirst(3))
+        var result = pinnedLead
+        let windowSize = 5
+
+        for start in stride(from: 0, to: rest.count, by: windowSize) {
+            let end = min(start + windowSize, rest.count)
+            let window = Array(rest[start..<end])
+            let ranked = window.enumerated().sorted { lhs, rhs in
+                let leftItem = primaryItem(lhs.element)
+                let rightItem = primaryItem(rhs.element)
+                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
+                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
+                if abs(leftScore - rightScore) > 0.001 { return leftScore > rightScore }
+                return lhs.offset < rhs.offset
+            }.map(\.element)
+            result.append(contentsOf: ranked)
+        }
+
+        return result
+    }
+
+    private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction) {
+        interactionProfile.record(category: itemCategory(item), action: action)
     }
 
     private var filteredItems: [FeedItem] {
@@ -118,7 +206,7 @@ struct DiscoverView: View {
                 result.append(.single(group[0]))
             }
         }
-        return result
+        return applyLocalPersonalization(result)
     }
 
     var body: some View {
@@ -178,13 +266,23 @@ struct DiscoverView: View {
                                     } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
                                         NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                                     } else if item.type == "event", let e = item.event {
-                                        SwipeToDismiss { dismiss(itemId(item)) } content: {
-                                            NativeEventDiscoverCard(event: e)
+                                        SwipeToDismiss {
+                                            recordInteraction(for: item, action: .dismiss)
+                                            dismiss(itemId(item))
+                                        } content: {
+                                            NativeEventDiscoverCard(event: e, onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen)
+                                            })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
                                     } else if item.type == "futures", let f = item.futures {
-                                        SwipeToDismiss { dismiss(itemId(item)) } content: {
-                                            NativeFuturesDiscoverCard(data: f)
+                                        SwipeToDismiss {
+                                            recordInteraction(for: item, action: .dismiss)
+                                            dismiss(itemId(item))
+                                        } content: {
+                                            NativeFuturesDiscoverCard(data: f, onOpen: {
+                                                recordInteraction(for: item, action: .detailOpen)
+                                            })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
                                     }
@@ -213,6 +311,31 @@ struct DiscoverView: View {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    let affinities = interactionProfile.topAffinities()
+                    if affinities.isEmpty {
+                        Text("No local tuning yet")
+                    } else {
+                        ForEach(affinities.indices, id: \.self) { idx in
+                            let category = affinities[idx].0
+                            let score = affinities[idx].1
+                            Label(
+                                "\(category.capitalized) \(score > 0 ? "+" : "")\(String(format: "%.1f", score))",
+                                systemImage: score > 0 ? "arrow.up" : "arrow.down"
+                            )
+                        }
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        interactionProfile.reset()
+                    } label: {
+                        Label("Reset Discover Tuning", systemImage: "arrow.counterclockwise")
+                    }
+                } label: {
+                    Label("Discover Tuning", systemImage: "slider.horizontal.3")
+                }
+            }
         }
         .task {
             await vm.load()
@@ -234,7 +357,7 @@ struct DiscoverView: View {
 
     private func scrollToNextGuess(proxy: ScrollViewProxy, after idx: Int, in items: [FeedItem]) {
         let nextGuessIdx = stride(from: idx + 1, to: items.count, by: 1).first { i in
-            (i + 1) % 2 == 0
+            (i + 1) % 5 == 0
         }
         if let next = nextGuessIdx, next < items.count {
             let targetId = itemId(items[next])
@@ -246,7 +369,7 @@ struct DiscoverView: View {
 
     private func scrollToNextGuessGrouped(proxy: ScrollViewProxy, after idx: Int, in items: [DiscoverGroupedItem]) {
         let nextIdx = stride(from: idx + 1, to: items.count, by: 1).first { i in
-            (i + 1) % 2 == 0
+            (i + 1) % 5 == 0
         }
         if let next = nextIdx, next < items.count {
             withAnimation(.easeInOut(duration: 0.3)) {
@@ -304,6 +427,7 @@ struct DiscoverView: View {
                 }
             }
             Button {
+                recordInteraction(for: item, action: .share)
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -332,6 +456,7 @@ struct DiscoverView: View {
                 }
             }
             Button {
+                recordInteraction(for: item, action: .share)
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -347,6 +472,7 @@ struct DiscoverView: View {
         }
         Divider()
         Button(role: .destructive) {
+            recordInteraction(for: item, action: .dismiss)
             dismiss(itemId(item))
         } label: {
             Label("Dismiss", systemImage: "xmark")
@@ -411,6 +537,7 @@ final class DiscoverViewModel: ObservableObject {
 
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
+    var onOpen: (() -> Void)? = nil
 
     private var awayColor: Color {
         Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
@@ -512,6 +639,7 @@ private struct NativeEventDiscoverCard: View {
             .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded { onOpen?() })
     }
 
     private func teamColumn(
@@ -606,6 +734,7 @@ private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blu
 
 private struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
+    var onOpen: (() -> Void)? = nil
 
     private var gradient: (Color, Color) {
         categoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? defaultGradient
@@ -727,6 +856,7 @@ private struct NativeFuturesDiscoverCard: View {
             .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded { onOpen?() })
     }
 
     @ViewBuilder
