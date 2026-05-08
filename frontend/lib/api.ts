@@ -1523,6 +1523,7 @@ export interface EntThemeMusic {
   count: number;
   spotify_race: EntMarketRow[];
   billboard_watch: EntMarketRow[];
+  billboard_groups: EntThresholdGroup[];
   album_drops: EntMarketRow[];
   artist_streaming: EntMarketRow[];
   side_markets: EntMarketRow[];

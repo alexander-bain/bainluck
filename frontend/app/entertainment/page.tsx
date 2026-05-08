@@ -587,7 +587,11 @@ function MusicSection({ data }: { data: EntThemeMusic }) {
         hasSpotify ? <SpotifyRace markets={data.spotify_race} /> : <MarketFallback markets={data.side_markets} />
       )}
       {tab === "billboard" && (
-        hasBillboard ? <BillboardHeatmap markets={data.billboard_watch} /> : <MarketFallback markets={data.side_markets} />
+        data.billboard_groups && data.billboard_groups.length > 0
+          ? <RTHeatmap groups={data.billboard_groups} />
+          : hasBillboard
+            ? <BillboardHeatmap markets={data.billboard_watch} />
+            : <MarketFallback markets={data.side_markets} />
       )}
       {tab === "albums" && (
         hasAlbums ? <AlbumGrid markets={data.album_drops} /> : <MarketFallback markets={data.side_markets} />

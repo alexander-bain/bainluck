@@ -85,7 +85,6 @@ _KIND_BY_TICKER: list[tuple[str, str]] = [
     ("kxbillboard", "billboard"),
     ("kxboxoffice", "boxoffice"),
     ("kxrottentomatoes", "rt"),
-    ("kxrt", "rt"),
     ("kxsurvivor", "reality"),
     ("kxbachelor", "reality"),
     ("kxbeastgames", "reality"),
@@ -93,10 +92,10 @@ _KIND_BY_TICKER: list[tuple[str, str]] = [
 ]
 
 _KIND_BY_NAME: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"\b(?:spotify|#1\s*song|chart\s*race)\b", re.I), "spotify"),
+    (re.compile(r"\b(?:#1\s*song|chart\s*race|spotify\s*#1|#1\s*on\s*(?:us\s*)?spotify)\b", re.I), "spotify"),
     (re.compile(r"\b(?:billboard|hot\s*100)\b", re.I), "billboard"),
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross)\b", re.I), "boxoffice"),
-    (re.compile(r"\b(?:rotten\s*tomatoes|RT\s*score|tomatometer|critic\s*score)\b", re.I), "rt"),
+    (re.compile(r"\b(?:rotten\s*tomatoes|tomatometer)\b", re.I), "rt"),
     (re.compile(r"\b(?:survivor|bachelor|bachelorette|beast\s*games|big\s*brother|reality)\b", re.I), "reality"),
     (re.compile(r"\b(?:eurovision)\b", re.I), "eurovision"),
 ]
@@ -190,25 +189,46 @@ def _is_interesting(row: dict) -> bool:
 # Threshold grouping — RT scores, box office brackets
 # ---------------------------------------------------------------------------
 
-_THRESHOLD_RE = re.compile(
-    r"^(.+?)\s*[-–—:]\s*"
-    r"(?:(?:rotten\s*tomatoes|RT)\s*(?:score\s*)?)?"
-    r"(?:above|over|under|below|≥|>=|>|<|≤|<=)?\s*"
-    r"[\$]?\d+[%MmKk]?"
-    r"(?:\s*[-–]\s*[\$]?\d+[%MmKk]?)?$",
+# Match: Will "Movie Title" score at least 75 on the Rotten Tomatoes Tomatometer?
+# Match: "Movie Title" Rotten Tomatoes score?
+# Match: "Movie Title" Opening Weekend Box Office
+# Match: Movie Title — above 75
+_RT_TITLE_RE = re.compile(
+    r'["“](.+?)["”]\s*(?:score\s+at\s+least\s+\d+|rotten\s*tomatoes|opening\s*weekend|box\s*office)',
+    re.I,
+)
+
+_GENERIC_TITLE_RE = re.compile(
+    r'^(?:will\s+)?["“](.+?)["”]',
+    re.I,
+)
+
+_THRESHOLD_NUM_RE = re.compile(
+    r'(?:at\s+least|above|over|≥|>=)\s*(\d+)',
     re.I,
 )
 
 
 def _normalize_group_key(name: str) -> str | None:
     """Extract the entity name from a threshold market question."""
-    m = _THRESHOLD_RE.match(name or "")
+    m = _RT_TITLE_RE.search(name or "")
+    if m:
+        return m.group(1).strip().lower()
+    m = _GENERIC_TITLE_RE.search(name or "")
     if m:
         return m.group(1).strip().lower()
     return None
 
 
-def _group_threshold_markets(markets: list[dict]) -> list[dict]:
+def _extract_threshold_label(q: str) -> str:
+    """Extract a short threshold label like '≥75' from a market question."""
+    m = _THRESHOLD_NUM_RE.search(q)
+    if m:
+        return f"≥{m.group(1)}"
+    return q[:30]
+
+
+def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict]]:
     """Group markets that share an entity but differ by threshold."""
     by_entity: dict[str, list[dict]] = defaultdict(list)
     ungrouped = []
@@ -223,7 +243,8 @@ def _group_threshold_markets(markets: list[dict]) -> list[dict]:
     groups = []
     for entity_key, rows in by_entity.items():
         if len(rows) >= 2:
-            title = rows[0]["q"].split("–")[0].split("—")[0].split(":")[0].strip()
+            title_match = _RT_TITLE_RE.search(rows[0]["q"]) or _GENERIC_TITLE_RE.search(rows[0]["q"])
+            title = title_match.group(1) if title_match else entity_key.title()
             groups.append({
                 "title": title,
                 "image_url": next(
@@ -231,7 +252,7 @@ def _group_threshold_markets(markets: list[dict]) -> list[dict]:
                 ),
                 "thresholds": [
                     {
-                        "label": r["q"],
+                        "label": _extract_threshold_label(r["q"]),
                         "prob": r["prob"],
                         "market_id": r["market_id"],
                     }
@@ -339,10 +360,14 @@ def _build_music(themed: dict) -> dict:
     spotify_race.sort(key=lambda r: -r["prob"])
     billboard_watch.sort(key=lambda r: -r["prob"])
 
+    billboard_groups, billboard_ungrouped = _group_threshold_markets(billboard_watch)
+    side_markets.extend(billboard_ungrouped)
+
     return {
         "count": len(music_markets),
         "spotify_race": spotify_race[:8],
         "billboard_watch": billboard_watch[:12],
+        "billboard_groups": billboard_groups,
         "album_drops": album_drops[:6],
         "artist_streaming": artist_streaming[:8],
         "side_markets": side_markets[:10],
