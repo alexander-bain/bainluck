@@ -501,6 +501,37 @@ struct MyStuffView: View {
                 Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
             }
         }
+        if let event = item.event {
+            Button {
+                let url = "https://bainluck.com/events/\(event.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
+            ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        } else if let futures = item.futures {
+            Button {
+                let url = "https://bainluck.com/futures/\(futures.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
+            ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)")!) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
     }
 
     private func pinInfo(for item: FeedItem) -> (type: String, id: Int)? {

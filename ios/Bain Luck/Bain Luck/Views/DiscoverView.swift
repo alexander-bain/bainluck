@@ -302,6 +302,17 @@ struct DiscoverView: View {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
             }
+            Button {
+                let url = "https://bainluck.com/events/\(e.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
             ShareLink(item: URL(string: "https://bainluck.com/events/\(e.id)")!) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
@@ -318,6 +329,17 @@ struct DiscoverView: View {
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
+            }
+            Button {
+                let url = "https://bainluck.com/futures/\(f.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
             }
             ShareLink(item: URL(string: "https://bainluck.com/futures/\(f.id)")!) {
                 Label("Share", systemImage: "square.and.arrow.up")

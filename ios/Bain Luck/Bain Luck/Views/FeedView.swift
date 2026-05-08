@@ -505,8 +505,19 @@ struct FeedView: View {
                 }
             }
             Divider()
+            Button {
+                let url = "https://bainluck.com/events/\(event.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
             ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
-                Label("Share Link", systemImage: "square.and.arrow.up")
+                Label("Share", systemImage: "square.and.arrow.up")
             }
             #if os(macOS)
             Button {
@@ -530,8 +541,19 @@ struct FeedView: View {
                 }
             }
             Divider()
+            Button {
+                let url = "https://bainluck.com/futures/\(futures.id)"
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                #else
+                UIPasteboard.general.string = url
+                #endif
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
             ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)")!) {
-                Label("Share Link", systemImage: "square.and.arrow.up")
+                Label("Share", systemImage: "square.and.arrow.up")
             }
         }
     }
