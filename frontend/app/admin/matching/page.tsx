@@ -605,6 +605,16 @@ export default function MatchingReviewPage() {
   const [secret, setSecret] = useState<string | null>(null);
   const [league, setLeague] = useState("nba");
 
+  const swrKey = secret ? `matching-review-${league}-${secret}` : null;
+  const { data, error, isLoading } = useSWR(swrKey, () => fetchReview(league, secret!), {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+  });
+
+  const refresh = useCallback(() => {
+    if (swrKey) mutate(swrKey);
+  }, [swrKey]);
+
   if (!secret) {
     return (
       <div style={{ maxWidth: 400, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
@@ -624,16 +634,6 @@ export default function MatchingReviewPage() {
       </div>
     );
   }
-
-  const swrKey = `matching-review-${league}-${secret}`;
-  const { data, error, isLoading } = useSWR(swrKey, () => fetchReview(league, secret), {
-    refreshInterval: 0,
-    revalidateOnFocus: false,
-  });
-
-  const refresh = useCallback(() => {
-    mutate(swrKey);
-  }, [swrKey]);
 
   return (
     <div

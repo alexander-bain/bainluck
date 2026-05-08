@@ -1513,6 +1513,17 @@ export default function EvalPage() {
   const [tab, setTab] = useState<"grid" | "futures" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
 
+  useEffect(() => {
+    if (!secret) return;
+    const update = async () => {
+      const d = await fetchEvalDecisions();
+      setDecisions(d);
+    };
+    update();
+    const interval = setInterval(update, 10000);
+    return () => clearInterval(interval);
+  }, [secret]);
+
   if (!secret) {
     return (
       <div style={{ maxWidth: 400, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
@@ -1532,17 +1543,6 @@ export default function EvalPage() {
       </div>
     );
   }
-
-  // Refresh decision count from backend
-  useEffect(() => {
-    const update = async () => {
-      const d = await fetchEvalDecisions();
-      setDecisions(d);
-    };
-    update();
-    const interval = setInterval(update, 10000);
-    return () => clearInterval(interval);
-  }, []);
 
   const gridCount = decisions.filter((d) => d.market_name.includes(":") && !d.market_name.startsWith("futures:")).length;
   const futuresCount = decisions.filter((d) => d.market_name.startsWith("futures:")).length;
