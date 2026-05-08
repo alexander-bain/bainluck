@@ -273,6 +273,8 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/test_tasks_wiring.py` | Missing/duplicate Celery beat schedule entries | Apr 2026 |
 | `tests/test_alembic.py` | Multiple heads, deleted migrations, orphaned revisions | May 7 |
 | `.github/workflows/ci.yml` (frontend-build) | ESLint + TypeScript errors blocking Vercel | May 7 |
+| `tests/integration/test_route_feed_scoring.py` | Feed scoring, ordering, event/futures data shape with seeded data | May 8 |
+| `tests/integration/test_route_events_seeded.py` | Event detail response shape, game-markets sections, related futures | May 8 |
 
 ---
 

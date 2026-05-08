@@ -1,5 +1,14 @@
 # Completed Features (Shipped)
 
+## May 8, 2026 (Parallel Session 2)
+
+### Bug Fixes + Test Expansion
+- ✅ **Weather API 500 fixed (RS-2)** — Missing `timedelta` import in `routes/weather.py` caused `NameError` on every weather endpoint call. All 6 weather endpoints were completely broken.
+- ✅ **iOS search category navigation (RS-10)** — Politics, Weather, Economics, Entertainment suggestions in search now navigate to their dedicated category views instead of triggering dead-end searches. Added "Categories" section to search empty state.
+- ✅ **iOS false offline detection (RS-4)** — `currentNetworkType()` in BugReportView never started the `NWPathMonitor`, so `currentPath` always returned "unsatisfied" → all bug reports showed `network: offline`. Fixed with async continuation + `pathUpdateHandler`.
+- ✅ **33 seeded-data contract tests** — Feed scoring/ordering/shape (16 tests) + event detail/game-markets/related-futures/history (17 tests). Integration test suite: 110 → 158 tests.
+- ✅ **Player award headshots (0f-4d)** — Verified already implemented at `events.py:3496-3515` (all-rosters expansion for the sport). Backlog updated.
+
 ## May 7-8, 2026
 
 ### Discover Feed Ranking Breakthrough

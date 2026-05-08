@@ -122,13 +122,15 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../MainTabView.swift`, `ios/.../Views/SidebarView.swift`
 **Parallel Safety:** Yellow
 
-### RS-2. Weather API Returns 500 on iOS (P1) — Bug #13
+### ~~RS-2. Weather API Returns 500 on iOS (P1) — Bug #13~~ FIXED (May 8)
 
-**Problem:** Weather page shows "Server error (500). Try again in a moment." on iPad. Could be iOS client sending different headers/params than web, or a transient backend issue.
+**Problem:** Weather page shows "Server error (500). Try again in a moment." on iPad.
 
-**Action:** Check Sentry for Weather endpoint 500s. If recurring, investigate whether iOS client hits a different weather sub-endpoint or sends malformed params.
+**Root cause:** Missing `timedelta` import in `weather.py` — `from datetime import datetime, timezone` was missing `timedelta`, causing `NameError` on every weather endpoint call (lines 81/90 used `timedelta(days=7)` and `timedelta(hours=6)`).
 
-**Files:** `backend/app/routes/weather.py`, `ios/.../Views/WeatherView.swift`
+**Fix:** Added `timedelta` to the import. One-line fix.
+
+**Files:** `backend/app/routes/weather.py`
 **Parallel Safety:** Yellow
 
 ### ~~RS-3. iOS Event Detail "Additional Markets" Broken (P1) — Bug #9~~ FIXED (May 8)
@@ -142,15 +144,15 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Components/MarketMapSection/`, `ios/.../Views/EventDetailView.swift`
 **Parallel Safety:** Yellow
 
-### RS-4. iOS False Offline Detection + ~~Preferences 401~~ (P2) — Bug #12 (401 FIXED May 8)
+### ~~RS-4. iOS False Offline Detection + ~~Preferences 401~~ (P2) — Bug #12~~ FIXED (May 8)
 
-**Problem:** App reports `network: offline` in bug report metadata, but user has working WiFi. Preferences page shows "Request failed (401)" — the Preferences endpoint requires auth but anonymous users get a hard error instead of a graceful fallback.
+**Problem:** App reports `network: offline` in bug report metadata, but user has working WiFi.
 
-**Two sub-issues:**
-1. **False offline:** `NWPathMonitor` or `URLSession` configuration incorrectly detecting network as offline. All 10 iPad bug reports from this session show `network: offline`.
-2. **Preferences 401:** Anonymous users hitting preferences endpoint should get default preferences, not a 401.
+**Root cause:** `currentNetworkType()` in `BugReportView.swift` created an `NWPathMonitor` but never called `start(queue:)`. The `currentPath` property on an unstarted monitor always returns `.unsatisfied` → "offline".
 
-**Files:** `ios/.../Utils/NetworkMonitor.swift`, `ios/.../Services/APIClient.swift`, `backend/app/routes/preferences.py`
+**Fix:** Replaced with async implementation using `withCheckedContinuation` and `pathUpdateHandler`. Monitor is started, fires once with the real path, then is cancelled. Preferences 401 was fixed separately on May 8.
+
+**Files:** `ios/.../Views/BugReportView.swift`
 **Parallel Safety:** Green
 
 ### RS-5. iPad Sign-In Failure (P2) — Bug #6
@@ -199,16 +201,13 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Views/EventDetailView.swift`, `ios/.../Components/WinProbChart.swift`
 **Parallel Safety:** Yellow
 
-### RS-10. iOS Search Suggests Non-Sport Categories (P2) — Bug #16
+### ~~RS-10. iOS Search Suggests Non-Sport Categories (P2) — Bug #16~~ FIXED (May 8)
 
 **Problem:** Search typeahead on iOS suggests "Politics" (and likely Weather, Economics, Entertainment) as search terms, but search only covers sports events/teams. Tapping "Politics" returns "No Results."
 
-**Fix options:**
-- **Option A:** Filter non-sport suggestions from typeahead
-- **Option B:** Make non-sport suggestions navigate to the category page instead of searching (better UX)
-- **Option C:** Expand search to cover futures markets (would find political markets)
+**Fix:** Option B implemented. Added a "Categories" section to the search empty state with Politics, Weather, Economics, and Entertainment items that navigate directly to their views via `path.append(Route.xxx)`. Removed those items from the "Explore" search shortcuts (kept Championship/MVP). Added `.politics` and `.entertainment` to the `navigationDestination` handler.
 
-**Files:** `ios/.../Views/SearchView.swift`, `backend/app/routes/events.py` (search endpoint)
+**Files:** `ios/.../Views/SearchView.swift`
 **Parallel Safety:** Green
 
 ### ~~RS-11. Baseball Inning Markets Misclassified as "Other" (P2) — Bug #5~~ FIXED (May 8)
@@ -295,13 +294,13 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Parallel Safety:** Green (no code changes)
 
-### 0f-4d. Player Award Headshots Missing
+### ~~0f-4d. Player Award Headshots Missing~~ ALREADY FIXED
 
 **Problem:** Award outcomes often reference players NOT on either team's roster (e.g., Quentin Grimes for 6MOY). The headshot lookup only checks the two event teams' rosters.
 
-**Fix:** Either look up ALL rosters for the sport, or use a separate player image service.
+**Fix:** Already implemented at `events.py` lines 3496-3515: the `get_related_futures` endpoint supplements `player_metadata` with ALL rosters for the sport (`select(Team.roster_players).where(Team.sport_id == event.sport_id)`). Guard: only if `len(player_metadata) < 500`.
 
-**Files:** `backend/app/routes/events.py` (player_metadata scope), `frontend/components/RelatedFutures.tsx` (PlayerHeadshot component)
+**Files:** `backend/app/routes/events.py` (player_metadata scope)
 **Parallel Safety:** Green
 
 ### 0f-4e. Slow Headshot Loading (~60s)
@@ -460,15 +459,15 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 **Files:** `backend/app/config/league_configs.py`, `backend/app/utils/tournament_stages.py`, `backend/app/routes/playoffs.py`, `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
-### 6. API Route Contract Tests — Expand Coverage
+### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-110 contract tests shipped (April 21). Expand to test with seeded data (not just empty DB):
-- Feed: events with probabilities, scoring verification
-- Events: detail response shape with full data
+~~110~~ 158 contract tests shipped. Seeded-data tests added (May 8):
+- ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
+- ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
 - Related futures: market grouping, dedup, gender filtering
 
-**Files:** `tests/integration/` (existing files)
+**Files:** `tests/integration/test_route_feed_scoring.py` (new), `tests/integration/test_route_events_seeded.py` (new)
 **Parallel Safety:** Green
 
 ---
