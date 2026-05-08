@@ -84,13 +84,27 @@ def matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
     lower = _normalize_match_name(name)
     if lower in ground_truth:
         return True
-    return any(lower in gt or gt in lower for gt in ground_truth)
+    return any(_names_match(lower, gt) for gt in ground_truth)
 
 
 def _names_match(a: str, b: str) -> bool:
     left = _normalize_match_name(a)
     right = _normalize_match_name(b)
-    return bool(left and right and (left in right or right in left))
+    if not left or not right:
+        return False
+    if left in right or right in left:
+        return True
+
+    stopwords = {
+        "will", "the", "to", "of", "in", "on", "by", "at", "for", "and",
+        "or", "win", "wins", "winner", "advance", "make", "reach",
+    }
+    left_tokens = {token for token in left.split() if token not in stopwords}
+    right_tokens = {token for token in right.split() if token not in stopwords}
+    if len(left_tokens) < 3 or len(right_tokens) < 3:
+        return False
+    overlap = left_tokens & right_tokens
+    return len(overlap) >= 3 and len(overlap) / min(len(left_tokens), len(right_tokens)) >= 0.6
 
 
 def _normalize_match_name(name: str) -> str:

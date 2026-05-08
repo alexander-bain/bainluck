@@ -148,7 +148,7 @@ _COMPELLING_RE = re.compile(
     r"bitcoin|btc|ethereum|eth|crypto|"
     r"taylor swift|beyonce|drake|kardashian|musk|sam altman|pope|nobel|"
     r"super bowl|world cup|champions league|masters|olympics|"
-    r"nba finals?|wnba finals?|conference finals?|stanley cup|world series"
+    r"nba finals?|wnba finals?|stanley cup|world series"
     r")\b",
     re.IGNORECASE,
 )
@@ -310,6 +310,9 @@ def _story_key(name: str, category: str) -> str | None:
 
     if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
         return "story:oil"
+
+    if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
+        return "story:basketball_finals_path"
 
     if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):
         return "story:ai"
@@ -914,6 +917,7 @@ def diversify_quality_families(
         "story:drake_iceman": 1,
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,
+        "story:basketball_finals_path": 4,
     }
 
     for item in sorted_items:

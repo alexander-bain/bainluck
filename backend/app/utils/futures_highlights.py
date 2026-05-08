@@ -164,9 +164,8 @@ SPORTS_POSTSEASON_STORY_BOOST = 55
 _SPORTS_POSTSEASON_STORY_RE = re.compile(
     r"(?=.*\b(advance|reach|make|win|winner)\b)"
     r"(?=.*\b("
-    r"nba finals?|wnba finals?|conference finals?|nba playoffs?|wnba playoffs?|"
-    r"stanley cup|world series|super bowl|college football playoff|"
-    r"nfl playoffs?|mlb playoffs?|nhl playoffs?"
+    r"nba finals?|wnba finals?|"
+    r"stanley cup|world series|super bowl|college football playoff"
     r")\b)",
     re.IGNORECASE,
 )

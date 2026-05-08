@@ -111,15 +111,9 @@ _SPORTS_POSTSEASON_SQL_FILTER = and_(
     or_(
         FuturesMarket.name.ilike("%NBA Finals%"),
         FuturesMarket.name.ilike("%WNBA Finals%"),
-        FuturesMarket.name.ilike("%Conference Finals%"),
-        FuturesMarket.name.ilike("%NBA Playoffs%"),
-        FuturesMarket.name.ilike("%WNBA Playoffs%"),
         FuturesMarket.name.ilike("%Stanley Cup%"),
         FuturesMarket.name.ilike("%World Series%"),
         FuturesMarket.name.ilike("%Super Bowl%"),
-        FuturesMarket.name.ilike("%NFL Playoffs%"),
-        FuturesMarket.name.ilike("%MLB Playoffs%"),
-        FuturesMarket.name.ilike("%NHL Playoffs%"),
     ),
     or_(
         FuturesMarket.name.ilike("%advance%"),

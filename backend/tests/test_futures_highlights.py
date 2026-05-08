@@ -61,6 +61,20 @@ class TestComputeFuturesHighlight:
         assert result.score >= 90
         assert "sports_postseason_story" in result.reasons
 
+    def test_conference_finals_path_does_not_get_championship_boost(self):
+        """The postseason boost is narrow enough not to flood Discover with every round."""
+        now = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
+        result = compute_futures_highlight(
+            market_tier=2,
+            sport_category="basketball",
+            resolution_date=now + timedelta(days=16),
+            now=now,
+            market_name="Will Boston Celtics advance to the Conference Finals in the 2026 NBA Playoffs?",
+        )
+
+        assert "sports_postseason_story" not in result.reasons
+        assert result.score < 80
+
     def test_major_movement_detected(self):
         """Large 24h probability changes are flagged."""
         outcomes = [

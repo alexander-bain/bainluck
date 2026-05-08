@@ -214,6 +214,19 @@ class TestMarketQualityClassification:
         assert monthly_high.story_key == "story:oil"
         assert daily_direction.story_key == "story:oil"
 
+    def test_story_key_groups_basketball_finals_path_variants(self):
+        win = classify_market_quality(
+            "Will the Boston Celtics win the 2026 NBA Finals?",
+            sport_category="basketball",
+        )
+        advance = classify_market_quality(
+            "Will Boston Celtics advance to the 2026 NBA Finals?",
+            sport_category="basketball",
+        )
+
+        assert win.story_key == "story:basketball_finals_path"
+        assert advance.story_key == "story:basketball_finals_path"
+
     def test_numeric_outcome_ladder_detected(self):
         quality = classify_market_quality(
             "What will CPI be in June?",
@@ -403,6 +416,37 @@ class TestFeedQualityDebug:
 
         assert tokens[:3] == ["boston", "celtics", "nba"]
         assert "win" not in tokens
+
+    def test_ground_truth_matching_treats_win_and_advance_as_same_finals_story(self):
+        debug = build_feed_quality_debug(
+            [
+                {
+                    "type": "futures",
+                    "score": 100,
+                    "headline": "No side up 42.5 points from opening",
+                    "reason": "No side shifted from opening",
+                    "data": {
+                        "id": 13805266,
+                        "name": "Will Boston Celtics advance to the 2026 NBA Finals?",
+                        "llm_sport_category": "basketball",
+                        "source": "polymarket",
+                        "top_outcomes": [{"name": "No", "probability": 0.58}],
+                    },
+                }
+            ],
+            ground_truth_items=[
+                {
+                    "source": "polymarket",
+                    "category": "trending",
+                    "name": "Will the Boston Celtics win the 2026 NBA Finals?",
+                    "probability": "Yes 42%, No 58%",
+                }
+            ],
+            top_n=1,
+        )
+
+        assert debug["summary"]["ground_truth_hit_count_50"] == 1
+        assert debug["missing_ground_truth"] == []
 
     def test_missing_ground_truth_db_trace_explains_no_match(self):
         trace = summarize_missing_ground_truth_db_trace(
