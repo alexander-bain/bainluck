@@ -72,6 +72,28 @@ interface MissingGroundTruthItem {
   story_key: string | null;
   triage_bucket: string;
   recommended_action: string;
+  db_trace?: MissingDbTrace;
+}
+
+interface MissingDbMatch {
+  id: number;
+  name: string;
+  source: string;
+  status: string;
+  category: string | null;
+  market_tier: number | null;
+  volume_24h: number | null;
+  resolution_date: string | null;
+  has_hook: boolean;
+  has_image: boolean;
+  blocked_reasons: string[];
+}
+
+interface MissingDbTrace {
+  trace_status: string;
+  trace_summary: string;
+  recommended_action: string;
+  matches: MissingDbMatch[];
 }
 
 interface MissingGroundTruthSummary {
@@ -505,6 +527,49 @@ export default function DiscoverQualityPage() {
                         {item.reasons.slice(0, 4).map((reason) => (
                           <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
                         ))}
+                      </div>
+                    )}
+                    {item.db_trace && (
+                      <div className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs font-medium text-text-primary">
+                            DB trace: {formatTargetName(item.db_trace.trace_status)}
+                          </div>
+                          <span className="text-xs text-text-muted">
+                            {item.db_trace.matches.length} match{item.db_trace.matches.length === 1 ? "" : "es"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-text-secondary mt-1">
+                          {item.db_trace.trace_summary}
+                        </div>
+                        <div className="text-xs text-text-muted mt-1">
+                          {item.db_trace.recommended_action}
+                        </div>
+                        {item.db_trace.matches.length > 0 && (
+                          <div className="space-y-2 mt-3">
+                            {item.db_trace.matches.slice(0, 3).map((match) => (
+                              <div key={match.id} className="text-xs">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-text-primary truncate">{match.name}</span>
+                                  <span className="text-text-muted shrink-0">#{match.id}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  <StatusPill tone="muted">{match.source}</StatusPill>
+                                  <StatusPill tone={match.status === "open" ? "ok" : "warn"}>{match.status}</StatusPill>
+                                  {match.category && <StatusPill tone="muted">{match.category}</StatusPill>}
+                                  {match.volume_24h !== null && (
+                                    <StatusPill tone="muted">{`24h $${Math.round(match.volume_24h).toLocaleString()}`}</StatusPill>
+                                  )}
+                                  {match.has_hook && <StatusPill tone="ok">hook</StatusPill>}
+                                  {match.has_image && <StatusPill tone="ok">image</StatusPill>}
+                                  {match.blocked_reasons.map((reason) => (
+                                    <StatusPill key={reason} tone="warn">{formatTargetName(reason)}</StatusPill>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

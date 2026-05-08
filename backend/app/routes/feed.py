@@ -13,6 +13,7 @@ import hashlib
 import json as _json_module
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -47,6 +48,7 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
 from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_items
+from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -63,6 +65,25 @@ router = APIRouter()
 def _check_admin_secret(secret: str | None) -> bool:
     expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
     return bool(expected and secret == expected)
+
+
+_TRACE_STOPWORDS = {
+    "will", "what", "when", "which", "with", "from", "that", "this",
+    "before", "after", "market", "winner", "yes", "no", "the", "and",
+}
+
+
+def _trace_search_tokens(name: str) -> list[str]:
+    tokens = [
+        t.lower()
+        for t in re.findall(r"[A-Za-z][A-Za-z0-9']{2,}", name)
+        if t.lower() not in _TRACE_STOPWORDS
+    ]
+    deduped: list[str] = []
+    for token in tokens:
+        if token not in deduped:
+            deduped.append(token)
+    return deduped[:4]
 
 
 def _ei_label(score: int) -> str:
@@ -327,6 +348,7 @@ async def get_feed(
             ground_truth_items=ground_truth_items,
             top_n=min(20, len(paginated)),
         )
+        await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
 
     # Remove internal sort/debug keys
     for item in paginated:
@@ -373,6 +395,72 @@ async def get_feed(
             pass
 
     return response
+
+
+async def _attach_missing_ground_truth_traces(
+    db: AsyncSession,
+    missing_items: list[dict],
+    now: datetime,
+) -> None:
+    """Attach lightweight DB root-cause traces to missing ground-truth rows."""
+    for item in missing_items:
+        if item.get("triage_bucket") not in {
+            "candidate_recall_gap",
+            "ranking_too_low",
+            "quality_filter_too_harsh",
+        }:
+            item["db_trace"] = summarize_missing_ground_truth_db_trace(item, [], now=now)
+            continue
+
+        tokens = _trace_search_tokens(item.get("name") or "")
+        clauses = []
+        if item.get("name"):
+            clauses.append(FuturesMarket.name.ilike(f"%{item['name'][:120]}%"))
+        if tokens:
+            clauses.append(and_(*[FuturesMarket.name.ilike(f"%{token}%") for token in tokens[:3]]))
+        if not clauses:
+            item["db_trace"] = summarize_missing_ground_truth_db_trace(item, [], now=now)
+            continue
+
+        result = await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.source,
+                FuturesMarket.status,
+                FuturesMarket.event_id,
+                FuturesMarket.llm_sport_category,
+                FuturesMarket.market_tier,
+                FuturesMarket.volume_24h,
+                FuturesMarket.resolution_date,
+                FuturesMarket.hook_description,
+                FuturesMarket.image_url,
+            )
+            .where(or_(*clauses))
+            .order_by(
+                FuturesMarket.status.asc(),
+                FuturesMarket.volume_24h.desc().nullslast(),
+                FuturesMarket.updated_at.desc().nullslast(),
+            )
+            .limit(5)
+        )
+        matches = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "source": row.source,
+                "status": row.status,
+                "event_id": row.event_id,
+                "llm_sport_category": row.llm_sport_category,
+                "market_tier": row.market_tier,
+                "volume_24h": float(row.volume_24h) if row.volume_24h is not None else None,
+                "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
+                "hook_description": row.hook_description,
+                "image_url": row.image_url,
+            }
+            for row in result.all()
+        ]
+        item["db_trace"] = summarize_missing_ground_truth_db_trace(item, matches, now=now)
 
 
 async def _load_personalization_context(

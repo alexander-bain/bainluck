@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +45,6 @@ _HIGH_VALUE_ARCHETYPES = {
     "big_name",
     "absurd_but_real",
 }
-
-
 def load_default_ground_truth_items() -> list[dict[str, Any]]:
     """Load local curated Kalshi/Polymarket examples when present."""
     root = Path(__file__).resolve().parents[2]
@@ -216,6 +215,90 @@ def find_missing_ground_truth_items(
             break
 
     return missing
+
+
+def summarize_missing_ground_truth_db_trace(
+    missing_item: dict[str, Any],
+    matches: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Explain whether a missing curated story exists in stored markets."""
+    now = now or datetime.now(timezone.utc)
+    if not matches:
+        return {
+            "trace_status": "no_db_match",
+            "trace_summary": "No similar FuturesMarket row found by name search.",
+            "recommended_action": "Check ingestion/source naming before tuning ranking.",
+            "matches": [],
+        }
+
+    summarized_matches: list[dict[str, Any]] = []
+    eligible_matches: list[dict[str, Any]] = []
+    blocked_reasons: Counter[str] = Counter()
+
+    for match in matches:
+        reasons: list[str] = []
+        name = match.get("name") or ""
+        resolution = match.get("resolution_date")
+        if isinstance(resolution, str):
+            try:
+                resolution = datetime.fromisoformat(resolution.replace("Z", "+00:00"))
+            except ValueError:
+                resolution = None
+        if resolution and resolution.tzinfo is None:
+            resolution = resolution.replace(tzinfo=timezone.utc)
+
+        if match.get("status") != "open":
+            reasons.append("not_open")
+        if match.get("event_id") is not None:
+            reasons.append("event_linked_game_market")
+        if resolution and resolution < now:
+            reasons.append("past_resolution")
+        if re.search(r"\bvs\.?\b", name, re.IGNORECASE):
+            reasons.append("game_name_filtered")
+
+        summarized = {
+            "id": match.get("id"),
+            "name": name,
+            "source": match.get("source"),
+            "status": match.get("status"),
+            "category": match.get("llm_sport_category"),
+            "market_tier": match.get("market_tier"),
+            "volume_24h": match.get("volume_24h"),
+            "resolution_date": match.get("resolution_date"),
+            "has_hook": bool(match.get("hook_description")),
+            "has_image": bool(match.get("image_url")),
+            "blocked_reasons": reasons,
+        }
+        summarized_matches.append(summarized)
+
+        if reasons:
+            blocked_reasons.update(reasons)
+        else:
+            eligible_matches.append(summarized)
+
+    if eligible_matches:
+        return {
+            "trace_status": "eligible_but_not_top_50",
+            "trace_summary": "A similar open market exists and appears feed-eligible, but did not rank into this diagnostic page.",
+            "recommended_action": "Inspect score inputs, canonical deduping, and candidate-pool ordering for the matched market.",
+            "matches": summarized_matches,
+        }
+
+    top_reason = blocked_reasons.most_common(1)[0][0] if blocked_reasons else "unknown_blocker"
+    action_by_reason = {
+        "not_open": "No ranking fix; source marks the market non-open.",
+        "event_linked_game_market": "No Discover ranking fix; this belongs in game/event market surfaces.",
+        "past_resolution": "No ranking fix; stale/resolved market should stay out of Discover.",
+        "game_name_filtered": "No Discover ranking fix unless game-market cards become a deliberate feed format.",
+    }
+    return {
+        "trace_status": f"blocked:{top_reason}",
+        "trace_summary": f"Similar market found, but blocked by {top_reason}.",
+        "recommended_action": action_by_reason.get(top_reason, "Inspect the matched market eligibility flags."),
+        "matches": summarized_matches,
+    }
 
 
 def diagnose_feed_items(

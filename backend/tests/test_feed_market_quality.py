@@ -13,6 +13,7 @@ from app.utils.feed_market_quality import (
     quality_score_adjustment,
 )
 from app.utils.feed_quality_debug import build_feed_quality_debug
+from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.futures_highlights import compute_futures_highlight
 
 
@@ -348,6 +349,55 @@ class TestFeedQualityDebug:
             "candidate_recall_gap": 1,
             "game_market_noise": 1,
         }
+
+    def test_missing_ground_truth_db_trace_explains_no_match(self):
+        trace = summarize_missing_ground_truth_db_trace(
+            {"name": "Will OpenAI announce GPT-6 in 2026?"},
+            [],
+        )
+
+        assert trace["trace_status"] == "no_db_match"
+        assert "ingestion" in trace["recommended_action"].lower()
+
+    def test_missing_ground_truth_db_trace_explains_eligible_match(self):
+        trace = summarize_missing_ground_truth_db_trace(
+            {"name": "Will OpenAI announce GPT-6 in 2026?"},
+            [
+                {
+                    "id": 123,
+                    "name": "Will OpenAI announce GPT-6 in 2026?",
+                    "source": "kalshi",
+                    "status": "open",
+                    "event_id": None,
+                    "llm_sport_category": "tech",
+                    "volume_24h": 2000,
+                    "resolution_date": None,
+                }
+            ],
+        )
+
+        assert trace["trace_status"] == "eligible_but_not_top_50"
+        assert trace["matches"][0]["blocked_reasons"] == []
+
+    def test_missing_ground_truth_db_trace_explains_game_market_block(self):
+        trace = summarize_missing_ground_truth_db_trace(
+            {"name": "Pistons vs. Magic"},
+            [
+                {
+                    "id": 124,
+                    "name": "Pistons vs. Magic",
+                    "source": "polymarket",
+                    "status": "open",
+                    "event_id": 55,
+                    "llm_sport_category": "basketball",
+                    "volume_24h": 2000,
+                    "resolution_date": None,
+                }
+            ],
+        )
+
+        assert trace["trace_status"] == "blocked:event_linked_game_market"
+        assert "event_linked_game_market" in trace["matches"][0]["blocked_reasons"]
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(
