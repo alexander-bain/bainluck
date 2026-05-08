@@ -40,3 +40,13 @@ def test_futures_headline_falls_back_to_leader_when_no_signal_detail():
     )
 
     assert headline == "Jane Doe leads at 42%"
+
+
+def test_futures_headline_formats_binary_side_naturally():
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="No",
+        top_surprise_change=0.3,
+    )
+
+    assert headline == "No side up 30.0 points from opening"

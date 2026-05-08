@@ -9,6 +9,13 @@ repeating scores, odds, or team names visible on the card.
 from typing import Optional
 
 
+def _side_label(name: str) -> str:
+    """Make binary Yes/No outcome labels read naturally in movement text."""
+    if name.strip().lower() in {"yes", "no"}:
+        return f"{name.strip()} side"
+    return name
+
+
 def generate_event_reason(
     home_team: str,
     away_team: str,
@@ -162,7 +169,7 @@ def generate_futures_reason(
         if top_mover_name and top_mover_change is not None:
             direction = "up" if top_mover_change > 0 else "down"
             pct = round(abs(top_mover_change) * 100, 1)
-            return f"{top_mover_name} moved {direction} {pct}% in 24h for {market_name}"
+            return f"{_side_label(top_mover_name)} moved {direction} {pct}% in 24h for {market_name}"
         return f"Big odds movement in {market_name}"
 
     # Surprise vs opening
@@ -170,7 +177,7 @@ def generate_futures_reason(
         if top_surprise_name and top_surprise_change is not None:
             direction = "up" if top_surprise_change > 0 else "down"
             pct = round(abs(top_surprise_change) * 100, 1)
-            return f"{top_surprise_name} moved {direction} {pct} points from opening in {market_name}"
+            return f"{_side_label(top_surprise_name)} moved {direction} {pct} points from opening in {market_name}"
         return f"Big shift from opening in {market_name}"
 
     # Rankings shakeup
@@ -182,14 +189,14 @@ def generate_futures_reason(
         if top_mover_name and top_mover_change is not None:
             direction = "up" if top_mover_change > 0 else "down"
             pct = round(abs(top_mover_change) * 100, 1)
-            return f"{top_mover_name} odds shifted {direction} {pct}% for {market_name}"
+            return f"{_side_label(top_mover_name)} odds shifted {direction} {pct}% for {market_name}"
         return f"Odds shifting in {market_name}"
 
     if "moderate_surprise" in reasons:
         if top_surprise_name and top_surprise_change is not None:
             direction = "up" if top_surprise_change > 0 else "down"
             pct = round(abs(top_surprise_change) * 100, 1)
-            return f"{top_surprise_name} shifted {direction} {pct} points from opening in {market_name}"
+            return f"{_side_label(top_surprise_name)} shifted {direction} {pct} points from opening in {market_name}"
         return f"Odds shifted from opening in {market_name}"
 
     # Resolving soon
@@ -239,22 +246,22 @@ def generate_futures_headline(
 
     if "major_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
         direction = "up" if top_mover_change > 0 else "down"
-        return f"{top_mover_name} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
+        return f"{_side_label(top_mover_name)} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
 
     if "major_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
         direction = "up" if top_surprise_change > 0 else "down"
-        return f"{top_surprise_name} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
+        return f"{_side_label(top_surprise_name)} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
 
     if "rank_shakeup" in reasons:
         return "Multiple ranking changes"
 
     if "moderate_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
         direction = "up" if top_mover_change > 0 else "down"
-        return f"{top_mover_name} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
+        return f"{_side_label(top_mover_name)} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
 
     if "moderate_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
         direction = "up" if top_surprise_change > 0 else "down"
-        return f"{top_surprise_name} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
+        return f"{_side_label(top_surprise_name)} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
