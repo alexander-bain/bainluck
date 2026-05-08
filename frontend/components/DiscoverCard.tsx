@@ -204,7 +204,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   const trending = isTrending(item);
   const analytics = getDiscoverItemAnalytics(item);
 
-  const trackAction = useCallback((action: "detail_click" | "like" | "unlike") => {
+  const trackAction = useCallback((action: "detail_click" | "like" | "unlike" | "share") => {
     trackEvent("feed_card_action", {
       action,
       ...analytics,
@@ -242,9 +242,9 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
       )}
 
       <div style={cardStyle}>
-        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} />}
-        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} />}
-        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} onDetailClick={() => trackAction("detail_click")} />}
+        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
       </div>
     </div>
   );
@@ -352,7 +352,7 @@ function TrendBadge() {
   );
 }
 
-function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId }: {
+function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare }: {
   liked: boolean;
   setLiked: (v: boolean) => void;
   shareUrl: string;
@@ -360,6 +360,7 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
   shareText?: string;
   contentType: ShareContentType;
   itemId: number | string;
+  onShare?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -379,6 +380,7 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
       try {
         await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
         trackShare("native");
+        onShare?.();
         return;
       } catch {
         return;
@@ -391,6 +393,7 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
       trackShare("clipboard");
+      onShare?.();
     }
   };
 
@@ -416,8 +419,8 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
 
 // ── Event Card ──
 
-function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick }: {
-  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void;
+function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare }: {
+  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const homeColor = data.home_team_data?.primary_color || "#374151";
@@ -518,6 +521,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
           shareText={shareText}
           contentType="event"
           itemId={data.id}
+          onShare={onShare}
         />
       </div>
     </div>
@@ -526,8 +530,8 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
 
 // ── Futures Card ──
 
-function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick }: {
-  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void;
+function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare }: {
+  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const catStyle = getCat(data.llm_sport_category);
@@ -605,6 +609,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
           shareText={shareText}
           contentType="futures"
           itemId={data.id}
+          onShare={onShare}
         />
       </div>
     </div>
@@ -613,8 +618,8 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
 
 // ── Tournament Card ──
 
-function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick }: {
-  data: FeedTournamentData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; onDetailClick?: () => void;
+function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick, onShare }: {
+  data: FeedTournamentData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; onDetailClick?: () => void; onShare?: () => void;
 }) {
   const leader = data.golfers?.[0];
   const leaderProbability = formatShareProbability(leader?.probability);
@@ -647,6 +652,7 @@ function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick }: {
           shareText={shareText}
           contentType="grid"
           itemId={data.name}
+          onShare={onShare}
         />
       </div>
     </div>

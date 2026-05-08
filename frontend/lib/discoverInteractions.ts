@@ -19,7 +19,7 @@ export interface DiscoverItemAnalytics {
   personalized?: boolean;
 }
 
-interface ProfileBucket {
+export interface ProfileBucket {
   score: number;
   impressions: number;
   clicks: number;
@@ -29,7 +29,7 @@ interface ProfileBucket {
   last_interaction_at: string;
 }
 
-interface DiscoverProfile {
+export interface DiscoverProfile {
   categories: Record<string, ProfileBucket>;
   updated_at: string;
 }
@@ -48,6 +48,10 @@ const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
 
 function normalizeCategory(category: string | null | undefined): string {
   return (category || "other").toLowerCase();
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 export function getDiscoverItemAnalytics(item: FeedItem): DiscoverItemAnalytics {
@@ -124,7 +128,48 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
     profile.categories[key] = bucket;
     profile.updated_at = now;
     localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+    if (action !== "impression") {
+      window.dispatchEvent(new CustomEvent("discover-profile-updated"));
+    }
   } catch {
     // Interaction profiling is opportunistic; analytics should never break the feed.
   }
+}
+
+export function readDiscoverInteractionProfile(): DiscoverProfile | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DiscoverProfile;
+    return parsed && parsed.categories ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getDiscoverCategoryAdjustment(
+  profile: DiscoverProfile | null,
+  category: string
+): number {
+  const bucket = profile?.categories[normalizeCategory(category)];
+  if (!bucket) return 0;
+
+  const engagement = bucket.clicks + bucket.likes * 1.5 + bucket.shares * 2 + bucket.dismisses;
+  if (engagement < 2) return 0;
+
+  return clamp(bucket.score, -8, 12);
+}
+
+export function getDiscoverPersonalizationTrace(
+  profile: DiscoverProfile | null,
+  category: string
+): string | undefined {
+  const key = normalizeCategory(category);
+  const bucket = profile?.categories[key];
+  const adjustment = getDiscoverCategoryAdjustment(profile, key);
+  if (!bucket || adjustment === 0) return undefined;
+
+  return `${key}: ${adjustment > 0 ? "+" : ""}${adjustment.toFixed(1)} from ${bucket.clicks} clicks, ${bucket.likes} likes, ${bucket.shares} shares, ${bucket.dismisses} dismisses`;
 }

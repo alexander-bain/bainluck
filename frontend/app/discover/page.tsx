@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
@@ -8,7 +8,14 @@ import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
-import { getDiscoverItemAnalytics, recordDiscoverInteraction } from "@/lib/discoverInteractions";
+import {
+  getDiscoverCategoryAdjustment,
+  getDiscoverItemAnalytics,
+  getDiscoverPersonalizationTrace,
+  readDiscoverInteractionProfile,
+  recordDiscoverInteraction,
+  type DiscoverProfile,
+} from "@/lib/discoverInteractions";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -49,6 +56,42 @@ function getItemCategory(item: FeedItem): string {
 function getGroupedAnalytics(groupedItem: DiscoverGroupedItem) {
   const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
   return item ? getDiscoverItemAnalytics(item) : null;
+}
+
+function applyLocalPersonalization(
+  items: DiscoverGroupedItem[],
+  profile: DiscoverProfile | null
+): DiscoverGroupedItem[] {
+  if (!profile || items.length <= 6) return items;
+
+  const pinnedLead = items.slice(0, 3);
+  const rest = items.slice(3);
+  const result: DiscoverGroupedItem[] = [...pinnedLead];
+  const windowSize = 5;
+
+  for (let start = 0; start < rest.length; start += windowSize) {
+    const window = rest.slice(start, start + windowSize);
+    const ranked = window
+      .map((groupedItem, idx) => {
+        const analytics = getGroupedAnalytics(groupedItem);
+        const adjustment = analytics
+          ? getDiscoverCategoryAdjustment(profile, analytics.category)
+          : 0;
+        return {
+          groupedItem,
+          idx,
+          adjustedScore: (analytics?.score ?? 0) + adjustment,
+        };
+      })
+      .sort((a, b) => {
+        const scoreDiff = b.adjustedScore - a.adjustedScore;
+        return Math.abs(scoreDiff) > 0.001 ? scoreDiff : a.idx - b.idx;
+      })
+      .map((entry) => entry.groupedItem);
+    result.push(...ranked);
+  }
+
+  return result;
 }
 
 function isStale(item: FeedItem): boolean {
@@ -199,11 +242,13 @@ const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "so
 function FeedItemShell({
   groupedItem,
   positionIndex,
+  personalizationTrace,
   children,
 }: {
   groupedItem: DiscoverGroupedItem;
   positionIndex: number;
-  children: React.ReactNode;
+  personalizationTrace?: string;
+  children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const tracked = useRef(false);
@@ -232,7 +277,11 @@ function FeedItemShell({
     return () => observer.disconnect();
   }, [analytics, positionIndex]);
 
-  return <div ref={ref}>{children}</div>;
+  return (
+    <div ref={ref} data-personalization-trace={personalizationTrace}>
+      {children}
+    </div>
+  );
 }
 
 export default function DiscoverPage() {
@@ -249,16 +298,24 @@ export default function DiscoverPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [pagesLoaded, setPagesLoaded] = useState(0);
+  const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDismissed(getDismissed());
+    setInteractionProfile(readDiscoverInteractionProfile());
     if (typeof window !== "undefined" && !localStorage.getItem("discover_onboarded")) {
       setShowOnboarding(true);
     }
     const today = new Date().toISOString().slice(0, 10);
     const stored = localStorage.getItem(`daily_guesses_${today}`);
     if (stored) setDailyGuesses(parseInt(stored, 10));
+  }, []);
+
+  useEffect(() => {
+    const refreshProfile = () => setInteractionProfile(readDiscoverInteractionProfile());
+    window.addEventListener("discover-profile-updated", refreshProfile);
+    return () => window.removeEventListener("discover-profile-updated", refreshProfile);
   }, []);
 
   // Load more pages from the API when client-side items run out
@@ -329,8 +386,9 @@ export default function DiscoverPage() {
       : categoryFilter === "sports"
       ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
       : filtered.filter((i) => getItemCategory(i) === categoryFilter);
-    return groupRelatedMarkets(catFiltered);
-  }, [data, allItems, dismissed, categoryFilter]);
+    const grouped = groupRelatedMarkets(catFiltered);
+    return applyLocalPersonalization(grouped, interactionProfile);
+  }, [data, allItems, dismissed, categoryFilter, interactionProfile]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
 
@@ -467,6 +525,9 @@ export default function DiscoverPage() {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
             const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
             const analytics = getGroupedAnalytics(gi);
+            const personalizationTrace = analytics
+              ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
+              : undefined;
 
             const handleTrackedDismiss = gi.type === "single"
               ? () => {
@@ -478,6 +539,7 @@ export default function DiscoverPage() {
                       surface: "discover",
                     });
                     recordDiscoverInteraction(analytics.category, "dismiss");
+                    setInteractionProfile(readDiscoverInteractionProfile());
                   }
                   handleDismiss(getItemId(gi.item!));
                 }
@@ -485,7 +547,7 @@ export default function DiscoverPage() {
 
             return (
               <div key={key} className="break-inside-avoid mb-4">
-                <FeedItemShell groupedItem={gi} positionIndex={idx}>
+                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={() => {
                       const today = new Date().toISOString().slice(0, 10);
