@@ -9,7 +9,8 @@
 - ✅ **Compelling-topic boosts** — Health outbreak, AI/tech, geopolitics, elections, Fed/economics, entertainment, sports personnel, and other public-interest markets get priority over mechanically active but boring markets.
 - ✅ **Deterministic Discover explanations** — Futures cards now generate specific headlines from existing outcome data: named movers, opening-probability surprises, leader changes, and source disagreement. This moved production `explanation-coverage@20` from **4/20 → 20/20** without relying on OpenAI hook generation.
 - ✅ **Curated first-page mixer** — Discover mode now applies first-page category caps after scoring so politics/geopolitics/economics cannot swallow the whole opening scroll. The mixer reorders, but does not drop cards or mutate scores.
-- ✅ **Positive quality eval metrics** — Feed audit now reports positive archetype coverage (`world_event`, `tech_frontier`, `macro_signal`, `culture_moment`, `health_weather_risk`, `sports_story`), category spread/max concentration, and archetype distribution.
+- ✅ **Archetype/story mixing** — First-page mixer now also caps editorial archetypes and story families, with a required-texture pass that can pull strong tech/culture/weather/sports/weird cards into the first page when available.
+- ✅ **Positive quality eval metrics** — Feed audit now reports positive archetype coverage (`world_event`, `tech_frontier`, `macro_signal`, `culture_moment`, `health_weather_risk`, `sports_story`), strict variety targets, category spread/max concentration, and archetype distribution.
 - ✅ **Bounded hook enrichment** — Reversed unsafe backlog-scale hook behavior. `enrich_market_hooks` now targets only feed-shaped candidates, runs `limit=100` every 6h, and manual admin trigger is capped at 250. No more plan to spend API calls on ~56K open markets.
 - ✅ **Discover quality audit** — `backend/scripts/audit_feed_quality.py` reports precision metrics: boring rate, ladder/bucket rate, duplicate family rate, explanation coverage, ground-truth hit rate, category distribution, and top-card debug reasons.
 - Backend: `routes/feed.py`, `utils/feed_market_quality.py`, `utils/feed_reasons.py`, `tasks/enrich_markets.py`, `tasks/__init__.py`, `routes/admin.py`, `scripts/audit_feed_quality.py`
@@ -30,6 +31,24 @@
 - ✅ **62 TypeScript errors fixed** — Unblocked Vercel deploys (20+ failed builds).
 - ✅ **Vercel ESLint fix** — Hooks-after-early-return in admin pages.
 - ✅ **NHL StatPal unicode fix** — "Montréal" now matches "Montreal" via diacritics stripping.
+
+### iOS Parity: Politics + Entertainment Native Rewrites
+- ✅ **PoliticsView.swift** (410 lines) — Bar-race hero with R/D/I party badges and 7d change chips, chamber control cards, senate state map grid (11-col geographic layout), cross-source spotlight cards, themed market card grids
+- ✅ **EntertainmentView.swift** (450 lines) — Trending hero cards with kind-specific bodies, Spotify Race horse-race (outcomes as contenders), music/movies/TV sub-sections, cultural moments feed with yes/no bars, tech & culture section
+- ✅ **CategoryModels.swift** — Full decode support for new API shapes: PoliticsCandidate with party/dual-source/history, ChamberControl, CrossSourceMatch, EntMarketRow with kind/volume/image/hook, EntThresholdGroup
+
+### Entertainment Fixes — Spotify, Heatmaps, TMDB
+- ✅ **Spotify Race fixed** — Shows outcomes within a single market as horse-race contenders (not separate markets as rows)
+- ✅ **RT heatmap** — Fed-style grid component, grouping regex fixed for actual Kalshi format
+- ✅ **Billboard heatmap** — Same grouping logic, renders when threshold groups exist
+- ✅ **TMDB poster enrichment** — `useTMDBPoster` hook auto-fetches movie posters for rt/boxoffice cards
+- ✅ **Kind classification tightened** — Removed greedy `kxrt` prefix, Spotify kind limited to chart-race patterns
+- ✅ **Artist streaming direction** — Parses ↑/↓ from market question, shows colored indicators
+
+### Presidential Hero Fix — French Election Bug
+- ✅ **Non-US election filter** — `_is_headline_market` requires US-specific keywords, excludes French/UK/Canadian/etc. markets
+- ✅ **VP market exclusion** — "Democratic VP nominee" no longer matches as presidential headline
+- ✅ **Resolved chamber control filter** — Skip control markets where either side >97%
 
 ### Entertainment Page v1 Design — Full Rewrite
 - ✅ **Editorial trending hero** — Lead card (1.4fr, 2 rows) + 4 smaller cards with kind-specific card bodies (Spotify leader+runner-up, RT threshold+histogram, reality binary split, multi-outcome lists, Eurovision flags)

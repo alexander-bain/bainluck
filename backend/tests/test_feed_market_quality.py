@@ -429,13 +429,14 @@ class TestQualityFamilyDiversity:
 
 
 class TestDiscoverFirstPageMixer:
-    def _item(self, idx: int, category: str, score: int = 100):
+    def _item(self, idx: int, category: str, score: int = 100, name: str | None = None, story_key: str | None = None):
         return {
             "type": "futures",
             "score": score,
+            "_quality_story_key": story_key,
             "data": {
                 "id": idx,
-                "name": f"{category} market {idx}",
+                "name": name or f"{category} market {idx}",
                 "llm_sport_category": category,
             },
         }
@@ -456,14 +457,14 @@ class TestDiscoverFirstPageMixer:
             ])
         ]
 
-        mixed = diversify_discover_first_page(items, first_page_size=10)
-        first_page = mixed[:10]
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
 
         assert len(mixed) == len(items)
         assert sum(
             1 for item in first_page
             if item["data"]["llm_sport_category"] == "politics"
-        ) == 5
+        ) <= 5
         assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
         assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
 
@@ -473,6 +474,68 @@ class TestDiscoverFirstPageMixer:
         mixed = diversify_discover_first_page(items, first_page_size=7)
 
         assert [item["data"]["id"] for item in mixed] == list(range(7))
+
+    def test_mixer_caps_world_event_archetype_when_other_stories_are_available(self):
+        items = [
+            self._item(
+                i,
+                "geopolitics",
+                100 - i,
+                name=f"Will Iran conflict variant {i} happen?",
+                story_key="story:middle_east_conflict",
+            )
+            for i in range(8)
+        ] + [
+            self._item(100, "tech", 80, name="OpenAI $1T+ valuation in 2026?"),
+            self._item(101, "entertainment", 79, name='Will "Super Bowl" be said on ICEMAN?'),
+            self._item(102, "weather", 78, name="Hantavirus pandemic in 2026?"),
+            self._item(103, "economics", 77, name="How many Fed rate cuts in 2026?"),
+            self._item(104, "golf", 76, name="PGA Tour: Truist Championship Top 20"),
+            self._item(105, "politics", 75, name="2028 U.S. Presidential Election winner?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+
+        world_events = [
+            item for item in first_page
+            if editorial_archetype(
+                item["data"]["name"],
+                item["data"]["llm_sport_category"],
+            ) == "world_event"
+        ]
+        middle_east = [
+            item for item in first_page
+            if item.get("_quality_story_key") == "story:middle_east_conflict"
+        ]
+
+        assert len(world_events) <= 4
+        assert len(middle_east) <= 2
+        assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
+        assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
+
+    def test_mixer_pulls_strong_weird_news_into_first_page(self):
+        items = [
+            self._item(i, "politics", 100 - i, name=f"2028 election variant {i}")
+            for i in range(5)
+        ] + [
+            self._item(100, "economics", 94, name="Fed Decision in July?"),
+            self._item(101, "entertainment", 93, name='Will "Super Bowl" be said on ICEMAN?'),
+            self._item(102, "weather", 92, name="Hantavirus pandemic in 2026?"),
+            self._item(103, "golf", 91, name="PGA Tour: Truist Championship Top 20"),
+            self._item(104, "tech", 90, name="Will the U.S. confirm that aliens exist before 2027?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+
+        assert any(
+            editorial_archetype(
+                item["data"]["name"],
+                item["data"]["llm_sport_category"],
+            ) == "weird_news"
+            for item in first_page
+        )
 
 
 class TestEditorialArchetypes:

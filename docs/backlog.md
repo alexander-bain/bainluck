@@ -56,10 +56,12 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ Hook enrichment bounded to feed-shaped markets only; do **not** run hooks for all ~56K open markets
 - ✅ First-page category mixer added: score-preserving reorder with caps for politics/geopolitics/economics/etc.
 - ✅ Positive audit metrics added: archetype coverage, category spread/concentration, archetype distribution
+- ✅ Archetype/story caps added: first page now limits single-archetype and hot-story overload, with a required-texture pass for strong tech/culture/weather/sports/weird cards.
+- ✅ Strict variety metrics added: top-10 non-politics/geopolitics count, top-10 fun item, top-20 world-event cap, weird-news presence, max category cap.
 
 **Next phases:**
-1. Tune the first-page mixer from real production audits: target `positive-archetypes@20 >= 5/6`, `category-spread@20 >= 6`, `max category count <= 5`.
-2. Expand editorial archetypes (`breaking_news`, `big_name`, `absurd_but_real`, `sports_drama`) and diversify by archetype, not just category.
+1. Tune strict variety thresholds from real production audits: target `positive-archetypes@20 >= 5/6`, `strict-variety@20 >= 4/5`, `category-spread@20 >= 6`, `max category count <= 5`.
+2. Expand editorial archetypes (`breaking_news`, `big_name`, `absurd_but_real`, `sports_drama`) once current archetypes expose remaining blind spots.
 3. Improve hook worker observability so queued enrichment reports ran/skipped/error without log streaming.
 4. Build an admin/debug viewer that compares current Discover feed against Kalshi/Polymarket/email ground-truth examples.
 

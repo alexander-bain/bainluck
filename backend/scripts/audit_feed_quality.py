@@ -106,6 +106,7 @@ def main() -> int:
             "ground_truth": _matches_ground_truth(data.get("name") or "", ground_truth),
         })
 
+    c10 = classified[:10]
     c20 = classified[:20]
     boring20 = [c for c in c20 if c["quality_class"] in ("low_quality", "suppress")]
     ladder20 = [c for c in c20 if c["ladder"]]
@@ -124,6 +125,22 @@ def main() -> int:
         "sports_story": any(c["archetype"] == "sports_story" for c in c20),
     }
     positive_target_hits = sum(1 for hit in positive_targets.values() if hit)
+    top10_non_politics = [
+        c for c in c10
+        if c["category"] not in {"politics", "geopolitics"}
+    ]
+    top10_fun = [
+        c for c in c10
+        if c["archetype"] in {"culture_moment", "weird_news", "sports_story"}
+    ]
+    strict_targets = {
+        "top10_non_politics_geopolitics>=4": len(top10_non_politics) >= 4,
+        "top10_has_fun_item": bool(top10_fun),
+        "top20_world_event<=4": archetypes.get("world_event", 0) <= 4,
+        "top20_has_weird_news": archetypes.get("weird_news", 0) >= 1,
+        "top20_max_category<=5": max(cats.values(), default=0) <= 5,
+    }
+    strict_target_hits = sum(1 for hit in strict_targets.values() if hit)
 
     print("DISCOVER FEED QUALITY AUDIT")
     print("=" * 72)
@@ -136,10 +153,12 @@ def main() -> int:
     print(f"explanation-coverage@20: {len(explanation_ok)}/20")
     print(f"ground-truth-hit@50:     {len(gt50)}/50")
     print(f"positive-archetypes@20:  {positive_target_hits}/{len(positive_targets)}")
+    print(f"strict-variety@20:       {strict_target_hits}/{len(strict_targets)}")
     print(f"category-spread@20:      {len(cats)} categories, max={max(cats.values(), default=0)}")
     print(f"category distribution@20:{dict(cats.most_common())}")
     print(f"archetype distribution@20:{dict(archetypes.most_common())}")
     print(f"positive targets@20:     {positive_targets}")
+    print(f"strict targets@20:       {strict_targets}")
     print()
 
     print("TOP 50")

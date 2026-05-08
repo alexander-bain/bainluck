@@ -8,6 +8,7 @@ especially repetitive range/bucket ladders.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -455,6 +456,19 @@ _DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
     "other": 3,
 }
 
+_DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
+    "world_event": 4,
+    "political_power": 3,
+    "macro_signal": 4,
+    "culture_moment": 3,
+    "health_weather_risk": 2,
+    "sports_story": 3,
+    "tech_frontier": 2,
+    "big_public_company": 2,
+    "weird_news": 2,
+    "other": 3,
+}
+
 
 def diversify_discover_first_page(
     items: list[dict],
@@ -471,30 +485,131 @@ def diversify_discover_first_page(
         return items
 
     target_size = min(first_page_size, len(items))
-    selected: list[dict] = []
-    deferred: list[dict] = []
     category_counts: dict[str, int] = {}
+    archetype_counts: dict[str, int] = {}
+    story_counts: dict[str, int] = {}
 
-    for item in items:
+    def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
         group = _discover_category_group(item)
-        cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
-        if len(selected) < target_size and category_counts.get(group, 0) < cap:
+        if category_counts.get(group, 0) >= _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3):
+            return False
+
+        if enforce_archetype:
+            archetype = _discover_archetype_group(item)
+            if archetype_counts.get(archetype, 0) >= _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS.get(archetype, 3):
+                return False
+
+        if enforce_story:
+            story_key = item.get("_quality_story_key")
+            if story_key and story_counts.get(story_key, 0) >= 2:
+                return False
+
+        return True
+
+    def record(item: dict) -> None:
+        group = _discover_category_group(item)
+        archetype = _discover_archetype_group(item)
+        story_key = item.get("_quality_story_key")
+        category_counts[group] = category_counts.get(group, 0) + 1
+        archetype_counts[archetype] = archetype_counts.get(archetype, 0) + 1
+        if story_key:
+            story_counts[story_key] = story_counts.get(story_key, 0) + 1
+
+    selected: list[dict] = []
+    selected_keys: set[tuple] = set()
+
+    for enforce_archetype, enforce_story in ((True, True), (True, False), (False, False)):
+        for item in items:
+            if len(selected) >= target_size:
+                break
+            key = _feed_item_key(item)
+            if key in selected_keys:
+                continue
+            if not can_select(item, enforce_archetype=enforce_archetype, enforce_story=enforce_story):
+                continue
             selected.append(item)
-            category_counts[group] = category_counts.get(group, 0) + 1
-        else:
-            deferred.append(item)
+            selected_keys.add(key)
+            record(item)
+        if len(selected) >= target_size:
+            break
 
     if len(selected) < target_size:
         needed = target_size - len(selected)
-        selected.extend(deferred[:needed])
-        deferred = deferred[needed:]
+        fallback = [
+            item for item in items
+            if _feed_item_key(item) not in selected_keys
+        ]
+        selected.extend(fallback[:needed])
+
+    _ensure_required_archetypes(selected, items)
 
     selected_keys = {_feed_item_key(item) for item in selected}
     remainder = [
         item for item in items
         if _feed_item_key(item) not in selected_keys
+        and item not in selected
     ]
     return selected + remainder
+
+
+def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> None:
+    """Make room for at least one strong card from key first-page textures."""
+    required: tuple[EditorialArchetype, ...] = (
+        "tech_frontier",
+        "culture_moment",
+        "health_weather_risk",
+        "sports_story",
+        "weird_news",
+    )
+    selected_keys = {_feed_item_key(item) for item in selected}
+
+    for target in required:
+        if any(_discover_archetype_group(item) == target for item in selected):
+            continue
+
+        candidate = next(
+            (
+                item for item in all_items
+                if _feed_item_key(item) not in selected_keys
+                and _discover_archetype_group(item) == target
+                and item.get("score", 0) >= 90
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+
+        archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
+        category_counts = Counter(_discover_category_group(item) for item in selected)
+        replacement_idx = None
+        for idx in range(len(selected) - 1, -1, -1):
+            item = selected[idx]
+            archetype = _discover_archetype_group(item)
+            category = _discover_category_group(item)
+            if archetype in required and archetype_counts[archetype] <= 1:
+                continue
+            if archetype_counts[archetype] <= 1 and category_counts[category] <= 1:
+                continue
+            replacement_idx = idx
+            break
+
+        if replacement_idx is None:
+            continue
+
+        removed = selected[replacement_idx]
+        selected[replacement_idx] = candidate
+        selected_keys.discard(_feed_item_key(removed))
+        selected_keys.add(_feed_item_key(candidate))
+
+
+def _discover_archetype_group(item: dict) -> EditorialArchetype:
+    if item.get("type") == "event":
+        return "sports_story"
+    data = item.get("data") or {}
+    return editorial_archetype(
+        data.get("name"),
+        data.get("llm_sport_category") or data.get("sport_name") or data.get("sport"),
+    )
 
 
 def _feed_item_key(item: dict) -> tuple:
