@@ -57,7 +57,11 @@ export interface PageViewParams {
     | 'weather'
     | 'economics'
     | 'politics'
-    | 'team';
+    | 'team'
+    | 'discover'
+    | 'entertainment'
+    | 'prediction_stats'
+    | 'bug_reports';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -240,7 +244,12 @@ export interface ScrollDepthParams {
     | 'wrestlemania'
     | 'weather'
     | 'economics'
-    | 'politics';
+    | 'politics'
+    | 'team'
+    | 'discover'
+    | 'entertainment'
+    | 'prediction_stats'
+    | 'bug_reports';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -261,7 +270,12 @@ export interface TimeOnPageParams {
     | 'wrestlemania'
     | 'weather'
     | 'economics'
-    | 'politics';
+    | 'politics'
+    | 'team'
+    | 'discover'
+    | 'entertainment'
+    | 'prediction_stats'
+    | 'bug_reports';
   seconds: number;
   page_path: string;
   event_id?: number;

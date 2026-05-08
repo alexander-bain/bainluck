@@ -271,9 +271,9 @@ function GameCard({
 }) {
   const isHome =
     event.home_team === teamName ||
-    (event as Record<string, unknown>).is_home === true;
+    (event as unknown as Record<string, unknown>).is_home === true;
   const opponent = isHome ? event.away_team : event.home_team;
-  const wp = (event as Record<string, unknown>).win_probability as
+  const wp = (event as unknown as Record<string, unknown>).win_probability as
     | number
     | null
     | undefined;

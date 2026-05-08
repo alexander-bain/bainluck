@@ -56,6 +56,7 @@ interface DailyByTask {
   poll_odds?: number;
   discover_events?: number;
   poll_futures?: number;
+  score_fetch?: number;
   [key: string]: string | number | undefined;
 }
 

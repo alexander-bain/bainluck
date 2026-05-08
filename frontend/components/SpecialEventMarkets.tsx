@@ -76,7 +76,7 @@ function isRedundantWithMarketMaps(m: { market_name: string; outcome_name: strin
   return false;
 }
 
-function findWinProbMarkets(markets: typeof data.other): Set<string> {
+function findWinProbMarkets(markets: GameMarketsResponse["other"]): Set<string> {
   const byName = new Map<string, number[]>();
   for (const m of markets ?? []) {
     const name = m.market_name || "";

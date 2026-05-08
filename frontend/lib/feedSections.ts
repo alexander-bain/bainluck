@@ -33,7 +33,7 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       topMarkets.push(item);
     } else if (item.type === "tournament") {
       // Tournaments sort into live or upcoming based on schedule_status
-      const td = item.data as Record<string, unknown>;
+      const td = item.data as unknown as Record<string, unknown>;
       if (td.schedule_status === "in-progress") {
         liveNow.push(item);
       } else {

@@ -60,7 +60,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                 )}
                 {!isLive && (tournament.start_date || tournament.commence_time) && (
                   <span className="text-text-tertiary">
-                    {_formatTournamentDate(tournament.start_date || tournament.commence_time, tournament.end_date)}
+                    {_formatTournamentDate(tournament.start_date || (tournament.commence_time ?? null), tournament.end_date ?? null)}
                   </span>
                 )}
               </div>
@@ -185,7 +185,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
               )}
               {!isLive && (tournament.start_date || tournament.commence_time) && (
                 <span className="text-text-tertiary">
-                  {_formatTournamentDate(tournament.start_date || tournament.commence_time, tournament.end_date)}
+                  {_formatTournamentDate(tournament.start_date || (tournament.commence_time ?? null), tournament.end_date ?? null)}
                 </span>
               )}
             </div>

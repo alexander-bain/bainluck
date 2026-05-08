@@ -17,6 +17,7 @@ export interface CurrentOdds {
   home_probability: number | null; // 0.0-1.0
   away_probability: number | null; // 0.0-1.0
   spread: number | null;
+  home_spread?: number | null;
   over_under: number | null;
   projected_home_score: number | null;
   projected_away_score: number | null;
@@ -193,6 +194,8 @@ export interface EventDetailResponse extends Event {
   /** @deprecated Use `ei` instead */
   pulse?: EIData;
   league_context?: LeagueContextData;
+  sport_key?: string;
+  box_score_data?: Record<string, unknown>;
 }
 
 export interface OddsHistoryPoint {
@@ -258,6 +261,7 @@ export interface EventHistoryResponse {
   event_id: number;
   home_team: string;
   away_team: string;
+  completed_at?: string;
   history: OddsHistoryPoint[];
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
   score_history?: ScoreHistoryPoint[];
@@ -546,6 +550,7 @@ export interface FuturesMarketsResponse {
 
 export interface FuturesMarketDetailResponse extends FuturesMarket {
   outcomes: FuturesOutcome[];
+  display_category?: string;
 }
 
 export interface FuturesHistoryPoint {

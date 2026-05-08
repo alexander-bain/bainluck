@@ -130,7 +130,7 @@ export default function WeatherHero() {
                 >
                   {probLabel(current.prob)}
                 </span>
-                <SourceBadge source={current.src} />
+                <SourceBadge src={current.src} />
               </div>
             </div>
 

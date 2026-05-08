@@ -313,6 +313,7 @@ interface GridTableProps {
   onSortKey: (k: string) => void;
   expandedTeam: string | null;
   onExpandTeam: (short: string | null) => void;
+  sportKey?: string;
 }
 
 function GridTable({
@@ -323,6 +324,7 @@ function GridTable({
   onSortKey,
   expandedTeam,
   onExpandTeam,
+  sportKey,
 }: GridTableProps) {
   return (
     <div className="relative">
@@ -537,6 +539,7 @@ export default function ChampionshipGrid({
         onSortKey={setSortKey}
         expandedTeam={expandedTeam}
         onExpandTeam={setExpandedTeam}
+        sportKey={sportKey}
       />
 
       {/* Legend */}

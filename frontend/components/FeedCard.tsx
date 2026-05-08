@@ -353,7 +353,7 @@ function EventFeedCard({
         event_id: data.id,
         sport: data.sport || 'unknown',
         league: data.sport || 'unknown',
-        league_tier: 0,
+        league_tier: 1 as 1 | 2 | 3,
         home_team: data.home_team,
         away_team: data.away_team,
         status: data.status,

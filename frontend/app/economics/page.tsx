@@ -186,7 +186,7 @@ export default function EconomicsPage() {
                     <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-1.5">
                       How many cuts in 2026?
                     </div>
-                    <RateCutsChart cuts={t.fed.rate_cuts} />
+                    <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
                     <FooterNote left="Modal outcome highlighted" right="Kalshi" />
                   </Card>
                 )}
@@ -404,7 +404,7 @@ export default function EconomicsPage() {
                   <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
                     30-year mortgage rate by end of 2026
                   </div>
-                  <Histogram buckets={t.housing.mortgage_brackets} color="#8B5CF6" height={90} />
+                  <Histogram buckets={t.housing.mortgage_brackets as [number, string][]} color="#8B5CF6" height={90} />
                 </Card>
               )}
               {t.housing.markets && t.housing.markets.length > 0 && (

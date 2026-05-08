@@ -41,6 +41,8 @@ import type {
   TeamProgressionResponse,
   SportHierarchyListResponse,
   SportHierarchy,
+  Event,
+  GolfLeaderboardResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -650,6 +652,7 @@ export interface GameMarketsResponse {
     market_name: string;
     outcome_name: string;
     movement: number | null;
+    bookmaker_count?: number;
   }[];
   player_props: {
     market_name: string;
