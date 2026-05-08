@@ -71,6 +71,12 @@ _TRACE_STOPWORDS = {
     "will", "what", "when", "which", "with", "from", "that", "this",
     "before", "after", "market", "winner", "yes", "no", "the", "and",
 }
+_DEDUP_NAME_STOPWORDS = _TRACE_STOPWORDS | {
+    "who", "does", "have", "than", "then", "into", "onto", "over", "under",
+    "above", "below", "between", "next", "last", "end", "start", "season",
+    "year", "month", "week", "day", "date", "2024", "2025", "2026", "2027",
+    "2028", "2029", "2030",
+}
 
 DISCOVER_SPORTS_CATEGORIES = (
     "basketball", "football", "baseball", "hockey", "soccer",
@@ -127,6 +133,34 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
                 deduped.append(fitem)
     deduped.extend(seen_canonical.values())
     return deduped
+
+
+def _name_tokens_for_dedupe(name: str | None) -> set[str]:
+    if not name:
+        return set()
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9']{2,}", name)
+        if token.lower() not in _DEDUP_NAME_STOPWORDS
+    }
+
+
+def _binary_names_compatible_for_dedupe(item_a: dict, item_b: dict) -> bool:
+    """Prevent generic Yes/No outcomes from collapsing unrelated stories."""
+    data_a = item_a.get("data", {})
+    data_b = item_b.get("data", {})
+    story_a = item_a.get("_quality_story_key")
+    story_b = item_b.get("_quality_story_key")
+    if story_a and story_b:
+        return story_a == story_b
+
+    tokens_a = _name_tokens_for_dedupe(data_a.get("name"))
+    tokens_b = _name_tokens_for_dedupe(data_b.get("name"))
+    if not tokens_a or not tokens_b:
+        return True
+    overlap = tokens_a & tokens_b
+    smaller = min(len(tokens_a), len(tokens_b))
+    return len(overlap) >= 2 or (smaller > 0 and len(overlap) / smaller >= 0.5)
 
 
 def _ei_label(score: int) -> str:
@@ -2162,6 +2196,9 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
     names_b = {o.get("name", "").lower().strip() for o in outcomes_b if o.get("name")}
     if not names_a or not names_b:
         return True
+    binary_names = {"yes", "no"}
+    if names_a <= binary_names and names_b <= binary_names:
+        return _binary_names_compatible_for_dedupe(item_a, item_b)
     return bool(names_a & names_b)
 
 

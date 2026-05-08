@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.routes.feed import _market_base_trace, _market_runtime_filter_trace
+from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _outcomes_overlap
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
@@ -437,6 +437,38 @@ class TestFeedQualityDebug:
         assert trace["eligible"] is True
         assert trace["blockers"] == []
         assert trace["checks"]["commence_time_staleness_applied"] is False
+
+    def test_canonical_dedupe_does_not_collapse_unrelated_yes_no_markets(self):
+        china_invade = {
+            "data": {
+                "name": "Will China invade Taiwan by end of 2026?",
+                "top_outcomes": [{"name": "Yes"}, {"name": "No"}],
+            }
+        }
+        trump_china = {
+            "data": {
+                "name": "Will Trump visit China on May 13?",
+                "top_outcomes": [{"name": "Yes"}, {"name": "No"}],
+            }
+        }
+
+        assert _outcomes_overlap(china_invade, trump_china) is False
+
+    def test_canonical_dedupe_keeps_similar_yes_no_markets_collapsible(self):
+        kalshi = {
+            "data": {
+                "name": "Will the U.S. confirm that aliens exist before 2027?",
+                "top_outcomes": [{"name": "Yes"}, {"name": "No"}],
+            }
+        }
+        polymarket = {
+            "data": {
+                "name": "Will the US confirm that aliens exist by...?",
+                "top_outcomes": [{"name": "Yes"}, {"name": "No"}],
+            }
+        }
+
+        assert _outcomes_overlap(kalshi, polymarket) is True
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(
