@@ -107,6 +107,14 @@ interface FeedDebugResponse {
   debug_items: DebugItem[];
   missing_ground_truth: MissingGroundTruthItem[];
   missing_ground_truth_summary: MissingGroundTruthSummary;
+  debug_timing?: {
+    total_ms: number;
+    stages: Array<{
+      stage: string;
+      ms: number;
+      elapsed_ms: number;
+    }>;
+  };
 }
 
 interface CandidatePoolTrace {
@@ -728,9 +736,28 @@ export default function DiscoverQualityPage() {
             </div>
           )}
 
-          <div className="grid md:grid-cols-3 gap-3">
+          <div className="grid md:grid-cols-4 gap-3">
             <DistributionBars title="Categories @20" data={summary.category_distribution} />
             <DistributionBars title="Archetypes @20" data={summary.archetype_distribution} />
+            <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
+              <h2 className="text-sm font-semibold text-text-primary">Feed Timing</h2>
+              {data.debug_timing ? (
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between gap-3 text-sm">
+                    <span className="text-text-muted">Total</span>
+                    <span className="text-text-primary font-medium">{Math.round(data.debug_timing.total_ms)}ms</span>
+                  </div>
+                  {data.debug_timing.stages.map((stage) => (
+                    <div key={stage.stage} className="flex justify-between gap-3">
+                      <span className="text-text-secondary">{formatTargetName(stage.stage)}</span>
+                      <span className="text-text-muted">{Math.round(stage.ms)}ms</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-text-muted">No timing data.</div>
+              )}
+            </div>
             <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
               <h2 className="text-sm font-semibold text-text-primary">Hook Worker</h2>
               {hookCoverage ? (

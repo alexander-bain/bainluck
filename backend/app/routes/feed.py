@@ -14,10 +14,11 @@ import json as _json_module
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,6 +61,26 @@ from app.routes.events import _build_team_lookup, _format_team_data
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _record_feed_timing(
+    timings: list[dict[str, float | str]],
+    started_at: float,
+    previous_at: float,
+    stage: str,
+) -> float:
+    """Record a stage timing relative to request start for admin diagnostics."""
+    current_at = time.perf_counter()
+    timings.append({
+        "stage": stage,
+        "ms": round((current_at - previous_at) * 1000, 2),
+        "elapsed_ms": round((current_at - started_at) * 1000, 2),
+    })
+    return current_at
+
+
+def _set_feed_timing_header(response: Response, started_at: float) -> None:
+    response.headers["X-Feed-Elapsed-Ms"] = str(round((time.perf_counter() - started_at) * 1000, 2))
 
 
 def _check_admin_secret(secret: str | None) -> bool:
@@ -185,6 +206,7 @@ _pulse_label = _ei_label
 
 @router.get("")
 async def get_feed(
+    response: Response,
     limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
@@ -215,7 +237,12 @@ async def get_feed(
     - data: full event or futures payload
     - personalized: whether score was personalized (only present if true)
     """
+    _started_at = time.perf_counter()
+    _previous_at = _started_at
+    _timings: list[dict[str, float | str]] = []
+
     if debug and not _check_admin_secret(secret):
+        _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     # --- Redis response cache (anon 15s, auth 5s) ---
@@ -232,6 +259,8 @@ async def get_feed(
             cached = await _async_redis.get(_cache_key)
             if cached:
                 await _async_redis.aclose()
+                _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "cache_hit")
+                _set_feed_timing_header(response, _started_at)
                 return _json_module.loads(cached)
         except Exception:
             _cache_key = None
@@ -261,6 +290,7 @@ async def get_feed(
 
     # my_teams_only requires authentication
     if my_teams_only and not user:
+        _set_feed_timing_header(response, _started_at)
         return {
             "items": [],
             "total": 0,
@@ -273,6 +303,7 @@ async def get_feed(
 
     # Load personalization context (one DB query for all user data)
     ctx = await _load_personalization_context(db, user)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "personalization")
 
     # Build team name set once (used by both scoring functions + response).
     # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
@@ -295,6 +326,7 @@ async def get_feed(
             feed_items.extend(event_items)
         except Exception as e:
             logger.error("Feed: event scoring failed, returning partial feed: %s", e)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
 
     # === ENRICH EVENTS WITH TEAM DATA ===
     # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
@@ -316,6 +348,7 @@ async def get_feed(
                         d["home_team_data"] = _format_team_data(home_team)
                     if away_team:
                         d["away_team_data"] = _format_team_data(away_team)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "team_enrichment")
 
     # === SCORE GOLF TOURNAMENTS ===
     # Skip golf tournaments if a non-golf sport tag is active
@@ -331,6 +364,7 @@ async def get_feed(
                 feed_items.extend(tournament_items)
         except Exception as e:
             logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
 
     # === SCORE FUTURES ===
     if include_futures:
@@ -340,6 +374,7 @@ async def get_feed(
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
             logger.error("Feed: futures scoring failed, returning partial feed: %s", e)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker
@@ -386,6 +421,7 @@ async def get_feed(
 
     if not my_teams_only and ((event_pct is not None and event_pct < 0.3) or not include_events):
         feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
@@ -399,6 +435,7 @@ async def get_feed(
             top_n=min(20, len(paginated)),
         )
         await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
     # Remove internal sort/debug keys
     for item in paginated:
@@ -407,7 +444,7 @@ async def get_feed(
         item.pop("_quality_family_key", None)
         item.pop("_quality_story_key", None)
 
-    response = {
+    payload = {
         "items": paginated,
         "total": total,
         "limit": limit,
@@ -416,14 +453,14 @@ async def get_feed(
     }
 
     if my_teams_only:
-        response["my_teams_only"] = True
+        payload["my_teams_only"] = True
         if my_team_names:
-            response["matched_teams"] = my_team_names
+            payload["matched_teams"] = my_team_names
 
     # Include personalization metadata if authenticated
     if ctx.is_authenticated:
-        response["personalized"] = True
-        response["personalization"] = {
+        payload["personalized"] = True
+        payload["personalization"] = {
             "team_count": len(ctx.team_relations),
             "sport_affinities_count": len(ctx.sport_affinities),
             "pinned_events": len(ctx.pinned_event_ids),
@@ -431,20 +468,25 @@ async def get_feed(
         }
 
     if debug_payload is not None:
-        response["debug_summary"] = debug_payload["summary"]
-        response["debug_items"] = debug_payload["items"]
-        response["missing_ground_truth"] = debug_payload["missing_ground_truth"]
-        response["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
+        payload["debug_summary"] = debug_payload["summary"]
+        payload["debug_items"] = debug_payload["items"]
+        payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
+        payload["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
+        payload["debug_timing"] = {
+            "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
+            "stages": _timings,
+        }
 
     # --- Write to cache ---
     if _cache_key and _async_redis:
         try:
-            await _async_redis.setex(_cache_key, _cache_ttl, _json_module.dumps(response, default=str))
+            await _async_redis.setex(_cache_key, _cache_ttl, _json_module.dumps(payload, default=str))
             await _async_redis.aclose()
         except Exception:
             pass
 
-    return response
+    _set_feed_timing_header(response, _started_at)
+    return payload
 
 
 async def _attach_missing_ground_truth_traces(

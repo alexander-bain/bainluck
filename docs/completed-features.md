@@ -32,6 +32,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Market trace API** — `GET /admin/discover-quality/trace/{market_id}` explains eligibility, pool membership, staleness filters, quality score, and suggested fixes.
 - ✅ **Admin UI** — Frontend trace panel in `/admin/discover-quality` for per-market debugging.
 - ✅ **Missing ground truth trace** — Shows why Kalshi/Polymarket email-featured markets don't appear in Discover.
+- ✅ **Feed timing diagnostics** — `/api/feed` now emits `X-Feed-Elapsed-Ms`, and admin debug responses show per-stage timings for personalization, events, golf, futures, ranking, and debug tracing.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.
