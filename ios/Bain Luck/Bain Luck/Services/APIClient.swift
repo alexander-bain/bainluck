@@ -574,6 +574,10 @@ actor APIClient {
         return try await fetch("/api/predictions/resolutions")
     }
 
+    func recordDiscoverInteraction(_ event: DiscoverInteractionEvent) async throws -> StatusResponse {
+        return try await postEncodable("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]))
+    }
+
     // MARK: - Bug Reports
 
     func submitBugReport(_ body: BugReportSubmission) async throws -> BugReportResponse {

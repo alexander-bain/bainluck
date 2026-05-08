@@ -14,6 +14,7 @@ import {
   getDiscoverPersonalizationTrace,
   readDiscoverInteractionProfile,
   recordDiscoverInteraction,
+  sendDiscoverInteraction,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 
@@ -269,6 +270,7 @@ function FeedItemShell({
           surface: "discover",
         });
         recordDiscoverInteraction(analytics.category, "impression");
+        sendDiscoverInteraction(analytics, "impression", positionIndex, "viewport");
         observer.disconnect();
       },
       { threshold: 0.55 }
@@ -539,6 +541,7 @@ export default function DiscoverPage() {
                       surface: "discover",
                     });
                     recordDiscoverInteraction(analytics.category, "dismiss");
+                    sendDiscoverInteraction(analytics, "dismiss", idx, "swipe");
                     setInteractionProfile(readDiscoverInteractionProfile());
                   }
                   handleDismiss(getItemId(gi.item!));

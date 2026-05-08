@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -955,6 +956,33 @@ class UserSeenMarket(Base):
     item_id: Mapped[int] = mapped_column(Integer, nullable=False)
     seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DiscoverInteraction(Base):
+    """Append-only interaction events from web and native Discover surfaces."""
+
+    __tablename__ = "discover_interactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    surface: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    action: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    item_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    item_name: Mapped[Optional[str]] = mapped_column(String(300))
+    score: Mapped[Optional[int]] = mapped_column(Integer)
+    rank: Mapped[Optional[int]] = mapped_column(Integer)
+    source: Mapped[Optional[str]] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index("ix_discover_interactions_rollup", "created_at", "surface", "category", "action"),
+        Index("ix_discover_interactions_item", "item_type", "item_id", "created_at"),
     )
 
 

@@ -35,6 +35,8 @@ export interface DiscoverProfile {
 }
 
 const PROFILE_KEY = "discover_interaction_profile_v1";
+const SESSION_KEY = "bainluck_session_id";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
   impression: 0.05,
@@ -133,6 +135,58 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
     }
   } catch {
     // Interaction profiling is opportunistic; analytics should never break the feed.
+  }
+}
+
+function getSessionId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  try {
+    const existing = localStorage.getItem(SESSION_KEY);
+    if (existing) return existing;
+    const next = globalThis.crypto?.randomUUID?.() || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(SESSION_KEY, next);
+    return next;
+  } catch {
+    return undefined;
+  }
+}
+
+export function sendDiscoverInteraction(
+  analytics: DiscoverItemAnalytics,
+  action: DiscoverAction,
+  positionIndex?: number,
+  source = "card"
+): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    const sessionId = getSessionId();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (sessionId) headers["x-session-id"] = sessionId;
+
+    void fetch(`${API_URL}/api/feed/interactions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        interactions: [{
+          action,
+          item_type: analytics.content_type,
+          item_id: String(analytics.item_id),
+          category: analytics.category,
+          item_name: analytics.item_name,
+          score: analytics.score,
+          rank: typeof positionIndex === "number" ? positionIndex + 1 : undefined,
+          surface: "web",
+          source,
+        }],
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // First-party interaction capture should never affect the feed.
   }
 }
 

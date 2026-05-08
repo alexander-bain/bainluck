@@ -35,6 +35,24 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - Discover Interaction Capture
+
+nonisolated struct DiscoverInteractionRequest: Encodable, Sendable {
+    let interactions: [DiscoverInteractionEvent]
+}
+
+nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
+    let action: String
+    let itemType: String
+    let itemId: String
+    let category: String
+    let itemName: String?
+    let score: Int?
+    let rank: Int?
+    let surface: String
+    let source: String?
+}
+
 // MARK: - Feed Item (Polymorphic)
 
 nonisolated struct FeedItem: Decodable, Identifiable, Sendable {

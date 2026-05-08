@@ -218,6 +218,78 @@ class TestDiscoverQualityTrace:
         assert "suggested_fix" in body
 
 
+class TestDiscoverInteractions:
+    async def test_records_discover_interaction_batch(self, client):
+        resp = await client.post(
+            "/api/feed/interactions",
+            json={
+                "interactions": [
+                    {
+                        "action": "impression",
+                        "item_type": "futures",
+                        "item_id": "123",
+                        "category": "tech",
+                        "item_name": "AI market",
+                        "score": 88,
+                        "rank": 4,
+                        "surface": "web",
+                        "source": "viewport",
+                    },
+                    {
+                        "action": "detail_click",
+                        "item_type": "futures",
+                        "item_id": "123",
+                        "category": "tech",
+                        "surface": "web",
+                        "source": "card",
+                    },
+                ]
+            },
+            headers={"x-session-id": "test-session"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok", "recorded": 2}
+
+    async def test_discover_engagement_summary_requires_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/admin/discover-engagement?secret=bad")
+
+        assert resp.status_code == 403
+
+    async def test_discover_engagement_summary_rolls_up_rates(self, client, mock_db, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+        grouped = MagicMock()
+        grouped.all.return_value = [
+            ("native", "basketball", "event", "impression", 2),
+            ("native", "basketball", "event", "open", 1),
+            ("native", "basketball", "event", "share", 1),
+        ]
+        top_items = MagicMock()
+        top_items.all.return_value = [
+            ("event", "1", "Lakers vs Celtics", "basketball", "native", 2),
+        ]
+        mock_db.execute.side_effect = [grouped, top_items]
+
+        resp = await client.get("/api/admin/discover-engagement?secret=test-admin&days=7")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["totals"]["impressions"] == 2
+        assert body["totals"]["opens"] == 1
+        assert body["totals"]["shares"] == 1
+        assert any(
+            row["surface"] == "native"
+            and row["category"] == "basketball"
+            and row["open_rate"] == 0.5
+            for row in body["groups"]
+        )
+        assert body["top_items"][0]["item_name"] == "Lakers vs Celtics"
+
+
 class TestFeedMyTeamsAnonymous:
     """my_teams_only without auth returns early with requires_auth flag."""
 

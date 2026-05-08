@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import text, func, delete, and_
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
-from app.models.models import BugReport
+from app.models.models import BugReport, DiscoverInteraction
 from app.services import get_db
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
@@ -6168,6 +6168,137 @@ async def discover_quality_market_trace(
     if not trace:
         raise HTTPException(status_code=404, detail="Market not found")
     return trace
+
+
+@router.get("/discover-engagement")
+async def discover_engagement_summary(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    days: int = Query(7, ge=1, le=30),
+    db: AsyncSession = Depends(get_db),
+):
+    """Summarize first-party Discover engagement by surface/category/type."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(
+            DiscoverInteraction.surface,
+            DiscoverInteraction.category,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.action,
+            func.count(DiscoverInteraction.id).label("count"),
+        )
+        .where(DiscoverInteraction.created_at >= cutoff)
+        .group_by(
+            DiscoverInteraction.surface,
+            DiscoverInteraction.category,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.action,
+        )
+    )
+
+    groups: dict[tuple[str, str, str], dict] = {}
+    for surface, category, item_type, action, count in result.all():
+        key = (surface or "unknown", category or "other", item_type or "unknown")
+        bucket = groups.setdefault(
+            key,
+            {
+                "surface": key[0],
+                "category": key[1],
+                "item_type": key[2],
+                "impressions": 0,
+                "opens": 0,
+                "dismisses": 0,
+                "shares": 0,
+                "likes": 0,
+                "group_expands": 0,
+                "actions": 0,
+            },
+        )
+        n = int(count or 0)
+        if action == "impression":
+            bucket["impressions"] += n
+        elif action in ("detail_click", "open"):
+            bucket["opens"] += n
+            bucket["actions"] += n
+        elif action == "dismiss":
+            bucket["dismisses"] += n
+            bucket["actions"] += n
+        elif action == "share":
+            bucket["shares"] += n
+            bucket["actions"] += n
+        elif action in ("like", "unlike"):
+            bucket["likes"] += n
+            bucket["actions"] += n
+        elif action == "group_expand":
+            bucket["group_expands"] += n
+            bucket["actions"] += n
+        else:
+            bucket["actions"] += n
+
+    rows = []
+    totals = {
+        "impressions": 0,
+        "opens": 0,
+        "dismisses": 0,
+        "shares": 0,
+        "likes": 0,
+        "group_expands": 0,
+        "actions": 0,
+    }
+    for bucket in groups.values():
+        impressions = bucket["impressions"]
+        for key in totals:
+            totals[key] += bucket[key]
+        rows.append(
+            {
+                **bucket,
+                "open_rate": round(bucket["opens"] / impressions, 4) if impressions else 0,
+                "dismiss_rate": round(bucket["dismisses"] / impressions, 4) if impressions else 0,
+                "share_rate": round(bucket["shares"] / impressions, 4) if impressions else 0,
+            }
+        )
+
+    top_items_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.max(DiscoverInteraction.item_name).label("item_name"),
+            func.max(DiscoverInteraction.category).label("category"),
+            func.max(DiscoverInteraction.surface).label("surface"),
+            func.count(DiscoverInteraction.id).label("actions"),
+        )
+        .where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action != "impression",
+        )
+        .group_by(DiscoverInteraction.item_type, DiscoverInteraction.item_id)
+        .order_by(func.count(DiscoverInteraction.id).desc())
+        .limit(20)
+    )
+
+    return {
+        "days": days,
+        "totals": {
+            **totals,
+            "open_rate": round(totals["opens"] / totals["impressions"], 4) if totals["impressions"] else 0,
+            "dismiss_rate": round(totals["dismisses"] / totals["impressions"], 4) if totals["impressions"] else 0,
+            "share_rate": round(totals["shares"] / totals["impressions"], 4) if totals["impressions"] else 0,
+        },
+        "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
+        "top_items": [
+            {
+                "item_type": item_type,
+                "item_id": item_id,
+                "item_name": item_name,
+                "category": category,
+                "surface": surface,
+                "actions": int(actions or 0),
+            }
+            for item_type, item_id, item_name, category, surface, actions in top_items_result.all()
+        ],
+    }
 
 
 @router.get("/market-lookup")

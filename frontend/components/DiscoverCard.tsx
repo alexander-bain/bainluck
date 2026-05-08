@@ -6,7 +6,7 @@ import { Check, Heart, Share2 } from "lucide-react";
 import { formatProbability } from "@/lib/api";
 import { trackEvent } from "@/lib/analytics";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
-import { getDiscoverItemAnalytics, recordDiscoverInteraction } from "@/lib/discoverInteractions";
+import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { ShareContentType } from "@/lib/share";
 
@@ -212,6 +212,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
       surface: "discover",
     });
     recordDiscoverInteraction(analytics.category, action);
+    sendDiscoverInteraction(analytics, action, positionIndex);
   }, [analytics, positionIndex]);
 
   const setLikedWithTracking = useCallback((next: boolean) => {
@@ -270,6 +271,7 @@ function GroupCard({ items, title, positionIndex }: { items: FeedItem[]; title: 
         surface: "discover",
       });
       recordDiscoverInteraction(analytics.category, "group_expand");
+      sendDiscoverInteraction(analytics, "group_expand", positionIndex);
     }
   };
 

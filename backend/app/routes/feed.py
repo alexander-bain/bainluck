@@ -10,6 +10,7 @@ Anonymous users see the generic interestingness feed.
 
 import asyncio
 import hashlib
+import inspect
 import json as _json_module
 import logging
 import os
@@ -18,7 +19,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
@@ -26,7 +28,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
-from app.models.models import User, UserFavorite, UserPreference, UserPin, Team
+from app.models.models import DiscoverInteraction, User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
 from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability as _compute_aggregate_probability
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
@@ -62,6 +64,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_DISCOVER_ACTIONS = {"impression", "detail_click", "open", "dismiss", "like", "unlike", "share", "group_expand"}
+_DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
+_DISCOVER_SURFACES = {"web", "native", "unknown"}
+
+
+class DiscoverInteractionIn(BaseModel):
+    action: str = Field(..., max_length=30)
+    item_type: str = Field(..., max_length=20)
+    item_id: str = Field(..., max_length=100)
+    category: str | None = Field(None, max_length=80)
+    item_name: str | None = Field(None, max_length=300)
+    score: int | None = None
+    rank: int | None = None
+    surface: str = Field("unknown", max_length=20)
+    source: str | None = Field(None, max_length=50)
+
+
+class DiscoverInteractionBatch(BaseModel):
+    interactions: list[DiscoverInteractionIn] = Field(..., min_length=1, max_length=50)
+
+
+def _normalize_discover_value(value: str | None, allowed: set[str], fallback: str) -> str:
+    normalized = (value or fallback).strip().lower()
+    return normalized if normalized in allowed else fallback
+
+
+def _session_id_from_request(request: Request) -> str | None:
+    return request.cookies.get("session_id") or request.headers.get("x-session-id")
+
 
 def _record_feed_timing(
     timings: list[dict[str, float | str]],
@@ -86,6 +117,46 @@ def _set_feed_timing_header(response: Response, started_at: float) -> None:
 def _check_admin_secret(secret: str | None) -> bool:
     expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
     return bool(expected and secret == expected)
+
+
+@router.post("/interactions")
+async def record_discover_interactions(
+    body: DiscoverInteractionBatch,
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record web/native Discover engagement events for ranking diagnostics."""
+    user_id = user.id if user else None
+    session_id = _session_id_from_request(request)
+
+    rows = []
+    for event in body.interactions:
+        action = _normalize_discover_value(event.action, _DISCOVER_ACTIONS, "impression")
+        item_type = _normalize_discover_value(event.item_type, _DISCOVER_ITEM_TYPES, "futures")
+        surface = _normalize_discover_value(event.surface, _DISCOVER_SURFACES, "unknown")
+        category = (event.category or "other").strip().lower()[:80] or "other"
+        rows.append(
+            DiscoverInteraction(
+                user_id=user_id,
+                session_id=session_id,
+                surface=surface,
+                action=action,
+                item_type=item_type,
+                item_id=str(event.item_id)[:100],
+                category=category,
+                item_name=event.item_name[:300] if event.item_name else None,
+                score=event.score,
+                rank=event.rank,
+                source=event.source[:50] if event.source else None,
+            )
+        )
+
+    maybe_add = db.add_all(rows)
+    if inspect.isawaitable(maybe_add):
+        await maybe_add
+    await db.commit()
+    return {"status": "ok", "recorded": len(rows)}
 
 
 _TRACE_STOPWORDS = {

@@ -129,6 +129,18 @@ struct DiscoverView: View {
         return item.type
     }
 
+    private func rawItemId(_ item: FeedItem) -> String {
+        if let e = item.event { return String(e.id) }
+        if let f = item.futures { return String(f.id) }
+        return item.id
+    }
+
+    private func itemName(_ item: FeedItem) -> String? {
+        if let e = item.event { return "\(e.awayTeam) vs \(e.homeTeam)" }
+        if let f = item.futures { return f.name }
+        return nil
+    }
+
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
@@ -176,6 +188,20 @@ struct DiscoverView: View {
             category: itemCategory(item),
             source: source
         )
+        Task {
+            let event = DiscoverInteractionEvent(
+                action: actionName,
+                itemType: itemType(item),
+                itemId: rawItemId(item),
+                category: itemCategory(item),
+                itemName: itemName(item),
+                score: item.score,
+                rank: nil,
+                surface: "native",
+                source: source
+            )
+            _ = try? await APIClient.shared.recordDiscoverInteraction(event)
+        }
     }
 
     private func trackImpression(for grouped: DiscoverGroupedItem, rank: Int) {
@@ -190,6 +216,20 @@ struct DiscoverView: View {
             rank: rank,
             score: item.score
         )
+        Task {
+            let event = DiscoverInteractionEvent(
+                action: "impression",
+                itemType: itemType(item),
+                itemId: rawItemId(item),
+                category: itemCategory(item),
+                itemName: itemName(item),
+                score: item.score,
+                rank: rank,
+                surface: "native",
+                source: "viewport"
+            )
+            _ = try? await APIClient.shared.recordDiscoverInteraction(event)
+        }
     }
 
     private var filteredItems: [FeedItem] {
