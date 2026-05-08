@@ -358,9 +358,9 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 **Entertainment Page:** ✅ BACKEND SHIPPED (May 6) — `/entertainment` endpoint live. Needs frontend design.
 
 **Remaining work:**
-- Politics page frontend design (awaiting Claude Design brief)
-- Entertainment page frontend design (awaiting Claude Design brief)
-- Native views for Politics + Entertainment (iOS/macOS)
+- ~~Politics page frontend design~~ ✅ SHIPPED (May 7 — bar-race hero, evolution chart, sparklines, senate map, chamber control, cross-source spotlight)
+- ~~Entertainment page frontend design~~ ✅ SHIPPED (May 7 — editorial hero, tabbed music/movies, cultural masonry, tech sidebar, TMDB posters)
+- ~~Native views for Politics + Entertainment~~ ✅ SHIPPED (May 7 — PoliticsView 410 lines, EntertainmentView 450 lines, CategoryModels updated)
 
 **Parallel Safety:** Green (new routes, new pages)
 

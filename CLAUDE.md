@@ -252,6 +252,8 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 28. **Vercel builds run ESLint, not just TypeScript** — `tsc --noEmit` passing does NOT mean the frontend will deploy. Vercel runs `next build` which includes ESLint rules-of-hooks checks. Always run `npm run build` locally before pushing frontend changes. Hooks called after early returns will pass `tsc` but fail `next build`. CI now catches this.
 29. **Kalshi market names use abbreviations that fail ILIKE matching** — "A's" doesn't match "Athletics", "Chicago WS" doesn't match "Chicago White Sox". The matching task now prefers ticker-derived team names (mascots) over market name-derived abbreviations. Missing ticker abbreviations (`ATH`, `WSH_MLB`) caused 67 unlinked MLB game markets.
 30. **Admin write endpoints need `_check_admin_secret`** — Several admin endpoints (matching override POST/DELETE, eval decision POST, playoffstatus scrape) were shipping without auth. Always add the check for any endpoint that mutates data or burns API quota.
+31. **`_is_headline_market` must filter non-US elections** — Polymarket has French, UK, Canadian presidential markets that contain "2028" and "presidential." Without `_NON_US_RE` filtering, the politics hero shows Jean-Luc Mélenchon instead of US candidates. Always require US-specific keywords AND exclude known non-US patterns.
+32. **Entertainment `kind` classification: avoid greedy ticker prefixes** — `kxrt` matched any ticker starting with those letters, causing political markets to be classified as Rotten Tomatoes. Use full prefixes (`kxrottentomatoes`) or name-based regex for ambiguous cases.
 
 ---
 
