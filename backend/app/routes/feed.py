@@ -1707,23 +1707,27 @@ async def _score_futures(
         .limit(180)
     )
 
-    movement_expr = (
-        select(func.max(func.abs(FuturesOutcome.probability_change_24h)))
-        .where(FuturesOutcome.market_id == FuturesMarket.id)
-        .correlate(FuturesMarket)
-        .scalar_subquery()
+    movement_scores = (
+        select(
+            FuturesOutcome.market_id.label("market_id"),
+            func.max(func.abs(FuturesOutcome.probability_change_24h)).label("max_movement"),
+        )
+        .where(FuturesOutcome.probability_change_24h.isnot(None))
+        .group_by(FuturesOutcome.market_id)
+        .subquery()
     )
 
     # Pool 2b: non-sports by actual movement. This surfaces stories that are
     # changing quickly even if their absolute volume is lower.
     nonsports_movement_query = (
         select(FuturesMarket.id)
+        .join(movement_scores, movement_scores.c.market_id == FuturesMarket.id)
         .where(
             *id_filters,
             non_sports_filter,
         )
         .order_by(
-            movement_expr.desc().nulls_last(),
+            movement_scores.c.max_movement.desc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
         )
         .limit(160)
