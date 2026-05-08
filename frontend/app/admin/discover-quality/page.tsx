@@ -272,6 +272,19 @@ interface DiscoverEngagementItem {
   actions: number;
 }
 
+interface DiscoverEngagementOpportunity {
+  kind: "promote" | "investigate" | "downrank";
+  priority: number;
+  label: string;
+  surface: string;
+  category: string;
+  item_type: string;
+  metric: string;
+  value: number;
+  impressions: number;
+  recommendation: string;
+}
+
 interface DiscoverEngagementResponse {
   days: number;
   totals: {
@@ -287,6 +300,7 @@ interface DiscoverEngagementResponse {
     share_rate: number;
   };
   groups: DiscoverEngagementGroup[];
+  opportunities: DiscoverEngagementOpportunity[];
   top_items: DiscoverEngagementItem[];
 }
 
@@ -621,6 +635,32 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
           <EngagementList title="Strong Opens" rows={strongestOpens} metric="open_rate" />
           <EngagementList title="High Dismiss" rows={highDismiss} metric="dismiss_rate" warn />
           <EngagementList title="Share Signals" rows={shareSignals} metric="share_rate" />
+        </div>
+      )}
+
+      {data.opportunities.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-text-primary mb-2">Ranking Opportunities</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {data.opportunities.slice(0, 6).map((item) => (
+              <div key={`${item.kind}-${item.label}-${item.metric}`} className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-text-primary truncate">{item.label}</div>
+                    <div className="text-xs text-text-secondary mt-1">{item.recommendation}</div>
+                  </div>
+                  <StatusPill tone={item.kind === "investigate" ? "warn" : item.kind === "promote" ? "ok" : "muted"}>
+                    {item.kind}
+                  </StatusPill>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <StatusPill tone="muted">{formatTargetName(item.metric)}</StatusPill>
+                  <StatusPill tone="muted">{rateText(item.value)}</StatusPill>
+                  <StatusPill tone="muted">{`${item.impressions} impressions`}</StatusPill>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

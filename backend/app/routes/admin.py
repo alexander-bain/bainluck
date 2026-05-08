@@ -6260,6 +6260,58 @@ async def discover_engagement_summary(
             }
         )
 
+    opportunities = []
+    for row in rows:
+        impressions = row["impressions"]
+        if impressions < 10:
+            continue
+        label = f"{row['surface']} / {row['category']} / {row['item_type']}"
+        if row["open_rate"] >= 0.18 or row["share_rate"] >= 0.04:
+            opportunities.append(
+                {
+                    "kind": "promote",
+                    "priority": round((row["open_rate"] * 100) + (row["share_rate"] * 250), 2),
+                    "label": label,
+                    "surface": row["surface"],
+                    "category": row["category"],
+                    "item_type": row["item_type"],
+                    "metric": "open_share_rate",
+                    "value": round(row["open_rate"] + row["share_rate"], 4),
+                    "impressions": impressions,
+                    "recommendation": "Consider a small ranking lift or stronger first-page representation.",
+                }
+            )
+        if row["dismiss_rate"] >= 0.12:
+            opportunities.append(
+                {
+                    "kind": "investigate",
+                    "priority": round(row["dismiss_rate"] * 100, 2),
+                    "label": label,
+                    "surface": row["surface"],
+                    "category": row["category"],
+                    "item_type": row["item_type"],
+                    "metric": "dismiss_rate",
+                    "value": row["dismiss_rate"],
+                    "impressions": impressions,
+                    "recommendation": "Review card wording, repetition, or category weighting before boosting similar items.",
+                }
+            )
+        if impressions >= 50 and row["open_rate"] <= 0.02 and row["share_rate"] == 0:
+            opportunities.append(
+                {
+                    "kind": "downrank",
+                    "priority": round((0.02 - row["open_rate"]) * 100 + impressions / 100, 2),
+                    "label": label,
+                    "surface": row["surface"],
+                    "category": row["category"],
+                    "item_type": row["item_type"],
+                    "metric": "low_open_rate",
+                    "value": row["open_rate"],
+                    "impressions": impressions,
+                    "recommendation": "Candidate for a bounded score cap or improved explanation/media treatment.",
+                }
+            )
+
     top_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -6287,6 +6339,7 @@ async def discover_engagement_summary(
             "share_rate": round(totals["shares"] / totals["impressions"], 4) if totals["impressions"] else 0,
         },
         "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
+        "opportunities": sorted(opportunities, key=lambda r: r["priority"], reverse=True)[:20],
         "top_items": [
             {
                 "item_type": item_type,

@@ -264,8 +264,8 @@ class TestDiscoverInteractions:
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
         grouped = MagicMock()
         grouped.all.return_value = [
-            ("native", "basketball", "event", "impression", 2),
-            ("native", "basketball", "event", "open", 1),
+            ("native", "basketball", "event", "impression", 20),
+            ("native", "basketball", "event", "open", 4),
             ("native", "basketball", "event", "share", 1),
         ]
         top_items = MagicMock()
@@ -278,15 +278,16 @@ class TestDiscoverInteractions:
         body = resp.json()
 
         assert resp.status_code == 200
-        assert body["totals"]["impressions"] == 2
-        assert body["totals"]["opens"] == 1
+        assert body["totals"]["impressions"] == 20
+        assert body["totals"]["opens"] == 4
         assert body["totals"]["shares"] == 1
         assert any(
             row["surface"] == "native"
             and row["category"] == "basketball"
-            and row["open_rate"] == 0.5
+            and row["open_rate"] == 0.2
             for row in body["groups"]
         )
+        assert body["opportunities"][0]["kind"] == "promote"
         assert body["top_items"][0]["item_name"] == "Lakers vs Celtics"
 
 
