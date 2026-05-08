@@ -388,9 +388,8 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 
 ## Event Detail Parity Items (from April 29 Sweep #3)
 
-Items 2, 4, 5, 6, 8 remain:
+Items 4, 5, 6, 8 remain (item 2 web x-axis alignment is done via `sharedChartDomain`):
 
-- **Web x-axis alignment**: Win Prob and Score Diff charts need identical tick positions. Generate explicit ticks from shared domain with dynamic intervals (hourly for long games, 30-min for short).
 - **1st half margin mismatch**: Web shows BOS +6.5, native shows BOS +1.0. Use spread threshold directly from period market with probability closest to 50%.
 - **Half map FINAL values**: Derive half scores from ESPN history halftime data point.
 - **2nd half maps missing**: Check if API returns 2H period markets; render if present.
@@ -412,33 +411,19 @@ Items 2, 4, 5, 6, 8 remain:
 **Files:** `utils/market_interestingness.py` (new), `scripts/calibrate_interestingness.py` (new), Google Sheet
 **Parallel Safety:** Green
 
-### 21. Rage Shake — In-App Bug Reporting
+### ~~21. Rage Shake~~ — SHIPPED
 
-**Goal:** Shake phone (iOS) or click button (web) to instantly report a bug with screenshot, page, device info, app state.
+Fully live on iOS/macOS. Admin page at `/admin/bug-reports`.
 
-**Platforms:** iOS (UIKit `motionEnded`), macOS (`Cmd+Shift+F`), Web (floating button or `Ctrl+Shift+F`).
+### ~~22. Interestingness-Powered Discovery Feed~~ — MOSTLY SHIPPED
 
-**Destination:** GitHub Issues API (`POST /repos/alexander-bain/bainluck/issues`), auto-labeled `bug/rageshake`.
-
-**Files:** `ios/.../Utils/RageShake.swift` (new), `components/FeedbackButton.tsx` (new)
-**Effort:** iOS 2-3h, Web 2-3h
-**Parallel Safety:** Green
-
-### 22. Interestingness-Powered Discovery Feed (LLM Blurbs + Images)
-
-**Goal:** Social-media-style feed where each card has image + LLM-written blurb + probability bar.
-
-**Phases:** (1) Score everything, store `interestingness_score`, re-score hourly. (2) GPT-4o-mini blurbs for top 100, store `llm_blurb`, regenerate weekly. (3) Images: stock/icon mapping, entity lookups, optionally AI-generated for top 20. (4) Feed integration.
-
-**Files:** `utils/market_interestingness.py`, `tasks/blurb_generation.py`, new migration, `components/DiscoveryCard.tsx` (new)
-**Effort:** P1: 2h, P2: 3h, P3: 2h, P4: 4h
-**Parallel Safety:** Green
+Discover feed already has LLM blurbs (`hook_description`), Pexels images (`image_url`), probability bars, and quality scoring. Remaining: formal `interestingness_score` column + calibration against email ground truth (captured in item 20).
 
 ### 23. Prediction Market Game / Social Picks
 
-**Formats:** (1) Feed-as-game (Higher/Lower buttons, leaderboard), (2) Daily picks (5 markets, Wordle-style), (3) Head-to-head (challenge friend), (4) Ambient screensaver (Apple TV/Mac/web), (5) Portfolio mode (track "returns").
+Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: (2) Wordle-style daily picks page, (3) head-to-head challenges, (4) ambient screensaver, (5) portfolio mode.
 
-**Depends on:** Item 22, auth (shipped), preferences (shipped).
+**Depends on:** Auth (shipped), preferences (shipped).
 **Parallel Safety:** Green
 
 ---
