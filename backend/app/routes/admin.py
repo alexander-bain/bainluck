@@ -6125,6 +6125,25 @@ async def hook_coverage(
     }
 
 
+@router.post("/hook-enrichment/trigger")
+async def trigger_hook_enrichment(
+    secret: str = Query(...),
+    limit: int = Query(500, ge=1, le=1000),
+):
+    """Queue hook enrichment for feed-prioritized open markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    task = celery_app.send_task("app.tasks.enrich_market_hooks", kwargs={"limit": limit})
+    return {
+        "queued": True,
+        "task_id": task.id,
+        "limit": limit,
+    }
+
+
 @router.get("/market-lookup")
 async def market_lookup(
     secret: str = Query(...),
