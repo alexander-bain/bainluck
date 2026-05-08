@@ -167,7 +167,7 @@ struct DiscoverView: View {
                 ScrollViewReader { proxy in
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(Array(pageGrouped.enumerated()), id: \.element.id) { idx, gi in
-                            let isGuessSlot = (idx + 1) % 2 == 0
+                            let isGuessSlot = (idx + 1) % 5 == 0
                             Group {
                                 switch gi {
                                 case .group(let title, let items):
@@ -404,6 +404,20 @@ final class DiscoverViewModel: ObservableObject {
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
 
+    private var awayColor: Color {
+        Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+    }
+
+    private var homeColor: Color {
+        Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+    }
+
+    private var eyebrow: String {
+        if event.status == "live" { return "LIVE" }
+        if event.status == "completed" || event.status == "closed" { return "FINAL" }
+        return (event.sportName ?? event.sport ?? "SPORTS").uppercased()
+    }
+
     private var statusText: String {
         if event.status == "live" { return event.espn?.period ?? "LIVE" }
         if event.status == "completed" || event.status == "closed" {
@@ -415,72 +429,146 @@ private struct NativeEventDiscoverCard: View {
         return "vs"
     }
 
+    private var contextText: String? {
+        if let label = event.highlight?.label, !label.isEmpty { return label }
+        if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
+            return "Excitement Index \(score): \(label)"
+        }
+        if event.status == "live" { return "Live probability is moving now" }
+        return nil
+    }
+
     var body: some View {
         NavigationLink(value: Route.eventDetail(id: event.id)) {
-            VStack(spacing: 8) {
-                // Compact matchup row
-                HStack(spacing: 10) {
-                    teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
-                             color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"),
-                             score: event.awayScore)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    HStack(spacing: 6) {
+                        if event.status == "live" {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 7, height: 7)
+                        }
+                        Text(eyebrow)
+                            .font(.system(size: 10, weight: .heavy))
+                            .tracking(0.8)
+                    }
+                    .foregroundStyle(event.status == "live" ? .red : .secondary)
+
+                    Spacer()
+
                     Text(statusText)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.caption.weight(.bold).monospacedDigit())
                         .foregroundStyle(event.status == "live" ? .red : .secondary)
-                        .frame(minWidth: 36)
-                    teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
-                             color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"),
-                             score: event.homeScore)
                 }
 
-                // Probability bar
+                HStack(alignment: .center, spacing: 10) {
+                    teamColumn(
+                        name: event.awayTeam,
+                        logo: event.awayTeamData?.logoSmall,
+                        color: awayColor,
+                        probability: event.currentOdds?.awayProbability,
+                        score: event.awayScore,
+                        alignment: .leading
+                    )
+
+                    Text("vs")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28)
+
+                    teamColumn(
+                        name: event.homeTeam,
+                        logo: event.homeTeamData?.logoSmall,
+                        color: homeColor,
+                        probability: event.currentOdds?.homeProbability,
+                        score: event.homeScore,
+                        alignment: .trailing
+                    )
+                }
+
                 if let hp = event.currentOdds?.homeProbability, let ap = event.currentOdds?.awayProbability {
-                    HStack(spacing: 4) {
-                        Text(formatProbability(ap))
-                            .font(.caption2.weight(.bold))
-                        GeometryReader { geo in
-                            HStack(spacing: 0) {
-                                Rectangle().fill(Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"))
-                                    .frame(width: geo.size.width * ap)
-                                Rectangle().fill(Color(hex: event.homeTeamData?.primaryColor ?? "#374151"))
-                                    .frame(width: geo.size.width * hp)
-                            }
-                            .clipShape(Capsule())
-                        }
-                        .frame(height: 5)
-                        Text(formatProbability(hp))
-                            .font(.caption2.weight(.bold))
-                    }
+                    probabilityBar(awayProbability: ap, homeProbability: hp)
+                }
+
+                if let contextText {
+                    Text(contextText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(14)
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack, lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
         }
         .buttonStyle(.plain)
     }
 
-    private func teamBadge(name: String, logo: String?, color: Color, score: Int?) -> some View {
-        HStack(spacing: 6) {
+    private func teamColumn(
+        name: String,
+        logo: String?,
+        color: Color,
+        probability: Double?,
+        score: Int?,
+        alignment: HorizontalAlignment
+    ) -> some View {
+        VStack(alignment: alignment, spacing: 7) {
             if let logo, let url = URL(string: logo) {
                 AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
-                    .frame(width: 28, height: 28)
+                    .frame(width: 42, height: 42)
             } else {
-                RoundedRectangle(cornerRadius: 6).fill(color)
-                    .frame(width: 28, height: 28)
-                    .overlay(Text(String(name.split(separator: " ").last ?? "")).font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(color)
+                    .frame(width: 42, height: 42)
+                    .overlay(
+                        Text(String(name.split(separator: " ").last ?? "").prefix(3).uppercased())
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(.white)
+                    )
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name.split(separator: " ").last.map(String.init) ?? name)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                if let s = score {
-                    Text("\(s)").font(.subheadline.weight(.black).monospacedDigit())
+
+            Text(name)
+                .font(.subheadline.weight(.bold))
+                .lineLimit(2)
+                .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
+                .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
+
+            HStack(spacing: 6) {
+                if let probability {
+                    Text(formatProbability(probability))
+                        .font(.title3.weight(.black).monospacedDigit())
+                        .foregroundStyle(color)
+                }
+                if let score {
+                    Text("\(score)")
+                        .font(.caption.weight(.heavy).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.10))
+                        .clipShape(Capsule())
                 }
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func probabilityBar(awayProbability: Double, homeProbability: Double) -> some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(awayColor)
+                    .frame(width: max(3, geo.size.width * awayProbability))
+                Rectangle()
+                    .fill(homeColor)
+                    .frame(width: max(3, geo.size.width * homeProbability))
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 8)
+        .background(Color.barTrack.opacity(0.25), in: Capsule())
     }
 }
 
