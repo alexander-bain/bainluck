@@ -21,7 +21,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
@@ -1646,8 +1646,36 @@ async def _score_futures(
     ]
 
     base_options = [
-        selectinload(FuturesMarket.outcomes),
-        selectinload(FuturesMarket.sport),
+        load_only(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.source,
+            FuturesMarket.sport_id,
+            FuturesMarket.category,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.market_tier,
+            FuturesMarket.canonical_market_key,
+            FuturesMarket.image_url,
+            FuturesMarket.hook_description,
+            FuturesMarket.volume_24h,
+            FuturesMarket.updated_at,
+            FuturesMarket.resolution_date,
+            FuturesMarket.status,
+            FuturesMarket.llm_league,
+            FuturesMarket.llm_gender,
+            FuturesMarket.llm_level,
+        ),
+        selectinload(FuturesMarket.outcomes).load_only(
+            FuturesOutcome.id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            FuturesOutcome.current_probability,
+            FuturesOutcome.probability_change_24h,
+            FuturesOutcome.rank,
+            FuturesOutcome.rank_change_24h,
+            FuturesOutcome.opening_probability,
+        ),
+        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
