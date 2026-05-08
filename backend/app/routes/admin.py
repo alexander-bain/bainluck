@@ -9241,7 +9241,7 @@ async def update_bug_report(
     if not await _check_admin_auth(secret, request, db):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    _VALID_STATUSES = {"new", "reviewed", "in_progress", "fixed", "wont_fix", "duplicate"}
+    _VALID_STATUSES = {"new", "reviewed", "in_progress", "fixed", "wont_fix", "duplicate", "actioned", "dismissed"}
     values = {}
     if status:
         if status not in _VALID_STATUSES:

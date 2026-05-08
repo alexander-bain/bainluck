@@ -234,7 +234,7 @@ final class AuthManager: ObservableObject {
             AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Apple sign-in successful: user \(response.user.id)")
         } catch {
-            self.error = "Sign-in failed. Please try again."
+            self.error = Self.userFacingAuthError(error)
             logger.error("Apple sign-in backend call failed: \(error)")
         }
     }
@@ -250,9 +250,9 @@ final class AuthManager: ObservableObject {
 
         do {
             #if os(iOS)
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let rootViewController = windowScene.windows.first?.rootViewController else {
+            guard let rootViewController = Self.findRootViewController() else {
                 error = "Cannot present sign-in"
+                logger.error("No root view controller found for Google sign-in")
                 return
             }
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
@@ -284,11 +284,10 @@ final class AuthManager: ObservableObject {
             AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Google sign-in successful: user \(response.user.id)")
         } catch {
-            // Silently ignore user cancellation (GIDSignInError code -5)
             if (error as NSError).code == -5 {
                 return
             }
-            self.error = "Sign-in failed. Please try again."
+            self.error = Self.userFacingAuthError(error)
             logger.error("Google sign-in error: \(error)")
         }
     }
@@ -300,6 +299,40 @@ final class AuthManager: ObservableObject {
             return nil
         }
         return clientID
+    }
+
+    // MARK: - Shared Helpers
+
+    #if os(iOS)
+    @MainActor
+    static func findRootViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first
+        return scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+            ?? scene?.windows.first?.rootViewController
+    }
+    #endif
+
+    static func userFacingAuthError(_ error: Error) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .networkError:
+                return "Connection failed. Check your network and try again."
+            case .httpError(let code, _) where code >= 500:
+                return "Server error (\(code)). Please try again."
+            case .httpError(let code, _):
+                return "Sign-in rejected (\(code)). Please try again."
+            case .decodingError:
+                return "Unexpected server response. Please try again."
+            case .invalidURL:
+                return "Sign-in failed. Please try again."
+            }
+        }
+        return "Sign-in failed. Please try again."
     }
 }
 
@@ -340,11 +373,15 @@ private class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegat
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
             #if os(iOS)
-            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = scene.windows.first else {
-                return ASPresentationAnchor()
-            }
-            return window
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first(where: { $0.activationState == .foregroundActive })
+                ?? UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first
+            return scene?.windows.first(where: { $0.isKeyWindow })
+                ?? scene?.windows.first
+                ?? ASPresentationAnchor()
             #elseif os(macOS)
             return NSApplication.shared.keyWindow ?? NSWindow()
             #endif

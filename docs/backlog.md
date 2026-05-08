@@ -107,6 +107,148 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 
 ---
 
+## Rage Shake Triage (May 7) — iOS Bugs
+
+16 reports filed via Rage Shake. 14 new items below (2 already tracked: DN-9, BR1-2). Grouped by theme.
+
+### RS-1. iPad Sidebar Navigation Gets Stuck (P1) — Bugs #14, #15
+
+**Problem:** After visiting Quick Links pages (Futures, Economics, Weather, Preferences), the iPad sidebar highlights the correct tab but the content area stays on the previous page. User cannot navigate away without force-closing.
+
+**Repro:** iPad → Sidebar → Quick Links → Futures → then tap Sports/Discover/Search → content doesn't change.
+
+**Root cause hypothesis:** iPad uses `NavigationSplitView` with sidebar. Quick Links pages likely push onto the detail column but don't integrate with the tab-based navigation state. The `selectedTab` binding and the detail view get out of sync.
+
+**Files:** `ios/.../MainTabView.swift`, `ios/.../Views/SidebarView.swift`
+**Parallel Safety:** Yellow
+
+### RS-2. Weather API Returns 500 on iOS (P1) — Bug #13
+
+**Problem:** Weather page shows "Server error (500). Try again in a moment." on iPad. Could be iOS client sending different headers/params than web, or a transient backend issue.
+
+**Action:** Check Sentry for Weather endpoint 500s. If recurring, investigate whether iOS client hits a different weather sub-endpoint or sends malformed params.
+
+**Files:** `backend/app/routes/weather.py`, `ios/.../Views/WeatherView.swift`
+**Parallel Safety:** Yellow
+
+### RS-3. iOS Event Detail "Additional Markets" Broken (P1) — Bug #9
+
+**Problem:** On iPhone, the "Additional Markets" section on event detail shows truncated, unreadable market names ("Spread...", "Texas R...", "O/U 6.5") in a cramped single-column layout with all values at 100%/0% for completed games. Looks nothing like the web version. The "Other Markets" bucket is a catch-all dumping ground.
+
+**Two sub-issues:**
+1. **Layout/rendering:** Market names are truncated to ~8 chars, bars are tiny. The iOS component doesn't match the web `MarketMapSection` layout.
+2. **Resolved market flooding:** Completed games show 100%/0% resolved markets — these should either be hidden or shown differently (e.g., "RESULT: NYY +7" instead of probability bars).
+
+**Files:** `ios/.../Components/MarketMapSection/`, `ios/.../Views/EventDetailView.swift`
+**Parallel Safety:** Yellow
+
+### RS-4. iOS False Offline Detection + Preferences 401 (P2) — Bug #12
+
+**Problem:** App reports `network: offline` in bug report metadata, but user has working WiFi. Preferences page shows "Request failed (401)" — the Preferences endpoint requires auth but anonymous users get a hard error instead of a graceful fallback.
+
+**Two sub-issues:**
+1. **False offline:** `NWPathMonitor` or `URLSession` configuration incorrectly detecting network as offline. All 10 iPad bug reports from this session show `network: offline`.
+2. **Preferences 401:** Anonymous users hitting preferences endpoint should get default preferences, not a 401.
+
+**Files:** `ios/.../Utils/NetworkMonitor.swift`, `ios/.../Services/APIClient.swift`, `backend/app/routes/preferences.py`
+**Parallel Safety:** Green
+
+### RS-5. iPad Sign-In Failure (P2) — Bug #6
+
+**Problem:** Sign-in fails on iPad with "Sign-in failed. Please try again." Could be Apple Sign-In or Google Sign-In. The iPad is on OS 26.4.2. Known gotcha #15 (Safari breaks Firebase Google Auth) may apply to in-app web views.
+
+**Action:** Test sign-in on iPad. Check if Firebase Auth is configured for iPad bundle ID. Check if ASAuthorizationController works on iPad.
+
+**Files:** `ios/.../Services/AuthService.swift`, Firebase console config
+**Parallel Safety:** Green
+
+### RS-6. Resolved/Past-Event Markets in Discover Feed (P2) — Bug #17
+
+**Problem:** Met Gala 2026 red carpet market ("What will Bad Bunny wear?") still showing in Discover feed on May 7, but the Met Gala happened May 5. The market may not have `status=closed` yet on Kalshi/Polymarket, or the resolution date hasn't passed, so it slips through the existing staleness filters.
+
+**Fix:** Add event-date-based filtering for markets whose underlying real-world event has clearly passed, independent of market status. The Met Gala date is encoded in the market name but not in a queryable field.
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** Yellow
+
+### RS-7. Discover Game Cards Need Game State Context (P2) — Bug #10
+
+**Problem:** A baseball game showing 99% probability in Discover has no context — is it live? Final? 8th inning? User explicitly says: do NOT hard-filter extreme probabilities (that's a lazy solution). Instead, add game state context to Discover cards: "Final: NYY 9 - TEX 2" or "Live: Bot 8th, NYY leads 7-2".
+
+**Fix:** The Discover feed endpoint already returns event data. Add `game_status`, `score`, and `game_state_display` to the card payload for game-type markets. Frontend/iOS renders a small status badge.
+
+**Files:** `backend/app/routes/feed.py`, `frontend/app/discover/page.tsx`, `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+### RS-8. iOS Discover Card Headers Block Scroll (P2) — Bug #11
+
+**Problem:** On iPhone, enriched Discover cards with colored/image headers (the big green golf card, orange economics card) intercept touch gestures. If you touch anywhere on the header area, you can't scroll the feed — only touching the white card body below the header allows scrolling.
+
+**Root cause hypothesis:** The header view has a tap gesture recognizer that's eating the scroll gesture. Need to set `simultaneousGesture` or use `contentShape` properly so scroll passes through.
+
+**Files:** `ios/.../Views/DiscoverCardView.swift` or equivalent
+**Parallel Safety:** Green
+
+### RS-9. Final Game Display Issues on iOS (P2) — Bug #8
+
+**Problem:** Three issues on completed game event detail (TEX 2 - NYY 9 Final):
+1. **1%-99% on final game:** Hero still shows 1%-99% probability instead of emphasizing the final result. The `final_result` source fix (May 7) should address the data, but the display should also show "FINAL" prominently and de-emphasize probability for completed games.
+2. **Chart 50% dip anomaly:** Blue dashed line (likely Polymarket) drops to exactly 50% mid-game then snaps back. This is a stale/missing data point being interpolated as 50% (the default). Should skip null data points rather than interpolating to 50%.
+3. **Tiny period markers:** Inning markers on the chart are unreadably small on iPhone.
+
+**Files:** `ios/.../Views/EventDetailView.swift`, `ios/.../Components/WinProbChart.swift`
+**Parallel Safety:** Yellow
+
+### RS-10. iOS Search Suggests Non-Sport Categories (P2) — Bug #16
+
+**Problem:** Search typeahead on iOS suggests "Politics" (and likely Weather, Economics, Entertainment) as search terms, but search only covers sports events/teams. Tapping "Politics" returns "No Results."
+
+**Fix options:**
+- **Option A:** Filter non-sport suggestions from typeahead
+- **Option B:** Make non-sport suggestions navigate to the category page instead of searching (better UX)
+- **Option C:** Expand search to cover futures markets (would find political markets)
+
+**Files:** `ios/.../Views/SearchView.swift`, `backend/app/routes/events.py` (search endpoint)
+**Parallel Safety:** Green
+
+### RS-11. Baseball Inning Markets Misclassified as "Other" (P2) — Bug #5
+
+**Problem:** "First Inning Run" and "First 5 Innings" markets appear in the generic "Other Markets" bucket on event detail. They should be classified alongside "1st Half" markets (basketball/football) as period-based markets with their own section.
+
+**Fix:** Extend `_classify_game_market()` to recognize baseball inning patterns (first inning, first 5 innings, etc.) and return `inning_market` or `half_total`/`half_spread` equivalent classification.
+
+**Files:** `backend/app/routes/events.py` (`_classify_game_market`), `ios/.../Components/MarketMapSection/`
+**Parallel Safety:** Yellow
+
+### RS-12. Market Maps Don't Label Zero Baseline (P2) — Bug #3
+
+**Problem:** The "Runs map" and margin map visualizations show x-axis labels like "-9", "6", "22+" but don't explicitly label zero/the baseline. User says: "Where zero is ALWAYS has to be labeled."
+
+**Fix:** Add a "0" tick mark and subtle vertical indicator line on all market map slider visualizations where the scale crosses zero.
+
+**Files:** `ios/.../Components/MarketMapSection/`, `frontend/components/MarketMapSection.tsx`
+**Parallel Safety:** Green
+
+### RS-13. Pre-Game Odds Redundantly Shown on Final Games (P2) — Bug #1
+
+**Problem:** Completed NBA playoff game (PHI 109 - BOS 100) shows "41% - 59%" with "Opened 41% - 59%" below — looks like odds are displayed twice since current equals opening for a final game. Also, no Kalshi/Polymarket source line on win probability chart despite known markets existing.
+
+**Two sub-issues:**
+1. **Redundant display:** When current probability equals (or is close to) opening probability, hide the "Opened X% - Y%" line. Or for final games, replace both with "Result: PHI wins" display.
+2. **Missing prediction market sources:** Kalshi and Polymarket had NBA playoff markets but they don't appear on the chart. Check if `event_id` linking worked for this game.
+
+**Files:** `ios/.../Views/EventDetailView.swift`, `backend/app/tasks/prediction_market_matching.py`
+**Parallel Safety:** Yellow
+
+### RS-14. iOS Event Detail Excessive Whitespace (P3) — Bug #4
+
+**Problem:** Large gap between sections on event detail page (visible between nav bar and Player Props header). Likely excessive padding/spacing in the section layout.
+
+**Files:** `ios/.../Views/EventDetailView.swift`
+**Parallel Safety:** Green
+
+---
+
 ## Tier 1 — High Leverage, Do Next
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
@@ -193,7 +335,7 @@ Not code — configuration in the GA4 property (analytics.google.com):
 **Files:** `frontend/app/events/[id]/page.tsx`, `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
-### BR1-2. Source Attribution Looks Duplicated — NEEDS DESIGN
+### BR1-2. Source Attribution Looks Duplicated — NEEDS DESIGN (Rage Shake Bug #1 confirms)
 
 **Problem:** The source list (sportsbooks contributing to the aggregate) appears to show twice — once as a static list and once inside a collapsible dropdown.
 
@@ -422,7 +564,7 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
-| DN-9 | Swipe to dismiss (iOS) | Web has swipe left/right with like/dismiss overlays | `ios/.../DiscoverView.swift` | Green |
+| DN-9 | Swipe to dismiss (iOS) | Web has swipe left/right with like/dismiss overlays. **Rage Shake Bug #7 confirms.** | `ios/.../DiscoverView.swift` | Green |
 | DN-10 | Onboarding flow | "Build Your Feed" modal with category selection on first launch | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
 | DN-11 | Grouped market cards | Markets with name prefix collapse into single expandable card | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
 | D-4a | Click/view tracking | `user_interactions` table logging detail views. Backend middleware | New migration, `main.py`, `utils/personalization.py` | Yellow |
