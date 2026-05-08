@@ -296,6 +296,12 @@ _ei_cache: dict = {}
 _ei_cache_time: float = 0
 _EI_CACHE_TTL = 300  # 5 minutes
 
+# In-memory cache for game-markets responses (roster queries are expensive)
+# Completed games: cached indefinitely. Live/scheduled: 30s TTL.
+_game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
+_GAME_MARKETS_LIVE_TTL = 30
+_GAME_MARKETS_MAX_SIZE = 200
+
 
 async def _load_ei_percentiles(db: AsyncSession) -> dict:
     """Load EI percentile thresholds from database.
@@ -2703,7 +2709,16 @@ async def get_game_markets(
     Returns markets linked via FuturesMarket.event_id OR matching event teams
     in game-prop markets.
     """
+    import time as _time
     from app.models import FuturesOddsSnapshot
+
+    # Check in-memory cache (completed games cached indefinitely, live 30s)
+    now_ts = _time.time()
+    if event_id in _game_markets_cache:
+        cached_ts, cached_status, cached_response = _game_markets_cache[event_id]
+        is_final = cached_status in ("completed", "closed")
+        if is_final or (now_ts - cached_ts) < _GAME_MARKETS_LIVE_TTL:
+            return cached_response
 
     # 1. Load event with sport
     result = await db.execute(
@@ -3177,7 +3192,7 @@ async def get_game_markets(
                     if "player_team" in prop:
                         break
 
-    return {
+    response = {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
@@ -3192,6 +3207,14 @@ async def get_game_markets(
         "other": other_markets,
         "pace": pace,
     }
+
+    # Cache response (evict oldest if over size limit)
+    if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
+        oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
+        del _game_markets_cache[oldest_key]
+    _game_markets_cache[event_id] = (now_ts, event.status or "", response)
+
+    return response
 
 
 @router.get("/{event_id}/related-futures")
