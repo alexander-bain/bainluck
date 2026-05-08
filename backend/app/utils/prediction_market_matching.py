@@ -772,7 +772,7 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "bos_nhl": "Bruins", "nyr": "Rangers", "nyi": "Islanders",
     "njd": "Devils", "pit_nhl": "Penguins", "phi_nhl": "Flyers",
     "wsh": "Capitals", "car_nhl": "Hurricanes", "cbj": "Blue Jackets",
-    "fla": "Panthers", "tbl": "Lightning", "tor_nhl": "Maple Leafs",
+    "fla": "Panthers", "tbl": "Lightning", "tb_nhl": "Lightning", "tor_nhl": "Maple Leafs",
     "mtl": "Canadiens", "ott": "Senators", "buf_nhl": "Sabres",
     "det_nhl": "Red Wings", "chi_nhl": "Blackhawks", "stl": "Blues",
     "nsh": "Predators", "dal_nhl": "Stars", "min_nhl": "Wild",
@@ -780,7 +780,7 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "van": "Canucks", "cgy": "Flames", "edm": "Oilers",
     "sea_nhl": "Kraken", "vgk": "Golden Knights", "sjs": "Sharks",
     "ana": "Ducks", "lak": "Kings",
-    "uta_nhl": "Utah Hockey", "la_nhl": "Kings",
+    "uta_nhl": "Mammoth", "la_nhl": "Kings",
     # MLB
     "nyy": "Yankees", "nym": "Mets", "bos_mlb": "Red Sox",
     "lad": "Dodgers", "hou_mlb": "Astros", "atl_mlb": "Braves",
