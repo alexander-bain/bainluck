@@ -625,13 +625,13 @@ struct OddsChartView: View {
                 ForEach(Array(visibleMarkers.enumerated()), id: \.element.id) { index, marker in
                     if let xPos = proxy.position(forX: marker.date) {
                         Text(marker.label)
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
                             .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .position(x: xPos, y: 8)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .position(x: xPos, y: 10)
                     }
                 }
             }
@@ -724,11 +724,18 @@ struct OddsChartView: View {
                 points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
             }
 
-            // Other win probability sources
+            // Other win probability sources (with outlier filtering)
             for (sourceKey, sourcePoints) in history.winProbHistory ?? [:] {
+                var prevProb: Double?
                 for wp in sourcePoints {
                     guard let date = wp.timestamp.asDate,
                           let prob = wp.homeProbability else { continue }
+                    // Skip stale 50% default readings from prediction markets:
+                    // if probability jumps to ~50% from >20% away, it's likely a gap
+                    if let prev = prevProb, abs(prob - 0.5) < 0.02, abs(prev - 0.5) > 0.15 {
+                        continue
+                    }
+                    prevProb = prob
                     points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
                 }
             }

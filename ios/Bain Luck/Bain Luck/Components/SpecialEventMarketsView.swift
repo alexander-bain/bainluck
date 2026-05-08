@@ -67,9 +67,20 @@ struct SpecialEventMarketsView: View {
         return winProbMarkets
     }
 
+    private var isGameFinished: Bool {
+        eventStatus == "completed" || eventStatus == "closed"
+    }
+
     private var categories: [MarketCategory] {
         let winProbNames = Self.isWinProbabilityMarket(markets)
-        let filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
+        var filtered = markets.filter { !Self.isRedundantWithMarketMaps($0) && !winProbNames.contains($0.marketName) }
+        // Hide resolved outcomes (100%/0%) for completed games
+        if isGameFinished {
+            filtered = filtered.filter { m in
+                guard let p = m.probability else { return false }
+                return p > 0.01 && p < 0.99
+            }
+        }
         guard !filtered.isEmpty else { return [] }
 
         var catMap: [String: MarketCategory] = [:]
@@ -122,7 +133,7 @@ struct SpecialEventMarketsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+                let columns = [GridItem(.flexible())]
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(cats) { cat in
                         VStack(alignment: .leading, spacing: 8) {
@@ -181,7 +192,7 @@ struct SpecialEventMarketsView: View {
                     Text(o.label)
                         .font(.system(size: 11))
                         .foregroundStyle(i == 0 ? .primary : .secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer()
                     GeometryReader { geo in
                         RoundedRectangle(cornerRadius: 2)

@@ -238,7 +238,7 @@ struct EventDetailView: View {
             )
         } else if let event = vm.event {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     heroSection(event)
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
@@ -484,26 +484,26 @@ struct EventDetailView: View {
                 // Giant probabilities centered
                 VStack(spacing: 4) {
                     if isFinished {
-                        let awayProb = event.openingOdds?.awayProbability
-                        let homeProb = event.openingOdds?.homeProbability
-                        if let ap = awayProb, let hp = homeProb {
-                            HStack(spacing: 8) {
-                                Text(formatProbability(ap))
-                                    .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(colors.away)
-                                Text("\u{2013}")
-                                    .font(.title3)
-                                    .foregroundStyle(.secondary.opacity(0.4))
-                                Text(formatProbability(hp))
-                                    .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(colors.home)
-                            }
-                            Text("Pre-Game Odds")
-                                .font(.caption2)
+                        // Winner emphasis for completed games
+                        let homeWon = (event.homeScore ?? 0) > (event.awayScore ?? 0)
+                        let tied = event.homeScore == event.awayScore
+                        if tied {
+                            Text("Final")
+                                .font(.title2.weight(.bold))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("Final")
+                            let winnerName = homeWon
+                                ? String(event.homeTeam.split(separator: " ").last ?? "")
+                                : String(event.awayTeam.split(separator: " ").last ?? "")
+                            Text("\(winnerName) Win")
                                 .font(.title3.weight(.bold))
+                                .foregroundStyle(homeWon ? colors.home : colors.away)
+                        }
+                        // Pre-game odds as secondary context
+                        if let ap = event.openingOdds?.awayProbability,
+                           let hp = event.openingOdds?.homeProbability {
+                            Text("Opened \(formatProbability(ap)) – \(formatProbability(hp))")
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     } else if let odds = event.currentOdds,
