@@ -136,14 +136,16 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Parallel Safety:** Green (no code changes)
 
-### 0f-4e. Slow Headshot Loading (~60s)
+### 0f-4e. Slow Headshot Loading (~60s) — INVESTIGATED May 8
 
 **Problem:** Player prop cards show initials for ~60 seconds before headshots load.
 
-**Investigation needed:** Either the roster data fetch is slow or headshot URLs need preloading.
+**Finding:** Image loading is NOT the bottleneck (ESPN CDN is fast, `fetchPriority="high"` + `loading="eager"` already set). The bottleneck is the **game-markets API endpoint** (`GET /api/events/{id}/game-markets`) which runs 2 roster DB queries + O(props × roster) name matching before returning `player_headshot` URLs. The headshot URLs only arrive when the full game-markets response completes.
 
-**Files:** Frontend image loading, backend roster sync timing
-**Parallel Safety:** Green
+**Fix needed:** Either (a) cache the roster lookup per sport in Redis (roster data rarely changes), (b) move headshot enrichment into the main event response so it arrives with the first fetch, or (c) add a server-side response cache for the game-markets endpoint.
+
+**Files:** `backend/app/routes/events.py` (game-markets endpoint, ~line 3103)
+**Parallel Safety:** Yellow
 
 ### 0f-13c-native. 2nd Half Margin/Total Maps Not Showing (NATIVE ONLY)
 
@@ -238,15 +240,15 @@ Not code — configuration in the GA4 property (analytics.google.com):
 **Files:** `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### macOS Polish (7 items)
+### macOS Polish (4 remaining of 7)
 
 | # | Item | Effort | Files | Safety |
 |---|------|--------|-------|--------|
-| MAC-1 | Live-updating title bar (show live score) | 1-2h | `Bain_LuckApp.swift` | Green |
-| MAC-3 | Keyboard navigation (tab/arrow between cards) | 2-3h | Various SwiftUI views | Green |
-| MAC-5 | Menu bar extra (live scores) | 3-4h | `MenuBarController.swift` (new) | Green |
+| ~~MAC-1~~ | ~~Live-updating title bar~~ | ✅ SHIPPED May 8 | `Bain_LuckApp.swift` | |
+| ~~MAC-3~~ | ~~Keyboard navigation~~ | ✅ SHIPPED May 8 | `FeedView.swift` | |
+| ~~MAC-5~~ | ~~Menu bar extra (live scores)~~ | ✅ SHIPPED May 8 | `MenuBarView.swift` (new) | |
 | MAC-6 | Push notifications | 2-3h | Various | Green |
-| MAC-8 | Right-click context menus (Share, Open, Copy) | 1h | Various SwiftUI views | Green |
+| ~~MAC-8~~ | ~~Right-click context menus~~ | ✅ SHIPPED May 8 | Various SwiftUI views | |
 | MAC-9 | Share button + universal links | 2-3h | Various | Green |
 | MAC-12 | macOS widgets (Today view) | 3-4h | New widget extension | Green |
 
@@ -363,7 +365,7 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 |---|------|-------------|-------|--------|
 | iOS-4 | Dead/stale views cleanup | TournamentChartView/CardView — audit for staleness | `ios/.../Views/` | Green |
 | iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
-| iOS-GD12 | Trevor Story missing headshot | Verify if URL missing in API or not loading. Add generic silhouette fallback | `RelatedFuturesView.swift`, backend roster | Green |
+| ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
 
 ---
 
