@@ -136,16 +136,9 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Parallel Safety:** Green (no code changes)
 
-### 0f-4e. Slow Headshot Loading (~60s) — INVESTIGATED May 8
+### ~~0f-4e. Slow Headshot Loading (~60s)~~ — FIXED (May 8)
 
-**Problem:** Player prop cards show initials for ~60 seconds before headshots load.
-
-**Finding:** Image loading is NOT the bottleneck (ESPN CDN is fast, `fetchPriority="high"` + `loading="eager"` already set). The bottleneck is the **game-markets API endpoint** (`GET /api/events/{id}/game-markets`) which runs 2 roster DB queries + O(props × roster) name matching before returning `player_headshot` URLs. The headshot URLs only arrive when the full game-markets response completes.
-
-**Fix needed:** Either (a) cache the roster lookup per sport in Redis (roster data rarely changes), (b) move headshot enrichment into the main event response so it arrives with the first fetch, or (c) add a server-side response cache for the game-markets endpoint.
-
-**Files:** `backend/app/routes/events.py` (game-markets endpoint, ~line 3103)
-**Parallel Safety:** Yellow
+In-memory response cache for game-markets endpoint. Completed games cached indefinitely, live games 30s TTL. Eliminates roster queries on repeated loads.
 
 ### 0f-13c-native. 2nd Half Margin/Total Maps Not Showing (NATIVE ONLY)
 
@@ -181,12 +174,11 @@ Not code — configuration in the GA4 property (analytics.google.com):
 **Files:** `ios/.../Views/EventDetailView.swift` (~line 824), `frontend/app/events/[id]/page.tsx`
 **Parallel Safety:** Yellow (design brief needed)
 
-### 0f-3. Live Box Score Integration for Player Props
+### ~~0f-3. Live Box Score Integration for Player Props~~ — PARTIALLY FIXED (May 8)
 
-**Problem:** Player prop cards should show actual stats from `box_score_data` during live games (e.g., "Jayson Tatum: 18 points so far vs 24.5 O/U"). The `boxScore` prop is wired but matching logic needs work — player names from Kalshi props don't always match ESPN box score names.
+Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV suffixes before exact last-name comparison (was substring match causing false positives). Remaining: verify matching accuracy on live games with unusual names.
 
-**Files:** `frontend/components/PlayerPropsDashboard.tsx` (matching), `backend/app/routes/events.py` (box score in response)
-**Parallel Safety:** Yellow
+**Files:** `frontend/components/PlayerPropsDashboard.tsx`
 
 ### 0f-3d Issue 4: Series Markets Not Surfaced
 
