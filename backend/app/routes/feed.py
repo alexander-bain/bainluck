@@ -43,7 +43,7 @@ from app.utils.feed_market_quality import (
     classify_market_quality,
     diversify_quality_families,
 )
-from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
+from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -1064,6 +1064,37 @@ async def _score_futures(
             volume_24h=market.volume_24h,
         )
 
+        top_mover_name = highlight_result.top_mover_name
+        top_mover_change = None
+        if top_mover_name:
+            for o in outcomes_data:
+                if o["name"] == top_mover_name and o.get("probability_change_24h"):
+                    top_mover_change = o["probability_change_24h"]
+                    break
+
+        top_surprise_name = None
+        top_surprise_change = None
+        for o in outcomes_data:
+            opening = o.get("opening_probability")
+            current = o.get("probability")
+            if opening is None or current is None:
+                continue
+            surprise_change = current - opening
+            if top_surprise_change is None or abs(surprise_change) > abs(top_surprise_change):
+                top_surprise_name = o.get("name")
+                top_surprise_change = surprise_change
+
+        headline = generate_futures_headline(
+            highlight_reasons=highlight_result.reasons,
+            top_mover_name=top_mover_name,
+            top_mover_change=top_mover_change,
+            top_surprise_name=top_surprise_name,
+            top_surprise_change=top_surprise_change,
+            leader_name=leader_name,
+            leader_probability=leader_prob,
+            source_count=source_count,
+        ) or highlight_result.primary_reason
+
         quality = classify_market_quality(
             market_name=market.name,
             sport_category=market.llm_sport_category,
@@ -1076,7 +1107,7 @@ async def _score_futures(
         base_score = apply_explanation_quality_score(
             base_score,
             hook_description=market.hook_description,
-            headline=highlight_result.primary_reason,
+            headline=headline,
             quality=quality,
         )
         if quality.reasons:
@@ -1149,20 +1180,13 @@ async def _score_futures(
         if not my_teams_only and personalized_score < 15:
             continue
 
-        # Find the actual biggest mover (with sign) for reason generation
-        top_mover_name = highlight_result.top_mover_name
-        top_mover_change = None
-        if top_mover_name:
-            for o in outcomes_data:
-                if o["name"] == top_mover_name and o.get("probability_change_24h"):
-                    top_mover_change = o["probability_change_24h"]
-                    break
-
         reason = generate_futures_reason(
             market_name=market.name,
             highlight_reasons=highlight_result.reasons,
             top_mover_name=top_mover_name,
             top_mover_change=top_mover_change,
+            top_surprise_name=top_surprise_name,
+            top_surprise_change=top_surprise_change,
             leader_name=leader_name,
             leader_probability=leader_prob,
             source_count=source_count,
@@ -1236,7 +1260,7 @@ async def _score_futures(
             "type": "futures",
             "score": personalized_score,
             "reason": reason,
-            "headline": highlight_result.primary_reason,
+            "headline": headline,
             "data": futures_data,
             "_sort_time": sort_time,
             "_quality_class": quality.quality_class,

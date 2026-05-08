@@ -131,6 +131,8 @@ def generate_futures_reason(
     highlight_reasons: list[str],
     top_mover_name: Optional[str] = None,
     top_mover_change: Optional[float] = None,
+    top_surprise_name: Optional[str] = None,
+    top_surprise_change: Optional[float] = None,
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     source_count: int = 1,
@@ -163,6 +165,14 @@ def generate_futures_reason(
             return f"{top_mover_name} moved {direction} {pct}% in 24h for {market_name}"
         return f"Big odds movement in {market_name}"
 
+    # Surprise vs opening
+    if "major_surprise" in reasons:
+        if top_surprise_name and top_surprise_change is not None:
+            direction = "up" if top_surprise_change > 0 else "down"
+            pct = round(abs(top_surprise_change) * 100, 1)
+            return f"{top_surprise_name} moved {direction} {pct} points from opening in {market_name}"
+        return f"Big shift from opening in {market_name}"
+
     # Rankings shakeup
     if "rank_shakeup" in reasons:
         return f"Multiple ranking changes in {market_name}"
@@ -174,6 +184,13 @@ def generate_futures_reason(
             pct = round(abs(top_mover_change) * 100, 1)
             return f"{top_mover_name} odds shifted {direction} {pct}% for {market_name}"
         return f"Odds shifting in {market_name}"
+
+    if "moderate_surprise" in reasons:
+        if top_surprise_name and top_surprise_change is not None:
+            direction = "up" if top_surprise_change > 0 else "down"
+            pct = round(abs(top_surprise_change) * 100, 1)
+            return f"{top_surprise_name} shifted {direction} {pct} points from opening in {market_name}"
+        return f"Odds shifted from opening in {market_name}"
 
     # Resolving soon
     if "resolving_soon_7d" in reasons:
@@ -197,3 +214,60 @@ def generate_futures_reason(
         return f"{leader_name} ({pct}%) leads {market_name}"
 
     return market_name
+
+
+def generate_futures_headline(
+    highlight_reasons: list[str],
+    top_mover_name: Optional[str] = None,
+    top_mover_change: Optional[float] = None,
+    top_surprise_name: Optional[str] = None,
+    top_surprise_change: Optional[float] = None,
+    leader_name: Optional[str] = None,
+    leader_probability: Optional[float] = None,
+    source_count: int = 1,
+) -> str:
+    """Generate compact, specific card text for futures Discover cards."""
+    reasons = set(highlight_reasons)
+
+    if "leader_change" in reasons:
+        if leader_name and leader_probability is not None:
+            return f"New favorite: {leader_name} ({round(leader_probability * 100)}%)"
+        return "New favorite"
+
+    if "source_divergence" in reasons:
+        return f"Sources disagree ({source_count})" if source_count >= 2 else "Sources disagree"
+
+    if "major_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
+        direction = "up" if top_mover_change > 0 else "down"
+        return f"{top_mover_name} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
+
+    if "major_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
+        direction = "up" if top_surprise_change > 0 else "down"
+        return f"{top_surprise_name} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
+
+    if "rank_shakeup" in reasons:
+        return "Multiple ranking changes"
+
+    if "moderate_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
+        direction = "up" if top_mover_change > 0 else "down"
+        return f"{top_mover_name} {direction} {round(abs(top_mover_change) * 100, 1)} points today"
+
+    if "moderate_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
+        direction = "up" if top_surprise_change > 0 else "down"
+        return f"{top_surprise_name} {direction} {round(abs(top_surprise_change) * 100, 1)} points from opening"
+
+    if "resolving_soon_7d" in reasons:
+        if leader_name and leader_probability is not None:
+            return f"Resolving soon: {leader_name} leads at {round(leader_probability * 100)}%"
+        return "Resolving soon"
+
+    if "resolving_soon_30d" in reasons:
+        return "Resolving this month"
+
+    if "multi_source" in reasons:
+        return f"Tracked by {source_count} sources" if source_count >= 2 else "Multi-source"
+
+    if leader_name and leader_probability is not None:
+        return f"{leader_name} leads at {round(leader_probability * 100)}%"
+
+    return ""

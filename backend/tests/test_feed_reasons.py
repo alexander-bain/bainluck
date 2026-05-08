@@ -1,0 +1,42 @@
+from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+
+
+def test_futures_headline_names_major_mover():
+    headline = generate_futures_headline(
+        highlight_reasons=["major_movement_24h"],
+        top_mover_name="OpenAI",
+        top_mover_change=0.123,
+    )
+
+    assert headline == "OpenAI up 12.3 points today"
+
+
+def test_futures_headline_names_opening_surprise():
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="Fed cut",
+        top_surprise_change=-0.187,
+    )
+
+    assert headline == "Fed cut down 18.7 points from opening"
+
+
+def test_futures_reason_explains_opening_surprise_with_market_context():
+    reason = generate_futures_reason(
+        market_name="Fed Decision in July?",
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="No change",
+        top_surprise_change=0.21,
+    )
+
+    assert reason == "No change moved up 21.0 points from opening in Fed Decision in July?"
+
+
+def test_futures_headline_falls_back_to_leader_when_no_signal_detail():
+    headline = generate_futures_headline(
+        highlight_reasons=[],
+        leader_name="Jane Doe",
+        leader_probability=0.42,
+    )
+
+    assert headline == "Jane Doe leads at 42%"
