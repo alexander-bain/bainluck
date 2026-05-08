@@ -187,7 +187,7 @@ struct BugReportView: View {
                     }
                 }
 
-                let networkType = currentNetworkType()
+                let networkType = await currentNetworkType()
                 let userName = authManager.user?.displayName ?? authManager.user.map { "User \($0.id)" } ?? "anonymous"
 
                 let appState: [String: String] = [
@@ -283,14 +283,20 @@ struct BugReportView: View {
     }
 }
 
-private func currentNetworkType() -> String {
-    let monitor = NWPathMonitor()
-    let path = monitor.currentPath
-    if path.usesInterfaceType(.wifi) { return "wifi" }
-    if path.usesInterfaceType(.cellular) { return "cellular" }
-    if path.usesInterfaceType(.wiredEthernet) { return "ethernet" }
-    if path.status == .satisfied { return "connected" }
-    return "offline"
+private func currentNetworkType() async -> String {
+    await withCheckedContinuation { continuation in
+        let monitor = NWPathMonitor()
+        let queue = DispatchQueue(label: "com.bainluck.network-check")
+        monitor.pathUpdateHandler = { path in
+            monitor.cancel()
+            if path.usesInterfaceType(.wifi) { continuation.resume(returning: "wifi") }
+            else if path.usesInterfaceType(.cellular) { continuation.resume(returning: "cellular") }
+            else if path.usesInterfaceType(.wiredEthernet) { continuation.resume(returning: "ethernet") }
+            else if path.status == .satisfied { continuation.resume(returning: "connected") }
+            else { continuation.resume(returning: "offline") }
+        }
+        monitor.start(queue: queue)
+    }
 }
 
 // MARK: - PencilKit Canvas Overlay (iOS only)
