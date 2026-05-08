@@ -1,5 +1,20 @@
 # Completed Features (Shipped)
 
+## May 7-8, 2026
+
+### Discover Feed Ranking Breakthrough
+- ✅ **Boring/repetitive market suppression** — Added `feed_market_quality` classifier and scoring caps for narrow commodity/finance ladders, dated buckets, social-count filler, music metric spam, and low-quality repeated families. Production audit: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`.
+- ✅ **Ground-truth-informed candidate widening** — Feed candidate pools now include non-sports volume, movement, enriched markets, and soon-resolving markets so good Kalshi/Polymarket/email-style stories can enter scoring instead of being crowded out by stale sports or finance ladders.
+- ✅ **Story-family diversity caps** — Top feed avoids repeated versions of the same story family after scoring. Exact families and broad story families are capped before response serialization.
+- ✅ **Compelling-topic boosts** — Health outbreak, AI/tech, geopolitics, elections, Fed/economics, entertainment, sports personnel, and other public-interest markets get priority over mechanically active but boring markets.
+- ✅ **Deterministic Discover explanations** — Futures cards now generate specific headlines from existing outcome data: named movers, opening-probability surprises, leader changes, and source disagreement. This moved production `explanation-coverage@20` from **4/20 → 20/20** without relying on OpenAI hook generation.
+- ✅ **Curated first-page mixer** — Discover mode now applies first-page category caps after scoring so politics/geopolitics/economics cannot swallow the whole opening scroll. The mixer reorders, but does not drop cards or mutate scores.
+- ✅ **Positive quality eval metrics** — Feed audit now reports positive archetype coverage (`world_event`, `tech_frontier`, `macro_signal`, `culture_moment`, `health_weather_risk`, `sports_story`), category spread/max concentration, and archetype distribution.
+- ✅ **Bounded hook enrichment** — Reversed unsafe backlog-scale hook behavior. `enrich_market_hooks` now targets only feed-shaped candidates, runs `limit=100` every 6h, and manual admin trigger is capped at 250. No more plan to spend API calls on ~56K open markets.
+- ✅ **Discover quality audit** — `backend/scripts/audit_feed_quality.py` reports precision metrics: boring rate, ladder/bucket rate, duplicate family rate, explanation coverage, ground-truth hit rate, category distribution, and top-card debug reasons.
+- Backend: `routes/feed.py`, `utils/feed_market_quality.py`, `utils/feed_reasons.py`, `tasks/enrich_markets.py`, `tasks/__init__.py`, `routes/admin.py`, `scripts/audit_feed_quality.py`
+- Tests: `test_feed_market_quality.py`, `test_feed_scoring.py`, `test_futures_highlights.py`, `test_feed_reasons.py`
+
 ## May 7, 2026
 
 ### Health Check + Security Hardening + CI

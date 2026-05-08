@@ -41,6 +41,7 @@ from app.utils.feed_market_quality import (
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
+    diversify_discover_first_page,
     diversify_quality_families,
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
@@ -299,6 +300,9 @@ async def get_feed(
         else:
             _epct = 0.6 if not ctx.is_authenticated else 0.4
             feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
+
+    if not my_teams_only and ((event_pct is not None and event_pct < 0.3) or not include_events):
+        feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]

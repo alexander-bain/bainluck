@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,331+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,400+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -68,6 +68,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 - **ESPN** — Team colors, logos, live game data, win probability (free, undocumented)
 - **OpenAI** — GPT-4o-mini for LLM classification + market hook descriptions (~$10/mo)
 - **Pexels** — Free stock photos for Discover feed cards (200 req/hr)
+- **TMDB** — Movie/TV metadata, posters, cast info (free tier, client-side via `frontend/lib/tmdb.ts`)
 - **Firebase Auth** — Google + Apple Sign-In (free tier)
 
 ---
@@ -76,7 +77,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,370+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,400+ tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest`
@@ -106,7 +107,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (23 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,331 pytest items
+│   └── tests/                   # 3,400+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
@@ -132,6 +133,22 @@ bainluck/
 2. `match_prediction_markets` (every 15 min) — link game markets to events via `event_id` FK. Pass 1: Kalshi ticker scan. Pass 2: Polymarket name matching.
 3. `poll_live_prediction_markets` (every 2 min, realtime queue) — live price updates for linked markets.
 4. Game-markets endpoint: loads via `event_id` FK + fallback (unlinked markets matching both team names + game ticker prefix or `category="game_prop"`).
+
+**Discover Feed Ranking & Explanation Pipeline** (`routes/feed.py`, `utils/feed_market_quality.py`, `utils/feed_reasons.py`, `scripts/audit_feed_quality.py`):
+- The feed builds multiple candidate pools (sports, non-sports volume, movement, enriched, soon-resolving), scores with futures highlights, then applies market-quality caps/diversity before returning cards.
+- Quality classifier suppresses narrow commodity/finance ladders, repetitive dated buckets, social-count filler, and weak explanation cards. It separately boosts compelling public stories: politics, geopolitics, Fed/economics, AI/tech, health outbreaks, entertainment, and sports personnel.
+- Deterministic futures explanations are now first-class. Do not rely on LLM hooks to make the first page understandable: headlines should name the mover/leader/source disagreement from existing outcome data (e.g., "Yes side up 32.5 points from opening").
+- LLM hook enrichment is intentionally bounded. `enrich_market_hooks` only targets feed-shaped candidates and Celery runs small batches (`limit=100` every 6h). Never run hooks for the full open-market backlog (~56K markets).
+- Current production audit target: `boring-rate@20=0`, `ladder/bucket-rate@20=0`, `duplicate-family-rate@20=0`, `explanation-coverage@20=20/20`. Use `python3 scripts/audit_feed_quality.py` to measure.
+
+**Themed Dashboard Pages** (politics, entertainment, weather, economics):
+Each category page follows the same pattern:
+- Backend route (`routes/politics.py`, `routes/entertainment.py`) queries `FuturesMarket` by `llm_sport_category` + Kalshi ticker prefixes, classifies into sub-themes, builds structured response with enriched market rows
+- `_classify_kind()` assigns rendering hints (`spotify`, `rt`, `boxoffice`, `reality`, `binary`, `multi`, etc.) based on ticker prefix → name regex → outcome count fallback
+- `_group_threshold_markets()` groups binary markets sharing an entity but differing by threshold (e.g., multiple "Movie X RT score ≥ N" markets) into heatmap-ready groups
+- Frontend: CSS module (`politics.module.css`, `entertainment.module.css`), typed data from `lib/api.ts`, section components with tabbed sub-views
+- Markets enriched with: `volume_24h`, `resolution_date`, `image_url`, `hook_description`, per-outcome `probability_change_24h`
+- TMDB client (`lib/tmdb.ts`): client-side movie poster lookup with localStorage cache, used by entertainment CoverTile component
 
 ---
 

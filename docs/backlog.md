@@ -46,6 +46,26 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ## Tier 0.5 — Feed & Navigation Quality
 
+### 0u. Discover Feed: Curated First Page Mixer + Positive Quality Eval — ACTIVE
+
+**Problem:** Recent ranking fixes removed the worst Discover failures, but the first page can still feel too same-textured: many important cards, not enough editorial variety.
+
+**Current state (May 7-8):**
+- ✅ Production first-page quality: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`
+- ✅ Deterministic explanations moved `explanation-coverage@20` from **4/20 → 20/20** without OpenAI hook spend
+- ✅ Hook enrichment bounded to feed-shaped markets only; do **not** run hooks for all ~56K open markets
+- ✅ First-page category mixer added: score-preserving reorder with caps for politics/geopolitics/economics/etc.
+- ✅ Positive audit metrics added: archetype coverage, category spread/concentration, archetype distribution
+
+**Next phases:**
+1. Tune the first-page mixer from real production audits: target `positive-archetypes@20 >= 5/6`, `category-spread@20 >= 6`, `max category count <= 5`.
+2. Expand editorial archetypes (`breaking_news`, `big_name`, `absurd_but_real`, `sports_drama`) and diversify by archetype, not just category.
+3. Improve hook worker observability so queued enrichment reports ran/skipped/error without log streaming.
+4. Build an admin/debug viewer that compares current Discover feed against Kalshi/Polymarket/email ground-truth examples.
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/scripts/audit_feed_quality.py`
+**Parallel Safety:** Yellow
+
 ### 0n. Navigation Redesign — NEEDS DESIGN BRIEF
 
 **Problem:** Inconsistent nav across platforms. Desktop web: Feed | Search | Weather | Economics | My Stuff. Mobile web: Feed | Search | My Stuff. iOS/Mac: Feed | Leagues | Search | My Stuff.

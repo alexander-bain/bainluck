@@ -5,7 +5,9 @@ from app.utils.feed_market_quality import (
     apply_quality_score,
     cap_low_quality_families,
     classify_market_quality,
+    diversify_discover_first_page,
     diversify_quality_families,
+    editorial_archetype,
     has_specific_explanation,
     has_strong_hook,
     quality_score_adjustment,
@@ -424,3 +426,65 @@ class TestQualityFamilyDiversity:
         ]
         assert len(election) == 2
         assert len(stakes) == 2
+
+
+class TestDiscoverFirstPageMixer:
+    def _item(self, idx: int, category: str, score: int = 100):
+        return {
+            "type": "futures",
+            "score": score,
+            "data": {
+                "id": idx,
+                "name": f"{category} market {idx}",
+                "llm_sport_category": category,
+            },
+        }
+
+    def test_mixer_caps_politics_in_first_page_without_dropping_items(self):
+        items = [
+            self._item(i, "politics", 100 - i)
+            for i in range(8)
+        ] + [
+            self._item(100 + i, category, 80 - i)
+            for i, category in enumerate([
+                "tech",
+                "entertainment",
+                "weather",
+                "economics",
+                "geopolitics",
+                "golf",
+            ])
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=10)
+        first_page = mixed[:10]
+
+        assert len(mixed) == len(items)
+        assert sum(
+            1 for item in first_page
+            if item["data"]["llm_sport_category"] == "politics"
+        ) == 5
+        assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
+        assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
+
+    def test_mixer_fills_when_category_caps_are_tighter_than_available_categories(self):
+        items = [self._item(i, "politics", 100 - i) for i in range(7)]
+
+        mixed = diversify_discover_first_page(items, first_page_size=7)
+
+        assert [item["data"]["id"] for item in mixed] == list(range(7))
+
+
+class TestEditorialArchetypes:
+    def test_editorial_archetype_detects_positive_story_roles(self):
+        examples = {
+            "Will China invade Taiwan by end of 2026?": "world_event",
+            "OpenAI $1T+ valuation in 2026?": "tech_frontier",
+            "How many Fed rate cuts in 2026?": "macro_signal",
+            'Will "Super Bowl" be said on ICEMAN?': "culture_moment",
+            "Hantavirus pandemic in 2026?": "health_weather_risk",
+            "PGA Tour: Truist Championship Top 20": "sports_story",
+        }
+
+        for name, expected in examples.items():
+            assert editorial_archetype(name, None) == expected

@@ -13,6 +13,18 @@ from typing import Literal
 
 
 QualityClass = Literal["compelling", "normal", "low_quality", "suppress"]
+EditorialArchetype = Literal[
+    "world_event",
+    "tech_frontier",
+    "macro_signal",
+    "culture_moment",
+    "health_weather_risk",
+    "sports_story",
+    "big_public_company",
+    "political_power",
+    "weird_news",
+    "other",
+]
 
 
 _MONTH_RE = (
@@ -130,6 +142,32 @@ _COMPELLING_RE = re.compile(
     r"bitcoin|btc|ethereum|eth|crypto|"
     r"taylor swift|beyonce|drake|kardashian|musk|sam altman|pope|nobel|"
     r"super bowl|world cup|champions league|masters|olympics"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_PUBLIC_COMPANY_RE = re.compile(
+    r"\b("
+    r"nvidia|nvda|tesla|tsla|apple|aapl|microsoft|msft|google|alphabet|googl|"
+    r"amazon|amzn|meta|netflix|nflx|openai|anthropic|spacex|rocket lab|rklb|"
+    r"wendy's|wen|fidelity national|fis|gamestop|gme|freeport|d-wave"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_CULTURE_RE = re.compile(
+    r"\b("
+    r"super bowl|eurovision|survivor|academy|emmy|grammy|billboard|spotify|"
+    r"album|song|movie|box office|oscars?|rott?en tomatoes|kimmel|taylor swift|"
+    r"beyonce|drake|kardashian|iceman"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_WEIRD_NEWS_RE = re.compile(
+    r"\b("
+    r"apologize|arrested|aliens?|ufo|pope|nobel|jail|prison|pardon|"
+    r"resign|fired|fire|scandal|banned"
     r")\b",
     re.IGNORECASE,
 )
@@ -358,6 +396,117 @@ def quality_score_adjustment(quality: MarketQuality) -> int:
     if quality.quality_class == "suppress":
         return -100
     return 0
+
+
+def editorial_archetype(
+    market_name: str | None,
+    sport_category: str | None = None,
+) -> EditorialArchetype:
+    """Classify a market into the editorial role it can play in Discover."""
+    name = market_name or ""
+    category = (sport_category or "").lower()
+    text = f"{name} {category}"
+
+    if _OUTBREAK_RE.search(text) or re.search(r"\b(hurricane|tornado|earthquake|wildfire|flood|rain|snow)\b", text, re.I):
+        return "health_weather_risk"
+    if re.search(r"\b(war|invade|invasion|ceasefire|peace|regime|taiwan|ukraine|israel|iran|russia|china|cuba|venezuela)\b", text, re.I):
+        return "world_event"
+    if re.search(r"\b(openai|anthropic|claude|gpt|ai model|frontiermath|deepseek|gemini|nvidia|compute)\b", text, re.I):
+        return "tech_frontier"
+    if re.search(r"\b(fed|rate cut|recession|inflation|cpi|ppi|earnings|oil|wti|treasury|yield)\b", text, re.I):
+        return "macro_signal"
+    if _CULTURE_RE.search(text) or category == "entertainment":
+        return "culture_moment"
+    if category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash"}:
+        return "sports_story"
+    if re.search(r"\b(pga|tour|championship|top 20|world cup|champions league|nba|nfl|mlb|nhl|ufc)\b", text, re.I):
+        return "sports_story"
+    if _PUBLIC_COMPANY_RE.search(text):
+        return "big_public_company"
+    if category in {"politics", "geopolitics"} or re.search(r"\b(president|senate|house|governor|mayor|election|nominee|confirmed)\b", text, re.I):
+        return "political_power"
+    if _WEIRD_NEWS_RE.search(text):
+        return "weird_news"
+    return "other"
+
+
+def _discover_category_group(item: dict) -> str:
+    data = item.get("data") or {}
+    category = (data.get("llm_sport_category") or data.get("sport_name") or data.get("sport") or "").lower()
+    if item.get("type") == "event":
+        return "sports_culture"
+    if category in {"weather", "health"}:
+        return "weather_health"
+    if category in {"politics", "geopolitics", "economics", "tech", "entertainment"}:
+        return category
+    if category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash", "mma", "cricket"}:
+        return "sports_culture"
+    return "other"
+
+
+_DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
+    "politics": 5,
+    "geopolitics": 3,
+    "economics": 4,
+    "tech": 3,
+    "entertainment": 3,
+    "weather_health": 2,
+    "sports_culture": 3,
+    "other": 3,
+}
+
+
+def diversify_discover_first_page(
+    items: list[dict],
+    *,
+    first_page_size: int = 20,
+) -> list[dict]:
+    """Reorder the first Discover page so it feels curated, not clustered.
+
+    This does not drop cards or change scores. It keeps the strongest item from
+    each story/category near the top while preventing one category, especially
+    politics, from swallowing the whole first page.
+    """
+    if first_page_size <= 0 or len(items) <= 1:
+        return items
+
+    target_size = min(first_page_size, len(items))
+    selected: list[dict] = []
+    deferred: list[dict] = []
+    category_counts: dict[str, int] = {}
+
+    for item in items:
+        group = _discover_category_group(item)
+        cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
+        if len(selected) < target_size and category_counts.get(group, 0) < cap:
+            selected.append(item)
+            category_counts[group] = category_counts.get(group, 0) + 1
+        else:
+            deferred.append(item)
+
+    if len(selected) < target_size:
+        needed = target_size - len(selected)
+        selected.extend(deferred[:needed])
+        deferred = deferred[needed:]
+
+    selected_keys = {_feed_item_key(item) for item in selected}
+    remainder = [
+        item for item in items
+        if _feed_item_key(item) not in selected_keys
+    ]
+    return selected + remainder
+
+
+def _feed_item_key(item: dict) -> tuple:
+    data = item.get("data") or {}
+    return (
+        item.get("type"),
+        data.get("id")
+        or data.get("canonical_market_key")
+        or data.get("name")
+        or item.get("reason")
+        or id(item),
+    )
 
 
 def apply_quality_score(raw_score: float, quality: MarketQuality) -> float:

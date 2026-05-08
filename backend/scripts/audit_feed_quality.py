@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.utils.feed_market_quality import (  # noqa: E402
     classify_market_quality,
+    editorial_archetype,
     has_specific_explanation,
 )
 
@@ -89,6 +90,10 @@ def main() -> int:
             "score": item.get("score"),
             "name": data.get("name") or "",
             "category": data.get("llm_sport_category") or "?",
+            "archetype": editorial_archetype(
+                data.get("name") or "",
+                data.get("llm_sport_category") or "",
+            ),
             "source": data.get("source") or "?",
             "headline": item.get("headline"),
             "reason": item.get("reason"),
@@ -109,6 +114,16 @@ def main() -> int:
     explanation_ok = [c for c in c20 if c["explanation_ok"]]
     gt50 = [c for c in classified[:50] if c["ground_truth"]]
     cats = Counter(c["category"] for c in c20)
+    archetypes = Counter(c["archetype"] for c in c20)
+    positive_targets = {
+        "world_event": any(c["archetype"] == "world_event" for c in c20),
+        "tech_frontier": any(c["archetype"] == "tech_frontier" for c in c20),
+        "macro_signal": any(c["archetype"] == "macro_signal" for c in c20),
+        "culture_moment": any(c["archetype"] == "culture_moment" for c in c20),
+        "health_weather_risk": any(c["archetype"] == "health_weather_risk" for c in c20),
+        "sports_story": any(c["archetype"] == "sports_story" for c in c20),
+    }
+    positive_target_hits = sum(1 for hit in positive_targets.values() if hit)
 
     print("DISCOVER FEED QUALITY AUDIT")
     print("=" * 72)
@@ -120,7 +135,11 @@ def main() -> int:
     print(f"duplicate-family-rate@20:{sum(duplicate_families.values())}/20")
     print(f"explanation-coverage@20: {len(explanation_ok)}/20")
     print(f"ground-truth-hit@50:     {len(gt50)}/50")
+    print(f"positive-archetypes@20:  {positive_target_hits}/{len(positive_targets)}")
+    print(f"category-spread@20:      {len(cats)} categories, max={max(cats.values(), default=0)}")
     print(f"category distribution@20:{dict(cats.most_common())}")
+    print(f"archetype distribution@20:{dict(archetypes.most_common())}")
+    print(f"positive targets@20:     {positive_targets}")
     print()
 
     print("TOP 50")
@@ -141,7 +160,7 @@ def main() -> int:
         if c["reasons"]:
             print(f"     reasons={','.join(c['reasons'][:6])}")
         if c["headline"] or c["reason"]:
-            print(f"     why={c['headline'] or c['reason']}")
+            print(f"     why={c['headline'] or c['reason']} ({c['archetype']})")
 
     if boring20 or duplicate_families:
         print()
