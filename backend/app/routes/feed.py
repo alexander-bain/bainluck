@@ -573,8 +573,6 @@ def _market_runtime_filter_trace(
             blockers.append("stale_no_movement")
 
     commence_time = _utc(market.commence_time)
-    if commence_time and commence_time < now and not has_any_movement:
-        blockers.append("past_commence_no_movement")
 
     return {
         "eligible": not blockers,
@@ -586,6 +584,7 @@ def _market_runtime_filter_trace(
             "has_any_movement": has_any_movement,
             "days_stale": round(days_stale, 2) if days_stale is not None else None,
             "commence_time": commence_time.isoformat() if commence_time else None,
+            "commence_time_staleness_applied": False,
         },
     }
 
@@ -1629,12 +1628,6 @@ async def _score_futures(
         if market.updated_at:
             days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
             if days_stale > 7 and not has_any_movement:
-                continue
-
-        # 4) Past-event market: commence_time in the past with no recent movement
-        if market.commence_time:
-            ct = market.commence_time.replace(tzinfo=timezone.utc) if market.commence_time.tzinfo is None else market.commence_time
-            if ct < now and not has_any_movement:
                 continue
 
         # Get source count from canonical key

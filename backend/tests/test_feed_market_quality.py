@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.routes.feed import _market_base_trace
+from app.routes.feed import _market_base_trace, _market_runtime_filter_trace
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
@@ -417,6 +417,26 @@ class TestFeedQualityDebug:
         assert trace["eligible"] is False
         assert "event_linked_game_market" in trace["blockers"]
         assert "game_name_filtered" in trace["blockers"]
+
+    def test_discover_runtime_trace_ignores_past_commence_for_open_futures(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=now - timedelta(days=30),
+            ),
+            [
+                {"name": "Yes", "probability": 0.45, "probability_change_24h": 0, "opening_probability": 0.4},
+                {"name": "No", "probability": 0.55, "probability_change_24h": 0, "opening_probability": 0.6},
+            ],
+            "No",
+            0.55,
+            now,
+        )
+
+        assert trace["eligible"] is True
+        assert trace["blockers"] == []
+        assert trace["checks"]["commence_time_staleness_applied"] is False
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(
