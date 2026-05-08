@@ -1612,16 +1612,23 @@ async def _score_futures(
     """
     timing_previous_at = time.perf_counter()
 
-    def mark_timing(stage: str) -> None:
+    def mark_timing(
+        stage: str,
+        *,
+        since_at: float | None = None,
+        update_previous: bool = True,
+    ) -> None:
         nonlocal timing_previous_at
         if timing_records is None or timing_started_at is None:
             return
-        timing_previous_at = _record_feed_timing(
+        recorded_at = _record_feed_timing(
             timing_records,
             timing_started_at,
-            timing_previous_at,
+            since_at if since_at is not None else timing_previous_at,
             f"futures.{stage}",
         )
+        if update_previous:
+            timing_previous_at = recorded_at
 
     # === BASE FILTERS ===
     base_filters = [
@@ -1759,12 +1766,18 @@ async def _score_futures(
         .limit(120)
     )
 
+    candidate_queries_started_at = timing_previous_at
     sports_result = await db.execute(sports_query)
+    mark_timing("pool_sports")
     nonsports_result = await db.execute(nonsports_query)
+    mark_timing("pool_nonsports_volume")
     nonsports_movement_result = await db.execute(nonsports_movement_query)
+    mark_timing("pool_nonsports_movement")
     nonsports_enriched_result = await db.execute(nonsports_enriched_query)
+    mark_timing("pool_nonsports_enriched")
     nonsports_timely_result = await db.execute(nonsports_timely_query)
-    mark_timing("candidate_queries")
+    mark_timing("pool_nonsports_timely")
+    mark_timing("candidate_queries", since_at=candidate_queries_started_at, update_previous=False)
 
     candidate_market_ids = (
         list(sports_result.scalars().all())
