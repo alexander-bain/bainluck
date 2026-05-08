@@ -156,10 +156,28 @@ def _normalize_q(q: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
 
 
+_NON_US_RE = re.compile(
+    r"\b(?:french|france|uk\b|british|canada|canadian|german|brazil|"
+    r"mexico|australian|india|japan|eu\b|european|south\s*korea|"
+    r"democratic\s*(?:vp|vice)|mélenchon|macron|starmer|trudeau|"
+    r"modi|scholz|lula|amlo|meloni)\b",
+    re.I,
+)
+
+
 def _is_headline_market(name_lower: str) -> bool:
-    return (
-        ("2028" in name_lower or "next president" in name_lower
-         or "presidential election" in name_lower)
+    if _NON_US_RE.search(name_lower):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:who\s+win|next\s+president|presidential\s+election|"
+            r"win\s+the\s+(?:2028|2032)\s+president|"
+            r"president\s+of\s+the\s+united\s+states|"
+            r"(?:republican|gop|democratic?)\s+(?:presidential\s+)?nomin)",
+            name_lower,
+        )
+        or ("2028" in name_lower and "president" in name_lower
+            and "vp" not in name_lower and "vice" not in name_lower)
     )
 
 
@@ -288,13 +306,16 @@ def _extract_control_probs(market: FuturesMarket) -> dict | None:
                 dem_prob = prob if name_lower == "yes" else 100 - prob
                 gop_prob = 100 - dem_prob
 
+    result = None
     if gop_prob is not None and dem_prob is not None:
-        return {"gop": gop_prob, "dem": dem_prob, "market_id": market.id}
-    if gop_prob is not None:
-        return {"gop": gop_prob, "dem": round(100 - gop_prob, 1), "market_id": market.id}
-    if dem_prob is not None:
-        return {"gop": round(100 - dem_prob, 1), "dem": dem_prob, "market_id": market.id}
-    return None
+        result = {"gop": gop_prob, "dem": dem_prob, "market_id": market.id}
+    elif gop_prob is not None:
+        result = {"gop": gop_prob, "dem": round(100 - gop_prob, 1), "market_id": market.id}
+    elif dem_prob is not None:
+        result = {"gop": round(100 - dem_prob, 1), "dem": dem_prob, "market_id": market.id}
+    if result and max(result["gop"], result["dem"]) > 97:
+        return None
+    return result
 
 
 def _find_chamber_control(congressional_markets: list[FuturesMarket]) -> dict:
