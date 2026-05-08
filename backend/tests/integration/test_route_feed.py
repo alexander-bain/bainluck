@@ -87,6 +87,23 @@ class TestFeedQueryParams:
         body = resp.json()
         assert body["items"] == []
 
+    async def test_include_events_false_skips_golf_tournaments(self, client, monkeypatch):
+        from app.routes import feed
+
+        called = False
+
+        async def fake_score_golf(*args, **kwargs):
+            nonlocal called
+            called = True
+            return []
+
+        monkeypatch.setattr(feed, "_score_golf_tournaments", fake_score_golf)
+
+        resp = await client.get("/api/feed?include_events=false&include_futures=false")
+
+        assert resp.status_code == 200
+        assert called is False
+
     async def test_status_filter_accepted(self, client):
         resp = await client.get("/api/feed?status=live")
         assert resp.status_code == 200

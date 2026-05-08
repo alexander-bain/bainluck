@@ -352,7 +352,7 @@ async def get_feed(
 
     # === SCORE GOLF TOURNAMENTS ===
     # Skip golf tournaments if a non-golf sport tag is active
-    _skip_golf = False
+    _skip_golf = not include_events
     if static_tag_filter:
         sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
         if sport_tags and "sport:golf" not in sport_tags:
