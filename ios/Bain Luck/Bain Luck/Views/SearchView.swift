@@ -185,8 +185,20 @@ struct SearchView: View {
     private let trendingSearches: [QuickSearchItem] = [
         .init(icon: "chart.bar.fill", label: "Championship", query: "Championship"),
         .init(icon: "trophy.fill", label: "MVP", query: "MVP"),
-        .init(icon: "building.columns.fill", label: "Politics", query: "Politics"),
-        .init(icon: "bitcoinsign.circle.fill", label: "Crypto", query: "Crypto"),
+    ]
+
+    private struct CategoryLink: Identifiable {
+        let icon: String
+        let label: String
+        let route: Route
+        var id: String { label }
+    }
+
+    private let categoryLinks: [CategoryLink] = [
+        .init(icon: "building.columns.fill", label: "Politics", route: .politics),
+        .init(icon: "cloud.sun.fill", label: "Weather", route: .weather),
+        .init(icon: "chart.line.uptrend.xyaxis", label: "Economics", route: .economics),
+        .init(icon: "star.fill", label: "Entertainment", route: .entertainment),
     ]
 
     var body: some View {
@@ -256,6 +268,10 @@ struct SearchView: View {
                     WeatherView()
                 case .economics:
                     EconomicsView()
+                case .politics:
+                    PoliticsView()
+                case .entertainment:
+                    EntertainmentView()
                 case .about:
                     AboutView()
                 }
@@ -440,6 +456,23 @@ struct SearchView: View {
                             quickSearchChip(icon: item.icon, label: item.label) {
                                 vm.query = item.query
                                 Task { await vm.search() }
+                            }
+                        }
+                    }
+                }
+
+                // Categories (navigate to dedicated views)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Categories")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(categoryLinks) { item in
+                            quickSearchChip(icon: item.icon, label: item.label) {
+                                path.append(item.route)
                             }
                         }
                     }
