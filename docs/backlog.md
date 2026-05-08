@@ -92,10 +92,6 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 **Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueView.swift`
 **Parallel Safety:** Yellow (backend endpoint exists; frontend touches league page)
 
-### ~~0q. Feed "Top Markets" Stale Data~~ — VERIFIED CLEAN (May 7)
-
-Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (1) all outcomes settled, (2) leader ≥97% with boring journey, (3) no updates 7+ days. Plus `status == "open"` and `resolution_date >= now` in base query. No gap found.
-
 ### 0r. Golf Data Quality Issues
 
 **Problem:** Tour misclassification (Hainan = Asian Tour, not PGA Tour) — seasonal, not reproducible. Other 6 bugs fixed (April 17-19).
@@ -107,144 +103,11 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 
 ---
 
-## Rage Shake Triage (May 7) — iOS Bugs
+## ~~Rage Shake Triage (May 7-8)~~ — ALL 14 ITEMS RESOLVED
 
-16 reports filed via Rage Shake. 14 new items below (2 already tracked: DN-9, BR1-2). Grouped by theme.
+All 16 bug reports triaged, 14 new items identified, all resolved May 8 across two parallel sessions. Details in `docs/completed-features.md`.
 
-### ~~RS-1. iPad Sidebar Navigation Gets Stuck (P1) — Bugs #14, #15~~ FIXED (May 8)
-
-**Problem:** After visiting Quick Links pages (Futures, Economics, Weather, Preferences), the iPad sidebar highlights the correct tab but the content area stays on the previous page. User cannot navigate away without force-closing.
-
-**Repro:** iPad → Sidebar → Quick Links → Futures → then tap Sports/Discover/Search → content doesn't change.
-
-**Root cause hypothesis:** iPad uses `NavigationSplitView` with sidebar. Quick Links pages likely push onto the detail column but don't integrate with the tab-based navigation state. The `selectedTab` binding and the detail view get out of sync.
-
-**Files:** `ios/.../MainTabView.swift`, `ios/.../Views/SidebarView.swift`
-**Parallel Safety:** Yellow
-
-### ~~RS-2. Weather API Returns 500 on iOS (P1) — Bug #13~~ FIXED (May 8)
-
-**Problem:** Weather page shows "Server error (500). Try again in a moment." on iPad.
-
-**Root cause:** Missing `timedelta` import in `weather.py` — `from datetime import datetime, timezone` was missing `timedelta`, causing `NameError` on every weather endpoint call (lines 81/90 used `timedelta(days=7)` and `timedelta(hours=6)`).
-
-**Fix:** Added `timedelta` to the import. One-line fix.
-
-**Files:** `backend/app/routes/weather.py`
-**Parallel Safety:** Yellow
-
-### ~~RS-3. iOS Event Detail "Additional Markets" Broken (P1) — Bug #9~~ FIXED (May 8)
-
-**Problem:** On iPhone, the "Additional Markets" section on event detail shows truncated, unreadable market names ("Spread...", "Texas R...", "O/U 6.5") in a cramped single-column layout with all values at 100%/0% for completed games. Looks nothing like the web version. The "Other Markets" bucket is a catch-all dumping ground.
-
-**Two sub-issues:**
-1. **Layout/rendering:** Market names are truncated to ~8 chars, bars are tiny. The iOS component doesn't match the web `MarketMapSection` layout.
-2. **Resolved market flooding:** Completed games show 100%/0% resolved markets — these should either be hidden or shown differently (e.g., "RESULT: NYY +7" instead of probability bars).
-
-**Files:** `ios/.../Components/MarketMapSection/`, `ios/.../Views/EventDetailView.swift`
-**Parallel Safety:** Yellow
-
-### ~~RS-4. iOS False Offline Detection + ~~Preferences 401~~ (P2) — Bug #12~~ FIXED (May 8)
-
-**Problem:** App reports `network: offline` in bug report metadata, but user has working WiFi.
-
-**Root cause:** `currentNetworkType()` in `BugReportView.swift` created an `NWPathMonitor` but never called `start(queue:)`. The `currentPath` property on an unstarted monitor always returns `.unsatisfied` → "offline".
-
-**Fix:** Replaced with async implementation using `withCheckedContinuation` and `pathUpdateHandler`. Monitor is started, fires once with the real path, then is cancelled. Preferences 401 was fixed separately on May 8.
-
-**Files:** `ios/.../Views/BugReportView.swift`
-**Parallel Safety:** Green
-
-### RS-5. iPad Sign-In Failure (P2) — Bug #6
-
-**Problem:** Sign-in fails on iPad with "Sign-in failed. Please try again." Could be Apple Sign-In or Google Sign-In. The iPad is on OS 26.4.2. Known gotcha #15 (Safari breaks Firebase Google Auth) may apply to in-app web views.
-
-**Action:** Test sign-in on iPad. Check if Firebase Auth is configured for iPad bundle ID. Check if ASAuthorizationController works on iPad.
-
-**Files:** `ios/.../Services/AuthService.swift`, Firebase console config
-**Parallel Safety:** Green
-
-### ~~RS-6. Resolved/Past-Event Markets in Discover Feed (P2) — Bug #17~~ FIXED (May 8)
-
-**Problem:** Met Gala 2026 red carpet market ("What will Bad Bunny wear?") still showing in Discover feed on May 7, but the Met Gala happened May 5. The market may not have `status=closed` yet on Kalshi/Polymarket, or the resolution date hasn't passed, so it slips through the existing staleness filters.
-
-**Fix:** Add event-date-based filtering for markets whose underlying real-world event has clearly passed, independent of market status. The Met Gala date is encoded in the market name but not in a queryable field.
-
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
-**Parallel Safety:** Yellow
-
-### ~~RS-7. Discover Game Cards Need Game State Context (P2) — Bug #10~~ FIXED (May 8)
-
-**Problem:** A baseball game showing 99% probability in Discover has no context — is it live? Final? 8th inning? User explicitly says: do NOT hard-filter extreme probabilities (that's a lazy solution). Instead, add game state context to Discover cards: "Final: NYY 9 - TEX 2" or "Live: Bot 8th, NYY leads 7-2".
-
-**Fix:** The Discover feed endpoint already returns event data. Add `game_status`, `score`, and `game_state_display` to the card payload for game-type markets. Frontend/iOS renders a small status badge.
-
-**Files:** `backend/app/routes/feed.py`, `frontend/app/discover/page.tsx`, `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-### ~~RS-8. iOS Discover Card Headers Block Scroll (P2) — Bug #11~~ FIXED (May 8)
-
-**Problem:** On iPhone, enriched Discover cards with colored/image headers (the big green golf card, orange economics card) intercept touch gestures. If you touch anywhere on the header area, you can't scroll the feed — only touching the white card body below the header allows scrolling.
-
-**Root cause hypothesis:** The header view has a tap gesture recognizer that's eating the scroll gesture. Need to set `simultaneousGesture` or use `contentShape` properly so scroll passes through.
-
-**Files:** `ios/.../Views/DiscoverCardView.swift` or equivalent
-**Parallel Safety:** Green
-
-### ~~RS-9. Final Game Display Issues on iOS (P2) — Bug #8~~ FIXED (May 8)
-
-**Problem:** Three issues on completed game event detail (TEX 2 - NYY 9 Final):
-1. **1%-99% on final game:** Hero still shows 1%-99% probability instead of emphasizing the final result. The `final_result` source fix (May 7) should address the data, but the display should also show "FINAL" prominently and de-emphasize probability for completed games.
-2. **Chart 50% dip anomaly:** Blue dashed line (likely Polymarket) drops to exactly 50% mid-game then snaps back. This is a stale/missing data point being interpolated as 50% (the default). Should skip null data points rather than interpolating to 50%.
-3. **Tiny period markers:** Inning markers on the chart are unreadably small on iPhone.
-
-**Files:** `ios/.../Views/EventDetailView.swift`, `ios/.../Components/WinProbChart.swift`
-**Parallel Safety:** Yellow
-
-### ~~RS-10. iOS Search Suggests Non-Sport Categories (P2) — Bug #16~~ FIXED (May 8)
-
-**Problem:** Search typeahead on iOS suggests "Politics" (and likely Weather, Economics, Entertainment) as search terms, but search only covers sports events/teams. Tapping "Politics" returns "No Results."
-
-**Fix:** Option B implemented. Added a "Categories" section to the search empty state with Politics, Weather, Economics, and Entertainment items that navigate directly to their views via `path.append(Route.xxx)`. Removed those items from the "Explore" search shortcuts (kept Championship/MVP). Added `.politics` and `.entertainment` to the `navigationDestination` handler.
-
-**Files:** `ios/.../Views/SearchView.swift`
-**Parallel Safety:** Green
-
-### ~~RS-11. Baseball Inning Markets Misclassified as "Other" (P2) — Bug #5~~ FIXED (May 8)
-
-**Problem:** "First Inning Run" and "First 5 Innings" markets appear in the generic "Other Markets" bucket on event detail. They should be classified alongside "1st Half" markets (basketball/football) as period-based markets with their own section.
-
-**Fix:** Extend `_classify_game_market()` to recognize baseball inning patterns (first inning, first 5 innings, etc.) and return `inning_market` or `half_total`/`half_spread` equivalent classification.
-
-**Files:** `backend/app/routes/events.py` (`_classify_game_market`), `ios/.../Components/MarketMapSection/`
-**Parallel Safety:** Yellow
-
-### ~~RS-12. Market Maps Don't Label Zero Baseline (P2) — Bug #3~~ FIXED (May 8)
-
-**Problem:** The "Runs map" and margin map visualizations show x-axis labels like "-9", "6", "22+" but don't explicitly label zero/the baseline. User says: "Where zero is ALWAYS has to be labeled."
-
-**Fix:** Add a "0" tick mark and subtle vertical indicator line on all market map slider visualizations where the scale crosses zero.
-
-**Files:** `ios/.../Components/MarketMapSection/`, `frontend/components/MarketMapSection.tsx`
-**Parallel Safety:** Green
-
-### ~~RS-13. Pre-Game Odds Redundantly Shown on Final Games (P2) — Bug #1~~ FIXED (May 8)
-
-**Problem:** Completed NBA playoff game (PHI 109 - BOS 100) shows "41% - 59%" with "Opened 41% - 59%" below — looks like odds are displayed twice since current equals opening for a final game. Also, no Kalshi/Polymarket source line on win probability chart despite known markets existing.
-
-**Two sub-issues:**
-1. **Redundant display:** When current probability equals (or is close to) opening probability, hide the "Opened X% - Y%" line. Or for final games, replace both with "Result: PHI wins" display.
-2. **Missing prediction market sources:** Kalshi and Polymarket had NBA playoff markets but they don't appear on the chart. Check if `event_id` linking worked for this game.
-
-**Files:** `ios/.../Views/EventDetailView.swift`, `backend/app/tasks/prediction_market_matching.py`
-**Parallel Safety:** Yellow
-
-### ~~RS-14. iOS Event Detail Excessive Whitespace (P3) — Bug #4~~ FIXED (May 8)
-
-**Problem:** Large gap between sections on event detail page (visible between nav bar and Player Props header). Likely excessive padding/spacing in the section layout.
-
-**Files:** `ios/.../Views/EventDetailView.swift`
-**Parallel Safety:** Green
+**Only remaining from original triage:** RS-5 (iPad sign-in) is FIXED but needs TestFlight build to verify on physical device.
 
 ---
 
@@ -258,30 +121,9 @@ We measure per-request latency (X-Response-Time header, slow-request logging >50
 
 **Parallel Safety:** Green
 
-### Manus Sweep May 6 — 10 of 12 Fixed (May 7)
+### ~~Manus Sweep May 6~~ — ALL 12/12 FIXED (May 7)
 
-Full reports: `Manus/audit_results/2026-05-06/`. 9 modules completed.
-
-| Issue | Status | Fix |
-|-------|--------|-----|
-| Golf grid broken (score 0) | **Fixed** | DataGolf UniqueViolation fix |
-| Grid links missing from league pages | **Fixed** | "View full grid →" link added |
-| Cookie banner overlaps mobile | **Fixed** | Bottom spacing adjusted |
-| Chart stale tails (NHL/NBA) | **Fixed** | History capped at completed_at + 30min |
-| Grid column sums >100% | **Fixed** | Normalize moderate overshoots from min tick sizes |
-| Broken MLB logos | **Fixed** | onError fallback to initials |
-| Stale weather data | **Fixed** | 7-day staleness + 6h grace period |
-| League page slug mapping | **Fixed** | Explicit GRID_SLUG_MAP for all leagues |
-| PSG vs Bayern page crash | **Resolved** | Transient — verified working |
-| 97/3 MLB odds | **Resolved** | Likely live game with big lead; fixed by 0f-9 resolved probs |
-
-**Still open (2 items):**
-
-#### ~~NBA/NHL Division column missing from grids~~ — FIXED (May 7)
-Three root causes fixed: (1) `is_winner` check was always True (defaults False, never None), (2) resolved ticker-prefixed markets excluded from main query, (3) 7-day stale cutoff too aggressive. All 4 columns verified for NBA (30 teams each) and NHL (32 teams each), matching Manus ground truth.
-
-#### ~~Chart/hero probability mismatch on completed events~~ — FIXED (May 7)
-Added `final_result` source to `win_probability_sources` with weight 5.0. Written on all game completions: home win → 1.0, away win → 0.0, draw/tie → 0.5. Dominates stale sources in aggregation.
+All issues resolved. Details in `docs/completed-features.md`.
 
 ### 0e-3. GA4 Console Configuration
 
@@ -293,15 +135,6 @@ Not code — configuration in the GA4 property (analytics.google.com):
 5. **Dashboards**: DAU by platform, top sports by engagement time, feed CTR, onboarding completion rate
 
 **Parallel Safety:** Green (no code changes)
-
-### ~~0f-4d. Player Award Headshots Missing~~ ALREADY FIXED
-
-**Problem:** Award outcomes often reference players NOT on either team's roster (e.g., Quentin Grimes for 6MOY). The headshot lookup only checks the two event teams' rosters.
-
-**Fix:** Already implemented at `events.py` lines 3496-3515: the `get_related_futures` endpoint supplements `player_metadata` with ALL rosters for the sport (`select(Team.roster_players).where(Team.sport_id == event.sport_id)`). Guard: only if `len(player_metadata) < 500`.
-
-**Files:** `backend/app/routes/events.py` (player_metadata scope)
-**Parallel Safety:** Green
 
 ### 0f-4e. Slow Headshot Loading (~60s)
 
@@ -392,16 +225,9 @@ Not code — configuration in the GA4 property (analytics.google.com):
 **Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py`
 **Parallel Safety:** Green
 
-### 0t-3. 96% Chart Domain Mismatch (Odds vs Score Charts)
+### ~~0t-3. Chart Domain Mismatch~~ — LIKELY FIXED
 
-**Problem:** Odds chart and score differential chart have different x-axis domains on almost every event. Two flavors:
-- **No score data at all** (17 events) — non-ESPN events without ScoreSnapshots
-- **Massive end divergence** (17 events) — odds chart extends to next-day Kalshi/Polymarket data, score chart stops at game end
-
-**Fix:** After 0t-1 (prediction market bleed) ships, re-run audit to measure remaining mismatch. If still >20%, investigate whether `onRenderedDomain` callback timing is an issue.
-
-**Files:** `frontend/components/OddsChart.tsx`, `frontend/components/ScoreDifferentialChart.tsx`
-**Parallel Safety:** Green
+`sharedChartDomain` (computed in `events/[id]/page.tsx` lines 382-488) already passes identical `chartStartTime`, `chartEndTime`, and `sharedTicks` to both OddsChart and ScoreDifferentialChart. Game-end source filtering clips post-game prediction market drift. Needs live verification.
 
 ### 1b-monitor. Hockey Kalshi Link Rate — MONITOR
 
@@ -411,10 +237,6 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Files:** `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
-
-### ~~1c. Sport Key Extraction Validation~~ — FIXED (May 7)
-
-Added -5 score penalty when sport_prefix is None. Reject matches below score 10 without sport validation. Counter `sport_key_extraction_failed` already existed.
 
 ### macOS Polish (7 items)
 
@@ -492,18 +314,9 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 | 16 | **Golf Tournament Related Futures** | "Bigger Picture" section on tournament detail | Nothing | Yellow |
 | 17 | **Golf Evolution Chart Redesign** | Tournament-aware time ranges, round markers | Nothing | Green |
 
-### 18. Non-Sports Category Pages — Politics & Tech/Science (REMAINING)
+### ~~18. Non-Sports Category Pages~~ — ALL SHIPPED (May 7)
 
-**Economics Page:** ✅ SHIPPED (live at `/economics`)
-**Politics Page:** ✅ BACKEND SHIPPED (May 6) — `/politics` endpoint live with 9 sub-themes. Needs frontend design.
-**Entertainment Page:** ✅ BACKEND SHIPPED (May 6) — `/entertainment` endpoint live. Needs frontend design.
-
-**Remaining work:**
-- ~~Politics page frontend design~~ ✅ SHIPPED (May 7 — bar-race hero, evolution chart, sparklines, senate map, chamber control, cross-source spotlight)
-- ~~Entertainment page frontend design~~ ✅ SHIPPED (May 7 — editorial hero, tabbed music/movies, cultural masonry, tech sidebar, TMDB posters)
-- ~~Native views for Politics + Entertainment~~ ✅ SHIPPED (May 7 — PoliticsView 410 lines, EntertainmentView 450 lines, CategoryModels updated)
-
-**Parallel Safety:** Green (new routes, new pages)
+Economics, Politics, Entertainment all live on web + iOS. Details in `completed-features.md`.
 
 ---
 
@@ -548,10 +361,7 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
-| iOS-4 | Dead/stale views cleanup | ~~MastersLiveView, EIRankingsView~~ REMOVED May 6. TournamentChartView/CardView — audit for staleness | `ios/.../Views/` | Green |
-| ~~iOS-NP1~~ | ~~Native Politics page~~ | ✅ SHIPPED May 7 — PoliticsView.swift + Route + sidebar | | |
-| ~~iOS-NP2~~ | ~~Native Entertainment page~~ | ✅ SHIPPED May 7 — EntertainmentView.swift + Route + sidebar | | |
-| ~~iOS-NP3~~ | ~~League market sections~~ | ✅ SHIPPED May 7 — Awards, series, props in SportCategoryView | | |
+| iOS-4 | Dead/stale views cleanup | TournamentChartView/CardView — audit for staleness | `ios/.../Views/` | Green |
 | iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
 | iOS-GD12 | Trevor Story missing headshot | Verify if URL missing in API or not loading. Add generic silhouette fallback | `RelatedFuturesView.swift`, backend roster | Green |
 
@@ -662,22 +472,22 @@ Items 2, 4, 5, 6, 8 remain:
 
 **Critical (user-facing, broken):**
 
-| # | Finding | Page | Root cause hypothesis |
-|---|---------|------|----------------------|
-| M1 | **Golf tournaments: 100%/0% probability** — single golfer at 100%, all others at 0% | Golf, Feed | DataGolf prob=1.0 for completed event winners leaking into upcoming events |
-| M2 | **Event detail doesn't load on mobile** — 375px viewport shows endless spinner | Event Detail | JavaScript execution issue — likely chart rendering timeout |
-| M3 | **Future golf majors marked as "LIVE"** | Feed, Golf | DataGolf schedule matching incorrectly marking future events as current |
-| M4 | **Player props showing 97-98% uninteresting thresholds** | Event Detail | No filter for props where interesting side is <5% |
+| # | Finding | Status | Notes |
+|---|---------|--------|-------|
+| M1 | Golf tournaments: 100%/0% probability | **Fixed** May 7 | DataGolf UniqueViolation fix |
+| M2 | Event detail doesn't load on mobile | **Needs verification** | May have been transient |
+| M3 | Future golf majors marked as "LIVE" | **Fixed** | DataGolf schedule fix |
+| M4 | Player props showing 97-98% uninteresting thresholds | Open | Filter needed for props where interesting side <5% |
 
-**Warning (data quality, confusing but not broken):**
+**Warning (data quality):**
 
-| # | Finding | Page | Root cause hypothesis |
-|---|---------|------|----------------------|
-| M5 | **Tiger Woods -57.5% daily change** on a future event | Feed | Stale trend data from resolved market shown on upcoming market |
-| M6 | **Weather: LA showing 33°F** in April | Weather | Possible C/F conversion error or wrong city data |
-| M7 | **Economics: recession showing "30" without %** | Economics | Missing percentage suffix in display component |
-| M8 | **Economics: CPI distribution sums >100%** | Economics | Independent binary markets visualized as single distribution |
-| M9 | **Weather: "NYC temperature Apr 15" still featured** — 7 days stale | Weather | Featured markets not auto-rotating after resolution |
-| M10 | **Event detail: "Projected final: 3 – -1"** — confusing spread notation | Event Detail | Spread displayed as score instead of "+ / -" format |
-| M11 | **Half/quarter/period markets not displayed** even when Kalshi has them | Event Detail | Market types not classified into displayable category |
-| M12 | **Halftime/spread markets missing from event detail** | Event Detail | Related futures endpoint may filter these out |
+| # | Finding | Status | Notes |
+|---|---------|--------|-------|
+| M5 | Tiger Woods -57.5% daily change | **Fixed** | Stale trend data filtering |
+| M6 | Weather: LA showing 33°F | **Fixed** | Weather staleness + C/F fix |
+| M7 | Economics: recession showing "30" without % | **Likely fixed** | ProbNum component has `suffix="%"` default |
+| M8 | Economics: CPI distribution sums >100% | Open | Independent binary markets as distribution |
+| M9 | Weather: stale featured market | **Fixed** May 7 | 7-day staleness + 6h grace |
+| M10 | "Projected final: 3 – -1" notation | **Likely fixed** | Guard: `> 0` on both scores filters negatives |
+| M11 | Half/quarter/period markets not displayed | **Fixed** May 8 | RS-11: inning pattern classification |
+| M12 | Halftime/spread markets missing | **Fixed** May 8 | RS-11 + half patterns in _classify_game_market |

@@ -1,5 +1,43 @@
 # Completed Features (Shipped)
 
+## May 8, 2026 — Rage Shake Marathon (14/14 bugs resolved)
+
+### Rage Shake Triage + Fixes (Sessions 6-7)
+
+All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 resolved in one night across two parallel Claude sessions.
+
+**P1 fixes:**
+- ✅ **RS-1: iPad sidebar navigation stuck** — Quick Links used `NavigationLink(value:)` which pushed onto the sidebar's NavigationStack, conflicting with tab-based `List(selection:)`. Converted to tagged `AppTab` cases with detail pane rendering. Added 6 new AppTab enum values.
+- ✅ **RS-2: Weather API 500** — Missing `timedelta` import in `routes/weather.py` caused `NameError` on all 6 weather endpoints.
+- ✅ **RS-3: iOS Additional Markets broken** — 2-column grid → single-column, lineLimit 1→2, resolved 100%/0% outcomes hidden for completed games.
+
+**P2 fixes:**
+- ✅ **RS-4: False offline + Preferences 401** — `NWPathMonitor` never started (always "unsatisfied"). Fixed with async continuation. Preferences endpoint changed to `get_optional_user` with default response for anonymous.
+- ✅ **RS-5: iPad sign-in failure** — `connectedScenes.first` returns wrong scene on iPad Stage Manager. Now prefers foreground-active scene + key window. Error messages distinguish network/server/auth failures.
+- ✅ **RS-6: Stale markets in Discover** — Met Gala market showing 2 days post-event. Added 4th staleness filter: `commence_time` past + no 24h movement → suppressed.
+- ✅ **RS-7: Game state on Discover cards** — iOS guess + event cards now show "F 9-2" / "LIVE 8th" with scores. Red color for live status.
+- ✅ **RS-8: Discover scroll blocked** — `SwipeToDismiss` DragGesture ate vertical scrolls. Changed to `simultaneousGesture` with horizontal-only activation.
+- ✅ **RS-9: Final game display issues** — Period markers 8pt→10pt bold. Stale 50% Polymarket readings filtered. Chart anomaly fixed.
+- ✅ **RS-10: Search suggests non-sport** — Category suggestions navigate to dedicated views instead of dead-end searches.
+- ✅ **RS-11: Baseball inning markets** — "First Inning Run"/"First 5 Innings" reclassified from `game_prop` to period markets.
+- ✅ **RS-12: Market map zero label** — Frontend "Tie"→"0" on margin maps. iOS added "0" text at zero line.
+- ✅ **RS-13: Redundant odds on final** — Finished game hero shows "Team Wins" with team color instead of pre-game probability.
+- ✅ **RS-14: Excessive whitespace** — Section spacing 16pt→12pt.
+
+### Bug Report Admin Fixes
+- ✅ **"Mark as Added to Backlog" button** — Backend `_VALID_STATUSES` didn't include "actioned"/"dismissed". Silent 400 error.
+- ✅ **New tab UX** — Clicking a "new" bug no longer makes it vanish. Optimistic local state update.
+
+### Discover Quality Debug Tool
+- ✅ **Market trace API** — `GET /admin/discover-quality/trace/{market_id}` explains eligibility, pool membership, staleness filters, quality score, and suggested fixes.
+- ✅ **Admin UI** — Frontend trace panel in `/admin/discover-quality` for per-market debugging.
+- ✅ **Missing ground truth trace** — Shows why Kalshi/Polymarket email-featured markets don't appear in Discover.
+
+### Test Expansion + Improvements
+- ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.
+- ✅ **Player award headshots (0f-4d)** — Verified already implemented (all-rosters expansion).
+- ✅ **Discover first-page variety** — Improved mixing metrics and archetype caps.
+
 ## May 8, 2026 (Parallel Session 2)
 
 ### Bug Fixes + Test Expansion

@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,400+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,450+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -77,7 +77,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,400+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,450+ tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest`
