@@ -424,10 +424,16 @@ struct FeedView: View {
             .background(Color.cardBackgroundDark)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             #if os(macOS)
+            .focusable()
+            .focusEffectDisabled()
             .onHover { hovering in hoveredItemId = hovering ? item.id : nil }
             .scaleEffect(isHovered ? 1.015 : 1.0)
             .shadow(color: .black.opacity(isHovered ? 0.1 : 0), radius: 4)
             .animation(.easeInOut(duration: 0.15), value: hoveredItemId)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isHovered ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 2)
+            )
             #endif
             .contextMenu { cardContextMenu(item) }
     }
