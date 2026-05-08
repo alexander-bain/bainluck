@@ -100,12 +100,14 @@ def main() -> int:
 
     missing = debug.get("missing_ground_truth") or []
     if missing:
+        missing_summary = debug.get("missing_ground_truth_summary") or {}
         print()
         print("MISSING GROUND TRUTH")
         print("-" * 72)
+        print(f"buckets: {missing_summary.get('bucket_counts', {})}")
         for item in missing[:20]:
             print(
-                f"[{item['source']}:{item['category']}] "
+                f"[{item['triage_bucket']}] [{item['source']}:{item['category']}] "
                 f"{item['name'][:84]} ({item['archetype']}, {item['quality_class']})"
             )
 

@@ -70,12 +70,20 @@ interface MissingGroundTruthItem {
   reasons: string[];
   family_key: string;
   story_key: string | null;
+  triage_bucket: string;
+  recommended_action: string;
+}
+
+interface MissingGroundTruthSummary {
+  total: number;
+  bucket_counts: Record<string, number>;
 }
 
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
   missing_ground_truth: MissingGroundTruthItem[];
+  missing_ground_truth_summary: MissingGroundTruthSummary;
 }
 
 interface HookCoverage {
@@ -209,6 +217,7 @@ export default function DiscoverQualityPage() {
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
+  const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
 
@@ -247,6 +256,10 @@ export default function DiscoverQualityPage() {
     () => Array.from(new Set((data?.debug_items || []).map((item) => item.quality_class))).sort(),
     [data]
   );
+  const missingBuckets = useMemo(
+    () => Object.keys(data?.missing_ground_truth_summary?.bucket_counts || {}).sort(),
+    [data]
+  );
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -260,6 +273,13 @@ export default function DiscoverQualityPage() {
       return true;
     });
   }, [archetype, category, data, quality, search]);
+
+  const filteredMissingGroundTruth = useMemo(() => {
+    return (data?.missing_ground_truth || []).filter((item) => {
+      if (missingBucket !== "all" && item.triage_bucket !== missingBucket) return false;
+      return true;
+    });
+  }, [data, missingBucket]);
 
   const triggerHooks = async () => {
     if (!submittedSecret) return;
@@ -420,21 +440,44 @@ export default function DiscoverQualityPage() {
 
           <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
             <div className="p-4 border-b border-surface-border">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h2 className="text-sm font-semibold text-text-primary">Missing Ground Truth</h2>
                   <p className="text-xs text-text-muted mt-1">
                     Curated Kalshi/Polymarket examples not present in the current top 50.
                   </p>
                 </div>
-                <span className="text-xs text-text-muted">
-                  {(data.missing_ground_truth || []).length} shown
-                </span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={missingBucket}
+                    onChange={(e) => setMissingBucket(e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
+                  >
+                    <option value="all">All buckets</option>
+                    {missingBuckets.map((bucket) => (
+                      <option key={bucket} value={bucket}>
+                        {formatTargetName(bucket)} ({data.missing_ground_truth_summary.bucket_counts[bucket]})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-text-muted">
+                    {filteredMissingGroundTruth.length} shown
+                  </span>
+                </div>
               </div>
+              {data.missing_ground_truth_summary && (
+                <div className="flex flex-wrap gap-1 mt-3">
+                  {Object.entries(data.missing_ground_truth_summary.bucket_counts).map(([bucket, count]) => (
+                    <StatusPill key={bucket} tone={bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                      {`${formatTargetName(bucket)}: ${count}`}
+                    </StatusPill>
+                  ))}
+                </div>
+              )}
             </div>
-            {(data.missing_ground_truth || []).length > 0 ? (
+            {filteredMissingGroundTruth.length > 0 ? (
               <div className="divide-y divide-surface-border/60">
-                {data.missing_ground_truth.slice(0, 12).map((item) => (
+                {filteredMissingGroundTruth.slice(0, 12).map((item) => (
                   <div key={`${item.source}-${item.name}`} className="p-3 hover:bg-surface-elevated/40">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
@@ -442,8 +485,12 @@ export default function DiscoverQualityPage() {
                         {item.probability && (
                           <div className="text-xs text-text-muted mt-1">{item.probability}</div>
                         )}
+                        <div className="text-xs text-text-secondary mt-2">{item.recommended_action}</div>
                       </div>
                       <div className="flex flex-wrap justify-end gap-1 shrink-0 max-w-[45%]">
+                        <StatusPill tone={item.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                          {formatTargetName(item.triage_bucket)}
+                        </StatusPill>
                         <StatusPill tone="muted">{item.source}</StatusPill>
                         <StatusPill tone="muted">{item.category}</StatusPill>
                         <StatusPill tone={item.quality_class === "low_quality" ? "warn" : "ok"}>

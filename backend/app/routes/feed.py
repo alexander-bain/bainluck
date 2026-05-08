@@ -362,6 +362,7 @@ async def get_feed(
         response["debug_summary"] = debug_payload["summary"]
         response["debug_items"] = debug_payload["items"]
         response["missing_ground_truth"] = debug_payload["missing_ground_truth"]
+        response["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
 
     # --- Write to cache ---
     if _cache_key and _async_redis:

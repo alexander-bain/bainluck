@@ -314,6 +314,12 @@ class TestFeedQualityDebug:
                 {
                     "source": "polymarket",
                     "category": "Sports",
+                    "name": "Celtics vs. Knicks",
+                    "probability": "Celtics 55%, Knicks 45%",
+                },
+                {
+                    "source": "polymarket",
+                    "category": "Sports",
                     "name": "Lakers vs. Knicks",
                     "probability": "Lakers 100%, Knicks 0%",
                 },
@@ -330,7 +336,18 @@ class TestFeedQualityDebug:
         assert debug["items"][1]["quality_class"] == "low_quality"
         assert [item["name"] for item in debug["missing_ground_truth"]] == [
             "Will OpenAI announce GPT-6 in 2026?",
+            "Celtics vs. Knicks",
         ]
+        buckets = {
+            item["name"]: item["triage_bucket"]
+            for item in debug["missing_ground_truth"]
+        }
+        assert buckets["Will OpenAI announce GPT-6 in 2026?"] == "candidate_recall_gap"
+        assert buckets["Celtics vs. Knicks"] == "game_market_noise"
+        assert debug["missing_ground_truth_summary"]["bucket_counts"] == {
+            "candidate_recall_gap": 1,
+            "game_market_noise": 1,
+        }
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(

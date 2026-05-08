@@ -19,6 +19,31 @@ from app.utils.feed_market_quality import (
 )
 
 _NUMBER_RE = re.compile(r"[-+]?\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
+_GAME_MARKET_RE = re.compile(
+    r"("
+    r"\bvs\.?\b|"
+    r"\bspread:|"
+    r"\bo/u\b|"
+    r"\bover/under\b|"
+    r"\bmoneyline\b|"
+    r"\bbo3\b|"
+    r"\bmap \d\b"
+    r")",
+    re.IGNORECASE,
+)
+_HIGH_VALUE_ARCHETYPES = {
+    "world_event",
+    "breaking_news",
+    "tech_frontier",
+    "macro_signal",
+    "culture_moment",
+    "health_weather_risk",
+    "sports_story",
+    "sports_drama",
+    "company_drama",
+    "big_name",
+    "absurd_but_real",
+}
 
 
 def load_default_ground_truth_items() -> list[dict[str, Any]]:
@@ -82,6 +107,52 @@ def _ground_truth_probably_resolved(probability: str | None) -> bool:
     return len(vals) >= 2 and all(v <= 5 or v >= 95 for v in vals)
 
 
+def _triage_missing_ground_truth(
+    *,
+    name: str,
+    quality_class: str,
+    archetype: str,
+    story_key: str | None,
+    feed_story_keys: set[str],
+    feed_archetypes: set[str],
+) -> tuple[str, str]:
+    """Classify why a curated item is missing from the current feed page."""
+    if _GAME_MARKET_RE.search(name):
+        return (
+            "game_market_noise",
+            "Ignore for Discover ranking unless this belongs on an event detail page or game-market module.",
+        )
+
+    if story_key and story_key in feed_story_keys:
+        return (
+            "already_represented_by_sibling_story",
+            "No immediate ranking fix; consider better cross-source/story grouping if this exact variant matters.",
+        )
+
+    if quality_class == "low_quality":
+        return (
+            "quality_filter_too_harsh",
+            "Review the quality classifier if this item is genuinely editorial despite bucket/metric signals.",
+        )
+
+    if quality_class == "compelling" or archetype in _HIGH_VALUE_ARCHETYPES:
+        return (
+            "candidate_recall_gap",
+            "Trace whether this market enters the feed candidate pools; if not, add a targeted pool or source mapping.",
+        )
+
+    if archetype in feed_archetypes:
+        return (
+            "ranking_too_low",
+            "Likely present in the broader market universe but loses to stronger same-texture cards; tune scoring only if this class should rise.",
+        )
+
+    return (
+        "ranking_too_low",
+        "Inspect score inputs and category mapping before adding a new pool.",
+    )
+
+
 def find_missing_ground_truth_items(
     diagnosed: list[dict[str, Any]],
     ground_truth_items: list[dict[str, Any]],
@@ -90,6 +161,14 @@ def find_missing_ground_truth_items(
 ) -> list[dict[str, Any]]:
     """Find curated examples that are not present in the diagnosed feed page."""
     feed_names = [item.get("name") or "" for item in diagnosed]
+    feed_story_keys = {
+        item["story_key"] for item in diagnosed
+        if item.get("story_key")
+    }
+    feed_archetypes = {
+        item["archetype"] for item in diagnosed
+        if item.get("archetype")
+    }
     seen: set[str] = set()
     missing: list[dict[str, Any]] = []
 
@@ -110,6 +189,15 @@ def find_missing_ground_truth_items(
         )
         if quality.quality_class == "suppress":
             continue
+        archetype = editorial_archetype(name, item.get("category"))
+        triage_bucket, recommended_action = _triage_missing_ground_truth(
+            name=name,
+            quality_class=quality.quality_class,
+            archetype=archetype,
+            story_key=quality.story_key,
+            feed_story_keys=feed_story_keys,
+            feed_archetypes=feed_archetypes,
+        )
 
         missing.append({
             "name": name,
@@ -117,10 +205,12 @@ def find_missing_ground_truth_items(
             "category": item.get("category") or "?",
             "probability": item.get("probability"),
             "quality_class": quality.quality_class,
-            "archetype": editorial_archetype(name, item.get("category")),
+            "archetype": archetype,
             "reasons": quality.reasons,
             "family_key": quality.family_key,
             "story_key": quality.story_key,
+            "triage_bucket": triage_bucket,
+            "recommended_action": recommended_action,
         })
         if len(missing) >= limit:
             break
@@ -305,8 +395,13 @@ def build_feed_quality_debug(
         diagnosed,
         ground_truth_items or [],
     )
+    missing_bucket_counts = Counter(item["triage_bucket"] for item in missing)
     return {
         "summary": summarize_feed_diagnostics(diagnosed, top_n=top_n),
         "items": diagnosed,
         "missing_ground_truth": missing,
+        "missing_ground_truth_summary": {
+            "total": len(missing),
+            "bucket_counts": dict(missing_bucket_counts.most_common()),
+        },
     }
