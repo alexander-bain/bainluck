@@ -373,6 +373,10 @@ actor APIClient {
         return try await fetch("/api/events/typeahead", query: ["q": query])
     }
 
+    func fetchTrendingSearches() async throws -> TrendingSearchesResponse {
+        return try await fetch("/api/events/search/trending", cacheTTL: 300)
+    }
+
     // MARK: - Team Page
 
     func fetchTeamPage(slug: String) async throws -> TeamPageResponse {

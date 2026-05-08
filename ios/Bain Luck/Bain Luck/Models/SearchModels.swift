@@ -132,6 +132,16 @@ nonisolated struct TypeaheadResponse: Decodable, Sendable {
     let didYouMean: String?
 }
 
+nonisolated struct TrendingSearchesResponse: Decodable, Sendable {
+    let trending: [TrendingQuery]
+}
+
+nonisolated struct TrendingQuery: Decodable, Identifiable, Sendable {
+    let query: String
+    let count: Int
+    var id: String { query }
+}
+
 nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     let type: String
     let text: String

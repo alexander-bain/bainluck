@@ -71,11 +71,22 @@ final class SearchViewModel: ObservableObject {
     @Published var error: String?
     @Published var selectedSport = ""
     @Published var recentSearches: [String] = []
+    @Published var trendingSearches: [TrendingQuery] = []
 
     private var debounceTask: Task<Void, Never>?
 
     init() {
         recentSearches = RecentSearches.load()
+    }
+
+    @MainActor
+    func loadTrending() async {
+        do {
+            let response = try await APIClient.shared.fetchTrendingSearches()
+            trendingSearches = response.trending
+        } catch {
+            trendingSearches = []
+        }
     }
 
     @MainActor
@@ -182,7 +193,7 @@ struct SearchView: View {
         .init(icon: "figure.boxing", label: "UFC", query: "UFC"),
     ]
 
-    private let trendingSearches: [QuickSearchItem] = [
+    private let fallbackTrendingSearches: [QuickSearchItem] = [
         .init(icon: "chart.bar.fill", label: "Championship", query: "Championship"),
         .init(icon: "trophy.fill", label: "MVP", query: "MVP"),
     ]
@@ -279,11 +290,13 @@ struct SearchView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "search", type: "search")
-            // Auto-focus the search field when tab appears
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isSearchFocused = true
             }
             updateLandscapeColumns()
+        }
+        .task {
+            await vm.loadTrending()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             if navCoordinator.selectedTab == .search,
@@ -480,17 +493,26 @@ struct SearchView: View {
 
                 // Trending / Explore
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Explore")
+                    Text(vm.trendingSearches.isEmpty ? "Explore" : "Trending")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
 
                     FlowLayout(spacing: 8) {
-                        ForEach(trendingSearches) { item in
-                            quickSearchChip(icon: item.icon, label: item.label) {
-                                vm.query = item.query
-                                Task { await vm.search() }
+                        if vm.trendingSearches.isEmpty {
+                            ForEach(fallbackTrendingSearches) { item in
+                                quickSearchChip(icon: item.icon, label: item.label) {
+                                    vm.query = item.query
+                                    Task { await vm.search() }
+                                }
+                            }
+                        } else {
+                            ForEach(vm.trendingSearches) { trend in
+                                quickSearchChip(icon: "flame.fill", label: trend.query.capitalized) {
+                                    vm.query = trend.query
+                                    Task { await vm.search() }
+                                }
                             }
                         }
                     }
