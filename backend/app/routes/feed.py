@@ -92,6 +92,43 @@ def _trace_search_tokens(name: str) -> list[str]:
     return deduped[:4]
 
 
+def _futures_market_id(item: dict) -> int | None:
+    if item.get("type") != "futures":
+        return None
+    data = item.get("data") or {}
+    return data.get("id")
+
+
+def _rank_futures_market(items: list[dict], market_id: int) -> int | None:
+    for idx, item in enumerate(items, start=1):
+        if _futures_market_id(item) == market_id:
+            return idx
+    return None
+
+
+def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
+    """Deduplicate futures by canonical key using the feed's existing rules."""
+    seen_canonical: dict[str, dict] = {}
+    deduped: list[dict] = []
+    for fitem in futures_items:
+        key = fitem["data"].get("canonical_market_key")
+        if key is None:
+            deduped.append(fitem)
+            continue
+        if key not in seen_canonical:
+            seen_canonical[key] = fitem
+        elif fitem["score"] > seen_canonical[key]["score"]:
+            if _outcomes_overlap(seen_canonical[key], fitem):
+                seen_canonical[key] = fitem
+            else:
+                deduped.append(fitem)
+        else:
+            if not _outcomes_overlap(seen_canonical[key], fitem):
+                deduped.append(fitem)
+    deduped.extend(seen_canonical.values())
+    return deduped
+
+
 def _ei_label(score: int) -> str:
     """Short EI label for feed display."""
     if score >= 90:
@@ -265,35 +302,7 @@ async def get_feed(
         try:
             futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
 
-            # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
-            # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
-            # all appear as separate cards in the feed.
-            #
-            # Safety: verify top outcome names overlap before collapsing.  Two markets
-            # sharing a canonical key but with zero outcome overlap are likely a
-            # false positive (e.g., different award markets both keyed as
-            # "basketball:NBA:game_prop:2025-26").
-            seen_canonical: dict[str, dict] = {}
-            deduped: list[dict] = []
-            for fitem in futures_items:
-                key = fitem["data"].get("canonical_market_key")
-                if key is None:
-                    deduped.append(fitem)  # No canonical key — can't dedup
-                    continue
-                if key not in seen_canonical:
-                    seen_canonical[key] = fitem
-                elif fitem["score"] > seen_canonical[key]["score"]:
-                    # Verify outcome overlap before replacing
-                    if _outcomes_overlap(seen_canonical[key], fitem):
-                        seen_canonical[key] = fitem
-                    else:
-                        deduped.append(fitem)  # False positive — keep both
-                else:
-                    # Lower score — still verify overlap before dropping
-                    if not _outcomes_overlap(seen_canonical[key], fitem):
-                        deduped.append(fitem)  # False positive — keep both
-            deduped.extend(seen_canonical.values())
-            feed_items.extend(deduped)
+            feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
             logger.error("Feed: futures scoring failed, returning partial feed: %s", e)
 
@@ -850,17 +859,141 @@ def _suggest_trace_fix(trace: dict) -> str:
         return "Tune the quality classifier if this is genuinely editorial."
     if "stale_no_movement" in blockers or "effectively_resolved" in blockers:
         return "No ranking fix unless stale/resolved markets need a special recap surface."
+    rank_phases = trace.get("rank_phases") or {}
+    if rank_phases.get("dropped_by_canonical_dedupe"):
+        return "Inspect canonical dedupe; this market is being collapsed behind a sibling."
+    returned_rank = rank_phases.get("returned_rank")
+    if returned_rank and returned_rank <= 50:
+        return "No immediate fix; the market is eligible and present in the returned diagnostic feed."
     if not trace["final_ranking"]["survived_final_caps"]:
         return "Inspect quality family caps, story deduping, and first-page diversity for this story."
+    if rank_phases.get("post_diversity_rank") and rank_phases["post_diversity_rank"] > 50:
+        return "Inspect Discover diversity repair and category/story caps before tuning score."
     if trace["final_ranking"]["final_futures_rank"] and trace["final_ranking"]["final_futures_rank"] > 50:
         return "Tune scoring inputs only if this should beat stronger same-category stories."
     return "No immediate fix; the market is eligible and present in the scored feed."
+
+
+async def _discover_rank_phase_trace(
+    db: AsyncSession,
+    now: datetime,
+    market_id: int,
+    *,
+    include_events: bool,
+    event_pct: float | None,
+    limit: int,
+) -> dict:
+    """Trace a futures market through the same assembly phases as GET /feed."""
+    ctx = PersonalizationContext()
+    event_items: list[dict] = []
+    tournament_items: list[dict] = []
+    if include_events:
+        event_items = await _score_events(db, now, None, ctx)
+        tournament_items = await _score_golf_tournaments(db, now, None, ctx)
+
+    raw_futures = await _score_futures(
+        db,
+        now,
+        sport_filter=None,
+        ctx=ctx,
+        my_teams_only=False,
+    )
+    raw_futures_rank = _rank_futures_market(raw_futures, market_id)
+
+    deduped_futures = _dedupe_futures_by_canonical(raw_futures)
+    post_dedupe_rank = _rank_futures_market(deduped_futures, market_id)
+    dropped_by_canonical_dedupe = raw_futures_rank is not None and post_dedupe_rank is None
+    canonical_replacement = None
+    if dropped_by_canonical_dedupe:
+        target = next(
+            (item for item in raw_futures if _futures_market_id(item) == market_id),
+            None,
+        )
+        target_key = (target or {}).get("data", {}).get("canonical_market_key")
+        if target_key:
+            replacement = next(
+                (
+                    item for item in deduped_futures
+                    if (item.get("data") or {}).get("canonical_market_key") == target_key
+                ),
+                None,
+            )
+            if replacement:
+                canonical_replacement = {
+                    "id": _futures_market_id(replacement),
+                    "name": (replacement.get("data") or {}).get("name"),
+                    "score": replacement.get("score"),
+                }
+
+    feed_items = event_items + tournament_items + deduped_futures
+    feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+    post_initial_sort_rank = _rank_futures_market(feed_items, market_id)
+
+    post_event_demote_rank = post_initial_sort_rank
+    if event_pct is not None and event_pct < 0.3:
+        for item in feed_items:
+            if item["type"] != "event":
+                continue
+            data = item.get("data", {})
+            ei = data.get("ei") or data.get("pulse")
+            ei_score = ei.get("score", 0) if ei else 0
+            headline = (item.get("headline") or "").lower()
+            is_exceptional = (
+                ei_score >= 70
+                or any(kw in headline for kw in [
+                    "elimination", "buzzer", "walk-off", "historic",
+                    "upset", "comeback", "playoff", "championship",
+                ])
+                or item.get("score", 0) >= 90
+            )
+            if not is_exceptional:
+                item["score"] = min(item["score"], 35)
+        feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+        post_event_demote_rank = _rank_futures_market(feed_items, market_id)
+
+    post_event_mix_rank = post_event_demote_rank
+    if event_pct is not None and event_pct >= 0.2:
+        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6)
+        post_event_mix_rank = _rank_futures_market(feed_items, market_id)
+
+    post_diversity_rank = post_event_mix_rank
+    if (event_pct is not None and event_pct < 0.3) or not include_events:
+        feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
+        post_diversity_rank = _rank_futures_market(feed_items, market_id)
+
+    returned = feed_items[:limit]
+    returned_rank = _rank_futures_market(returned, market_id)
+
+    return {
+        "mode": {
+            "include_events": include_events,
+            "event_pct": event_pct,
+            "limit": limit,
+        },
+        "raw_futures_rank": raw_futures_rank,
+        "post_canonical_dedupe_rank": post_dedupe_rank,
+        "post_initial_sort_rank": post_initial_sort_rank,
+        "post_event_demote_rank": post_event_demote_rank,
+        "post_event_mix_rank": post_event_mix_rank,
+        "post_diversity_rank": post_diversity_rank,
+        "returned_rank": returned_rank,
+        "returned": returned_rank is not None,
+        "raw_futures_count": len(raw_futures),
+        "post_dedupe_futures_count": len(deduped_futures),
+        "assembled_count": len(feed_items),
+        "dropped_by_canonical_dedupe": dropped_by_canonical_dedupe,
+        "canonical_replacement": canonical_replacement,
+    }
 
 
 async def build_discover_market_trace(
     db: AsyncSession,
     market_id: int,
     now: datetime | None = None,
+    *,
+    include_events: bool = False,
+    event_pct: float | None = 0.15,
+    limit: int = 50,
 ) -> dict | None:
     """Build an admin-only pipeline trace for a single Discover market."""
     now = now or datetime.now(timezone.utc)
@@ -882,21 +1015,14 @@ async def build_discover_market_trace(
     candidate_pools = await _discover_candidate_pool_trace(db, now, market_id)
     score_trace = _score_market_trace(market, now, source_count)
 
-    scored_futures = await _score_futures(
+    rank_phases = await _discover_rank_phase_trace(
         db,
         now,
-        sport_filter=None,
-        ctx=PersonalizationContext(),
-        my_teams_only=False,
+        market_id,
+        include_events=include_events,
+        event_pct=event_pct,
+        limit=limit,
     )
-    final_rank = None
-    final_score = None
-    for idx, item in enumerate(scored_futures, start=1):
-        data = item.get("data") or {}
-        if data.get("id") == market_id:
-            final_rank = idx
-            final_score = item.get("score")
-            break
 
     trace = {
         "market": {
@@ -918,11 +1044,12 @@ async def build_discover_market_trace(
         "base_eligibility": base_eligibility,
         "candidate_pools": candidate_pools,
         "score_trace": score_trace,
+        "rank_phases": rank_phases,
         "final_ranking": {
-            "survived_final_caps": final_rank is not None,
-            "final_futures_rank": final_rank,
-            "final_score": final_score,
-            "scored_futures_count": len(scored_futures),
+            "survived_final_caps": rank_phases["returned"],
+            "final_futures_rank": rank_phases["raw_futures_rank"],
+            "final_score": score_trace["scores"]["final"] if rank_phases["raw_futures_rank"] else None,
+            "scored_futures_count": rank_phases["raw_futures_count"],
         },
     }
     trace["suggested_fix"] = _suggest_trace_fix(trace)

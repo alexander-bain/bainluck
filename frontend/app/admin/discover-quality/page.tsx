@@ -198,6 +198,30 @@ interface DiscoverMarketTrace {
     final_score: number | null;
     scored_futures_count: number;
   };
+  rank_phases?: {
+    mode: {
+      include_events: boolean;
+      event_pct: number | null;
+      limit: number;
+    };
+    raw_futures_rank: number | null;
+    post_canonical_dedupe_rank: number | null;
+    post_initial_sort_rank: number | null;
+    post_event_demote_rank: number | null;
+    post_event_mix_rank: number | null;
+    post_diversity_rank: number | null;
+    returned_rank: number | null;
+    returned: boolean;
+    raw_futures_count: number;
+    post_dedupe_futures_count: number;
+    assembled_count: number;
+    dropped_by_canonical_dedupe: boolean;
+    canonical_replacement: {
+      id: number | null;
+      name: string | null;
+      score: number | null;
+    } | null;
+  };
   suggested_fix: string;
 }
 
@@ -238,7 +262,7 @@ async function fetchHookCoverage(secret: string): Promise<HookCoverage> {
 
 async function fetchDiscoverTrace(secret: string, marketId: number): Promise<DiscoverMarketTrace> {
   const res = await fetch(
-    `${API_URL}/api/admin/discover-quality/trace/${marketId}?secret=${encodeURIComponent(secret)}`
+    `${API_URL}/api/admin/discover-quality/trace/${marketId}?secret=${encodeURIComponent(secret)}&include_events=false&event_pct=0.15&limit=50`
   );
   if (!res.ok) throw new Error(`Trace API error: ${res.status}`);
   return res.json();
@@ -331,7 +355,12 @@ function percentText(value: number | null) {
   return value === null ? "none" : `${Math.round(value * 100)}%`;
 }
 
+function rankText(value: number | null) {
+  return value === null ? "out" : `#${value}`;
+}
+
 function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
+  const phases = trace.rank_phases;
   return (
     <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3 space-y-3">
       <div className="flex items-start justify-between gap-4">
@@ -360,9 +389,9 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
           </div>
         </div>
         <div>
-          <div className="text-text-muted">Final futures rank</div>
+          <div className="text-text-muted">Returned rank</div>
           <div className="text-text-primary font-medium">
-            {trace.final_ranking.final_futures_rank ? `#${trace.final_ranking.final_futures_rank}` : "none"}
+            {rankText(phases?.returned_rank ?? null)}
           </div>
         </div>
         <div>
@@ -384,6 +413,43 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
           <div className="text-text-secondary mt-1">{trace.score_trace.highlight.reason}</div>
         )}
       </div>
+
+      {phases && (
+        <div className="text-xs">
+          <div className="font-medium text-text-primary mb-1">Rank Phases</div>
+          <div className="grid md:grid-cols-3 gap-2">
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">Raw futures</span>
+              <span className="text-text-primary">{rankText(phases.raw_futures_rank)}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">After canonical dedupe</span>
+              <span className="text-text-primary">{rankText(phases.post_canonical_dedupe_rank)}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">Initial feed sort</span>
+              <span className="text-text-primary">{rankText(phases.post_initial_sort_rank)}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">After event demotion</span>
+              <span className="text-text-primary">{rankText(phases.post_event_demote_rank)}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">After event mix</span>
+              <span className="text-text-primary">{rankText(phases.post_event_mix_rank)}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-text-secondary">After diversity</span>
+              <span className="text-text-primary">{rankText(phases.post_diversity_rank)}</span>
+            </div>
+          </div>
+          {phases.dropped_by_canonical_dedupe && phases.canonical_replacement && (
+            <div className="mt-2 text-text-muted">
+              Deduped behind #{phases.canonical_replacement.id}: {phases.canonical_replacement.name}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-3 text-xs">
         <div>

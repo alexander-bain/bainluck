@@ -153,7 +153,7 @@ class TestDiscoverQualityTrace:
 
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
 
-        async def _fake_trace(db, market_id):
+        async def _fake_trace(db, market_id, **kwargs):
             return {
                 "market": {"id": market_id, "name": "Will this ship?"},
                 "base_eligibility": {"eligible": True, "blockers": [], "checks": {}},
@@ -168,6 +168,17 @@ class TestDiscoverQualityTrace:
                     "blockers": [],
                     "scores": {"highlight": 90, "after_quality": 90, "after_explanation": 90, "final": 90},
                 },
+                "rank_phases": {
+                    "raw_futures_rank": 1,
+                    "post_canonical_dedupe_rank": 1,
+                    "post_initial_sort_rank": 1,
+                    "post_event_demote_rank": 1,
+                    "post_event_mix_rank": 1,
+                    "post_diversity_rank": 1,
+                    "returned_rank": 1,
+                    "returned": True,
+                    "dropped_by_canonical_dedupe": False,
+                },
                 "final_ranking": {"survived_final_caps": True, "final_futures_rank": 1},
                 "suggested_fix": "No immediate fix.",
             }
@@ -180,6 +191,7 @@ class TestDiscoverQualityTrace:
         assert resp.status_code == 200
         assert body["market"]["id"] == 123
         assert body["candidate_pools"]["included"] is True
+        assert body["rank_phases"]["returned_rank"] == 1
         assert body["final_ranking"]["survived_final_caps"] is True
         assert "suggested_fix" in body
 

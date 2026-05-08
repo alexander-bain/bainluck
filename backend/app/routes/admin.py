@@ -6148,6 +6148,9 @@ async def trigger_hook_enrichment(
 async def discover_quality_market_trace(
     market_id: int,
     secret: str = Query(...),
+    include_events: bool = Query(False),
+    event_pct: float = Query(0.15, ge=0, le=1),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
     """Explain how a futures market flows through Discover ranking."""
@@ -6156,7 +6159,13 @@ async def discover_quality_market_trace(
 
     from app.routes.feed import build_discover_market_trace
 
-    trace = await build_discover_market_trace(db, market_id)
+    trace = await build_discover_market_trace(
+        db,
+        market_id,
+        include_events=include_events,
+        event_pct=event_pct,
+        limit=limit,
+    )
     if not trace:
         raise HTTPException(status_code=404, detail="Market not found")
     return trace
