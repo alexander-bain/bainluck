@@ -12,10 +12,11 @@ import asyncio
 import hashlib
 import json as _json_module
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,6 +46,7 @@ from app.utils.feed_market_quality import (
     diversify_quality_families,
 )
 from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
+from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_names
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -56,6 +58,11 @@ from app.routes.events import _build_team_lookup, _format_team_data
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _check_admin_secret(secret: str | None) -> bool:
+    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
+    return bool(expected and secret == expected)
 
 
 def _ei_label(score: int) -> str:
@@ -87,6 +94,8 @@ async def get_feed(
     my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
     tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\"])"),
     event_pct: Optional[float] = Query(None, description="Override event percentage floor (0.0-1.0). Discover uses 0.15."),
+    debug: bool = Query(False, description="Include admin-only feed quality diagnostics"),
+    secret: Optional[str] = Query(None, description="Admin secret for debug diagnostics"),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -107,11 +116,14 @@ async def get_feed(
     - data: full event or futures payload
     - personalized: whether score was personalized (only present if true)
     """
+    if debug and not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     # --- Redis response cache (anon 15s, auth 5s) ---
     _cache_key = None
     _cache_ttl = 15 if user is None else 5
     _async_redis = None
-    if not my_teams_only:
+    if not my_teams_only and not debug:
         try:
             from app.tasks.redis_state import get_async_redis_client
             _async_redis = get_async_redis_client()
@@ -307,9 +319,20 @@ async def get_feed(
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
 
-    # Remove internal sort keys
+    debug_payload = None
+    if debug:
+        debug_payload = build_feed_quality_debug(
+            paginated,
+            ground_truth=load_default_ground_truth_names(),
+            top_n=min(20, len(paginated)),
+        )
+
+    # Remove internal sort/debug keys
     for item in paginated:
         item.pop("_sort_time", None)
+        item.pop("_quality_class", None)
+        item.pop("_quality_family_key", None)
+        item.pop("_quality_story_key", None)
 
     response = {
         "items": paginated,
@@ -333,6 +356,10 @@ async def get_feed(
             "pinned_events": len(ctx.pinned_event_ids),
             "pinned_futures": len(ctx.pinned_futures_ids),
         }
+
+    if debug_payload is not None:
+        response["debug_summary"] = debug_payload["summary"]
+        response["debug_items"] = debug_payload["items"]
 
     # --- Write to cache ---
     if _cache_key and _async_redis:

@@ -104,6 +104,27 @@ class TestFeedQueryParams:
         assert resp.status_code == 422
 
 
+class TestFeedDebug:
+    async def test_debug_requires_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/feed?debug=true")
+
+        assert resp.status_code == 403
+
+    async def test_debug_returns_diagnostics_for_admin(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get("/api/feed?debug=true&secret=test-admin")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert "debug_summary" in body
+        assert "debug_items" in body
+        assert body["debug_summary"]["items"] == 0
+        assert body["debug_items"] == []
+
+
 class TestFeedMyTeamsAnonymous:
     """my_teams_only without auth returns early with requires_auth flag."""
 

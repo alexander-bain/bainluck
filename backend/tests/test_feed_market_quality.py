@@ -12,6 +12,7 @@ from app.utils.feed_market_quality import (
     has_strong_hook,
     quality_score_adjustment,
 )
+from app.utils.feed_quality_debug import build_feed_quality_debug
 from app.utils.futures_highlights import compute_futures_highlight
 
 
@@ -258,6 +259,56 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "low_quality"
         assert apply_quality_score(100, quality) <= 70
+
+
+class TestFeedQualityDebug:
+    def test_builds_summary_and_item_diagnostics(self):
+        items = [
+            {
+                "type": "futures",
+                "score": 100,
+                "headline": "Yes side up 30.0 points from opening",
+                "reason": "Yes side moved up 30.0 points from opening in Iran closes its airspace by...?",
+                "data": {
+                    "id": 1,
+                    "name": "Iran closes its airspace by...?",
+                    "llm_sport_category": "geopolitics",
+                    "source": "kalshi",
+                    "top_outcomes": [{"name": "Yes", "probability": 0.8}],
+                    "hook_description": None,
+                    "image_url": None,
+                },
+            },
+            {
+                "type": "futures",
+                "score": 70,
+                "headline": "Yes side up 5.0 points today",
+                "reason": "Oil moved today",
+                "data": {
+                    "id": 2,
+                    "name": "Oil Price (WTI) on May 1, 2026?",
+                    "llm_sport_category": "economics",
+                    "source": "kalshi",
+                    "top_outcomes": [{"name": "Yes", "probability": 0.55}],
+                    "hook_description": None,
+                    "image_url": None,
+                },
+            },
+        ]
+
+        debug = build_feed_quality_debug(
+            items,
+            ground_truth={"iran closes its airspace by...?"},
+            top_n=2,
+        )
+
+        assert debug["summary"]["items"] == 2
+        assert debug["summary"]["boring_count"] == 1
+        assert debug["summary"]["ladder_count"] == 1
+        assert debug["summary"]["ground_truth_hit_count_50"] == 1
+        assert debug["items"][0]["quality_class"] == "compelling"
+        assert debug["items"][0]["ground_truth"] is True
+        assert debug["items"][1]["quality_class"] == "low_quality"
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(

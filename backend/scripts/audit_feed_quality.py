@@ -10,10 +10,8 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-from collections import Counter
 from pathlib import Path
 
 import httpx
@@ -21,37 +19,10 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.utils.feed_market_quality import (  # noqa: E402
-    classify_market_quality,
-    editorial_archetype,
-    has_specific_explanation,
+from app.utils.feed_quality_debug import (  # noqa: E402
+    build_feed_quality_debug,
+    load_default_ground_truth_names,
 )
-
-
-def _load_ground_truth_names() -> set[str]:
-    names: set[str] = set()
-    for rel in (
-        "scripts/polymarket_browse_ground_truth.json",
-        "scripts/kalshi_ground_truth.json",
-    ):
-        path = ROOT / rel
-        if not path.exists():
-            continue
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
-            continue
-        for item in data:
-            if item.get("trending") and item.get("market_name"):
-                names.add(item["market_name"].lower().strip())
-    return names
-
-
-def _matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
-    lower = name.lower().strip()
-    if lower in ground_truth:
-        return True
-    return any(lower in gt or gt in lower for gt in ground_truth)
 
 
 def main() -> int:
@@ -68,97 +39,33 @@ def main() -> int:
     payload = resp.json()
     items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
 
-    ground_truth = _load_ground_truth_names()
-    classified: list[dict] = []
-    for idx, item in enumerate(items, start=1):
-        data = item.get("data") or {}
-        outcomes = data.get("top_outcomes") or []
-        quality = classify_market_quality(
-            market_name=data.get("name"),
-            sport_category=data.get("llm_sport_category"),
-            outcome_names=[o.get("name") for o in outcomes if o.get("name")],
-        )
-        hook = data.get("hook_description")
-        headline = item.get("headline")
-        explanation_ok = has_specific_explanation(
-            hook_description=hook,
-            headline=headline,
-            quality=quality,
-        )
-        classified.append({
-            "rank": idx,
-            "score": item.get("score"),
-            "name": data.get("name") or "",
-            "category": data.get("llm_sport_category") or "?",
-            "archetype": editorial_archetype(
-                data.get("name") or "",
-                data.get("llm_sport_category") or "",
-            ),
-            "source": data.get("source") or "?",
-            "headline": item.get("headline"),
-            "reason": item.get("reason"),
-            "hook": bool(hook),
-            "explanation_ok": explanation_ok,
-            "quality_class": quality.quality_class,
-            "family_key": quality.family_key,
-            "ladder": quality.is_ladder_or_bucket,
-            "reasons": quality.reasons,
-            "ground_truth": _matches_ground_truth(data.get("name") or "", ground_truth),
-        })
-
-    c10 = classified[:10]
-    c20 = classified[:20]
-    boring20 = [c for c in c20 if c["quality_class"] in ("low_quality", "suppress")]
-    ladder20 = [c for c in c20 if c["ladder"]]
-    family_counts = Counter(c["family_key"] for c in c20)
-    duplicate_families = {k: v for k, v in family_counts.items() if v > 1}
-    explanation_ok = [c for c in c20 if c["explanation_ok"]]
-    gt50 = [c for c in classified[:50] if c["ground_truth"]]
-    cats = Counter(c["category"] for c in c20)
-    archetypes = Counter(c["archetype"] for c in c20)
-    positive_targets = {
-        "world_event": any(c["archetype"] == "world_event" for c in c20),
-        "tech_frontier": any(c["archetype"] == "tech_frontier" for c in c20),
-        "macro_signal": any(c["archetype"] == "macro_signal" for c in c20),
-        "culture_moment": any(c["archetype"] == "culture_moment" for c in c20),
-        "health_weather_risk": any(c["archetype"] == "health_weather_risk" for c in c20),
-        "sports_story": any(c["archetype"] == "sports_story" for c in c20),
-    }
-    positive_target_hits = sum(1 for hit in positive_targets.values() if hit)
-    top10_non_politics = [
-        c for c in c10
-        if c["category"] not in {"politics", "geopolitics"}
-    ]
-    top10_fun = [
-        c for c in c10
-        if c["archetype"] in {"culture_moment", "weird_news", "sports_story"}
-    ]
-    strict_targets = {
-        "top10_non_politics_geopolitics>=4": len(top10_non_politics) >= 4,
-        "top10_has_fun_item": bool(top10_fun),
-        "top20_world_event<=4": archetypes.get("world_event", 0) <= 4,
-        "top20_has_weird_news": archetypes.get("weird_news", 0) >= 1,
-        "top20_max_category<=5": max(cats.values(), default=0) <= 5,
-    }
-    strict_target_hits = sum(1 for hit in strict_targets.values() if hit)
+    debug = build_feed_quality_debug(
+        items,
+        ground_truth=load_default_ground_truth_names(),
+        top_n=20,
+    )
+    classified = debug["items"]
+    summary = debug["summary"]
+    boring20 = [c for c in classified[:20] if c["quality_class"] in ("low_quality", "suppress")]
+    duplicate_families = summary["duplicate_families"]
 
     print("DISCOVER FEED QUALITY AUDIT")
     print("=" * 72)
     print(f"URL: {base_url}")
     print(f"Items: {len(classified)}")
     print()
-    print(f"boring-rate@20:          {len(boring20)}/20")
-    print(f"ladder/bucket-rate@20:   {len(ladder20)}/20")
-    print(f"duplicate-family-rate@20:{sum(duplicate_families.values())}/20")
-    print(f"explanation-coverage@20: {len(explanation_ok)}/20")
-    print(f"ground-truth-hit@50:     {len(gt50)}/50")
-    print(f"positive-archetypes@20:  {positive_target_hits}/{len(positive_targets)}")
-    print(f"strict-variety@20:       {strict_target_hits}/{len(strict_targets)}")
-    print(f"category-spread@20:      {len(cats)} categories, max={max(cats.values(), default=0)}")
-    print(f"category distribution@20:{dict(cats.most_common())}")
-    print(f"archetype distribution@20:{dict(archetypes.most_common())}")
-    print(f"positive targets@20:     {positive_targets}")
-    print(f"strict targets@20:       {strict_targets}")
+    print(f"boring-rate@20:          {summary['boring_count']}/20")
+    print(f"ladder/bucket-rate@20:   {summary['ladder_count']}/20")
+    print(f"duplicate-family-rate@20:{summary['duplicate_family_count']}/20")
+    print(f"explanation-coverage@20: {summary['explanation_ok_count']}/20")
+    print(f"ground-truth-hit@50:     {summary['ground_truth_hit_count_50']}/50")
+    print(f"positive-archetypes@20:  {summary['positive_archetype_hits']}/{summary['positive_targets_total']}")
+    print(f"strict-variety@20:       {summary['strict_variety_hits']}/{summary['strict_targets_total']}")
+    print(f"category-spread@20:      {summary['category_spread']} categories, max={summary['max_category_count']}")
+    print(f"category distribution@20:{summary['category_distribution']}")
+    print(f"archetype distribution@20:{summary['archetype_distribution']}")
+    print(f"positive targets@20:     {summary['positive_targets']}")
+    print(f"strict targets@20:       {summary['strict_targets']}")
     print()
 
     print("TOP 50")
