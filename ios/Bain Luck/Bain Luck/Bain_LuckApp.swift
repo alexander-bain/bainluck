@@ -63,6 +63,10 @@ struct Bain_LuckApp: App {
                 .environmentObject(authManager)
                 .environmentObject(navCoordinator)
                 .environmentObject(pinManager)
+                #if os(macOS)
+                .navigationTitle(navCoordinator.liveGameTitle)
+                .task { await pollLiveGames() }
+                #endif
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
                     pinManager.isAuthenticated = isAuth
                     Task {
@@ -141,6 +145,9 @@ struct Bain_LuckApp: App {
         #endif
 
         #if os(macOS)
+        .onChange(of: navCoordinator.liveGameTitle) { _, title in
+            NSApplication.shared.mainWindow?.title = title
+        }
         WindowGroup(for: Int.self) { $eventId in
             if let id = eventId {
                 NavigationStack {
@@ -155,4 +162,36 @@ struct Bain_LuckApp: App {
         .defaultSize(width: 900, height: 700)
         #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private func pollLiveGames() async {
+        while !Task.isCancelled {
+            do {
+                let feed = try await APIClient.shared.fetchFeed(
+                    limit: 10,
+                    includeFutures: false
+                )
+                let liveEvents = feed.items
+                    .compactMap { $0.event }
+                    .filter { $0.status == "live" }
+
+                if let best = liveEvents.first {
+                    let away = best.awayTeam.split(separator: " ").last.map(String.init) ?? best.awayTeam
+                    let home = best.homeTeam.split(separator: " ").last.map(String.init) ?? best.homeTeam
+                    let score = "\(away) \(best.awayScore ?? 0) - \(home) \(best.homeScore ?? 0)"
+                    let period = best.espn?.period ?? best.espn?.gameClock ?? ""
+                    navCoordinator.liveGameTitle = period.isEmpty ? score : "\(score) • \(period)"
+                    navCoordinator.liveGameCount = liveEvents.count
+                } else {
+                    navCoordinator.liveGameTitle = "Bain Luck"
+                    navCoordinator.liveGameCount = 0
+                }
+            } catch {
+                navCoordinator.liveGameTitle = "Bain Luck"
+            }
+            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+        }
+    }
+    #endif
 }
