@@ -289,6 +289,7 @@ struct DiscoverView: View {
     @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         if let e = item.event {
+            let url = eventShareURL(e)
             if let prob = e.currentOdds?.homeProbability {
                 Button {
                     let text = "\(e.homeTeam): \(Int(prob * 100))%"
@@ -303,7 +304,6 @@ struct DiscoverView: View {
                 }
             }
             Button {
-                let url = "https://bainluck.com/events/\(e.id)"
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -313,10 +313,11 @@ struct DiscoverView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/events/\(e.id)")!) {
+            ShareLink(item: URL(string: url)!) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         } else if let f = item.futures {
+            let url = futuresShareURL(f)
             if let leader = f.topOutcomes?.first, let prob = leader.probability {
                 Button {
                     let text = "\(leader.name): \(Int(prob * 100))%"
@@ -331,7 +332,6 @@ struct DiscoverView: View {
                 }
             }
             Button {
-                let url = "https://bainluck.com/futures/\(f.id)"
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
@@ -341,7 +341,7 @@ struct DiscoverView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/futures/\(f.id)")!) {
+            ShareLink(item: URL(string: url)!) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }
@@ -351,6 +351,14 @@ struct DiscoverView: View {
         } label: {
             Label("Dismiss", systemImage: "xmark")
         }
+    }
+
+    private func eventShareURL(_ event: FeedEventData) -> String {
+        "https://bainluck.com/events/\(event.id)?utm_source=share&utm_medium=native&utm_campaign=card&content_type=event&item_id=\(event.id)"
+    }
+
+    private func futuresShareURL(_ market: FeedFuturesData) -> String {
+        "https://bainluck.com/futures/\(market.id)?utm_source=share&utm_medium=native&utm_campaign=card&content_type=futures&item_id=\(market.id)"
     }
 }
 
@@ -603,109 +611,190 @@ private struct NativeFuturesDiscoverCard: View {
         categoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? defaultGradient
     }
 
+    private var categoryLabel: String {
+        (data.sportName ?? data.llmSportCategory ?? "Market").uppercased()
+    }
+
+    private var leader: FeedFuturesOutcome? {
+        data.topOutcomes?.first
+    }
+
+    private var leaderProbability: Double {
+        leader?.probability ?? 0
+    }
+
     var body: some View {
         NavigationLink(value: Route.futuresDetail(id: data.id)) {
             VStack(alignment: .leading, spacing: 0) {
-                // Hero section with gradient/image
                 ZStack(alignment: .bottomLeading) {
-                    if let imageUrl = data.imageUrl, let url = URL(string: imageUrl) {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let img):
-                                img.resizable().scaledToFill()
-                            default:
-                                LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            }
-                        }
-                        .frame(height: 140)
+                    heroBackground
+                        .frame(height: 170)
                         .clipped()
-                        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
-                    } else {
-                        LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            .frame(height: 140)
-                    }
 
-                    // Overlay content
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(data.llmSportCategory?.uppercased() ?? "MARKET")
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(categoryLabel)
                                 .font(.system(size: 9, weight: .heavy))
                                 .tracking(0.8)
-                                .foregroundStyle(.white.opacity(0.7))
+                                .foregroundStyle(.white.opacity(0.78))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.black.opacity(0.24), in: Capsule())
+
+                            Spacer()
+
                             if isTrending(data) {
-                                Text("🔥 Trending")
+                                Label("Trending", systemImage: "flame.fill")
                                     .font(.system(size: 9, weight: .heavy))
                                     .foregroundStyle(.orange)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.black.opacity(0.24), in: Capsule())
                             }
                         }
 
-                        if let leader = data.topOutcomes?.first {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
-                                    .font(.system(size: 36, weight: .black).monospacedDigit())
+                        Spacer(minLength: 16)
+
+                        if let leader {
+                            HStack(alignment: .bottom, spacing: 10) {
+                                Text("\(Int((leaderProbability * 100).rounded()))%")
+                                    .font(.system(size: 52, weight: .black).monospacedDigit())
+                                    .minimumScaleFactor(0.76)
                                     .foregroundStyle(.white)
+                                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+
                                 MovementBadge(movement: leader.movement)
+                                    .padding(.bottom, 8)
                             }
+
                             Text(leader.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(1)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(.white.opacity(0.92))
+                                .lineLimit(2)
                         }
                     }
-                    .padding(12)
+                    .padding(14)
                 }
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
 
-                // Details section
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(data.name)
-                        .font(.subheadline.weight(.bold))
+                        .font(.headline.weight(.bold))
                         .lineLimit(2)
 
                     if let hook = data.hookDescription {
                         Text(hook)
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
 
                     if let outcomes = data.topOutcomes, outcomes.count > 1 {
-                        ForEach(outcomes.prefix(3).indices, id: \.self) { i in
-                            let o = outcomes[i]
-                            HStack(spacing: 4) {
-                                Text(o.name)
-                                    .font(.caption2)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                GeometryReader { geo in
-                                    Capsule().fill(i == 0 ? Color.blue : Color.secondary.opacity(0.2))
-                                        .frame(width: max(2, geo.size.width * (o.probability ?? 0)))
-                                }
-                                .frame(width: 60, height: 6)
-                                Text("\(Int(((o.probability ?? 0) * 100).rounded()))%")
-                                    .font(.caption2.weight(.semibold).monospacedDigit())
-                                    .frame(width: 28, alignment: .trailing)
+                        VStack(spacing: 7) {
+                            ForEach(Array(outcomes.prefix(3).enumerated()), id: \.element.id) { idx, outcome in
+                                outcomeRow(outcome, isLeader: idx == 0)
                             }
                         }
                     }
 
-                    if let src = data.source {
-                        Text(src.uppercased())
-                            .font(.system(size: 9, weight: .heavy))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.1))
-                            .clipShape(Capsule())
+                    HStack(spacing: 8) {
+                        if let src = data.source {
+                            Text(src.uppercased())
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.blue.opacity(0.10), in: Capsule())
+                        }
+
+                        if let count = data.sourceCount, count > 1 {
+                            Text("\(count) SOURCES")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.secondary.opacity(0.10), in: Capsule())
+                        }
+
+                        Spacer()
                     }
                 }
-                .padding(12)
+                .padding(14)
             }
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack, lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var heroBackground: some View {
+        if let imageUrl = data.imageUrl, let url = URL(string: imageUrl) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .overlay(
+                            LinearGradient(
+                                colors: [.black.opacity(0.08), .black.opacity(0.78)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                default:
+                    LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+        } else {
+            LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .overlay(
+                    Text(categoryEmoji(data.llmSportCategory))
+                        .font(.system(size: 96))
+                        .opacity(0.10)
+                )
+        }
+    }
+
+    private func outcomeRow(_ outcome: FeedFuturesOutcome, isLeader: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(outcome.name)
+                .font(.caption.weight(isLeader ? .semibold : .regular))
+                .lineLimit(1)
+                .frame(width: 112, alignment: .leading)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.12))
+                    Capsule()
+                        .fill(isLeader ? Color.blue : Color.secondary.opacity(0.35))
+                        .frame(width: max(3, geo.size.width * (outcome.probability ?? 0)))
+                }
+            }
+            .frame(height: 7)
+
+            Text("\(Int(((outcome.probability ?? 0) * 100).rounded()))%")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .frame(width: 34, alignment: .trailing)
+        }
+    }
+
+    private func categoryEmoji(_ category: String?) -> String {
+        switch category?.lowercased() {
+        case "politics": return "🏛"
+        case "geopolitics": return "🌍"
+        case "economics": return "📈"
+        case "tech": return "💻"
+        case "entertainment": return "🎬"
+        case "culture": return "🎭"
+        case "weather": return "🌤"
+        case "health": return "🏥"
+        default: return "🍀"
+        }
     }
 }
 
