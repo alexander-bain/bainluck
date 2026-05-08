@@ -57,7 +57,7 @@ export async function generateMetadata({
       : `${statusLabel(event)}. Follow ${matchup} with probability-first odds on Bain Luck.`
   );
   const url = buildShareUrl(`/events/${event.id}`);
-  const image = event.home_team_data?.logo_large || event.home_team_data?.logo_small || event.away_team_data?.logo_large || event.away_team_data?.logo_small || undefined;
+  const image = buildShareUrl(`/events/${event.id}/opengraph-image`);
 
   return {
     title,
@@ -69,13 +69,13 @@ export async function generateMetadata({
       url,
       siteName: "Bain Luck",
       type: "article",
-      images: image ? [{ url: image, alt: matchup }] : undefined,
+      images: [{ url: image, alt: matchup, width: 1200, height: 630 }],
     },
     twitter: {
-      card: image ? "summary_large_image" : "summary",
+      card: "summary_large_image",
       title,
       description,
-      images: image ? [image] : undefined,
+      images: [image],
     },
   };
 }

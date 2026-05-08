@@ -412,6 +412,14 @@ export interface ShareParams {
   url?: string;
 }
 
+export interface SharedLinkOpenParams {
+  content_type: 'event' | 'futures' | 'grid';
+  item_id: number | string;
+  source: string;
+  medium?: string;
+  campaign?: string;
+}
+
 export interface FeedRefreshParams {
   trigger: 'manual' | 'auto';
   new_items_count: number;
@@ -546,6 +554,7 @@ export interface AnalyticsEventMap {
   player_prop_click: PlayerPropClickParams;
   market_map_interact: MarketMapInteractParams;
   share: ShareParams;
+  shared_link_open: SharedLinkOpenParams;
   feed_refresh: FeedRefreshParams;
 }
 

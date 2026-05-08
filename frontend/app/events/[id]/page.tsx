@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { format as fmtDate } from "date-fns";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
@@ -160,10 +161,16 @@ function getKeyStats(
 
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
+  const searchParams = useSearchParams();
+  const sharedSource = searchParams.get("utm_source");
+  const sharedMedium = searchParams.get("utm_medium") || undefined;
+  const sharedCampaign = searchParams.get("utm_campaign") || undefined;
+  const isSharedLink = sharedSource === "share";
   const [countdown, setCountdown] = useState<number>(0);
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
   const hasTrackedDetailView = useRef(false);
+  const hasTrackedSharedOpen = useRef(false);
   const [activeChartPoint, setActiveChartPoint] = useState<ActiveChartPoint | null>(null);
   const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -281,6 +288,19 @@ export default function EventPage({ params }: EventPageProps) {
       recordEvent(event.id, event.sport || undefined);
     }
   }, [event, track, recordEvent]);
+
+  useEffect(() => {
+    if (event && isSharedLink && !hasTrackedSharedOpen.current) {
+      hasTrackedSharedOpen.current = true;
+      track("shared_link_open", {
+        content_type: "event",
+        item_id: event.id,
+        source: sharedSource,
+        medium: sharedMedium,
+        campaign: sharedCampaign,
+      });
+    }
+  }, [event, isSharedLink, sharedCampaign, sharedMedium, sharedSource, track]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -737,6 +757,21 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
       </div>
+
+      {isSharedLink && (
+        <div className="rounded-card border border-accent-brand/20 bg-accent-brand/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-text-primary">Shared from Discover</p>
+            <p className="text-xs text-text-secondary">Explore the rest of today&apos;s probability stories.</p>
+          </div>
+          <Link
+            href="/discover"
+            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3 py-2 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+          >
+            Open Discover
+          </Link>
+        </div>
+      )}
 
       {/* Hero Section — v2 design */}
       <div className="rounded-card shadow-card overflow-hidden bg-surface-card">

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   fetchFuturesMarket,
@@ -83,6 +84,11 @@ type SortDirection = "asc" | "desc";
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
   const isValidId = !isNaN(marketId) && marketId > 0;
+  const searchParams = useSearchParams();
+  const sharedSource = searchParams.get("utm_source");
+  const sharedMedium = searchParams.get("utm_medium") || undefined;
+  const sharedCampaign = searchParams.get("utm_campaign") || undefined;
+  const isSharedLink = sharedSource === "share";
 
   // Analytics hooks must be called before conditional returns
   usePageTracking({
@@ -127,6 +133,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
   // Track futures detail view once data loads
   const hasTrackedFutures = useRef(false);
+  const hasTrackedSharedOpen = useRef(false);
   useEffect(() => {
     if (market && !hasTrackedFutures.current) {
       hasTrackedFutures.current = true;
@@ -137,6 +144,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       });
     }
   }, [market, marketId, track]);
+
+  useEffect(() => {
+    if (market && isSharedLink && !hasTrackedSharedOpen.current) {
+      hasTrackedSharedOpen.current = true;
+      track("shared_link_open", {
+        content_type: "futures",
+        item_id: marketId,
+        source: sharedSource,
+        medium: sharedMedium,
+        campaign: sharedCampaign,
+      });
+    }
+  }, [isSharedLink, market, marketId, sharedCampaign, sharedMedium, sharedSource, track]);
 
   // Related events (upcoming/recent games featuring contender teams)
   const { data: relatedEventsData } = useSWR(
@@ -283,6 +303,21 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     <div className="space-y-6">
       {/* Navigation */}
       {backLink}
+
+      {isSharedLink && (
+        <div className="rounded-card border border-accent-brand/20 bg-accent-brand/5 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-text-primary">Shared from Discover</p>
+            <p className="text-xs text-text-secondary">Explore the rest of today&apos;s probability stories.</p>
+          </div>
+          <Link
+            href="/discover"
+            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3 py-2 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+          >
+            Open Discover
+          </Link>
+        </div>
+      )}
 
       {/* Expired market banner */}
       {market.resolution_date && new Date(market.resolution_date) < new Date() && (

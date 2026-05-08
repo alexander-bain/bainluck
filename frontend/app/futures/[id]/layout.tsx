@@ -56,7 +56,7 @@ export async function generateMetadata({
         : `See ${market.name} translated into intuitive probabilities on Bain Luck.`)
   );
   const url = buildShareUrl(`/futures/${market.id}`);
-  const image = market.image_url || undefined;
+  const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
 
   return {
     title,
@@ -68,13 +68,13 @@ export async function generateMetadata({
       url,
       siteName: "Bain Luck",
       type: "article",
-      images: image ? [{ url: image, alt: market.name }] : undefined,
+      images: [{ url: image, alt: market.name, width: 1200, height: 630 }],
     },
     twitter: {
-      card: image ? "summary_large_image" : "summary",
+      card: "summary_large_image",
       title,
       description,
-      images: image ? [image] : undefined,
+      images: [image],
     },
   };
 }
