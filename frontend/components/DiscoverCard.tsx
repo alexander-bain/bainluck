@@ -6,6 +6,7 @@ import { Check, Heart, Share2 } from "lucide-react";
 import { formatProbability } from "@/lib/api";
 import { trackEvent } from "@/lib/analytics";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { getDiscoverItemAnalytics, recordDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { ShareContentType } from "@/lib/share";
 
@@ -64,6 +65,7 @@ export interface DiscoverGroupedItem {
 interface DiscoverCardProps {
   groupedItem: DiscoverGroupedItem;
   onDismiss?: () => void;
+  positionIndex?: number;
 }
 
 // ── Category Styling ──
@@ -189,19 +191,35 @@ function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
 
 // ── Main Export ──
 
-export default function DiscoverCard({ groupedItem, onDismiss }: DiscoverCardProps) {
+export default function DiscoverCard({ groupedItem, onDismiss, positionIndex }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
-    return <GroupCard items={groupedItem.items} title={groupedItem.groupTitle || ""} />;
+    return <GroupCard items={groupedItem.items} title={groupedItem.groupTitle || ""} positionIndex={positionIndex} />;
   }
   const item = groupedItem.item!;
-  return <SingleCard item={item} onDismiss={onDismiss} />;
+  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} />;
 }
 
-function SingleCard({ item, onDismiss }: { item: FeedItem; onDismiss?: () => void }) {
+function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number }) {
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
+  const analytics = getDiscoverItemAnalytics(item);
 
-  const handleLike = useCallback(() => setLiked(true), []);
+  const trackAction = useCallback((action: "detail_click" | "like" | "unlike") => {
+    trackEvent("feed_card_action", {
+      action,
+      ...analytics,
+      position: positionIndex,
+      surface: "discover",
+    });
+    recordDiscoverInteraction(analytics.category, action);
+  }, [analytics, positionIndex]);
+
+  const setLikedWithTracking = useCallback((next: boolean) => {
+    setLiked(next);
+    trackAction(next ? "like" : "unlike");
+  }, [trackAction]);
+
+  const handleLike = useCallback(() => setLikedWithTracking(true), [setLikedWithTracking]);
   const swipe = useSwipe(onDismiss, handleLike);
 
   const cardStyle = {
@@ -224,9 +242,9 @@ function SingleCard({ item, onDismiss }: { item: FeedItem; onDismiss?: () => voi
       )}
 
       <div style={cardStyle}>
-        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} trending={trending} />}
-        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} trending={trending} />}
-        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLiked} onDismiss={onDismiss} />}
+        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} />}
+        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} />}
+        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} onDetailClick={() => trackAction("detail_click")} />}
       </div>
     </div>
   );
@@ -234,18 +252,32 @@ function SingleCard({ item, onDismiss }: { item: FeedItem; onDismiss?: () => voi
 
 // ── Group Card ──
 
-function GroupCard({ items, title }: { items: FeedItem[]; title: string }) {
+function GroupCard({ items, title, positionIndex }: { items: FeedItem[]; title: string; positionIndex?: number }) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
   const rest = items.slice(1);
   const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const catStyle = getCat(cat);
+  const analytics = getDiscoverItemAnalytics(primary);
+
+  const setExpandedWithTracking = (next: boolean) => {
+    setExpanded(next);
+    if (next) {
+      trackEvent("feed_card_action", {
+        action: "group_expand",
+        ...analytics,
+        position: positionIndex,
+        surface: "discover",
+      });
+      recordDiscoverInteraction(analytics.category, "group_expand");
+    }
+  };
 
   return (
     <div className="rounded-2xl border border-surface-border bg-surface-card shadow-lg overflow-hidden">
       {/* Group header */}
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setExpandedWithTracking(!expanded)}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-surface-elevated/50 hover:bg-surface-elevated transition-colors"
       >
         <div className="flex items-center gap-2">
@@ -273,7 +305,7 @@ function GroupCard({ items, title }: { items: FeedItem[]; title: string }) {
 
       {!expanded && rest.length > 0 && (
         <button
-          onClick={() => setExpanded(true)}
+          onClick={() => setExpandedWithTracking(true)}
           className="w-full text-center py-2 text-xs text-blue-600 hover:text-blue-700 font-medium"
         >
           Show {rest.length} more
@@ -384,8 +416,8 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
 
 // ── Event Card ──
 
-function EventCard({ item, data, liked, setLiked, onDismiss, trending }: {
-  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean;
+function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick }: {
+  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const homeColor = data.home_team_data?.primary_color || "#374151";
@@ -446,7 +478,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending }: {
       </div>
 
       <div className="p-4">
-        <Link href={`/events/${data.id}`} className="block group">
+        <Link href={`/events/${data.id}`} onClick={onDetailClick} className="block group">
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} {isDone ? "" : "@"} {data.home_team}</h3>
         </Link>
 
@@ -494,8 +526,8 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending }: {
 
 // ── Futures Card ──
 
-function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
-  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean;
+function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick }: {
+  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const catStyle = getCat(data.llm_sport_category);
@@ -537,7 +569,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
       </div>
 
       <div className="p-4">
-        <Link href={`/futures/${data.id}`} className="block group">
+        <Link href={`/futures/${data.id}`} onClick={onDetailClick} className="block group">
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
 
@@ -581,8 +613,8 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
 
 // ── Tournament Card ──
 
-function TournamentCard({ data, liked, setLiked, onDismiss }: {
-  data: FeedTournamentData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void;
+function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick }: {
+  data: FeedTournamentData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; onDetailClick?: () => void;
 }) {
   const leader = data.golfers?.[0];
   const leaderProbability = formatShareProbability(leader?.probability);
@@ -603,7 +635,9 @@ function TournamentCard({ data, liked, setLiked, onDismiss }: {
         )}
       </div>
       <div className="p-4">
-        <h3 className="font-bold text-lg leading-tight mb-1">{data.name}</h3>
+        <Link href="/sport/golf" onClick={onDetailClick} className="block group">
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
+        </Link>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
         <ActionBar
           liked={liked}

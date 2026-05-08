@@ -7,6 +7,8 @@ import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { trackEvent } from "@/lib/analytics";
+import { getDiscoverItemAnalytics, recordDiscoverInteraction } from "@/lib/discoverInteractions";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -42,6 +44,11 @@ function getItemCategory(item: FeedItem): string {
     return (item.data as FeedFuturesData).llm_sport_category || "other";
   }
   return "golf";
+}
+
+function getGroupedAnalytics(groupedItem: DiscoverGroupedItem) {
+  const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
+  return item ? getDiscoverItemAnalytics(item) : null;
 }
 
 function isStale(item: FeedItem): boolean {
@@ -188,6 +195,45 @@ const CATEGORY_FILTERS = [
 ];
 
 const SPORTS_CATS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "olympics"]);
+
+function FeedItemShell({
+  groupedItem,
+  positionIndex,
+  children,
+}: {
+  groupedItem: DiscoverGroupedItem;
+  positionIndex: number;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const tracked = useRef(false);
+  const analytics = useMemo(() => getGroupedAnalytics(groupedItem), [groupedItem]);
+
+  useEffect(() => {
+    if (!analytics || tracked.current) return;
+    const node = ref.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting || tracked.current) return;
+        tracked.current = true;
+        trackEvent("feed_card_impression", {
+          ...analytics,
+          position: positionIndex,
+          surface: "discover",
+        });
+        recordDiscoverInteraction(analytics.category, "impression");
+        observer.disconnect();
+      },
+      { threshold: 0.55 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [analytics, positionIndex]);
+
+  return <div ref={ref}>{children}</div>;
+}
 
 export default function DiscoverPage() {
   usePageTracking({ pageType: "discover", pageTitle: "Discover" });
@@ -420,22 +466,41 @@ export default function DiscoverPage() {
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
             const isGuessSlot = gi.type === "single" && (idx + 1) % 5 === 0 && (gi.item!.type === "futures" || gi.item!.type === "event");
+            const analytics = getGroupedAnalytics(gi);
+
+            const handleTrackedDismiss = gi.type === "single"
+              ? () => {
+                  if (analytics) {
+                    trackEvent("feed_card_action", {
+                      action: "dismiss",
+                      ...analytics,
+                      position: idx,
+                      surface: "discover",
+                    });
+                    recordDiscoverInteraction(analytics.category, "dismiss");
+                  }
+                  handleDismiss(getItemId(gi.item!));
+                }
+              : undefined;
 
             return (
               <div key={key} className="break-inside-avoid mb-4">
-                {isGuessSlot ? (
-                  <GuessCard item={gi.item!} onGuessCompleted={() => {
-                    const today = new Date().toISOString().slice(0, 10);
-                    const next = dailyGuesses + 1;
-                    setDailyGuesses(next);
-                    localStorage.setItem(`daily_guesses_${today}`, next.toString());
-                  }} />
-                ) : (
-                  <DiscoverCard
-                    groupedItem={gi}
-                    onDismiss={gi.type === "single" ? () => handleDismiss(getItemId(gi.item!)) : undefined}
-                  />
-                )}
+                <FeedItemShell groupedItem={gi} positionIndex={idx}>
+                  {isGuessSlot ? (
+                    <GuessCard item={gi.item!} onGuessCompleted={() => {
+                      const today = new Date().toISOString().slice(0, 10);
+                      const next = dailyGuesses + 1;
+                      setDailyGuesses(next);
+                      localStorage.setItem(`daily_guesses_${today}`, next.toString());
+                    }} />
+                  ) : (
+                    <DiscoverCard
+                      groupedItem={gi}
+                      positionIndex={idx}
+                      onDismiss={handleTrackedDismiss}
+                    />
+                  )}
+                </FeedItemShell>
               </div>
             );
           })}

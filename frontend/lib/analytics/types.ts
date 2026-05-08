@@ -420,6 +420,31 @@ export interface SharedLinkOpenParams {
   campaign?: string;
 }
 
+export interface FeedCardImpressionParams {
+  content_type: 'event' | 'futures' | 'grid';
+  item_id: number | string;
+  category: string;
+  position: number;
+  score: number;
+  item_name?: string;
+  headline?: string;
+  personalized?: boolean;
+  surface: 'discover';
+}
+
+export interface FeedCardActionParams {
+  action: 'detail_click' | 'dismiss' | 'like' | 'unlike' | 'share' | 'group_expand';
+  content_type: 'event' | 'futures' | 'grid';
+  item_id: number | string;
+  category: string;
+  position?: number;
+  score?: number;
+  item_name?: string;
+  headline?: string;
+  personalized?: boolean;
+  surface: 'discover' | 'discover_guess';
+}
+
 export interface FeedRefreshParams {
   trigger: 'manual' | 'auto';
   new_items_count: number;
@@ -555,6 +580,8 @@ export interface AnalyticsEventMap {
   market_map_interact: MarketMapInteractParams;
   share: ShareParams;
   shared_link_open: SharedLinkOpenParams;
+  feed_card_impression: FeedCardImpressionParams;
+  feed_card_action: FeedCardActionParams;
   feed_refresh: FeedRefreshParams;
 }
 
