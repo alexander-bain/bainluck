@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import useSWR, { mutate } from "swr";
 import {
   AlertTriangle,
+  ChevronDown,
   CheckCircle2,
   Filter,
   Play,
@@ -108,6 +109,98 @@ interface FeedDebugResponse {
   missing_ground_truth_summary: MissingGroundTruthSummary;
 }
 
+interface CandidatePoolTrace {
+  name: string;
+  limit: number;
+  candidate_count: number;
+  included: boolean;
+  position: number | null;
+}
+
+interface DiscoverMarketTrace {
+  market: {
+    id: number;
+    name: string;
+    source: string;
+    status: string;
+    category: string | null;
+    llm_sport_category: string | null;
+    market_tier: number | null;
+    market_type: string | null;
+    external_id: string | null;
+    canonical_market_key: string | null;
+    source_count: number;
+    volume_24h: number | null;
+    resolution_date: string | null;
+    updated_at: string | null;
+  };
+  base_eligibility: {
+    eligible: boolean;
+    blockers: string[];
+    checks: Record<string, string | number | boolean | null>;
+  };
+  candidate_pools: {
+    included: boolean;
+    deduped_candidate_count: number;
+    candidate_position: number | null;
+    pools: CandidatePoolTrace[];
+  };
+  score_trace: {
+    eligible_before_caps: boolean;
+    blockers: string[];
+    runtime_filters: {
+      eligible: boolean;
+      blockers: string[];
+      checks: Record<string, string | number | boolean | null>;
+    };
+    scores: {
+      highlight: number;
+      after_quality: number;
+      after_explanation: number;
+      personalization_multiplier: number;
+      final: number;
+    };
+    highlight: {
+      headline: string | null;
+      reason: string | null;
+      primary_reason: string | null;
+      reasons: string[];
+      leader_name: string | null;
+      leader_probability: number | null;
+      top_mover_name: string | null;
+      top_mover_change: number | null;
+      top_surprise_name: string | null;
+      top_surprise_change: number | null;
+    };
+    quality: {
+      class: string;
+      family_key: string;
+      story_key: string | null;
+      reasons: string[];
+    };
+    explanation: {
+      has_hook: boolean;
+      has_image: boolean;
+      headline_ok: boolean;
+    };
+    top_outcomes: Array<{
+      name: string;
+      probability: number | null;
+      probability_change_24h: number | null;
+      rank: number | null;
+      rank_change_24h: number | null;
+      opening_probability: number | null;
+    }>;
+  };
+  final_ranking: {
+    survived_final_caps: boolean;
+    final_futures_rank: number | null;
+    final_score: number | null;
+    scored_futures_count: number;
+  };
+  suggested_fix: string;
+}
+
 interface HookCoverage {
   total_open: number;
   with_hook: number;
@@ -140,6 +233,14 @@ async function fetchHookCoverage(secret: string): Promise<HookCoverage> {
     `${API_URL}/api/admin/hook-coverage?secret=${encodeURIComponent(secret)}`
   );
   if (!res.ok) throw new Error(`Hook coverage API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchDiscoverTrace(secret: string, marketId: number): Promise<DiscoverMarketTrace> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-quality/trace/${marketId}?secret=${encodeURIComponent(secret)}`
+  );
+  if (!res.ok) throw new Error(`Trace API error: ${res.status}`);
   return res.json();
 }
 
@@ -226,6 +327,116 @@ function StatusPill({ children, tone }: { children: string; tone: "ok" | "warn" 
   );
 }
 
+function percentText(value: number | null) {
+  return value === null ? "none" : `${Math.round(value * 100)}%`;
+}
+
+function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3 space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs font-semibold text-text-primary">Suggested fix</div>
+          <div className="text-xs text-text-secondary mt-1">{trace.suggested_fix}</div>
+        </div>
+        <div className="flex flex-wrap justify-end gap-1 shrink-0">
+          <StatusPill tone={trace.base_eligibility.eligible ? "ok" : "warn"}>
+            {trace.base_eligibility.eligible ? "base eligible" : "base blocked"}
+          </StatusPill>
+          <StatusPill tone={trace.candidate_pools.included ? "ok" : "warn"}>
+            {trace.candidate_pools.included ? "in pool" : "pool miss"}
+          </StatusPill>
+          <StatusPill tone={trace.final_ranking.survived_final_caps ? "ok" : "warn"}>
+            {trace.final_ranking.survived_final_caps ? "survived caps" : "not in final"}
+          </StatusPill>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-4 gap-2 text-xs">
+        <div>
+          <div className="text-text-muted">Score path</div>
+          <div className="text-text-primary font-medium">
+            {trace.score_trace.scores.highlight} → {trace.score_trace.scores.after_quality} → {trace.score_trace.scores.after_explanation} → {trace.score_trace.scores.final}
+          </div>
+        </div>
+        <div>
+          <div className="text-text-muted">Final futures rank</div>
+          <div className="text-text-primary font-medium">
+            {trace.final_ranking.final_futures_rank ? `#${trace.final_ranking.final_futures_rank}` : "none"}
+          </div>
+        </div>
+        <div>
+          <div className="text-text-muted">Candidate position</div>
+          <div className="text-text-primary font-medium">
+            {trace.candidate_pools.candidate_position ? `#${trace.candidate_pools.candidate_position}` : "none"}
+          </div>
+        </div>
+        <div>
+          <div className="text-text-muted">Quality</div>
+          <div className="text-text-primary font-medium">{formatTargetName(trace.score_trace.quality.class)}</div>
+        </div>
+      </div>
+
+      <div className="text-xs">
+        <div className="text-text-muted">Headline</div>
+        <div className="text-text-primary mt-1">{trace.score_trace.highlight.headline || "No headline"}</div>
+        {trace.score_trace.highlight.reason && (
+          <div className="text-text-secondary mt-1">{trace.score_trace.highlight.reason}</div>
+        )}
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3 text-xs">
+        <div>
+          <div className="font-medium text-text-primary mb-1">Candidate Pools</div>
+          <div className="space-y-1">
+            {trace.candidate_pools.pools.map((pool) => (
+              <div key={pool.name} className="flex items-center justify-between gap-2">
+                <span className="text-text-secondary">{formatTargetName(pool.name)}</span>
+                <span className={pool.included ? "text-accent-live" : "text-text-muted"}>
+                  {pool.included ? `#${pool.position}` : "out"} / {pool.candidate_count}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="font-medium text-text-primary mb-1">Blockers & Signals</div>
+          <div className="flex flex-wrap gap-1">
+            {trace.base_eligibility.blockers.map((blocker) => (
+              <StatusPill key={blocker} tone="warn">{formatTargetName(blocker)}</StatusPill>
+            ))}
+            {trace.score_trace.blockers.map((blocker) => (
+              <StatusPill key={blocker} tone="warn">{formatTargetName(blocker)}</StatusPill>
+            ))}
+            {trace.score_trace.quality.reasons.map((reason) => (
+              <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
+            ))}
+            {trace.score_trace.explanation.has_hook && <StatusPill tone="ok">hook</StatusPill>}
+            {trace.score_trace.explanation.has_image && <StatusPill tone="ok">image</StatusPill>}
+          </div>
+        </div>
+      </div>
+
+      {trace.score_trace.top_outcomes.length > 0 && (
+        <div className="text-xs">
+          <div className="font-medium text-text-primary mb-1">Top Outcomes</div>
+          <div className="grid md:grid-cols-2 gap-1">
+            {trace.score_trace.top_outcomes.slice(0, 4).map((outcome) => (
+              <div key={outcome.name} className="flex justify-between gap-3 text-text-secondary">
+                <span className="truncate">{outcome.name}</span>
+                <span className="shrink-0">
+                  {percentText(outcome.probability)}
+                  {outcome.probability_change_24h !== null ? ` (${outcome.probability_change_24h > 0 ? "+" : ""}${Math.round(outcome.probability_change_24h * 100)}pp)` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DiscoverQualityPage() {
   usePageTracking({
     pageType: "admin_discover_quality",
@@ -242,6 +453,10 @@ export default function DiscoverQualityPage() {
   const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
+  const [expandedTraceId, setExpandedTraceId] = useState<number | null>(null);
+  const [traceByMarketId, setTraceByMarketId] = useState<Record<number, DiscoverMarketTrace>>({});
+  const [traceLoadingId, setTraceLoadingId] = useState<number | null>(null);
+  const [traceError, setTraceError] = useState<string | null>(null);
 
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get("secret");
@@ -315,6 +530,27 @@ export default function DiscoverQualityPage() {
       await mutate(hookKey);
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const toggleTrace = async (marketId: number) => {
+    if (!submittedSecret) return;
+    if (expandedTraceId === marketId) {
+      setExpandedTraceId(null);
+      return;
+    }
+    setExpandedTraceId(marketId);
+    setTraceError(null);
+    if (traceByMarketId[marketId]) return;
+
+    setTraceLoadingId(marketId);
+    try {
+      const trace = await fetchDiscoverTrace(submittedSecret, marketId);
+      setTraceByMarketId((prev) => ({ ...prev, [marketId]: trace }));
+    } catch (err) {
+      setTraceError(err instanceof Error ? err.message : "Trace failed");
+    } finally {
+      setTraceLoadingId(null);
     }
   };
 
@@ -551,7 +787,14 @@ export default function DiscoverQualityPage() {
                               <div key={match.id} className="text-xs">
                                 <div className="flex items-center justify-between gap-3">
                                   <span className="text-text-primary truncate">{match.name}</span>
-                                  <span className="text-text-muted shrink-0">#{match.id}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleTrace(match.id)}
+                                    className="inline-flex items-center gap-1 text-text-muted hover:text-text-primary shrink-0"
+                                  >
+                                    <ChevronDown className={`w-3 h-3 transition-transform ${expandedTraceId === match.id ? "rotate-180" : ""}`} />
+                                    #{match.id}
+                                  </button>
                                 </div>
                                 <div className="flex flex-wrap gap-1 mt-1">
                                   <StatusPill tone="muted">{match.source}</StatusPill>
@@ -566,6 +809,17 @@ export default function DiscoverQualityPage() {
                                     <StatusPill key={reason} tone="warn">{formatTargetName(reason)}</StatusPill>
                                   ))}
                                 </div>
+                                {expandedTraceId === match.id && (
+                                  <div className="mt-2">
+                                    {traceLoadingId === match.id && (
+                                      <div className="text-xs text-text-muted animate-pulse">Loading trace...</div>
+                                    )}
+                                    {traceError && traceLoadingId !== match.id && (
+                                      <div className="text-xs text-accent-danger">{traceError}</div>
+                                    )}
+                                    {traceByMarketId[match.id] && <TracePanel trace={traceByMarketId[match.id]} />}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -620,39 +874,64 @@ export default function DiscoverQualityPage() {
                 </thead>
                 <tbody>
                   {filteredItems.map((item) => (
-                    <tr key={`${item.type}-${item.id}-${item.rank}`} className="border-t border-surface-border/60 hover:bg-surface-elevated/40">
-                      <td className="p-3 align-top text-text-muted">#{item.rank}<br /><span className="text-text-primary font-semibold">{item.score}</span></td>
-                      <td className="p-3 align-top min-w-[280px]">
-                        <div className="font-medium text-text-primary">{item.name}</div>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <StatusPill tone="muted">{item.category}</StatusPill>
-                          <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
-                          {item.ground_truth && <StatusPill tone="ok">ground truth</StatusPill>}
-                        </div>
-                      </td>
-                      <td className="p-3 align-top min-w-[260px]">
-                        <div className="text-text-primary">{item.headline || item.reason || "No explanation"}</div>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <StatusPill tone={item.explanation_ok ? "ok" : "warn"}>{item.explanation_ok ? "explained" : "weak explanation"}</StatusPill>
-                          {item.hook && <StatusPill tone="ok">hook</StatusPill>}
-                          {item.image && <StatusPill tone="ok">image</StatusPill>}
-                        </div>
-                      </td>
-                      <td className="p-3 align-top min-w-[180px]">
-                        <div className="flex flex-wrap gap-1">
-                          <StatusPill tone={item.quality_class === "low_quality" || item.quality_class === "suppress" ? "warn" : "ok"}>
-                            {formatTargetName(item.quality_class)}
-                          </StatusPill>
-                          {item.ladder && <StatusPill tone="warn">ladder</StatusPill>}
-                          {item.reasons.map((reason) => (
-                            <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-3 align-top min-w-[220px]">
-                        <code className="block text-xs text-text-muted break-all">{item.story_key || item.family_key}</code>
-                      </td>
-                    </tr>
+                    <Fragment key={`${item.type}-${item.id}-${item.rank}`}>
+                      <tr key={`${item.type}-${item.id}-${item.rank}`} className="border-t border-surface-border/60 hover:bg-surface-elevated/40">
+                        <td className="p-3 align-top text-text-muted">#{item.rank}<br /><span className="text-text-primary font-semibold">{item.score}</span></td>
+                        <td className="p-3 align-top min-w-[280px]">
+                          <div className="font-medium text-text-primary">{item.name}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <StatusPill tone="muted">{item.category}</StatusPill>
+                            <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
+                            {item.ground_truth && <StatusPill tone="ok">ground truth</StatusPill>}
+                          </div>
+                          {item.type === "futures" && item.id !== null && (
+                            <button
+                              type="button"
+                              onClick={() => toggleTrace(item.id!)}
+                              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-futures hover:underline"
+                            >
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedTraceId === item.id ? "rotate-180" : ""}`} />
+                              Trace pipeline
+                            </button>
+                          )}
+                        </td>
+                        <td className="p-3 align-top min-w-[260px]">
+                          <div className="text-text-primary">{item.headline || item.reason || "No explanation"}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <StatusPill tone={item.explanation_ok ? "ok" : "warn"}>{item.explanation_ok ? "explained" : "weak explanation"}</StatusPill>
+                            {item.hook && <StatusPill tone="ok">hook</StatusPill>}
+                            {item.image && <StatusPill tone="ok">image</StatusPill>}
+                          </div>
+                        </td>
+                        <td className="p-3 align-top min-w-[180px]">
+                          <div className="flex flex-wrap gap-1">
+                            <StatusPill tone={item.quality_class === "low_quality" || item.quality_class === "suppress" ? "warn" : "ok"}>
+                              {formatTargetName(item.quality_class)}
+                            </StatusPill>
+                            {item.ladder && <StatusPill tone="warn">ladder</StatusPill>}
+                            {item.reasons.map((reason) => (
+                              <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="p-3 align-top min-w-[220px]">
+                          <code className="block text-xs text-text-muted break-all">{item.story_key || item.family_key}</code>
+                        </td>
+                      </tr>
+                      {item.type === "futures" && item.id !== null && expandedTraceId === item.id && (
+                        <tr key={`${item.type}-${item.id}-${item.rank}-trace`} className="border-t border-surface-border/60">
+                          <td colSpan={5} className="p-3">
+                            {traceLoadingId === item.id && (
+                              <div className="text-xs text-text-muted animate-pulse">Loading trace...</div>
+                            )}
+                            {traceError && traceLoadingId !== item.id && (
+                              <div className="text-xs text-accent-danger">{traceError}</div>
+                            )}
+                            {traceByMarketId[item.id] && <TracePanel trace={traceByMarketId[item.id]} />}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -6144,6 +6144,24 @@ async def trigger_hook_enrichment(
     }
 
 
+@router.get("/discover-quality/trace/{market_id}")
+async def discover_quality_market_trace(
+    market_id: int,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Explain how a futures market flows through Discover ranking."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.routes.feed import build_discover_market_trace
+
+    trace = await build_discover_market_trace(db, market_id)
+    if not trace:
+        raise HTTPException(status_code=404, detail="Market not found")
+    return trace
+
+
 @router.get("/market-lookup")
 async def market_lookup(
     secret: str = Query(...),

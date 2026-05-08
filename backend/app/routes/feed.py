@@ -72,6 +72,12 @@ _TRACE_STOPWORDS = {
     "before", "after", "market", "winner", "yes", "no", "the", "and",
 }
 
+DISCOVER_SPORTS_CATEGORIES = (
+    "basketball", "football", "baseball", "hockey", "soccer",
+    "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
+    "esports", "rugby", "lacrosse",
+)
+
 
 def _trace_search_tokens(name: str) -> list[str]:
     tokens = [
@@ -461,6 +467,467 @@ async def _attach_missing_ground_truth_traces(
             for row in result.all()
         ]
         item["db_trace"] = summarize_missing_ground_truth_db_trace(item, matches, now=now)
+
+
+def _utc(dt: datetime | None) -> datetime | None:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
+    blockers: list[str] = []
+    if market.status != "open":
+        blockers.append("not_open")
+    if market.event_id is not None:
+        blockers.append("event_linked_game_market")
+    resolution_date = _utc(market.resolution_date)
+    if resolution_date and resolution_date < now:
+        blockers.append("past_resolution")
+    if re.search(r"\bvs\.?\b", market.name or "", re.IGNORECASE):
+        blockers.append("game_name_filtered")
+
+    return {
+        "eligible": not blockers,
+        "blockers": blockers,
+        "checks": {
+            "status": market.status,
+            "event_id": market.event_id,
+            "resolution_date": resolution_date.isoformat() if resolution_date else None,
+            "game_name_filtered": bool(re.search(r"\bvs\.?\b", market.name or "", re.IGNORECASE)),
+        },
+    }
+
+
+def _top_outcomes_for_trace(market: FuturesMarket) -> tuple[list[dict], str | None, float | None]:
+    sorted_outcomes = sorted(
+        market.outcomes,
+        key=lambda o: float(o.current_probability) if o.current_probability is not None else 0,
+        reverse=True,
+    )
+    outcomes_data = []
+    for outcome in sorted_outcomes[:10]:
+        outcomes_data.append({
+            "name": outcome.name,
+            "probability": float(outcome.current_probability) if outcome.current_probability is not None else None,
+            "probability_change_24h": (
+                float(outcome.probability_change_24h)
+                if outcome.probability_change_24h is not None else None
+            ),
+            "rank": outcome.rank,
+            "rank_change_24h": outcome.rank_change_24h,
+            "opening_probability": (
+                float(outcome.opening_probability)
+                if outcome.opening_probability is not None else None
+            ),
+        })
+
+    leader_name = None
+    leader_prob = None
+    if sorted_outcomes:
+        leader = sorted_outcomes[0]
+        leader_name = leader.name
+        leader_prob = float(leader.current_probability) if leader.current_probability is not None else None
+    return outcomes_data, leader_name, leader_prob
+
+
+def _market_runtime_filter_trace(
+    market: FuturesMarket,
+    outcomes_data: list[dict],
+    leader_name: str | None,
+    leader_prob: float | None,
+    now: datetime,
+) -> dict:
+    blockers: list[str] = []
+    probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
+    all_settled = (
+        len(probs_available) >= 2
+        and all(p < 0.05 or p > 0.95 for p in probs_available)
+    )
+    if all_settled:
+        blockers.append("all_outcomes_settled")
+
+    leader_opening = None
+    if leader_name:
+        for outcome in outcomes_data:
+            if outcome["name"] == leader_name:
+                leader_opening = outcome.get("opening_probability")
+                break
+    is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
+    if is_effectively_resolved and (leader_opening is None or leader_opening >= 0.85):
+        blockers.append("effectively_resolved")
+
+    has_any_movement = any(
+        outcome["probability_change_24h"] is not None
+        and abs(outcome["probability_change_24h"]) > 0.001
+        for outcome in outcomes_data
+    )
+
+    days_stale = None
+    updated_at = _utc(market.updated_at)
+    if updated_at:
+        days_stale = (now - updated_at).total_seconds() / 86400
+        if days_stale > 7 and not has_any_movement:
+            blockers.append("stale_no_movement")
+
+    commence_time = _utc(market.commence_time)
+    if commence_time and commence_time < now and not has_any_movement:
+        blockers.append("past_commence_no_movement")
+
+    return {
+        "eligible": not blockers,
+        "blockers": blockers,
+        "checks": {
+            "all_outcomes_settled": all_settled,
+            "leader_probability": leader_prob,
+            "leader_opening_probability": leader_opening,
+            "has_any_movement": has_any_movement,
+            "days_stale": round(days_stale, 2) if days_stale is not None else None,
+            "commence_time": commence_time.isoformat() if commence_time else None,
+        },
+    }
+
+
+async def _discover_candidate_pool_trace(
+    db: AsyncSession,
+    now: datetime,
+    market_id: int,
+) -> dict:
+    base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        ~FuturesMarket.name.ilike('% vs %'),
+        ~FuturesMarket.name.ilike('% vs. %'),
+    ]
+    non_sports_filter = or_(
+        ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+        FuturesMarket.llm_sport_category.is_(None),
+    )
+    movement_expr = (
+        select(func.max(func.abs(FuturesOutcome.probability_change_24h)))
+        .where(FuturesOutcome.market_id == FuturesMarket.id)
+        .correlate(FuturesMarket)
+        .scalar_subquery()
+    )
+    pool_specs = [
+        (
+            "sports_tier",
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+            [
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.resolution_date.asc().nulls_last(),
+            ],
+            50,
+        ),
+        (
+            "nonsports_volume",
+            non_sports_filter,
+            [
+                FuturesMarket.volume_24h.desc().nulls_last(),
+                FuturesMarket.market_tier.asc().nulls_last(),
+            ],
+            180,
+        ),
+        (
+            "nonsports_movement",
+            non_sports_filter,
+            [
+                movement_expr.desc().nulls_last(),
+                FuturesMarket.volume_24h.desc().nulls_last(),
+            ],
+            160,
+        ),
+        (
+            "nonsports_enriched",
+            and_(
+                non_sports_filter,
+                or_(
+                    FuturesMarket.hook_description.isnot(None),
+                    FuturesMarket.image_url.isnot(None),
+                ),
+            ),
+            [
+                FuturesMarket.hook_generated_at.desc().nulls_last(),
+                FuturesMarket.updated_at.desc().nulls_last(),
+            ],
+            160,
+        ),
+        (
+            "nonsports_timely",
+            and_(non_sports_filter, FuturesMarket.resolution_date.isnot(None)),
+            [
+                FuturesMarket.resolution_date.asc().nulls_last(),
+                FuturesMarket.volume_24h.desc().nulls_last(),
+            ],
+            120,
+        ),
+    ]
+
+    pools = []
+    candidate_ids: list[int] = []
+    for name, extra_filter, ordering, limit in pool_specs:
+        result = await db.execute(
+            select(FuturesMarket.id)
+            .where(*base_filters, extra_filter)
+            .order_by(*ordering)
+            .limit(limit)
+        )
+        ids = list(result.scalars().all())
+        candidate_ids.extend(ids)
+        pools.append({
+            "name": name,
+            "limit": limit,
+            "candidate_count": len(ids),
+            "included": market_id in ids,
+            "position": ids.index(market_id) + 1 if market_id in ids else None,
+        })
+
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for candidate_id in candidate_ids:
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        deduped.append(candidate_id)
+
+    return {
+        "included": market_id in seen,
+        "deduped_candidate_count": len(deduped),
+        "candidate_position": deduped.index(market_id) + 1 if market_id in seen else None,
+        "pools": pools,
+    }
+
+
+def _score_market_trace(
+    market: FuturesMarket,
+    now: datetime,
+    source_count: int,
+) -> dict:
+    outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(market)
+    runtime_filters = _market_runtime_filter_trace(
+        market,
+        outcomes_data,
+        leader_name,
+        leader_prob,
+        now,
+    )
+
+    highlight_result = compute_futures_highlight(
+        market_tier=market.market_tier,
+        sport_category=market.llm_sport_category,
+        resolution_date=market.resolution_date,
+        outcomes=outcomes_data,
+        source_count=source_count,
+        now=now,
+        market_name=market.name,
+        volume_24h=market.volume_24h,
+    )
+
+    top_mover_name = highlight_result.top_mover_name
+    top_mover_change = None
+    if top_mover_name:
+        for outcome in outcomes_data:
+            if outcome["name"] == top_mover_name and outcome.get("probability_change_24h"):
+                top_mover_change = outcome["probability_change_24h"]
+                break
+
+    top_surprise_name = None
+    top_surprise_change = None
+    for outcome in outcomes_data:
+        opening = outcome.get("opening_probability")
+        current = outcome.get("probability")
+        if opening is None or current is None:
+            continue
+        surprise_change = current - opening
+        if top_surprise_change is None or abs(surprise_change) > abs(top_surprise_change):
+            top_surprise_name = outcome.get("name")
+            top_surprise_change = surprise_change
+
+    headline = generate_futures_headline(
+        highlight_reasons=highlight_result.reasons,
+        top_mover_name=top_mover_name,
+        top_mover_change=top_mover_change,
+        top_surprise_name=top_surprise_name,
+        top_surprise_change=top_surprise_change,
+        leader_name=leader_name,
+        leader_probability=leader_prob,
+        source_count=source_count,
+    ) or highlight_result.primary_reason
+
+    quality = classify_market_quality(
+        market_name=market.name,
+        sport_category=market.llm_sport_category,
+        outcome_names=[outcome.name for outcome in market.outcomes if outcome.name],
+    )
+    quality_score = apply_quality_score(highlight_result.score, quality)
+    explanation_score = apply_explanation_quality_score(
+        quality_score,
+        hook_description=market.hook_description,
+        headline=headline,
+        quality=quality,
+    )
+    p_result = compute_futures_multiplier(
+        ctx=PersonalizationContext(),
+        sport_category=market.llm_sport_category,
+        outcome_team_ids=[o.team_id for o in market.outcomes if o.team_id is not None],
+        futures_market_id=market.id,
+        sport_key=market.sport.key if market.sport else None,
+        outcome_names=[o.name for o in market.outcomes if o.name],
+    )
+    final_score = min(100, int(explanation_score * p_result.multiplier))
+
+    blockers = list(runtime_filters["blockers"])
+    if quality.quality_class == "suppress":
+        blockers.append("quality_suppressed")
+    if final_score < 15:
+        blockers.append("below_score_floor")
+
+    return {
+        "eligible_before_caps": not blockers,
+        "blockers": blockers,
+        "runtime_filters": runtime_filters,
+        "scores": {
+            "highlight": highlight_result.score,
+            "after_quality": quality_score,
+            "after_explanation": explanation_score,
+            "personalization_multiplier": p_result.multiplier,
+            "final": final_score,
+        },
+        "highlight": {
+            "headline": headline,
+            "reason": generate_futures_reason(
+                market_name=market.name,
+                highlight_reasons=highlight_result.reasons,
+                top_mover_name=top_mover_name,
+                top_mover_change=top_mover_change,
+                top_surprise_name=top_surprise_name,
+                top_surprise_change=top_surprise_change,
+                leader_name=leader_name,
+                leader_probability=leader_prob,
+                source_count=source_count,
+            ),
+            "primary_reason": highlight_result.primary_reason,
+            "reasons": highlight_result.reasons,
+            "leader_name": leader_name,
+            "leader_probability": leader_prob,
+            "top_mover_name": top_mover_name,
+            "top_mover_change": top_mover_change,
+            "top_surprise_name": top_surprise_name,
+            "top_surprise_change": top_surprise_change,
+        },
+        "quality": {
+            "class": quality.quality_class,
+            "family_key": quality.family_key,
+            "story_key": quality.story_key,
+            "reasons": quality.reasons,
+        },
+        "explanation": {
+            "has_hook": bool(market.hook_description),
+            "has_image": bool(market.image_url),
+            "headline_ok": bool(headline),
+        },
+        "top_outcomes": outcomes_data[:5],
+    }
+
+
+def _suggest_trace_fix(trace: dict) -> str:
+    if not trace["base_eligibility"]["eligible"]:
+        blockers = trace["base_eligibility"]["blockers"]
+        if "event_linked_game_market" in blockers:
+            return "Leave out of Discover; route this to event detail or a game-market module."
+        if "not_open" in blockers or "past_resolution" in blockers:
+            return "No ranking fix; this market is closed or stale by source state."
+        return "Fix base eligibility only if this class should intentionally appear in Discover."
+    if not trace["candidate_pools"]["included"]:
+        return "Add or retune a targeted candidate pool for this market class."
+    blockers = trace["score_trace"]["blockers"]
+    if "quality_suppressed" in blockers:
+        return "Tune the quality classifier if this is genuinely editorial."
+    if "stale_no_movement" in blockers or "effectively_resolved" in blockers:
+        return "No ranking fix unless stale/resolved markets need a special recap surface."
+    if not trace["final_ranking"]["survived_final_caps"]:
+        return "Inspect quality family caps, story deduping, and first-page diversity for this story."
+    if trace["final_ranking"]["final_futures_rank"] and trace["final_ranking"]["final_futures_rank"] > 50:
+        return "Tune scoring inputs only if this should beat stronger same-category stories."
+    return "No immediate fix; the market is eligible and present in the scored feed."
+
+
+async def build_discover_market_trace(
+    db: AsyncSession,
+    market_id: int,
+    now: datetime | None = None,
+) -> dict | None:
+    """Build an admin-only pipeline trace for a single Discover market."""
+    now = now or datetime.now(timezone.utc)
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes), selectinload(FuturesMarket.sport))
+        .where(FuturesMarket.id == market_id)
+    )
+    market = result.scalars().first()
+    if not market:
+        return None
+
+    canonical_counts = await _get_canonical_source_counts(db)
+    source_count = (
+        canonical_counts.get(market.canonical_market_key, 1)
+        if market.canonical_market_key else 1
+    )
+    base_eligibility = _market_base_trace(market, now)
+    candidate_pools = await _discover_candidate_pool_trace(db, now, market_id)
+    score_trace = _score_market_trace(market, now, source_count)
+
+    scored_futures = await _score_futures(
+        db,
+        now,
+        sport_filter=None,
+        ctx=PersonalizationContext(),
+        my_teams_only=False,
+    )
+    final_rank = None
+    final_score = None
+    for idx, item in enumerate(scored_futures, start=1):
+        data = item.get("data") or {}
+        if data.get("id") == market_id:
+            final_rank = idx
+            final_score = item.get("score")
+            break
+
+    trace = {
+        "market": {
+            "id": market.id,
+            "name": market.name,
+            "source": market.source,
+            "status": market.status,
+            "category": market.category,
+            "llm_sport_category": market.llm_sport_category,
+            "market_tier": market.market_tier,
+            "market_type": market.market_type,
+            "external_id": market.external_id,
+            "canonical_market_key": market.canonical_market_key,
+            "source_count": source_count,
+            "volume_24h": float(market.volume_24h) if market.volume_24h is not None else None,
+            "resolution_date": _utc(market.resolution_date).isoformat() if _utc(market.resolution_date) else None,
+            "updated_at": _utc(market.updated_at).isoformat() if _utc(market.updated_at) else None,
+        },
+        "base_eligibility": base_eligibility,
+        "candidate_pools": candidate_pools,
+        "score_trace": score_trace,
+        "final_ranking": {
+            "survived_final_caps": final_rank is not None,
+            "final_futures_rank": final_rank,
+            "final_score": final_score,
+            "scored_futures_count": len(scored_futures),
+        },
+    }
+    trace["suggested_fix"] = _suggest_trace_fix(trace)
+    return trace
 
 
 async def _load_personalization_context(
@@ -954,12 +1421,6 @@ async def _score_futures(
     # Sports outnumber non-sports ~10:1 in the DB, so a single query
     # returns ~90% sports. Pull sports and non-sports separately with
     # generous limits, then score everything together.
-    _SPORTS_CATS = [
-        "basketball", "football", "baseball", "hockey", "soccer",
-        "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
-        "esports", "rugby", "lacrosse",
-    ]
-
     id_filters = list(base_filters)
     if sport_filter:
         id_filters.append(
@@ -980,7 +1441,7 @@ async def _score_futures(
         select(FuturesMarket.id)
         .where(
             *id_filters,
-            FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
         )
         .order_by(
             FuturesMarket.market_tier.asc().nulls_last(),
@@ -990,7 +1451,7 @@ async def _score_futures(
     )
 
     non_sports_filter = or_(
-        ~FuturesMarket.llm_sport_category.in_(_SPORTS_CATS),
+        ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
         FuturesMarket.llm_sport_category.is_(None),
     )
 
