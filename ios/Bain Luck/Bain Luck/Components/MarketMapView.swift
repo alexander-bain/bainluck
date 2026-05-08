@@ -440,7 +440,7 @@ struct MarketMapView: View {
                 )
                 .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
 
-                // Zero line
+                // Zero line + label
                 if let zeroPct = zeroPosition {
                     Rectangle()
                         .fill(Color.secondary.opacity(0.3))
@@ -448,6 +448,11 @@ struct MarketMapView: View {
                         .offset(x: geo.size.width * zeroPct / 100.0 - 1)
                         .frame(height: 40)
                         .offset(y: -5)
+
+                    Text("0")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(.secondary)
+                        .position(x: geo.size.width * zeroPct / 100.0, y: 48)
                 }
 
                 // Marker dots

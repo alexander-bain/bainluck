@@ -9,6 +9,13 @@ enum AppTab: Int, Hashable {
     case leagues = 2
     case search = 3
     case myStuff = 4
+    // Quick Links (iPad sidebar only — not shown as iPhone tabs)
+    case futures = 5
+    case weather = 6
+    case economics = 7
+    case politics = 8
+    case entertainment = 9
+    case preferences = 10
 }
 
 /// Coordinates deep link and universal link URL handling with tab navigation.

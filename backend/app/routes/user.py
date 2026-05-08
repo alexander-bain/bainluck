@@ -13,7 +13,7 @@ from sqlalchemy import select, delete, and_, or_, case, cast, func, String, unio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
     User, UserPin, UserFavorite, UserPreference, Team,
     FuturesMarket, FuturesOutcome,
@@ -507,13 +507,21 @@ async def submit_onboarding(
 
 @router.get("/preferences", response_model=PreferencesResponse)
 async def get_preferences(
-    user: User = Depends(get_current_user),
+    user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get current preferences and team favorites.
-    Used to pre-populate the onboarding form for re-editing.
+    Returns defaults for anonymous users.
     """
+    if not user:
+        return PreferencesResponse(
+            home_location=None,
+            sport_affinities={},
+            onboarding_completed=False,
+            favorites=[],
+        )
+
     from app.models.models import Sport
 
     # Load preferences

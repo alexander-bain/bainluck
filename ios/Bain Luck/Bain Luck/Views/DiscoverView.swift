@@ -384,7 +384,12 @@ private struct NativeEventDiscoverCard: View {
 
     private var statusText: String {
         if event.status == "live" { return event.espn?.period ?? "LIVE" }
-        if event.status == "completed" || event.status == "closed" { return "Final" }
+        if event.status == "completed" || event.status == "closed" {
+            if let a = event.awayScore, let h = event.homeScore {
+                return "F \(a)-\(h)"
+            }
+            return "Final"
+        }
         return "vs"
     }
 
@@ -398,8 +403,8 @@ private struct NativeEventDiscoverCard: View {
                              score: event.awayScore)
                     Text(statusText)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36)
+                        .foregroundStyle(event.status == "live" ? .red : .secondary)
+                        .frame(minWidth: 36)
                     teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
                              color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"),
                              score: event.homeScore)
@@ -985,9 +990,27 @@ private struct NativeEventGuessCard: View {
             HStack(spacing: 12) {
                 teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall,
                          color: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"))
-                Text("vs")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 2) {
+                    if event.status == "live" {
+                        Text(event.espn?.period ?? "LIVE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.red)
+                    } else if event.status == "completed" || event.status == "closed" {
+                        Text("Final")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("vs")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let a = event.awayScore, let h = event.homeScore,
+                       (event.status == "live" || event.status == "completed" || event.status == "closed") {
+                        Text("\(a)-\(h)")
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundStyle(.primary)
+                    }
+                }
                 teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall,
                          color: Color(hex: event.homeTeamData?.primaryColor ?? "#374151"))
             }
@@ -1104,16 +1127,24 @@ private struct SwipeToDismiss<Content: View>: View {
     @ViewBuilder let content: () -> Content
     @State private var offset: CGFloat = 0
     @State private var removing = false
+    @State private var isHorizontalDrag = false
 
     var body: some View {
         content()
             .offset(x: offset)
             .opacity(removing ? 0 : 1.0 - abs(offset) / 300)
-            .gesture(
-                DragGesture()
-                    .onChanged { v in offset = v.translation.width }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .onChanged { v in
+                        if !isHorizontalDrag && offset == 0 {
+                            isHorizontalDrag = abs(v.translation.width) > abs(v.translation.height)
+                        }
+                        if isHorizontalDrag {
+                            offset = v.translation.width
+                        }
+                    }
                     .onEnded { v in
-                        if abs(v.translation.width) > 120 {
+                        if isHorizontalDrag && abs(v.translation.width) > 120 {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 offset = v.translation.width > 0 ? 400 : -400
                                 removing = true
@@ -1124,6 +1155,7 @@ private struct SwipeToDismiss<Content: View>: View {
                         } else {
                             withAnimation(.spring(response: 0.3)) { offset = 0 }
                         }
+                        isHorizontalDrag = false
                     }
             )
     }

@@ -304,7 +304,7 @@ export default function MarketMapSection({
       accentRgb: "37,99,235",
       axisLabels: {
         left: `${aAbbr} by ${maxMargin}+`,
-        mid: "Tie",
+        mid: "0",
         right: `${hAbbr} by ${maxMargin}+`,
       },
       zeroPosition: 0,

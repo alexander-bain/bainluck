@@ -2546,13 +2546,10 @@ def _classify_game_market(name: str) -> str:
     lower = name.lower()
 
     _HALF_PATTERNS = ("1st half", "1h", "2nd half", "2h", "first half", "second half",
-                      "first 5 innings", "f5 innings", "f5")
+                      "first 5 innings", "f5 innings", "f5",
+                      "first inning", "1st inning")
     _QUARTER_PATTERNS = ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter",
                          "1q", "2q", "3q", "4q")
-
-    # "First Inning Run" — binary baseball prop, not a period market
-    if "first inning run" in lower or "1st inning run" in lower:
-        return "game_prop"
 
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:

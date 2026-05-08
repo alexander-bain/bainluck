@@ -113,66 +113,22 @@ struct MainTabView: View {
                 }
 
                 Section("Quick Links") {
-                    NavigationLink(value: Route.futuresList) {
-                        Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
-                    }
-                    NavigationLink(value: Route.weather) {
-                        Label("Weather", systemImage: "cloud.sun.fill")
-                    }
-                    NavigationLink(value: Route.economics) {
-                        Label("Economics", systemImage: "chart.bar.fill")
-                    }
-                    NavigationLink(value: Route.politics) {
-                        Label("Politics", systemImage: "building.columns.fill")
-                    }
-                    NavigationLink(value: Route.entertainment) {
-                        Label("Entertainment", systemImage: "film.fill")
-                    }
-                    NavigationLink(value: Route.preferences) {
-                        Label("Preferences", systemImage: "gearshape")
-                    }
+                    Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
+                        .tag(AppTab.futures)
+                    Label("Weather", systemImage: "cloud.sun.fill")
+                        .tag(AppTab.weather)
+                    Label("Economics", systemImage: "chart.bar.fill")
+                        .tag(AppTab.economics)
+                    Label("Politics", systemImage: "building.columns.fill")
+                        .tag(AppTab.politics)
+                    Label("Entertainment", systemImage: "film.fill")
+                        .tag(AppTab.entertainment)
+                    Label("Preferences", systemImage: "gearshape")
+                        .tag(AppTab.preferences)
                 }
             }
             .navigationTitle("🍀 Bain Luck")
             .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 260)
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .eventDetail(let id):
-                    EventDetailView(eventId: id)
-                case .futuresDetail(let id):
-                    FuturesDetailView(marketId: id)
-                case .preferences:
-                    PreferencesView()
-                case .sportCategory(let key, let name):
-                    SportCategoryView(categoryKey: key, categoryName: name)
-                case .leagueGrid(let slug):
-                    LeagueGridView(slug: slug)
-                case .golfCategory:
-                    GolfCategoryView()
-                case .golfLeaderboard:
-                    GolfCategoryView()
-                case .golfTournament(_, let name):
-                    SportCategoryView(categoryKey: "golf", categoryName: name)
-                case .futuresList:
-                    FuturesListView()
-                case .teamDetail(_):
-                    Text("Team")
-                case .predictionStats:
-                    PredictionStatsView()
-                case .weather:
-                    WeatherView()
-                case .economics:
-                    EconomicsView()
-                case .politics:
-                    PoliticsView()
-                case .entertainment:
-                    EntertainmentView()
-                case .eiRankings:
-                    Text("EI Rankings")
-                case .about:
-                    Text("About")
-                }
-            }
         } detail: {
             switch navCoordinator.selectedTab {
             case .feed:
@@ -185,6 +141,18 @@ struct MainTabView: View {
                 SearchView()
             case .myStuff:
                 MyStuffView()
+            case .futures:
+                NavigationStack { FuturesListView() }
+            case .weather:
+                NavigationStack { WeatherView() }
+            case .economics:
+                NavigationStack { EconomicsView() }
+            case .politics:
+                NavigationStack { PoliticsView() }
+            case .entertainment:
+                NavigationStack { EntertainmentView() }
+            case .preferences:
+                NavigationStack { PreferencesView() }
             }
         }
     }

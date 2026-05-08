@@ -150,6 +150,12 @@ Each category page follows the same pattern:
 - Markets enriched with: `volume_24h`, `resolution_date`, `image_url`, `hook_description`, per-outcome `probability_change_24h`
 - TMDB client (`lib/tmdb.ts`): client-side movie poster lookup with localStorage cache, used by entertainment CoverTile component
 
+**iOS Authentication** (`ios/.../Services/AuthManager.swift`):
+Backend-session-token pattern, NOT typical Firebase client auth. iOS SDK handles OAuth popup (Apple native / Google GID SDK) → raw credential sent to Bain Luck backend (`POST /api/auth/apple` or `/api/auth/google-access-token`) → backend verifies with identity provider, creates Firebase user, issues PyJWT session token (HS256, 30-day TTL) → iOS stores in Keychain, sends as `Bearer` on all API calls. Originated as Safari ITP workaround; iOS uses the same flow. Silent Google restore on token expiry. Apple credential revocation checked on foreground.
+
+**Rage Shake Bug Reporting** (`ios/.../Utils/RageShake.swift`, `routes/admin.py`, `frontend/app/admin/bug-reports/`):
+Shake phone or `Cmd+Shift+F` (macOS) → screenshot + app state (page, device, network, user) → `POST /api/feedback/bug-report` → admin page at `/admin/bug-reports`. Auto-diagnosis generates severity (P0-P3), root cause, and a Claude Code prompt with screenshot download command. Status flow: new → reviewed (auto on click) → actioned (added to backlog) / dismissed.
+
 ---
 
 ## Product Priorities (ordered)
@@ -220,7 +226,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 
 ---
 
-## Gotchas (Top 15 — full list in `docs/gotchas-reference.md`)
+## Gotchas (full list in `docs/gotchas-reference.md`)
 
 1. **Alembic revision IDs must be <=32 characters**
 2. **Alembic uses psycopg2, not asyncpg** (intentional for Heroku release phase)
@@ -254,6 +260,8 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 30. **Admin write endpoints need `_check_admin_secret`** — Several admin endpoints (matching override POST/DELETE, eval decision POST, playoffstatus scrape) were shipping without auth. Always add the check for any endpoint that mutates data or burns API quota.
 31. **`_is_headline_market` must filter non-US elections** — Polymarket has French, UK, Canadian presidential markets that contain "2028" and "presidential." Without `_NON_US_RE` filtering, the politics hero shows Jean-Luc Mélenchon instead of US candidates. Always require US-specific keywords AND exclude known non-US patterns.
 32. **Entertainment `kind` classification: avoid greedy ticker prefixes** — `kxrt` matched any ticker starting with those letters, causing political markets to be classified as Rotten Tomatoes. Use full prefixes (`kxrottentomatoes`) or name-based regex for ambiguous cases.
+33. **iPad Stage Manager breaks `connectedScenes.first`** — On iPad with Stage Manager, `UIApplication.shared.connectedScenes.first` can return a background scene. Always filter with `.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive })` and prefer `isKeyWindow`. Applies to Google Sign-In presentation, Apple Sign-In anchor, and any UIKit window access.
+34. **Bug report admin status mismatch** — Frontend uses `actioned`/`dismissed` statuses; backend `_VALID_STATUSES` must include them. The PATCH endpoint silently returns 400 if a status isn't in the set, and the frontend doesn't check `res.ok`.
 
 ---
 

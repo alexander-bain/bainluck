@@ -1043,13 +1043,19 @@ async def _score_futures(
                 continue
 
         # 3) Stale market: no price updates for 7+ days and zero movement
+        has_any_movement = any(
+            o["probability_change_24h"] is not None and abs(o["probability_change_24h"]) > 0.001
+            for o in outcomes_data
+        )
         if market.updated_at:
             days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
-            has_any_movement = any(
-                o["probability_change_24h"] is not None and abs(o["probability_change_24h"]) > 0.001
-                for o in outcomes_data
-            )
             if days_stale > 7 and not has_any_movement:
+                continue
+
+        # 4) Past-event market: commence_time in the past with no recent movement
+        if market.commence_time:
+            ct = market.commence_time.replace(tzinfo=timezone.utc) if market.commence_time.tzinfo is None else market.commence_time
+            if ct < now and not has_any_movement:
                 continue
 
         # Get source count from canonical key
