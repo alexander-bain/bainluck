@@ -147,7 +147,8 @@ _COMPELLING_RE = re.compile(
     r"openai|gpt|claude|ai model|deepseek|gemini|ipo|bankrupt|earnings|"
     r"bitcoin|btc|ethereum|eth|crypto|"
     r"taylor swift|beyonce|drake|kardashian|musk|sam altman|pope|nobel|"
-    r"super bowl|world cup|champions league|masters|olympics"
+    r"super bowl|world cup|champions league|masters|olympics|"
+    r"nba finals?|wnba finals?|conference finals?|stanley cup|world series"
     r")\b",
     re.IGNORECASE,
 )
@@ -306,6 +307,9 @@ def _story_key(name: str, category: str) -> str | None:
 
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
         return "story:macro_rates"
+
+    if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
+        return "story:oil"
 
     if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):
         return "story:ai"

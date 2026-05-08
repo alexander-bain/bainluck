@@ -106,6 +106,30 @@ DISCOVER_SPORTS_CATEGORIES = (
     "esports", "rugby", "lacrosse",
 )
 
+_SPORTS_POSTSEASON_SQL_FILTER = and_(
+    FuturesMarket.llm_sport_category.in_(("basketball", "football", "baseball", "hockey")),
+    or_(
+        FuturesMarket.name.ilike("%NBA Finals%"),
+        FuturesMarket.name.ilike("%WNBA Finals%"),
+        FuturesMarket.name.ilike("%Conference Finals%"),
+        FuturesMarket.name.ilike("%NBA Playoffs%"),
+        FuturesMarket.name.ilike("%WNBA Playoffs%"),
+        FuturesMarket.name.ilike("%Stanley Cup%"),
+        FuturesMarket.name.ilike("%World Series%"),
+        FuturesMarket.name.ilike("%Super Bowl%"),
+        FuturesMarket.name.ilike("%NFL Playoffs%"),
+        FuturesMarket.name.ilike("%MLB Playoffs%"),
+        FuturesMarket.name.ilike("%NHL Playoffs%"),
+    ),
+    or_(
+        FuturesMarket.name.ilike("%advance%"),
+        FuturesMarket.name.ilike("%reach%"),
+        FuturesMarket.name.ilike("%make%"),
+        FuturesMarket.name.ilike("%win%"),
+        FuturesMarket.name.ilike("%winner%"),
+    ),
+)
+
 
 def _trace_search_tokens(name: str) -> list[str]:
     tokens = [
@@ -720,6 +744,15 @@ async def _discover_candidate_pool_trace(
                 FuturesMarket.resolution_date.asc().nulls_last(),
             ],
             50,
+        ),
+        (
+            "sports_postseason",
+            _SPORTS_POSTSEASON_SQL_FILTER,
+            [
+                FuturesMarket.resolution_date.asc().nulls_last(),
+                FuturesMarket.updated_at.desc().nulls_last(),
+            ],
+            80,
         ),
         (
             "nonsports_volume",
@@ -1714,6 +1747,19 @@ async def _score_futures(
         .limit(50)
     )
 
+    sports_postseason_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            _SPORTS_POSTSEASON_SQL_FILTER,
+        )
+        .order_by(
+            FuturesMarket.resolution_date.asc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
     non_sports_filter = or_(
         ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
         FuturesMarket.llm_sport_category.is_(None),
@@ -1801,6 +1847,8 @@ async def _score_futures(
     candidate_queries_started_at = timing_previous_at
     sports_result = await db.execute(sports_query)
     mark_timing("pool_sports")
+    sports_postseason_result = await db.execute(sports_postseason_query)
+    mark_timing("pool_sports_postseason")
     nonsports_result = await db.execute(nonsports_query)
     mark_timing("pool_nonsports_volume")
     nonsports_movement_result = await db.execute(nonsports_movement_query)
@@ -1813,6 +1861,7 @@ async def _score_futures(
 
     candidate_market_ids = (
         list(sports_result.scalars().all())
+        + list(sports_postseason_result.scalars().all())
         + list(nonsports_result.scalars().all())
         + list(nonsports_movement_result.scalars().all())
         + list(nonsports_enriched_result.scalars().all())

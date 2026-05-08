@@ -159,6 +159,17 @@ _COMPELLING_PATTERNS = [
 BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
 COMPELLING_BOOST = 8  # per matching pattern, max 3
+SPORTS_POSTSEASON_STORY_BOOST = 55
+
+_SPORTS_POSTSEASON_STORY_RE = re.compile(
+    r"(?=.*\b(advance|reach|make|win|winner)\b)"
+    r"(?=.*\b("
+    r"nba finals?|wnba finals?|conference finals?|nba playoffs?|wnba playoffs?|"
+    r"stanley cup|world series|super bowl|college football playoff|"
+    r"nfl playoffs?|mlb playoffs?|nhl playoffs?"
+    r")\b)",
+    re.IGNORECASE,
+)
 
 # Scoring weights
 FUTURES_WEIGHTS = {
@@ -296,6 +307,10 @@ def compute_futures_highlight(
         if compelling_hits > 0:
             result.score += COMPELLING_BOOST * min(compelling_hits, 3)
             result.reasons.append(f"compelling_x{min(compelling_hits, 3)}")
+
+    if _market_name and _SPORTS_POSTSEASON_STORY_RE.search(_market_name):
+        result.score += SPORTS_POSTSEASON_STORY_BOOST
+        result.reasons.append("sports_postseason_story")
 
     # === Market tier scoring ===
     tier = market_tier or 5

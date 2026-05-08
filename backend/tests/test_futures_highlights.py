@@ -37,6 +37,30 @@ class TestComputeFuturesHighlight:
         assert basketball.flags.league_tier == 1
         assert other.flags.league_tier == 3
 
+    def test_major_postseason_path_scores_like_discover_story(self):
+        """NBA Finals path markets are strong Discover sports stories."""
+        now = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
+        result = compute_futures_highlight(
+            market_tier=2,
+            sport_category="basketball",
+            resolution_date=now + timedelta(days=23),
+            now=now,
+            market_name="Will Oklahoma City Thunder advance to the 2026 NBA Finals?",
+            outcomes=[
+                {
+                    "name": "Yes",
+                    "probability": 0.42,
+                    "probability_change_24h": 0.0,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.555,
+                }
+            ],
+        )
+
+        assert result.score >= 90
+        assert "sports_postseason_story" in result.reasons
+
     def test_major_movement_detected(self):
         """Large 24h probability changes are flagged."""
         outcomes = [

@@ -201,6 +201,19 @@ class TestMarketQualityClassification:
         assert stake.story_key == "story:us_government_stakes"
         assert golf.story_key == "story:golf_truist_championship"
 
+    def test_story_key_groups_oil_ladder_variants(self):
+        monthly_high = classify_market_quality(
+            "What will WTI Crude Oil (WTI) hit in May 2026?",
+            sport_category="economics",
+        )
+        daily_direction = classify_market_quality(
+            "WTI Crude Oil (WTI) Up or Down on May 8?",
+            sport_category="economics",
+        )
+
+        assert monthly_high.story_key == "story:oil"
+        assert daily_direction.story_key == "story:oil"
+
     def test_numeric_outcome_ladder_detected(self):
         quality = classify_market_quality(
             "What will CPI be in June?",
