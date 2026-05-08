@@ -44,6 +44,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Native Discover personalization overlay** — iOS/macOS Discover now stores a local category tuning profile in `UserDefaults`, records detail opens, dismisses, and copied share links, applies the same bounded five-card-window re-rank as web after the first three cards, and adds a toolbar menu showing top local affinities with a reset action.
 - ✅ **Native Discover analytics parity** — iOS/macOS Discover now emits Firebase Analytics events for card impressions, opens, dismisses, copied share links, category filter taps, and local tuning resets, tagged with native surface/category/rank metadata so personalization and design quality can be measured alongside web.
 - ✅ **First-party Discover engagement capture** — Web and native now send Discover impressions/actions to `/api/feed/interactions`, stored in an append-only `discover_interactions` table. Admins can inspect `/api/admin/discover-engagement` for open/dismiss/share rates by surface, category, and item type.
+- ✅ **Discover engagement admin panel** — `/admin/discover-quality` now includes first-party engagement totals, open/dismiss/share rates, category/surface opportunity lists, and top actioned cards alongside feed quality, timing, hook coverage, and trace diagnostics.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

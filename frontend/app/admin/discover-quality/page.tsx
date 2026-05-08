@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import useSWR, { mutate } from "swr";
 import {
   AlertTriangle,
+  BarChart3,
   ChevronDown,
   CheckCircle2,
   Filter,
@@ -246,6 +247,49 @@ interface HookCoverage {
   tier_1_3_hook_pct: number;
 }
 
+interface DiscoverEngagementGroup {
+  surface: string;
+  category: string;
+  item_type: string;
+  impressions: number;
+  opens: number;
+  dismisses: number;
+  shares: number;
+  likes: number;
+  group_expands: number;
+  actions: number;
+  open_rate: number;
+  dismiss_rate: number;
+  share_rate: number;
+}
+
+interface DiscoverEngagementItem {
+  item_type: string;
+  item_id: string;
+  item_name: string | null;
+  category: string | null;
+  surface: string | null;
+  actions: number;
+}
+
+interface DiscoverEngagementResponse {
+  days: number;
+  totals: {
+    impressions: number;
+    opens: number;
+    dismisses: number;
+    shares: number;
+    likes: number;
+    group_expands: number;
+    actions: number;
+    open_rate: number;
+    dismiss_rate: number;
+    share_rate: number;
+  };
+  groups: DiscoverEngagementGroup[];
+  top_items: DiscoverEngagementItem[];
+}
+
 async function fetchDiscoverDebug(secret: string): Promise<FeedDebugResponse> {
   const params = new URLSearchParams({
     limit: "50",
@@ -273,6 +317,14 @@ async function fetchDiscoverTrace(secret: string, marketId: number): Promise<Dis
     `${API_URL}/api/admin/discover-quality/trace/${marketId}?secret=${encodeURIComponent(secret)}&include_events=false&event_pct=0.15&limit=50`
   );
   if (!res.ok) throw new Error(`Trace API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchDiscoverEngagement(secret: string, days: number): Promise<DiscoverEngagementResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-engagement?secret=${encodeURIComponent(secret)}&days=${days}`
+  );
+  if (!res.ok) throw new Error(`Engagement API error: ${res.status}`);
   return res.json();
 }
 
@@ -361,6 +413,10 @@ function StatusPill({ children, tone }: { children: string; tone: "ok" | "warn" 
 
 function percentText(value: number | null) {
   return value === null ? "none" : `${Math.round(value * 100)}%`;
+}
+
+function rateText(value: number) {
+  return `${Math.round(value * 100)}%`;
 }
 
 function rankText(value: number | null) {
@@ -511,6 +567,128 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
   );
 }
 
+function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
+  const strongestOpens = data.groups
+    .filter((row) => row.impressions >= 5)
+    .sort((a, b) => b.open_rate - a.open_rate)
+    .slice(0, 5);
+  const highDismiss = data.groups
+    .filter((row) => row.impressions >= 5)
+    .sort((a, b) => b.dismiss_rate - a.dismiss_rate)
+    .slice(0, 5);
+  const shareSignals = data.groups
+    .filter((row) => row.impressions >= 5)
+    .sort((a, b) => b.share_rate - a.share_rate)
+    .slice(0, 5);
+
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Engagement</h2>
+          <p className="text-xs text-text-muted mt-1">
+            First-party Discover behavior from web and native over {data.days} day{data.days === 1 ? "" : "s"}.
+          </p>
+        </div>
+        <BarChart3 className="w-4 h-4 text-text-muted" />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div>
+          <div className="text-xs text-text-muted">Impressions</div>
+          <div className="text-lg font-semibold text-text-primary">{data.totals.impressions.toLocaleString()}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Open rate</div>
+          <div className="text-lg font-semibold text-text-primary">{rateText(data.totals.open_rate)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Dismiss rate</div>
+          <div className="text-lg font-semibold text-text-primary">{rateText(data.totals.dismiss_rate)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Share rate</div>
+          <div className="text-lg font-semibold text-text-primary">{rateText(data.totals.share_rate)}</div>
+        </div>
+      </div>
+
+      {data.totals.impressions === 0 ? (
+        <div className="text-sm text-text-muted rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+          No first-party engagement captured yet. Open `/discover` on web or native after this deploy to start populating this panel.
+        </div>
+      ) : (
+        <div className="grid lg:grid-cols-3 gap-3">
+          <EngagementList title="Strong Opens" rows={strongestOpens} metric="open_rate" />
+          <EngagementList title="High Dismiss" rows={highDismiss} metric="dismiss_rate" warn />
+          <EngagementList title="Share Signals" rows={shareSignals} metric="share_rate" />
+        </div>
+      )}
+
+      {data.top_items.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-text-primary mb-2">Top Actioned Items</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {data.top_items.slice(0, 6).map((item) => (
+              <div key={`${item.item_type}-${item.item_id}`} className="rounded-lg border border-surface-border bg-surface-elevated/40 p-2">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-text-primary font-medium truncate">
+                    {item.item_name || `${item.item_type} #${item.item_id}`}
+                  </span>
+                  <span className="text-text-muted shrink-0">{item.actions} actions</span>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <StatusPill tone="muted">{item.surface || "unknown"}</StatusPill>
+                  <StatusPill tone="muted">{item.category || "other"}</StatusPill>
+                  <StatusPill tone="muted">{item.item_type}</StatusPill>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EngagementList({
+  title,
+  rows,
+  metric,
+  warn,
+}: {
+  title: string;
+  rows: DiscoverEngagementGroup[];
+  metric: "open_rate" | "dismiss_rate" | "share_rate";
+  warn?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+      <div className="text-xs font-medium text-text-primary mb-2">{title}</div>
+      {rows.length === 0 ? (
+        <div className="text-xs text-text-muted">Needs at least 5 impressions per group.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={`${title}-${row.surface}-${row.category}-${row.item_type}`}>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-text-secondary truncate">
+                  {row.surface} · {formatTargetName(row.category)} · {row.item_type}
+                </span>
+                <span className={warn ? "text-accent-danger" : "text-accent-live"}>
+                  {rateText(row[metric])}
+                </span>
+              </div>
+              <div className="text-[11px] text-text-muted">
+                {row.impressions} impressions, {row.opens} opens, {row.dismisses} dismisses, {row.shares} shares
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DiscoverQualityPage() {
   usePageTracking({
     pageType: "admin_discover_quality",
@@ -527,6 +705,7 @@ export default function DiscoverQualityPage() {
   const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
+  const [engagementDays, setEngagementDays] = useState(7);
   const [expandedTraceId, setExpandedTraceId] = useState<number | null>(null);
   const [traceByMarketId, setTraceByMarketId] = useState<Record<number, DiscoverMarketTrace>>({});
   const [traceLoadingId, setTraceLoadingId] = useState<number | null>(null);
@@ -542,6 +721,7 @@ export default function DiscoverQualityPage() {
 
   const debugKey = submittedSecret ? ["discover-quality", submittedSecret] : null;
   const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
+  const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
 
   const { data, error, isLoading } = useSWR(
     debugKey,
@@ -552,6 +732,12 @@ export default function DiscoverQualityPage() {
   const { data: hookCoverage } = useSWR(
     hookKey,
     () => fetchHookCoverage(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: engagementData } = useSWR(
+    engagementKey,
+    () => fetchDiscoverEngagement(submittedSecret!, engagementDays),
     { refreshInterval: 60000 }
   );
 
@@ -787,6 +973,34 @@ export default function DiscoverQualityPage() {
                 <div className="text-sm text-text-muted">Loading hook coverage...</div>
               )}
             </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="text-sm font-semibold text-text-primary">Behavior Signals</h2>
+                <p className="text-xs text-text-muted mt-1">
+                  Use these to spot ranking/design opportunities after the capture table has traffic.
+                </p>
+              </div>
+              <select
+                value={engagementDays}
+                onChange={(e) => setEngagementDays(Number(e.target.value))}
+                className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
+              >
+                <option value={1}>1 day</option>
+                <option value={7}>7 days</option>
+                <option value={14}>14 days</option>
+                <option value={30}>30 days</option>
+              </select>
+            </div>
+            {engagementData ? (
+              <EngagementPanel data={engagementData} />
+            ) : (
+              <div className="bg-surface-card border border-surface-border rounded-lg p-4 text-sm text-text-muted">
+                Loading engagement...
+              </div>
+            )}
           </div>
 
           <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
