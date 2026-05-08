@@ -151,17 +151,18 @@ async def enrich_market_hooks(limit: int = 50):
     blurbs = _load_polymarket_blurbs()
 
     async with get_task_session() as session:
+        feed_categories = [
+            "politics",
+            "geopolitics",
+            "economics",
+            "tech",
+            "health",
+            "entertainment",
+            "weather",
+        ]
         feed_category_priority = case(
             (
-                FuturesMarket.llm_sport_category.in_([
-                    "politics",
-                    "geopolitics",
-                    "economics",
-                    "tech",
-                    "health",
-                    "entertainment",
-                    "weather",
-                ]),
+                FuturesMarket.llm_sport_category.in_(feed_categories),
                 0,
             ),
             else_=1,
@@ -171,13 +172,21 @@ async def enrich_market_hooks(limit: int = 50):
             else_=1,
         )
 
-        # Prioritize feed-shaped markets missing hooks over stale regenerations.
-        # The old tier/date ordering spent too much work on broad backlog while
-        # current Discover cards still had generic explanations.
+        feed_candidate_scope = or_(
+            FuturesMarket.llm_sport_category.in_(feed_categories),
+            FuturesMarket.volume_24h >= 5_000,
+            FuturesMarket.market_tier <= 3,
+        )
+
+        # Only enrich feed-shaped candidates. Do not grind through the entire
+        # open-market backlog: there are tens of thousands of open markets, and
+        # most should never need LLM hooks unless they become plausible Discover
+        # candidates.
         result = await session.execute(
             select(FuturesMarket)
             .where(
                 FuturesMarket.status == "open",
+                feed_candidate_scope,
                 or_(
                     FuturesMarket.hook_description.is_(None),
                     FuturesMarket.hook_generated_at.is_(None),

@@ -863,8 +863,10 @@ celery_app.conf.beat_schedule = {
     # },
     "enrich-market-hooks": {
         "task": "app.tasks.enrich_market_hooks",
-        "schedule": crontab(minute=40),  # 24x daily — burning through 53K backlog at 500/run
-        "kwargs": {"limit": 500},
+        # Feed-prioritized only; keep volume modest to avoid spending on the
+        # entire open-market backlog.
+        "schedule": crontab(minute=40, hour="*/6"),
+        "kwargs": {"limit": 100},
     },
     "enrich-market-images": {
         "task": "app.tasks.enrich_market_images",

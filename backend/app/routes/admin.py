@@ -6128,7 +6128,7 @@ async def hook_coverage(
 @router.post("/hook-enrichment/trigger")
 async def trigger_hook_enrichment(
     secret: str = Query(...),
-    limit: int = Query(500, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=250),
 ):
     """Queue hook enrichment for feed-prioritized open markets."""
     if not _check_admin_secret(secret):
