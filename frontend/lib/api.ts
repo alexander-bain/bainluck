@@ -1497,17 +1497,62 @@ export async function fetchPolitics(): Promise<PoliticsData> {
   return apiFetch<PoliticsData>("/api/politics");
 }
 
-// Entertainment types reuse the same market row shape as politics
-export interface EntertainmentSection {
-  label: string;
+// Entertainment v2 types — enriched market rows with kind/volume/delta/image
+export interface EntMarketRow {
+  q: string;
+  prob: number;
+  src: string;
+  market_id: number;
+  external_id: string;
+  kind: string;
+  top_outcomes: { name: string; prob: number; delta_24h: number }[];
+  outcome_count: number;
+  volume_24h: number | null;
+  resolution_date: string | null;
+  image_url: string | null;
+  hook: string | null;
+}
+
+export interface EntThresholdGroup {
+  title: string;
+  image_url: string | null;
+  thresholds: { label: string; prob: number; market_id: number }[];
+}
+
+export interface EntThemeMusic {
   count: number;
-  markets: PoliticsMarketRow[];
+  spotify_race: EntMarketRow[];
+  billboard_watch: EntMarketRow[];
+  album_drops: EntMarketRow[];
+  artist_streaming: EntMarketRow[];
+  side_markets: EntMarketRow[];
+}
+
+export interface EntThemeMoviesTV {
+  count: number;
+  rt_groups: EntThresholdGroup[];
+  rt_markets: EntMarketRow[];
+  box_office_groups: EntThresholdGroup[];
+  box_office: EntMarketRow[];
+  reality_tv: EntMarketRow[];
+  side_markets: EntMarketRow[];
+}
+
+export interface EntThemeTechCulture {
+  count: number;
+  markets: EntMarketRow[];
 }
 
 export interface EntertainmentData {
   total_markets: number;
   updated_at: string;
-  sections: Record<string, EntertainmentSection>;
+  trending: EntMarketRow[];
+  themes: {
+    music: EntThemeMusic;
+    movies_tv: EntThemeMoviesTV;
+    tech_culture: EntThemeTechCulture;
+  };
+  cultural_moments: EntMarketRow[];
   by_source: { kalshi: number; polymarket: number };
 }
 

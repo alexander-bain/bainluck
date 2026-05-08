@@ -1,138 +1,1412 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import {
-  SectionHeader, Card, SourceChip,
-  ProbBar, probColor,
-} from "@/components/economics/atoms";
 import { fetchEntertainment } from "@/lib/api";
-import type { EntertainmentData, PoliticsMarketRow } from "@/lib/api";
+import type {
+  EntertainmentData,
+  EntMarketRow,
+  EntThresholdGroup,
+  EntThemeMusic,
+  EntThemeMoviesTV,
+  EntThemeTechCulture,
+} from "@/lib/api";
+import s from "./entertainment.module.css";
 
-const SECTION_ORDER = [
-  "movies", "tv_streaming", "music", "awards", "social_media", "celebrity", "viral", "other",
+// ─────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────
+
+const PALETTE = [
+  ["#0F172A", "#334155"],
+  ["#1E1B4B", "#4338CA"],
+  ["#3F1D38", "#9D174D"],
+  ["#7C2D12", "#EA580C"],
+  ["#064E3B", "#10B981"],
+  ["#0C4A6E", "#0EA5E9"],
+  ["#3B0764", "#A855F7"],
+  ["#7F1D1D", "#EF4444"],
+  ["#365314", "#84CC16"],
+  ["#422006", "#A16207"],
+  ["#0F172A", "#64748B"],
+  ["#1F2937", "#F59E0B"],
 ];
 
-const SECTION_KICKER: Record<string, string> = {
-  movies: "Movies & Box Office",
-  tv_streaming: "TV & Streaming",
-  music: "Music",
-  awards: "Awards Season",
-  social_media: "Social Media & Creators",
-  celebrity: "Celebrity",
-  viral: "Viral & Novelty",
-  other: "More Entertainment",
+function hash(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return h;
+}
+
+function tileColors(seed: string): [string, string] {
+  return PALETTE[Math.abs(hash(seed)) % PALETTE.length] as [string, string];
+}
+
+const KIND_EMOJI: Record<string, string> = {
+  spotify: "🎧",
+  billboard: "📊",
+  boxoffice: "🎬",
+  rt: "🍅",
+  reality: "📺",
+  eurovision: "🎤",
+  multi: "🌐",
+  binary: "✦",
 };
 
-function MarketCard({ market }: { market: PoliticsMarketRow }) {
+const KIND_LABEL: Record<string, string> = {
+  spotify: "Spotify",
+  billboard: "Billboard",
+  boxoffice: "Box Office",
+  rt: "Rotten Tomatoes",
+  reality: "Reality TV",
+  eurovision: "Eurovision",
+  multi: "Market",
+  binary: "Market",
+};
+
+// ─────────────────────────────────────────────────────────
+// Shared atoms
+// ─────────────────────────────────────────────────────────
+
+function CoverTile({
+  title,
+  imageUrl,
+  size = 44,
+  big = false,
+}: {
+  title: string;
+  imageUrl?: string | null;
+  size?: number;
+  big?: boolean;
+}) {
+  const [base, tone] = tileColors(title);
+  const words = (title || "").split(/\s+/).slice(0, 2);
+  const initials =
+    words.length === 2
+      ? words.map((w) => w[0]).join("")
+      : (title || "").slice(0, 4);
+
   return (
-    <Link href={`/futures/${market.market_id}`}>
-      <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 hover:shadow-md transition-all cursor-pointer h-full">
-        <div className="text-[13px] font-medium text-[#374151] mb-3 line-clamp-2 leading-snug">
-          {market.q}
+    <div
+      className={big ? s.coverLg : s.cover}
+      style={{
+        width: size,
+        height: size,
+        background: `linear-gradient(135deg, ${base} 0%, ${tone} 100%)`,
+      }}
+    >
+      {imageUrl ? (
+        <img src={imageUrl} alt="" className={s.coverImg} loading="lazy" />
+      ) : null}
+      {initials.toUpperCase()}
+    </div>
+  );
+}
+
+function TagChip({ emoji, label }: { emoji?: string; label: string }) {
+  return (
+    <span className={s.tagChip}>
+      {emoji && <span style={{ fontSize: 11 }}>{emoji}</span>}
+      {label}
+    </span>
+  );
+}
+
+function EntSourceChip({ source }: { source: string }) {
+  if (source === "kalshi") {
+    return (
+      <span className={s.srcKalshi}>
+        <span className={s.srcDot} />
+        Kalshi
+      </span>
+    );
+  }
+  return (
+    <span className={s.srcPoly}>
+      <span className={s.srcDot} />
+      Polymarket
+    </span>
+  );
+}
+
+function EntDelta({ value }: { value: number | null | undefined }) {
+  if (!value || Math.abs(value) < 0.1)
+    return <span className={s.deltaFlat}>—</span>;
+  return (
+    <span className={value > 0 ? s.deltaUp : s.deltaDown}>
+      {value > 0 ? "↑" : "↓"} {Math.abs(value).toFixed(1)}%
+    </span>
+  );
+}
+
+function MetaRow({
+  src,
+  volume,
+  resolves,
+}: {
+  src: string;
+  volume?: number | null;
+  resolves?: string | null;
+}) {
+  return (
+    <div className={s.metaRow}>
+      <EntSourceChip source={src} />
+      {volume != null && volume > 0 && (
+        <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums" }}>
+          Vol ${volume >= 1000 ? `${(volume / 1000).toFixed(0)}k` : volume}
+        </span>
+      )}
+      {resolves && <span>· Resolves {formatDate(resolves)}</span>}
+    </div>
+  );
+}
+
+function ProbPct({ value, size = 14 }: { value: number; size?: number }) {
+  return (
+    <span
+      className={s.probNum}
+      style={{ fontSize: size, letterSpacing: size > 24 ? "-0.02em" : "-0.01em" }}
+    >
+      {Math.round(value)}
+      <span style={{ fontSize: size * 0.65, opacity: 0.7 }}>%</span>
+    </span>
+  );
+}
+
+function YesNoBar({ yes, no }: { yes: number; no: number }) {
+  return (
+    <div className={s.ynBar}>
+      <span className={s.ynYes} style={{ width: `${yes}%` }}>
+        YES {Math.round(yes)}%
+      </span>
+      <span className={s.ynNo} style={{ width: `${no}%` }}>
+        NO {Math.round(no)}%
+      </span>
+    </div>
+  );
+}
+
+function EntProbBar({
+  value,
+  height = 6,
+  color = "#10B981",
+}: {
+  value: number;
+  height?: number;
+  color?: string;
+}) {
+  return (
+    <div className={s.probBar} style={{ height }}>
+      <div
+        className={s.probBarFill}
+        style={{ width: `${Math.max(value, 1)}%`, background: color }}
+      />
+    </div>
+  );
+}
+
+function EntHistogram({
+  data,
+  height = 88,
+}: {
+  data: { range: string; prob: number }[];
+  height?: number;
+}) {
+  const maxV = Math.max(...data.map((d) => d.prob), 0.01);
+  return (
+    <div>
+      <div className={s.histWrap} style={{ height }}>
+        {data.map((d, i) => {
+          const isPeak = d.prob === maxV;
+          return (
+            <div
+              key={i}
+              className={isPeak ? s.histBarPeak : s.histBar}
+              style={{ height: `${(d.prob / maxV) * 100}%` }}
+              title={`${d.range} · ${Math.round(d.prob * 100)}%`}
+            >
+              <span className={s.histVal}>{Math.round(d.prob * 100)}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className={s.histLabels}>
+        {data.map((d, i) => (
+          <span key={i} className={s.histLabel}>
+            {d.range}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TabBar<T extends string>({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: { key: T; label: string }[];
+  active: T;
+  onChange: (k: T) => void;
+}) {
+  return (
+    <div className={s.tabBar}>
+      {tabs.map((t) => (
+        <button
+          key={t.key}
+          className={active === t.key ? s.tabBtnActive : s.tabBtn}
+          onClick={() => onChange(t.key)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Hero — editorial layout
+// ─────────────────────────────────────────────────────────
+
+function TrendingHero({ markets }: { markets: EntMarketRow[] }) {
+  if (!markets || markets.length < 2) return null;
+  const [lead, ...rest] = markets;
+
+  return (
+    <div className={s.heroGrid}>
+      <div className={`${s.heroCardLead} ${s.heroLead}`}>
+        <HeroCardContent market={lead} isLead />
+      </div>
+      {rest.slice(0, 4).map((m, i) => (
+        <Link key={i} href={`/futures/${m.market_id}`}>
+          <div className={s.heroCard} style={{ height: "100%" }}>
+            <HeroCardContent market={m} />
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function HeroCardContent({
+  market,
+  isLead = false,
+}: {
+  market: EntMarketRow;
+  isLead?: boolean;
+}) {
+  const Wrap = isLead ? Link : "div";
+  const inner = (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <CoverTile
+          title={market.q}
+          imageUrl={market.image_url}
+          size={isLead ? 72 : 44}
+          big={isLead}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              marginBottom: 4,
+              flexWrap: "wrap",
+            }}
+          >
+            <TagChip
+              emoji={KIND_EMOJI[market.kind] || "✦"}
+              label={KIND_LABEL[market.kind] || "Market"}
+            />
+          </div>
+          <div
+            style={{
+              fontSize: isLead ? 18 : 14,
+              fontWeight: 600,
+              lineHeight: 1.25,
+              letterSpacing: "-0.01em",
+              color: "#111827",
+            }}
+          >
+            {market.q}
+          </div>
+          {market.hook && (
+            <div
+              style={{
+                fontSize: isLead ? 13 : 12,
+                color: "#6B7280",
+                marginTop: 4,
+                lineHeight: 1.4,
+              }}
+            >
+              {market.hook}
+            </div>
+          )}
         </div>
-        <div className="space-y-0.5">
-          {market.top_outcomes.map((o, i) => (
-            <div key={i} className="flex items-center justify-between gap-2">
-              <span className="text-xs text-[#6B7280] truncate flex-1">{o.name}</span>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <div className="w-12 h-1.5 bg-[#F3F4F6] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${Math.max(3, o.prob)}%`, background: probColor(o.prob) }}
-                  />
-                </div>
-                <span className="font-mono text-xs font-semibold w-8 text-right" style={{ color: probColor(o.prob) }}>
-                  {Math.round(o.prob)}%
+      </div>
+
+      <div style={{ flex: 1 }} />
+
+      <CardBodyByKind market={market} isLead={isLead} />
+
+      <MetaRow
+        src={market.src}
+        volume={market.volume_24h}
+        resolves={market.resolution_date}
+      />
+    </>
+  );
+
+  if (isLead) {
+    return <Link href={`/futures/${market.market_id}`}>{inner}</Link>;
+  }
+  return inner;
+}
+
+function CardBodyByKind({
+  market,
+  isLead = false,
+}: {
+  market: EntMarketRow;
+  isLead?: boolean;
+}) {
+  const outcomes = market.top_outcomes;
+
+  if (market.kind === "spotify" && outcomes.length >= 2) {
+    return (
+      <div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: 6,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 600 }}>
+            {outcomes[0].name}
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+            <ProbPct value={outcomes[0].prob} size={isLead ? 28 : 20} />
+            <EntDelta value={outcomes[0].delta_24h} />
+          </div>
+        </div>
+        <EntProbBar value={outcomes[0].prob} height={isLead ? 8 : 6} />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#6B7280" }}>
+            {outcomes[1].name}
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+            <ProbPct value={outcomes[1].prob} size={13} />
+            <EntDelta value={outcomes[1].delta_24h} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    market.kind === "reality" &&
+    market.outcome_count <= 2 &&
+    outcomes.length >= 2
+  ) {
+    const aLead = outcomes[0].prob >= outcomes[1].prob;
+    return (
+      <div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginBottom: 6,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                color: aLead ? "#111827" : "#9CA3AF",
+                fontWeight: 600,
+              }}
+            >
+              {outcomes[0].name}
+            </div>
+            <ProbPct value={outcomes[0].prob} size={isLead ? 24 : 18} />
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: !aLead ? "#111827" : "#9CA3AF",
+                fontWeight: 600,
+              }}
+            >
+              {outcomes[1].name}
+            </div>
+            <ProbPct value={outcomes[1].prob} size={isLead ? 24 : 18} />
+          </div>
+        </div>
+        <div className={s.splitBar}>
+          <span
+            className={aLead ? s.splitBarLead : s.splitBarTrail}
+            style={{ width: `${outcomes[0].prob}%` }}
+          />
+          <span
+            className={!aLead ? s.splitBarLead : s.splitBarTrail}
+            style={{ width: `${outcomes[1].prob}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    (market.kind === "multi" ||
+      market.kind === "eurovision" ||
+      market.outcome_count > 2) &&
+    outcomes.length >= 2
+  ) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {outcomes.slice(0, isLead ? 4 : 3).map((o, i) => (
+          <div
+            key={i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "#6B7280", minWidth: 0 }}>
+              {o.name}
+            </span>
+            <EntProbBar value={o.prob} height={4} />
+            <ProbPct value={o.prob} size={12} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Default: binary
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <ProbPct value={market.prob} size={isLead ? 28 : 20} />
+      <span style={{ fontSize: 11, color: "#9CA3AF" }}>
+        {market.prob >= 50 ? "Yes" : "No"} likely
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Music section
+// ─────────────────────────────────────────────────────────
+
+type MusicTab = "spotify" | "billboard" | "albums" | "streaming";
+const MUSIC_TABS: { key: MusicTab; label: string }[] = [
+  { key: "spotify", label: "Spotify Race" },
+  { key: "billboard", label: "Billboard" },
+  { key: "albums", label: "Album Drops" },
+  { key: "streaming", label: "Artist Streaming" },
+];
+
+function MusicSection({ data }: { data: EntThemeMusic }) {
+  const [tab, setTab] = useState<MusicTab>("spotify");
+
+  const hasSpotify = data.spotify_race.length > 0;
+  const hasBillboard = data.billboard_watch.length > 0;
+  const hasAlbums = data.album_drops.length > 0;
+  const hasStreaming = data.artist_streaming.length > 0;
+  const allMarkets = [
+    ...data.spotify_race,
+    ...data.billboard_watch,
+    ...data.album_drops,
+    ...data.artist_streaming,
+    ...data.side_markets,
+  ];
+
+  if (allMarkets.length === 0) return null;
+
+  return (
+    <section id="sec-music" className={s.section}>
+      <div className={s.sectionHead}>
+        <div>
+          <div className={s.eyebrow}>🎧 Music</div>
+          <h2 className={s.sectionTitle}>Charts, drops, and streams</h2>
+        </div>
+        <div className={s.sectionMeta}>
+          <TabBar tabs={MUSIC_TABS} active={tab} onChange={setTab} />
+        </div>
+      </div>
+
+      {tab === "spotify" && (
+        hasSpotify ? <SpotifyRace markets={data.spotify_race} /> : <MarketFallback markets={data.side_markets} />
+      )}
+      {tab === "billboard" && (
+        hasBillboard ? <MarketList markets={data.billboard_watch} /> : <MarketFallback markets={data.side_markets} />
+      )}
+      {tab === "albums" && (
+        hasAlbums ? <AlbumGrid markets={data.album_drops} /> : <MarketFallback markets={data.side_markets} />
+      )}
+      {tab === "streaming" && (
+        hasStreaming ? <StreamingGrid markets={data.artist_streaming} /> : <MarketFallback markets={data.side_markets} />
+      )}
+    </section>
+  );
+}
+
+function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
+  const sorted = [...markets].sort((a, b) => b.prob - a.prob);
+  return (
+    <div className={s.card} style={{ padding: 18 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: 14,
+        }}
+      >
+        <div>
+          <div className={s.eyebrow}>🎧 Spotify Chart Race</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+            {sorted[0]?.q || "Who's #1 on US Spotify this week?"}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {sorted.map((m, i) => {
+          const isLeader = i === 0;
+          const leader = m.top_outcomes[0];
+          if (!leader) return null;
+          return (
+            <Link key={i} href={`/futures/${m.market_id}`}>
+              <div className={s.raceRow}>
+                <span className={isLeader ? s.raceRankLead : s.raceRank}>
+                  {i + 1}
                 </span>
+                <CoverTile title={leader.name} imageUrl={m.image_url} size={36} />
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "#111827",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {leader.name}
+                  </div>
+                  <div style={{ marginTop: 5 }}>
+                    <EntProbBar
+                      value={m.prob}
+                      height={6}
+                      color={isLeader ? "#10B981" : "rgba(16, 185, 129, 0.3)"}
+                    />
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: 2,
+                  }}
+                >
+                  <ProbPct value={m.prob} size={16} />
+                  <EntDelta value={leader.delta_24h} />
+                </div>
+                <EntSourceChip source={m.src} />
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
+  return (
+    <div className={s.grid3}>
+      {markets.map((m, i) => (
+        <Link key={i} href={`/futures/${m.market_id}`}>
+          <div className={s.card} style={{ padding: 16, height: "100%" }}>
+            <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+              <CoverTile title={m.q} imageUrl={m.image_url} size={56} big />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{m.q}</div>
+                {m.hook && (
+                  <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+                    {m.hook}
+                  </div>
+                )}
               </div>
             </div>
-          ))}
+            {m.top_outcomes.length > 2 && (
+              <EntHistogram
+                data={m.top_outcomes.map((o) => ({
+                  range: o.name,
+                  prob: o.prob / 100,
+                }))}
+              />
+            )}
+            <div
+              style={{
+                marginTop: 12,
+                paddingTop: 10,
+                borderTop: "1px solid #E5E7EB",
+              }}
+            >
+              <MetaRow src={m.src} volume={m.volume_24h} />
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function StreamingGrid({ markets }: { markets: EntMarketRow[] }) {
+  return (
+    <div className={s.card} style={{ padding: 0, overflow: "hidden" }}>
+      <div
+        style={{
+          padding: "14px 18px",
+          borderBottom: "1px solid #E5E7EB",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            Streaming direction markets
+          </div>
+          <div style={{ fontSize: 11, color: "#9CA3AF" }}>
+            Weekly stream predictions
+          </div>
         </div>
-        {market.outcome_count > 3 && (
-          <div className="text-[10px] text-[#9CA3AF] mt-1.5">+{market.outcome_count - 3} more</div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+        }}
+      >
+        {markets.map((m, i) => (
+          <Link key={i} href={`/futures/${m.market_id}`}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "32px 1fr auto",
+                gap: 10,
+                padding: "12px 16px",
+                alignItems: "center",
+                borderRight: "1px solid #E5E7EB",
+                borderBottom: "1px solid #E5E7EB",
+              }}
+            >
+              <CoverTile title={m.q} imageUrl={m.image_url} size={32} />
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {m.top_outcomes[0]?.name || m.q}
+                </div>
+              </div>
+              <ProbPct value={m.prob} size={13} />
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Movies & TV section
+// ─────────────────────────────────────────────────────────
+
+type MovieTab = "rt" | "boxoffice" | "reality";
+const MOVIE_TABS: { key: MovieTab; label: string }[] = [
+  { key: "rt", label: "Rotten Tomatoes" },
+  { key: "boxoffice", label: "Box Office" },
+  { key: "reality", label: "Reality TV" },
+];
+
+function MoviesTVSection({ data }: { data: EntThemeMoviesTV }) {
+  const [tab, setTab] = useState<MovieTab>("rt");
+
+  const allMarkets = [
+    ...data.rt_markets,
+    ...data.box_office,
+    ...data.reality_tv,
+    ...data.side_markets,
+  ];
+
+  if (allMarkets.length === 0) return null;
+
+  return (
+    <section id="sec-movies" className={s.section}>
+      <div className={s.sectionHead}>
+        <div>
+          <div className={s.eyebrow}>🎬 Movies & TV</div>
+          <h2 className={s.sectionTitle}>
+            Critic scores, box office, and reality outcomes
+          </h2>
+        </div>
+        <div className={s.sectionMeta}>
+          <TabBar tabs={MOVIE_TABS} active={tab} onChange={setTab} />
+        </div>
+      </div>
+
+      {tab === "rt" && (
+        data.rt_markets.length > 0 ? <MarketList markets={data.rt_markets} /> : <MarketFallback markets={data.side_markets} />
+      )}
+      {tab === "boxoffice" && (
+        data.box_office.length > 0 ? <BoxOfficeCards markets={data.box_office} /> : <MarketFallback markets={data.side_markets} />
+      )}
+      {tab === "reality" && (
+        data.reality_tv.length > 0 ? <RealityCards markets={data.reality_tv} /> : <MarketFallback markets={data.side_markets} />
+      )}
+    </section>
+  );
+}
+
+function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
+  return (
+    <div className={s.card} style={{ padding: 18 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: 14,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Box office markets</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {markets.map((m, i) => (
+          <Link key={i} href={`/futures/${m.market_id}`}>
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 8,
+                }}
+              >
+                <CoverTile title={m.q} imageUrl={m.image_url} size={40} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{m.q}</div>
+                  {m.hook && (
+                    <div style={{ fontSize: 11, color: "#9CA3AF" }}>
+                      {m.hook}
+                    </div>
+                  )}
+                </div>
+                <EntSourceChip source={m.src} />
+              </div>
+              {m.top_outcomes.length > 2 && (
+                <EntHistogram
+                  data={m.top_outcomes.map((o) => ({
+                    range: o.name,
+                    prob: o.prob / 100,
+                  }))}
+                  height={56}
+                />
+              )}
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RealityCards({ markets }: { markets: EntMarketRow[] }) {
+  return (
+    <div className={s.grid3}>
+      {markets.map((m, i) => {
+        const isBinary = m.outcome_count <= 2;
+        return (
+          <Link key={i} href={`/futures/${m.market_id}`}>
+            <div className={s.card} style={{ padding: 16, height: "100%" }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                <CoverTile title={m.q} imageUrl={m.image_url} size={44} big />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{m.q}</div>
+                </div>
+              </div>
+              {isBinary && m.top_outcomes.length >= 2 ? (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>
+                        {m.top_outcomes[0].name}
+                      </div>
+                      <ProbPct value={m.top_outcomes[0].prob} size={20} />
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>
+                        {m.top_outcomes[1].name}
+                      </div>
+                      <ProbPct value={m.top_outcomes[1].prob} size={20} />
+                    </div>
+                  </div>
+                  <div className={s.splitBar}>
+                    <span
+                      className={
+                        m.top_outcomes[0].prob >= m.top_outcomes[1].prob
+                          ? s.splitBarLead
+                          : s.splitBarTrail
+                      }
+                      style={{ width: `${m.top_outcomes[0].prob}%` }}
+                    />
+                    <span
+                      className={
+                        m.top_outcomes[1].prob >= m.top_outcomes[0].prob
+                          ? s.splitBarLead
+                          : s.splitBarTrail
+                      }
+                      style={{ width: `${m.top_outcomes[1].prob}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  {m.top_outcomes.map((o, j) => (
+                    <div
+                      key={j}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 12, color: "#111827" }}>
+                          {o.name}
+                        </div>
+                        <EntProbBar value={o.prob} height={4} />
+                      </div>
+                      <ProbPct value={o.prob} size={13} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div
+                style={{
+                  marginTop: 12,
+                  paddingTop: 10,
+                  borderTop: "1px solid #E5E7EB",
+                }}
+              >
+                <MetaRow src={m.src} volume={m.volume_24h} />
+              </div>
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Cultural moments — masonry feed
+// ─────────────────────────────────────────────────────────
+
+function CulturalMoments({ markets }: { markets: EntMarketRow[] }) {
+  if (!markets || markets.length === 0) return null;
+
+  return (
+    <section className={s.section}>
+      <div className={s.sectionHead}>
+        <div>
+          <div className={s.eyebrow}>🎭 Cultural moments</div>
+          <h2 className={s.sectionTitle}>Pop culture prediction feed</h2>
+          <p className={s.sectionSub}>
+            One-off markets around live events, celebrity drama, and
+            headline-watching
+          </p>
+        </div>
+      </div>
+      <div className={s.masonryFeed}>
+        {markets.map((m, i) => (
+          <MomentCard key={i} market={m} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MomentCard({ market }: { market: EntMarketRow }) {
+  const isBinary = market.outcome_count <= 2;
+  return (
+    <Link href={`/futures/${market.market_id}`}>
+      <div className={`${s.card} ${s.masonryCard}`} style={{ padding: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 10,
+          }}
+        >
+          <TagChip
+            emoji={KIND_EMOJI[market.kind] || "✦"}
+            label={KIND_LABEL[market.kind] || "Market"}
+          />
+          {market.resolution_date && (
+            <div
+              style={{ marginLeft: "auto", fontSize: 10, color: "#9CA3AF" }}
+            >
+              Resolves {formatDate(market.resolution_date)}
+            </div>
+          )}
+        </div>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 700,
+            lineHeight: 1.3,
+            letterSpacing: "-0.01em",
+            marginBottom: 4,
+            color: "#111827",
+          }}
+        >
+          {market.q}
+        </div>
+        {market.hook && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#6B7280",
+              marginBottom: 12,
+              lineHeight: 1.45,
+            }}
+          >
+            {market.hook}
+          </div>
         )}
-        <div className="mt-2">
-          <SourceChip src={market.src} />
+        {isBinary ? (
+          <YesNoBar yes={market.prob} no={100 - market.prob} />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {market.top_outcomes.map((o, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr auto",
+                  gap: 8,
+                  alignItems: "center",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#6B7280" }}>
+                  {o.name}
+                </span>
+                <EntProbBar value={o.prob} height={4} />
+                <ProbPct value={o.prob} size={12} />
+              </div>
+            ))}
+          </div>
+        )}
+        <div
+          style={{
+            marginTop: 12,
+            paddingTop: 10,
+            borderTop: "1px solid #E5E7EB",
+          }}
+        >
+          <MetaRow src={market.src} volume={market.volume_24h} />
         </div>
       </div>
     </Link>
   );
 }
 
-export default function EntertainmentPage() {
-  usePageTracking({ pageType: "entertainment", pageTitle: "Entertainment Dashboard" });
-  useScrollDepth({ pageType: "entertainment" });
-  useEngagementTime({ pageType: "entertainment" });
+// ─────────────────────────────────────────────────────────
+// Tech & Culture sidebar
+// ─────────────────────────────────────────────────────────
 
-  const { data, error } = useSWR("entertainment-data", fetchEntertainment, { refreshInterval: 60000 });
-
-  if (error) return (
-    <div className="max-w-5xl mx-auto py-20 text-center text-text-muted text-sm">
-      Failed to load entertainment data
-    </div>
-  );
-
-  if (!data) return (
-    <div className="max-w-5xl mx-auto py-20 text-center text-text-muted text-sm animate-pulse">
-      Loading entertainment markets...
-    </div>
-  );
+function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
+  if (!data.markets || data.markets.length === 0) return null;
 
   return (
-    <div className="-mx-3 md:-mx-6 -mt-4" style={{ background: "#FAFBFC" }}>
-      {/* Hero */}
-      <div className="px-4 md:px-6 pt-10 pb-8" style={{ maxWidth: 1440, margin: "0 auto" }}>
-        <div className="flex items-center gap-3 mb-4">
-          <span className="inline-flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-            Entertainment markets · Live
-          </span>
-          <span className="font-mono text-xs text-[#9CA3AF]">
-            {data.total_markets.toLocaleString()} active · Kalshi {data.by_source.kalshi.toLocaleString()} · Polymarket {data.by_source.polymarket.toLocaleString()}
+    <aside className={s.sidebar}>
+      <div className={s.sidebarCard}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: 8,
+          }}
+        >
+          <h3 className={s.sidebarTitle}>Tech & Culture</h3>
+          <span
+            style={{
+              fontSize: 10,
+              color: "#9CA3AF",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              fontWeight: 600,
+            }}
+          >
+            {data.count} markets
           </span>
         </div>
-        <h1 className="text-[42px] md:text-[56px] font-semibold text-[#111827] leading-[1.1] tracking-tight">
-          What do markets think about{" "}
-          <span className="italic text-[#7C3AED]" style={{ fontFamily: "'Georgia', serif" }}>culture</span>?
-        </h1>
-        <p className="text-base text-[#6B7280] mt-4 max-w-[640px]">
-          Box office predictions, streaming wars, music charts, awards races, and viral moments —
-          all translated into plain probabilities from Kalshi and Polymarket.
+        <p className={s.sidebarSub}>
+          Net worth, social media, and platform bets
         </p>
       </div>
 
-      <div className="px-4 md:px-6 pb-16" style={{ maxWidth: 1440, margin: "0 auto" }}>
-        {SECTION_ORDER.map((key) => {
-          const section = data.sections[key];
-          if (!section || section.markets.length === 0) return null;
-          return (
-            <section key={key} className="mb-12">
-              <SectionHeader
-                kicker={SECTION_KICKER[key] || section.label}
-                title={section.label}
-                count={section.count}
-              />
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {section.markets.map((m, i) => (
-                  <MarketCard key={i} market={m} />
+      {data.markets.map((m, i) => (
+        <Link key={i} href={`/futures/${m.market_id}`}>
+          <div className={s.sidebarCard}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+              {m.q}
+            </div>
+            {m.hook && (
+              <div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 8 }}>
+                {m.hook}
+              </div>
+            )}
+            {m.outcome_count <= 2 ? (
+              <YesNoBar yes={m.prob} no={100 - m.prob} />
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                {m.top_outcomes.map((o, j) => (
+                  <div
+                    key={j}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto",
+                      gap: 8,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#111827",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {o.name}
+                      </div>
+                      <EntProbBar value={o.prob} height={3} />
+                    </div>
+                    <ProbPct value={o.prob} size={11} />
+                  </div>
                 ))}
               </div>
-            </section>
-          );
-        })}
-      </div>
+            )}
+            <div style={{ marginTop: 8 }}>
+              <EntSourceChip source={m.src} />
+            </div>
+          </div>
+        </Link>
+      ))}
+    </aside>
+  );
+}
 
-      {/* Footer */}
-      <footer className="border-t border-[#E5E7EB]" style={{ background: "#fff" }}>
-        <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-[#9CA3AF]">
-          <span>Data from Kalshi &amp; Polymarket prediction markets · For entertainment purposes only.</span>
-          <span className="font-mono">
-            bainluck.com/entertainment · {data.total_markets.toLocaleString()} active
-          </span>
-        </div>
-      </footer>
+// ─────────────────────────────────────────────────────────
+// Fallback components
+// ─────────────────────────────────────────────────────────
+
+function MarketList({ markets }: { markets: EntMarketRow[] }) {
+  if (!markets || markets.length === 0)
+    return (
+      <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+        No markets in this category yet
+      </div>
+    );
+  return (
+    <div className={s.gridAuto}>
+      {markets.map((m, i) => (
+        <GenericMarketCard key={i} market={m} />
+      ))}
     </div>
   );
+}
+
+function MarketFallback({ markets }: { markets: EntMarketRow[] }) {
+  if (!markets || markets.length === 0)
+    return (
+      <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+        No markets in this category yet
+      </div>
+    );
+  return <MarketList markets={markets} />;
+}
+
+function GenericMarketCard({ market }: { market: EntMarketRow }) {
+  return (
+    <Link href={`/futures/${market.market_id}`}>
+      <div className={s.card} style={{ padding: 14, height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 11,
+            color: "#9CA3AF",
+          }}
+        >
+          <EntSourceChip source={market.src} />
+          {market.outcome_count > 3 && (
+            <span
+              style={{
+                marginLeft: "auto",
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: 10,
+              }}
+            >
+              +{market.outcome_count - 3} more
+            </span>
+          )}
+        </div>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: 14,
+            fontWeight: 500,
+            lineHeight: 1.35,
+            color: "#111827",
+          }}
+        >
+          {market.q}
+        </h3>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            marginTop: "auto",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "#6B7280" }}>
+            {market.top_outcomes[0]?.name || "Yes"}
+          </span>
+          <ProbPct value={market.prob} size={20} />
+        </div>
+        <EntProbBar value={market.prob} height={4} />
+      </div>
+    </Link>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Main page
+// ─────────────────────────────────────────────────────────
+
+type FilterKey = "all" | "music" | "movies" | "tv" | "internet" | "live";
+const FILTERS: { key: FilterKey; label: string; emoji: string }[] = [
+  { key: "all", label: "All", emoji: "✦" },
+  { key: "music", label: "Music", emoji: "🎧" },
+  { key: "movies", label: "Movies", emoji: "🎬" },
+  { key: "tv", label: "TV", emoji: "📺" },
+  { key: "internet", label: "Internet", emoji: "🌐" },
+  { key: "live", label: "Live Events", emoji: "🎤" },
+];
+
+export default function EntertainmentPage() {
+  usePageTracking({ pageType: "entertainment", pageTitle: "Entertainment & Culture" });
+  useScrollDepth({ pageType: "entertainment" });
+  useEngagementTime({ pageType: "entertainment" });
+
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const { data, error } = useSWR("entertainment-data-v2", fetchEntertainment, {
+    refreshInterval: 60000,
+  });
+
+  if (error) {
+    return (
+      <div className={s.page}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "#9CA3AF", fontSize: 14 }}>
+          Failed to load entertainment data
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className={s.page}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "#9CA3AF", fontSize: 14 }}>
+          <div style={{ animation: "pulse 2s ease-in-out infinite" }}>
+            Loading entertainment markets...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const show = (key: FilterKey) => filter === "all" || filter === key;
+
+  return (
+    <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
+      {/* Page header */}
+      <div className={s.pageHead}>
+        <div className={s.eyebrow}>🎤 Entertainment & Culture</div>
+        <h1 className={s.pageTitle}>
+          What the markets are betting on in pop culture
+        </h1>
+        <p className={s.pageSub}>
+          Live probabilities from Kalshi and Polymarket — charts, box office,
+          reality TV, and the moments breaking the internet.
+        </p>
+        <div className={s.pageMeta}>
+          <span>
+            <b className={s.metaNum}>
+              {data.total_markets.toLocaleString()}
+            </b>{" "}
+            active markets
+          </span>
+          <span>·</span>
+          <span>
+            Updated{" "}
+            <b className={s.metaNum}>{formatTimeAgo(data.updated_at)}</b>
+          </span>
+        </div>
+      </div>
+
+      {/* Filter chips */}
+      <div className={s.filterRow}>
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            className={
+              filter === f.key ? s.filterChipActive : s.filterChip
+            }
+            onClick={() => setFilter(f.key)}
+          >
+            <span style={{ fontSize: 14 }}>{f.emoji}</span>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className={s.pageContent}>
+        {/* Trending hero */}
+        {data.trending && data.trending.length > 0 && (
+          <TrendingHero markets={data.trending} />
+        )}
+
+        {/* Main + sidebar grid */}
+        <div className={s.mainSidebar}>
+          <div className={s.main}>
+            {show("music") && data.themes.music && (
+              <MusicSection data={data.themes.music} />
+            )}
+            {(show("movies") || show("tv")) && data.themes.movies_tv && (
+              <MoviesTVSection data={data.themes.movies_tv} />
+            )}
+            {data.cultural_moments && data.cultural_moments.length > 0 && (
+              <CulturalMoments markets={data.cultural_moments} />
+            )}
+          </div>
+          {show("internet") && data.themes.tech_culture && (
+            <TechCultureSidebar data={data.themes.tech_culture} />
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className={s.footer}>
+          <span>
+            Markets sourced from Kalshi and Polymarket. Probabilities update on
+            a 30-second cadence. Bain Luck is a discovery platform — we never
+            accept bets.
+          </span>
+          <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
+            {data.total_markets.toLocaleString()} entertainment ·{" "}
+            {new Date().toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
 }
