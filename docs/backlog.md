@@ -131,7 +131,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `backend/app/routes/weather.py`, `ios/.../Views/WeatherView.swift`
 **Parallel Safety:** Yellow
 
-### RS-3. iOS Event Detail "Additional Markets" Broken (P1) — Bug #9
+### ~~RS-3. iOS Event Detail "Additional Markets" Broken (P1) — Bug #9~~ FIXED (May 8)
 
 **Problem:** On iPhone, the "Additional Markets" section on event detail shows truncated, unreadable market names ("Spread...", "Texas R...", "O/U 6.5") in a cramped single-column layout with all values at 100%/0% for completed games. Looks nothing like the web version. The "Other Markets" bucket is a catch-all dumping ground.
 
@@ -189,7 +189,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Views/DiscoverCardView.swift` or equivalent
 **Parallel Safety:** Green
 
-### RS-9. Final Game Display Issues on iOS (P2) — Bug #8
+### ~~RS-9. Final Game Display Issues on iOS (P2) — Bug #8~~ FIXED (May 8)
 
 **Problem:** Three issues on completed game event detail (TEX 2 - NYY 9 Final):
 1. **1%-99% on final game:** Hero still shows 1%-99% probability instead of emphasizing the final result. The `final_result` source fix (May 7) should address the data, but the display should also show "FINAL" prominently and de-emphasize probability for completed games.
@@ -229,7 +229,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Components/MarketMapSection/`, `frontend/components/MarketMapSection.tsx`
 **Parallel Safety:** Green
 
-### RS-13. Pre-Game Odds Redundantly Shown on Final Games (P2) — Bug #1
+### ~~RS-13. Pre-Game Odds Redundantly Shown on Final Games (P2) — Bug #1~~ FIXED (May 8)
 
 **Problem:** Completed NBA playoff game (PHI 109 - BOS 100) shows "41% - 59%" with "Opened 41% - 59%" below — looks like odds are displayed twice since current equals opening for a final game. Also, no Kalshi/Polymarket source line on win probability chart despite known markets existing.
 
@@ -240,7 +240,7 @@ Investigated May 7. Feed has 3 robust staleness filters in `_score_futures()`: (
 **Files:** `ios/.../Views/EventDetailView.swift`, `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### RS-14. iOS Event Detail Excessive Whitespace (P3) — Bug #4
+### ~~RS-14. iOS Event Detail Excessive Whitespace (P3) — Bug #4~~ FIXED (May 8)
 
 **Problem:** Large gap between sections on event detail page (visible between nav bar and Player Props header). Likely excessive padding/spacing in the section layout.
 
