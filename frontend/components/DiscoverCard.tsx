@@ -2,8 +2,12 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
+import { Check, Heart, Share2 } from "lucide-react";
 import { formatProbability } from "@/lib/api";
+import { trackEvent } from "@/lib/analytics";
+import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
+import type { ShareContentType } from "@/lib/share";
 
 // ── Session ID for prediction tracking ──
 
@@ -316,29 +320,63 @@ function TrendBadge() {
   );
 }
 
-function ActionBar({ liked, setLiked, shareUrl, shareTitle }: {
-  liked: boolean; setLiked: (v: boolean) => void; shareUrl: string; shareTitle: string;
+function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId }: {
+  liked: boolean;
+  setLiked: (v: boolean) => void;
+  shareUrl: string;
+  shareTitle: string;
+  shareText?: string;
+  contentType: ShareContentType;
+  itemId: number | string;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const trackShare = (method: string) => {
+    trackEvent("share", {
+      content_type: contentType,
+      item_id: itemId,
+      method,
+      item_name: shareTitle,
+      source_section: "discover",
+      url: shareUrl,
+    }, { immediate: true });
+  };
+
   const handleShare = async () => {
     if (navigator.share) {
-      try { await navigator.share({ title: shareTitle, url: shareUrl }); } catch {}
-    } else { await navigator.clipboard.writeText(shareUrl); }
+      try {
+        await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
+        trackShare("native");
+        return;
+      } catch {
+        return;
+      }
+    }
+
+    if (navigator.clipboard?.writeText) {
+      const text = shareText ? `${shareText}\n${shareUrl}` : shareUrl;
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+      trackShare("clipboard");
+    }
   };
+
   return (
     <div className="flex items-center gap-1 mt-3 pt-3 border-t border-surface-border">
       <button onClick={() => setLiked(!liked)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm ${liked ? "bg-red-500/10 text-red-500" : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"}`}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill={liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-        </svg>
+        <Heart size={16} fill={liked ? "currentColor" : "none"} strokeWidth={2} />
         {liked ? "Liked" : "Like"}
       </button>
       <div className="flex-1" />
-      <button onClick={handleShare} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-        </svg>
-        Share
+      <button
+        onClick={handleShare}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm"
+        title={copied ? "Copied" : "Share"}
+        aria-label={copied ? "Copied share link" : "Share this card"}
+      >
+        {copied ? <Check size={14} strokeWidth={2.4} /> : <Share2 size={14} strokeWidth={2} />}
+        {copied ? "Copied" : "Share"}
       </button>
     </div>
   );
@@ -380,6 +418,12 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending }: {
     if (tags.some(t => t.includes("playoff"))) contextLines.push("Playoff implications on the line");
   }
   if (data.ei && data.ei.score >= 60) contextLines.push(`Excitement Index: ${data.ei.score}/100 — ${data.ei.label}`);
+  const shareUrl = buildDiscoverShareUrl(`/events/${data.id}`, "event", data.id);
+  const homeProbability = formatShareProbability(homeProb);
+  const awayProbability = formatShareProbability(awayProb);
+  const shareText = homeProbability && awayProbability
+    ? `${data.home_team} ${homeProbability}, ${data.away_team} ${awayProbability} on Bain Luck.`
+    : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
@@ -434,7 +478,15 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending }: {
           </div>
         )}
 
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/events/${data.id}`} shareTitle={`${data.away_team} vs ${data.home_team}`} />
+        <ActionBar
+          liked={liked}
+          setLiked={setLiked}
+          shareUrl={shareUrl}
+          shareTitle={`${data.away_team} vs ${data.home_team}`}
+          shareText={shareText}
+          contentType="event"
+          itemId={data.id}
+        />
       </div>
     </div>
   );
@@ -454,6 +506,11 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
+  const shareUrl = buildDiscoverShareUrl(`/futures/${data.id}`, "futures", data.id);
+  const leaderProbability = formatShareProbability(prob);
+  const shareText = leader && leaderProbability
+    ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
+    : `Track ${data.name} on Bain Luck.`;
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
@@ -508,7 +565,15 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending }: {
           </>
         )}
 
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl={`https://bainluck.com/futures/${data.id}`} shareTitle={data.name} />
+        <ActionBar
+          liked={liked}
+          setLiked={setLiked}
+          shareUrl={shareUrl}
+          shareTitle={data.name}
+          shareText={shareText}
+          contentType="futures"
+          itemId={data.id}
+        />
       </div>
     </div>
   );
@@ -520,6 +585,10 @@ function TournamentCard({ data, liked, setLiked, onDismiss }: {
   data: FeedTournamentData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void;
 }) {
   const leader = data.golfers?.[0];
+  const leaderProbability = formatShareProbability(leader?.probability);
+  const shareText = leader && leaderProbability
+    ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
+    : `Track ${data.name} on Bain Luck.`;
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
@@ -536,7 +605,15 @@ function TournamentCard({ data, liked, setLiked, onDismiss }: {
       <div className="p-4">
         <h3 className="font-bold text-lg leading-tight mb-1">{data.name}</h3>
         {data.venue && <p className="text-sm text-text-secondary">{data.venue}</p>}
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl="https://bainluck.com/sport/golf" shareTitle={data.name} />
+        <ActionBar
+          liked={liked}
+          setLiked={setLiked}
+          shareUrl={buildDiscoverShareUrl("/sport/golf", "grid", data.name)}
+          shareTitle={data.name}
+          shareText={shareText}
+          contentType="grid"
+          itemId={data.name}
+        />
       </div>
     </div>
   );
@@ -609,10 +686,25 @@ export function GuessCard({ item, onGuessCompleted }: { item: FeedItem; onGuessC
 
   const handleShare = async () => {
     const text = `${correct ? "I got it right!" : "So close!"} ${cardTitle} — actual odds: ${actualPct}%. Can you beat me?`;
+    const shareUrl = buildDiscoverShareUrl("/discover", isEvent ? "event" : "futures", itemId);
+    const trackGuessShare = (method: string) => {
+      trackEvent("share", {
+        content_type: isEvent ? "event" : "futures",
+        item_id: itemId,
+        method,
+        item_name: cardTitle,
+        source_section: "discover_guess",
+        url: shareUrl,
+      }, { immediate: true });
+    };
     if (navigator.share) {
-      try { await navigator.share({ title: text, url: "https://bainluck.com/discover" }); } catch {}
+      try {
+        await navigator.share({ title: text, text, url: shareUrl });
+        trackGuessShare("native");
+      } catch {}
     } else {
-      await navigator.clipboard.writeText(`${text}\nhttps://bainluck.com/discover`);
+      await navigator.clipboard.writeText(`${text}\n${shareUrl}`);
+      trackGuessShare("clipboard");
     }
   };
 

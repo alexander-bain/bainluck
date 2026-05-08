@@ -35,6 +35,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Feed timing diagnostics** — `/api/feed` now emits `X-Feed-Elapsed-Ms`, and admin debug responses show per-stage timings for personalization, events, golf, futures, ranking, and debug tracing.
 - ✅ **Discover feed latency pass** — Futures-only feed path no longer scores golf tournaments; futures candidate pools have stage timing; source-count queries are scoped to candidates; feed-specific futures indexes were added; futures ORM hydration now loads only feed-used columns. Production futures-only header observed around **770ms** with quality metrics unchanged.
 - ✅ **Ground-truth recall pass** — Major NBA Finals path markets get a targeted sports-postseason candidate lane and score boost, while conference-final path markets stay below championship-level weight. Ground-truth matching now treats "win Finals" and "advance to Finals" variants as the same story, and oil ladders share a story key with sibling WTI oil cards. Production audit moved actionable missing buckets to zero: only game-market noise and sibling stories remain.
+- ✅ **Discover shareability pass** — Discover cards now share stable UTM-tagged detail URLs with card-specific share text, clipboard copied state, GA4 `share` events, and dynamic Open Graph/Twitter metadata for event and futures detail pages.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

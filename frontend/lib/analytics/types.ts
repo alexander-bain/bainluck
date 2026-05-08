@@ -407,6 +407,9 @@ export interface ShareParams {
   content_type: 'event' | 'futures' | 'grid';
   item_id: number | string;
   method: string;
+  item_name?: string;
+  source_section?: string;
+  url?: string;
 }
 
 export interface FeedRefreshParams {
