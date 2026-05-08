@@ -1814,7 +1814,12 @@ async def _score_futures(
         return []
 
     # Build canonical key → source count map for cross-source scoring
-    canonical_source_counts = await _get_canonical_source_counts(db)
+    candidate_canonical_keys = {
+        market.canonical_market_key
+        for market in markets
+        if market.canonical_market_key
+    }
+    canonical_source_counts = await _get_canonical_source_counts(db, keys=candidate_canonical_keys)
     mark_timing("canonical_counts")
 
     scored_items = []
@@ -2165,24 +2170,48 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
     return cache
 
 
-async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
-    """Get source count for each canonical market key (cached 5 min)."""
+async def _get_canonical_source_counts(
+    db: AsyncSession,
+    keys: Optional[set[str]] = None,
+) -> dict[str, int]:
+    """Get source counts for canonical market keys.
+
+    The full map is cached for trace/debug callers. Feed scoring passes the
+    candidate keys so it does not group the entire futures market table on a
+    cold worker.
+    """
     import time
 
     global _canonical_source_counts_cache, _canonical_source_counts_ts
     now = time.time()
     if _canonical_source_counts_cache is not None and (now - _canonical_source_counts_ts) < _CANONICAL_CACHE_TTL:
-        return _canonical_source_counts_cache
+        if keys is None:
+            return _canonical_source_counts_cache
+        return {
+            key: count
+            for key, count in _canonical_source_counts_cache.items()
+            if key in keys
+        }
 
-    result = await db.execute(
+    if keys is not None and not keys:
+        return {}
+
+    query = (
         select(
             FuturesMarket.canonical_market_key,
             func.count(func.distinct(FuturesMarket.source)).label("source_count"),
         )
         .where(FuturesMarket.canonical_market_key.isnot(None))
-        .group_by(FuturesMarket.canonical_market_key)
     )
+    if keys is not None:
+        query = query.where(FuturesMarket.canonical_market_key.in_(keys))
+    query = query.group_by(FuturesMarket.canonical_market_key)
+
+    result = await db.execute(query)
     cache = {row.canonical_market_key: row.source_count for row in result.all()}
+    if keys is not None:
+        return cache
+
     _canonical_source_counts_cache = cache
     _canonical_source_counts_ts = now
     return cache
