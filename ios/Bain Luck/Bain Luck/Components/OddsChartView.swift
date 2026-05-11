@@ -407,25 +407,28 @@ struct OddsChartView: View {
     /// commence_time and the first data point, start from the first data point
     /// instead — prevents empty chart space from schedule delays.
     private var gameEndDate: Date? {
-        // Use authoritative completed_at from the API when available
-        if let ca = vm.history?.completedAt, let d = ca.asDate {
-            return d.addingTimeInterval(120) // 2 min buffer
-        }
-        // Fallback: infer from last ESPN or stat_model data point
         guard status == "completed" || status == "closed" else { return nil }
+        // Prefer actual game data endpoints (ESPN, stat_model) over completedAt
+        // (completedAt is a backend processing timestamp, often 30-45 min after game end)
         var candidates: [Date] = []
         if let espn = vm.history?.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
             candidates.append(d)
         }
         if let wp = vm.history?.winProbHistory {
-            for (source, points) in wp where source == "espn" || source == "stat_model" {
+            for (source, points) in wp where source == "espn" || source == "stat_model" || source == "mlb" || source == "fangraphs" {
                 if let last = points.last, let d = last.timestamp.asDate {
                     candidates.append(d)
                 }
             }
         }
-        guard let latest = candidates.max() else { return nil }
-        return latest.addingTimeInterval(120)
+        if let latest = candidates.max() {
+            return latest.addingTimeInterval(120)
+        }
+        // Fallback to completedAt only if no game-end data
+        if let ca = vm.history?.completedAt, let d = ca.asDate {
+            return d
+        }
+        return nil
     }
 
     private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
@@ -515,6 +518,32 @@ struct OddsChartView: View {
             let firstPeriodLabel = inferFirstPeriodLabel(from: firstSeen.map(\.label))
             if let firstPeriodLabel, !seenLabels.contains(firstPeriodLabel) {
                 firstSeen.insert((firstPeriodLabel, startDate), at: 0)
+            }
+        }
+
+        // Soccer halftime detection: if we have no meaningful period markers
+        // but ESPN history shows a time gap >8 minutes (halftime break),
+        // insert a "HT" marker at the gap.
+        let isSoccer = commenceTime?.contains("soccer") == true
+            || homeTeamName?.lowercased().contains("fc") == true
+            || status == "live" || status == "completed"  // best-effort check
+        if firstSeen.isEmpty || firstSeen.allSatisfy({ $0.label.allSatisfy(\.isNumber) }),
+           let espnHistory = history.espnHistory, espnHistory.count >= 5 {
+            let espnDates = espnHistory.compactMap { $0.timestamp.asDate }.sorted()
+            for i in 1..<espnDates.count {
+                let gap = espnDates[i].timeIntervalSince(espnDates[i - 1])
+                if gap > 480 { // >8 minute gap = likely halftime
+                    let htDate = espnDates[i - 1].addingTimeInterval(gap / 2)
+                    if !seenLabels.contains("HT") {
+                        firstSeen.removeAll()
+                        seenLabels.removeAll()
+                        firstSeen.append(("1H", espnDates.first!))
+                        firstSeen.append(("HT", htDate))
+                        firstSeen.append(("2H", espnDates[i]))
+                        seenLabels = ["1H", "HT", "2H"]
+                    }
+                    break
+                }
             }
         }
 
