@@ -5400,12 +5400,12 @@ async def event_creation_lead_time(
         FROM events e
         JOIN sports s ON e.sport_id = s.id
         WHERE s.key = :sport
-          AND e.commence_time > NOW() - INTERVAL :days_str
+          AND e.commence_time > NOW() - make_interval(days => :days_back)
           AND e.created_at IS NOT NULL
           AND e.commence_time IS NOT NULL
         ORDER BY e.commence_time DESC
         LIMIT 50
-    """), {"sport": sport, "days_str": f"{days} days"})
+    """), {"sport": sport, "days_back": days})
     rows = result.all()
 
     events = []
