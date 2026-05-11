@@ -225,6 +225,11 @@ def _attach_claim(event: Event, claim: EventClaim) -> None:
     if claim.source == "odds_api":
         if not event.external_id:
             event.external_id = claim.source_id
+        elif event.external_id != claim.source_id:
+            logger.info(
+                "Event %d already has external_id=%s, incoming=%s (same game, different API ID)",
+                event.id, event.external_id, claim.source_id,
+            )
     elif claim.source == "statpal":
         if not event.statpal_fixture_id:
             event.statpal_fixture_id = claim.source_id

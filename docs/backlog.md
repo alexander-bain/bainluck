@@ -151,17 +151,9 @@ iOS `gameEndDate` was using `completedAt + 2min` as primary source (30-45 min la
 **Files:** `backend/app/services/event_registry.py`, `backend/app/tasks/merge_events.py`
 **Parallel Safety:** Red (touches event creation)
 
-### BUG-NBA. Missing NBA Playoff Games (CRITICAL) — May 11
+### ~~BUG-NBA. Missing NBA Playoff Games~~ — NOT A BUG (May 11)
 
-**Problem:** Only 3 NBA events exist in the database (2 duplicates of OKC vs Lakers + 1 Wolves vs Spurs), despite NBA playoffs being in progress. The Top Markets section shows NBA Finals futures ("Will Boston Celtics advance?"), confirming the markets exist, but the corresponding game events are not being created.
-
-**Action:** Check if the Odds API is returning NBA events. The `poll_odds` task should be creating events for `basketball_nba`. Verify:
-1. Is `basketball_nba` in `SPORT_POLLING_TIERS`?
-2. Is the Odds API quota mode allowing NBA polling?
-3. Are NBA games being returned by the API but failing event creation?
-
-**Files:** `backend/app/tasks/odds_polling.py`, `backend/app/services/event_registry.py`, `backend/app/config/sport_polling_tiers.py`
-**Parallel Safety:** Yellow
+DB has 60 NBA events (most completed). Odds API itself only returns 3 upcoming events — between playoff rounds. `basketball_nba` is active, Tier 1, polling works. Completed games correctly filtered from feed. The duplicate OKC vs Lakers is covered by BUG-DUP.
 
 ### MS-8. MLB Chart Rendering Failure (WARNING) — Chart Timing Audit
 

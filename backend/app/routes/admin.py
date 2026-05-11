@@ -9886,3 +9886,17 @@ async def calibration_data(
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
     }
+
+
+@router.post("/merge-events")
+async def merge_events_admin(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger the duplicate event merger (runs in non-dry-run mode)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    from app.tasks.sports import _merge_duplicate_events_impl
+    result = await _merge_duplicate_events_impl(dry_run=False)
+    return result
