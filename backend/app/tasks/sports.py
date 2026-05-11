@@ -584,7 +584,8 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
     from app.tasks.base import get_task_session
 
     async with get_task_session() as session:
-        # Find all duplicate pairs
+        # Find duplicate pairs — limited to 200 per run to avoid timeouts.
+        # The task runs every 10 minutes so it drains the backlog over time.
         result = await session.execute(sa_text("""
             WITH dupes AS (
                 SELECT a.id AS id_a, b.id AS id_b
@@ -598,6 +599,7 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                 )
                 WHERE a.commence_time > NOW() - INTERVAL '30 days'
                   AND b.commence_time > NOW() - INTERVAL '30 days'
+                LIMIT 200
             )
             SELECT
                 a.id AS id_a, a.external_id AS ext_a,
@@ -695,36 +697,24 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                         sa_text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
                         params,
                     )
-                # Reassign FK references from orphan → keep before delete
+                # Reassign ALL FK references from orphan → keep before delete
                 for table in ("odds_snapshots", "win_prob_snapshots", "score_snapshots",
-                              "espn_snapshots", "scoring_plays"):
+                              "espn_snapshots", "scoring_plays", "odds_aggregated",
+                              "line_movement_analyses", "futures_markets"):
                     await session.execute(
                         sa_text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :orphan"),
                         {"keep": keep_id, "orphan": orphan_id},
                     )
-                # Nullable FK: futures_markets
                 await session.execute(
-                    sa_text("UPDATE futures_markets SET event_id = :keep WHERE event_id = :orphan"),
-                    {"keep": keep_id, "orphan": orphan_id},
+                    sa_text("DELETE FROM events WHERE id = :orphan"),
+                    {"orphan": orphan_id},
                 )
-                # user_predictions
-                await session.execute(
-                    sa_text("UPDATE user_predictions SET event_id = :keep WHERE event_id = :orphan"),
-                    {"keep": keep_id, "orphan": orphan_id},
-                )
+                await session.commit()
                 delete_ids.append(orphan_id)
 
             merged_count += 1
 
         if not dry_run and delete_ids:
-            # Batch delete in chunks of 500
-            for i in range(0, len(delete_ids), 500):
-                chunk = delete_ids[i:i + 500]
-                await session.execute(
-                    sa_text("DELETE FROM events WHERE id = ANY(:ids)"),
-                    {"ids": chunk},
-                )
-            await session.commit()
             logger.info(f"Merged {merged_count} duplicate events, deleted {len(delete_ids)} orphans")
 
         return {
