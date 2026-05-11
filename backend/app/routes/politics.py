@@ -55,6 +55,19 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
 ]
 
 
+_NON_POLITICS_RE = re.compile(
+    r"\b(?:billboard|spotify|grammy|oscar|emmy|rotten\s*tomatoes|box\s*office"
+    r"|vix|s&p|nasdaq|oil|crude|fed\s*rate|cpi|gdp|unemployment|inflation"
+    r"|temperature|weather|hurricane|rainfall"
+    r"|nba|nfl|mlb|nhl|pga|ufc|mma|tennis|soccer|cricket)\b",
+    re.I,
+)
+
+
+def _is_non_politics(market: FuturesMarket) -> bool:
+    return bool(_NON_POLITICS_RE.search(market.name or ""))
+
+
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
     for prefix, theme in _THEME_BY_TICKER:
@@ -497,6 +510,8 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
     themed: dict[str, list] = defaultdict(list)
     for m in all_markets:
         if _is_resolved(m):
+            continue
+        if _is_non_politics(m):
             continue
         theme = _classify_theme(m)
         themed[theme].append(m)
