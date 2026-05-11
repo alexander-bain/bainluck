@@ -1033,7 +1033,7 @@ private struct NativeDailyChallengeCard: View {
                     .font(.subheadline.weight(.bold))
                 Text(completed
                      ? "Come back tomorrow for a new challenge"
-                     : "Make \(DAILY_GOAL) predictions today · \(guessesToday)/\(DAILY_GOAL)")
+                     : "Tap Higher or Lower on \(DAILY_GOAL) cards · \(guessesToday)/\(DAILY_GOAL)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
