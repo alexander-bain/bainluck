@@ -608,32 +608,11 @@ struct EventDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Hero Tag Chips (inline in hero, matching web)
+    // MARK: - Hero Tag Chips (disabled — internal taxonomy tags not user-facing)
 
     @ViewBuilder
     private func heroTagChips(_ event: EventDetail) -> some View {
-        let displayTags = (event.eventTags ?? []).filter { tag in
-            let ns = tag.components(separatedBy: ":").first ?? ""
-            let allowed: Set<String> = ["importance", "signal", "timing", "tier", "ei",
-                                         "stakes", "narrative", "audience", "competitive_structure"]
-            guard allowed.contains(ns) else { return false }
-            let hidden: Set<String> = ["competitive_structure:head_to_head",
-                                        "audience:local_interest", "stakes:meaningless"]
-            return !hidden.contains(tag)
-        }
-        if !displayTags.isEmpty {
-            FlowLayout(spacing: 4) {
-                ForEach(displayTags, id: \.self) { tag in
-                    Text(Self.tagLabel(tag))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Self.tagForeground(tag))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Self.tagBackground(tag))
-                        .clipShape(Capsule())
-                }
-            }
-        }
+        EmptyView()
     }
 
     // MARK: - Hero Status Badge
@@ -654,43 +633,7 @@ struct EventDetailView: View {
 
     @ViewBuilder
     private func eventTagsSection(_ event: EventDetail) -> some View {
-        let displayTags = (event.eventTags ?? []).filter { tag in
-            let ns = tag.components(separatedBy: ":").first ?? ""
-            let allowed: Set<String> = ["importance", "signal", "timing", "tier", "ei",
-                                         "stakes", "narrative", "audience", "competitive_structure"]
-            guard allowed.contains(ns) else { return false }
-            let hidden: Set<String> = ["competitive_structure:head_to_head",
-                                        "audience:local_interest", "stakes:meaningless"]
-            return !hidden.contains(tag)
-        }
-        if !displayTags.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "tag")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text("Tags")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-                FlowLayout(spacing: 6) {
-                    ForEach(displayTags, id: \.self) { tag in
-                        Text(Self.tagLabel(tag))
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(Self.tagForeground(tag))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Self.tagBackground(tag))
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
+        EmptyView()
     }
 
     private static func tagLabel(_ tag: String) -> String {
