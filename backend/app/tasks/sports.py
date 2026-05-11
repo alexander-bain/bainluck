@@ -668,12 +668,19 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                         "espn_id": row.espn_b,
                     }
             else:
-                skipped_count += 1
-                continue
-
-            if orphan_has_snaps:
-                skipped_count += 1
-                continue
+                # Both have external_id + snapshots — keep the richer one.
+                # This handles The Odds API returning two IDs for the same game
+                # (e.g., from different regions: us vs us2).
+                keep_id, orphan_id = row.id_a, row.id_b
+                orphan_has_snaps = row.has_snaps_b
+                absorb = {
+                    "statpal_fixture_id": row.statpal_b,
+                    "commence_time_source": row.source_b,
+                    "statpal_end_time": row.end_b,
+                    "home_team_id": row.htid_b,
+                    "away_team_id": row.atid_b,
+                    "espn_id": row.espn_b,
+                }
 
             if not dry_run:
                 # Absorb metadata (only fill NULLs)
@@ -688,6 +695,23 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                         sa_text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
                         params,
                     )
+                # Reassign FK references from orphan → keep before delete
+                for table in ("odds_snapshots", "win_prob_snapshots", "score_snapshots",
+                              "espn_snapshots", "scoring_plays"):
+                    await session.execute(
+                        sa_text(f"UPDATE {table} SET event_id = :keep WHERE event_id = :orphan"),
+                        {"keep": keep_id, "orphan": orphan_id},
+                    )
+                # Nullable FK: futures_markets
+                await session.execute(
+                    sa_text("UPDATE futures_markets SET event_id = :keep WHERE event_id = :orphan"),
+                    {"keep": keep_id, "orphan": orphan_id},
+                )
+                # user_predictions
+                await session.execute(
+                    sa_text("UPDATE user_predictions SET event_id = :keep WHERE event_id = :orphan"),
+                    {"keep": keep_id, "orphan": orphan_id},
+                )
                 delete_ids.append(orphan_id)
 
             merged_count += 1
