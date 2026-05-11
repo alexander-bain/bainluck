@@ -5497,6 +5497,9 @@ async def statpal_probe_endpoints(
                 raw_debug["match_count"] = len(matches) if isinstance(matches, list) else "not_a_list"
                 raw_debug["tournament_league"] = tournament.get("league")
                 raw_debug["tournament_season"] = tournament.get("season")
+                raw_debug["tournament_id"] = tournament.get("id")
+                raw_debug["tournament_country"] = tournament.get("country")
+                raw_debug["tournament_week"] = tournament.get("week")
             elif isinstance(tournament, list):
                 raw_debug["tournament_type"] = "LIST"
                 raw_debug["tournament_count"] = len(tournament)
