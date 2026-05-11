@@ -4129,6 +4129,146 @@ async def prediction_market_debug(
     }
 
 
+@router.get("/prediction-markets/tier1-gaps")
+async def prediction_market_tier1_gaps(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnose every unlinked open Tier 1 game market with failure reasons."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import func, or_, text as _text
+    from app.models.models import FuturesMarket, Event, Sport
+    from app.utils.prediction_market_matching import (
+        extract_matchup_with_ticker_fallback,
+        extract_game_date_from_ticker,
+    )
+    from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
+
+    await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
+
+    _TIER1_PREFIXES = [
+        p for p in KALSHI_GAME_TICKER_PREFIXES
+        if any(p.startswith(s) for s in ("kxnba", "kxnhl", "kxmlb", "kxnfl"))
+    ]
+    tier1_conditions = [
+        func.lower(FuturesMarket.external_id).like(f"{p}%")
+        for p in _TIER1_PREFIXES
+    ]
+
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "open",
+            or_(*tier1_conditions),
+        )
+        .order_by(FuturesMarket.commence_time.desc())
+        .limit(50)
+    )
+    markets = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    gaps = []
+
+    for market in markets:
+        entry = {
+            "id": market.id,
+            "external_id": market.external_id,
+            "name": market.name,
+            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+        }
+
+        matchup = extract_matchup_with_ticker_fallback(
+            market.name, external_id=market.external_id,
+        )
+        if not matchup:
+            entry["failure"] = "matchup_extraction_failed"
+            gaps.append(entry)
+            continue
+
+        entry["extracted_team_a"] = matchup.team_a
+        entry["extracted_team_b"] = matchup.team_b
+        entry["format_type"] = matchup.format_type
+
+        ticker_date = extract_game_date_from_ticker(market.external_id)
+        entry["ticker_date"] = ticker_date.isoformat() if ticker_date else None
+
+        teams_to_search = [matchup.team_a]
+        if matchup.team_b:
+            teams_to_search.append(matchup.team_b)
+
+        from app.utils.prediction_market_matching import _expand_team_search_terms, _escape_like
+        ilike_conditions = []
+        for team in teams_to_search:
+            for search_term in _expand_team_search_terms(team):
+                pattern = f"%{_escape_like(search_term)}%"
+                ilike_conditions.append(Event.home_team_name.ilike(pattern))
+                ilike_conditions.append(Event.away_team_name.ilike(pattern))
+
+        ref_time = ticker_date or market.commence_time or now
+        time_delta = timedelta(hours=36) if ticker_date else timedelta(days=7)
+        time_start = ref_time - time_delta
+        time_end = ref_time + time_delta
+
+        event_result = await db.execute(
+            select(Event.id, Event.home_team_name, Event.away_team_name,
+                   Event.commence_time, Event.status)
+            .where(
+                or_(*ilike_conditions),
+                Event.commence_time.between(time_start, time_end),
+            )
+            .order_by(Event.commence_time)
+            .limit(5)
+        )
+        candidates = event_result.all()
+
+        if not candidates:
+            event_any = await db.execute(
+                select(Event.id, Event.home_team_name, Event.away_team_name,
+                       Event.commence_time, Event.status)
+                .where(or_(*ilike_conditions))
+                .order_by(Event.commence_time.desc())
+                .limit(3)
+            )
+            any_candidates = event_any.all()
+            if any_candidates:
+                entry["failure"] = "event_exists_but_outside_time_window"
+                entry["nearest_events"] = [
+                    {"id": c.id, "teams": f"{c.home_team_name} vs {c.away_team_name}",
+                     "time": c.commence_time.isoformat() if c.commence_time else None,
+                     "status": c.status}
+                    for c in any_candidates
+                ]
+            else:
+                entry["failure"] = "no_event_with_matching_teams"
+                entry["search_terms"] = teams_to_search
+        else:
+            entry["failure"] = "event_found_but_scoring_rejected"
+            entry["candidates"] = [
+                {"id": c.id, "teams": f"{c.home_team_name} vs {c.away_team_name}",
+                 "time": c.commence_time.isoformat() if c.commence_time else None,
+                 "status": c.status}
+                for c in candidates
+            ]
+
+        gaps.append(entry)
+
+    by_failure = {}
+    for g in gaps:
+        f = g.get("failure", "unknown")
+        by_failure.setdefault(f, []).append(g)
+
+    return {
+        "total_tier1_gaps": len(gaps),
+        "by_failure": {k: {"count": len(v), "samples": v[:5]} for k, v in by_failure.items()},
+        "all_gaps": gaps,
+    }
+
+
 @router.get("/prediction-markets/event-debug")
 async def prediction_market_event_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
