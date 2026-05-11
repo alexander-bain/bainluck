@@ -106,6 +106,136 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ---
 
+## Manus Sweep Findings (May 11, 2026)
+
+10-module automated audit. 3 critical, 9 warning, 4 info findings. Results in `Manus/audit_results/2026-05-11/`.
+
+### MS-1. Weather Page Frozen on April 20 Data (CRITICAL) — Category Page Audit
+
+**Problem:** The entire weather page is showing 3-week-old data (April 20). Featured markets, city forecasts, and rain probabilities are all stale. The weather data pipeline appears to have stopped updating.
+
+**Action:** Check weather polling task (`poll_weather_markets`) in Celery beat schedule. Verify Kalshi weather markets are being ingested. Check `updated_at` timestamps on weather-category futures_markets.
+
+**Files:** `backend/app/tasks/kalshi.py` (weather polling), `backend/app/routes/weather.py`
+**Parallel Safety:** Yellow
+
+### MS-2. NBA Knicks Championship Odds Stale (CRITICAL) — Grid Audit
+
+**Problem:** NBA championship grid shows Knicks at 1.0% while Kalshi (13%) and Polymarket (14%) both show them as serious contenders. The grid data is not updating from live market prices.
+
+**Action:** Check if the Knicks' futures market has a stale `current_probability` or if the grid query is pulling from the wrong snapshot. Run `audit_grid_accuracy.py` to verify.
+
+**Files:** `backend/app/routes/playoffs.py`, `backend/scripts/audit_grid_accuracy.py`
+**Parallel Safety:** Yellow
+
+### MS-3. Player Prop Monotonicity Violations (CRITICAL) — Market Accuracy Audit
+
+**Problem:** Jake LaRavia shows P(20+ pts) = 48% but P(10+ pts) = 27% — mathematically impossible. Higher thresholds must have lower probabilities. This affects user trust.
+
+**Action:** Add monotonicity enforcement in the game-markets endpoint: for each player, sort threshold props and enforce P(lower threshold) >= P(higher threshold). Flag violations in admin dashboard.
+
+**Files:** `backend/app/routes/events.py` (game-markets endpoint, player prop enrichment)
+**Parallel Safety:** Yellow
+
+### MS-4. Politics Page Misclassified Markets (WARNING) — Category Page Audit
+
+**Problem:** Billboard, Sports, and VIX markets appearing on the Politics page. The `_classify_theme()` function is too permissive — some Kalshi ticker prefixes map to the wrong category.
+
+**Files:** `backend/app/routes/politics.py` (`_classify_theme`)
+**Parallel Safety:** Green
+
+### MS-5. Entertainment Spotify Race Sums to ~135% (WARNING) — Category Page Audit
+
+**Problem:** Spotify Race probabilities for the "#1 song" market sum to ~135% instead of ~100%. Independent binary markets (one per artist) are displayed as if they're mutually exclusive outcomes.
+
+**Action:** Either (a) normalize probabilities to sum to 100%, or (b) label clearly as "independent probabilities, not a race."
+
+**Files:** `backend/app/routes/entertainment.py`, `frontend/app/entertainment/page.tsx`
+**Parallel Safety:** Green
+
+### MS-6. Economics Monotonicity Violations (WARNING) — Category Page Audit
+
+**Problem:** Unemployment and crude oil threshold markets have non-monotonic probabilities (e.g., "above 4.5%" at 60% but "above 4.0%" at 55%).
+
+**Action:** Add monotonicity enforcement for threshold ladders in the economics endpoint, same pattern as MS-3.
+
+**Files:** `backend/app/routes/economics.py`
+**Parallel Safety:** Green
+
+### MS-7. Chart Stale Tails in 5/8 Events (WARNING) — Chart Timing Audit
+
+**Problem:** Win probability charts extend 15-30 minutes past actual game end with flat stale data from bookmakers continuing to poll after the final whistle.
+
+**Action:** The `sharedChartDomain` game-end clipping (shipped May 7) should handle this. Verify it's working — if the filter is correct, these may be games where ESPN data ends early and the fallback to `completed_at` is triggering.
+
+**Files:** `frontend/app/events/[id]/page.tsx` (sharedChartDomain), `ios/.../Views/EventDetailView.swift`
+**Parallel Safety:** Yellow
+
+### MS-8. MLB Chart Rendering Failure (WARNING) — Chart Timing Audit
+
+**Problem:** Rays vs Red Sox chart has massive gaps and fails to converge to a final state. Possibly a data gap in win_prob_snapshots or a source that stopped mid-game.
+
+**Action:** Check win_prob_snapshots for this event — look for time gaps >10 minutes. May need to filter out sources with sparse data.
+
+**Files:** `backend/app/routes/events.py` (history endpoint)
+**Parallel Safety:** Yellow
+
+### MS-9. Soccer Missing Half-Time Markers + 3-Way Odds Confusion (WARNING) — Event Detail Audit
+
+**Problem:** Soccer event detail pages lack half-time period markers (no "HT" vertical line). Also, hero shows 2-way probabilities but some sources report 3-way (Home/Draw/Away), causing cross-page mismatches.
+
+**Action:** For markers: check if ESPN soccer history includes `period` changes. For odds: decide whether to show 2-way (Home vs Away excluding Draw) or 3-way.
+
+**Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py`
+**Parallel Safety:** Green
+
+### MS-10. NCAAB 14 Teams at 99% (WARNING) — League Page Audit
+
+**Problem:** NCAAB page shows 14 teams at 99% Title Game probability — stale post-tournament data from March Madness that was never cleaned up.
+
+**Action:** Add season-end detection: if the sport is in offseason, either hide resolved markets or show a "Season Complete" banner.
+
+**Files:** `backend/app/routes/leagues.py`
+**Parallel Safety:** Green
+
+### MS-11. Completed Market Still Shows Live Probability (WARNING) — Market Accuracy Audit
+
+**Problem:** Completed MLB game still shows "Yes: 52%" for a first-inning-run market that should have settled to 0% or 100%.
+
+**Action:** The `_score_futures` staleness filter should catch this. Check if game-prop markets with `event_id` linked to completed events are being filtered.
+
+**Files:** `backend/app/routes/events.py` (game-markets endpoint)
+**Parallel Safety:** Yellow
+
+### MS-12. Golf Grid Monotonicity (WARNING) — Grid Audit
+
+**Problem:** Some golfers show Win probability > Top 5 probability — impossible since winning implies finishing in the top 5.
+
+**Action:** Add cross-column monotonicity enforcement in the golf grid builder.
+
+**Files:** `backend/app/routes/golf.py`
+**Parallel Safety:** Green
+
+### MS-13. Missing Sport Coverage (INFO) — Market Completeness Audit
+
+**Problem:** UFC/MMA, Tennis, Formula 1, and Esports have significant upstream markets on Kalshi/Polymarket but no dedicated pages or navigation on bainluck. NFL Win Totals and NBA Series Winner markets are also missing.
+
+**Action:** Lower priority — these are feature gaps, not bugs. Track as expansion opportunities.
+
+**Files:** Various new routes
+**Parallel Safety:** Green
+
+### MS-14. EPL/UFC/Tennis Pages Non-Functional (INFO) — League Page Audit
+
+**Problem:** EPL page fails to load entirely. UFC shows "Coming Soon" placeholder. Tennis page is empty. These are dead-end navigation paths.
+
+**Action:** Either fix the data pipeline for these sports or remove them from navigation until ready.
+
+**Files:** `backend/app/routes/leagues.py`, nav components
+**Parallel Safety:** Green
+
+---
+
 ## ~~Rage Shake Triage (May 7-8)~~ — ALL 14 ITEMS RESOLVED
 
 All 16 bug reports triaged, 14 new items identified, all resolved May 8 across two parallel sessions. Details in `docs/completed-features.md`.
