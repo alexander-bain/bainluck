@@ -137,14 +137,9 @@ Normalized independent binary market probabilities to sum to ~100% when total ex
 
 Enforce monotonicity on cumulative probabilities before converting to discrete brackets.
 
-### MS-7. Chart Stale Tails in 5/8 Events (WARNING) — Chart Timing Audit
+### ~~MS-7. Chart Stale Tails~~ — FIXED (May 11)
 
-**Problem:** Win probability charts extend 15-30 minutes past actual game end with flat stale data from bookmakers continuing to poll after the final whistle.
-
-**Action:** The `sharedChartDomain` game-end clipping (shipped May 7) should handle this. Verify it's working — if the filter is correct, these may be games where ESPN data ends early and the fallback to `completed_at` is triggering.
-
-**Files:** `frontend/app/events/[id]/page.tsx` (sharedChartDomain), `ios/.../Views/EventDetailView.swift`
-**Parallel Safety:** Yellow
+iOS `gameEndDate` was using `completedAt + 2min` as primary source (30-45 min late). Now prefers ESPN/stat_model data points, matching the parent `sharedChartDomain` logic. Web was already correct.
 
 ### MS-8. MLB Chart Rendering Failure (WARNING) — Chart Timing Audit
 
@@ -155,14 +150,11 @@ Enforce monotonicity on cumulative probabilities before converting to discrete b
 **Files:** `backend/app/routes/events.py` (history endpoint)
 **Parallel Safety:** Yellow
 
-### MS-9. Soccer Missing Half-Time Markers + 3-Way Odds Confusion (WARNING) — Event Detail Audit
+### ~~MS-9. Soccer Missing Half-Time Markers~~ — FIXED (May 11)
 
-**Problem:** Soccer event detail pages lack half-time period markers (no "HT" vertical line). Also, hero shows 2-way probabilities but some sources report 3-way (Home/Draw/Away), causing cross-page mismatches.
+Soccer ESPN data reports minutes ("19'") not named periods. Added halftime detection from ESPN data time gaps: >8 minute gap = halftime break → insert 1H/HT/2H markers.
 
-**Action:** For markers: check if ESPN soccer history includes `period` changes. For odds: decide whether to show 2-way (Home vs Away excluding Draw) or 3-way.
-
-**Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py`
-**Parallel Safety:** Green
+**Remaining:** 3-way odds confusion (Home/Draw/Away) still open — needs design decision on whether to show 2-way or 3-way probabilities for soccer. Lower priority.
 
 ### ~~MS-10. NCAAB 14 Teams at 99%~~ — FIXED (May 11)
 
@@ -177,14 +169,9 @@ Added all-settled filter: skip markets where every outcome is <3% or >97% (post-
 **Files:** `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
-### MS-12. Golf Grid Monotonicity (WARNING) — Grid Audit
+### ~~MS-12. Golf Grid Monotonicity~~ — FIXED (May 11)
 
-**Problem:** Some golfers show Win probability > Top 5 probability — impossible since winning implies finishing in the top 5.
-
-**Action:** Add cross-column monotonicity enforcement in the golf grid builder.
-
-**Files:** `backend/app/routes/golf.py`
-**Parallel Safety:** Green
+Added cross-column enforcement: Win <= Top5 <= Top10 <= Top20 <= MakeCut. Lower placement probs are raised to match win prob if violated.
 
 ### MS-13. Missing Sport Coverage (INFO) — Market Completeness Audit
 
