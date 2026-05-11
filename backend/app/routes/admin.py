@@ -9886,48 +9886,57 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Calibration query: one outcome per market for threshold/ladder markets,
-    # all outcomes for multi-outcome markets (championships, awards).
-    # Resolution inferred from current_probability: 1.0 = winner, 0.0 = loser.
-    # Use strict thresholds (0.99/0.01) to avoid partially-updated markets.
-    # Dedup uses outcome_count to detect threshold markets (>2 outcomes + non-ME,
-    # or single-outcome "Yes"-only markets).
+    # For calibration, determine winners without arbitrary probability thresholds:
+    #
+    # Multi-outcome ME markets (championships, awards): winner = outcome with
+    # highest current_probability within the market. All outcomes participate.
+    #
+    # Binary/threshold markets (1-2 outcome, or non-ME): keep one outcome per
+    # market (closest to 50%). Winner = current_probability > 0.5.
     sql = text("""
-        WITH market_info AS (
-            SELECT fm.id AS market_id, fm.source, fm.mutually_exclusive,
+        WITH market_stats AS (
+            SELECT fm.id AS market_id, fm.source,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                COUNT(*) AS outcome_count
+                fm.mutually_exclusive,
+                COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
+                                  AND fo.opening_probability > 0
+                                  AND fo.opening_probability < 1) AS eligible_count,
+                MAX(fo.current_probability) AS max_current_prob
             FROM futures_markets fm
             JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
-              AND fo.opening_probability IS NOT NULL
             GROUP BY fm.id, fm.source, fm.mutually_exclusive, fm.llm_sport_category
+            HAVING COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
+                                     AND fo.opening_probability > 0
+                                     AND fo.opening_probability < 1) >= 1
         ),
-        resolved_outcomes AS (
+        ranked_outcomes AS (
             SELECT
                 fo.opening_probability,
-                (fo.current_probability >= 0.99) AS resolved_yes,
-                mi.market_id, mi.source, mi.category,
-                mi.outcome_count,
-                -- For threshold markets (>2 outcomes or single-outcome binary):
-                -- keep one per market, closest to 50%
+                fo.current_probability,
+                ms.market_id, ms.source, ms.category,
+                ms.mutually_exclusive, ms.eligible_count,
+                -- For ME markets with 3+ outcomes: winner = highest current_prob
+                (ms.mutually_exclusive = true AND ms.eligible_count >= 3) AS is_multi,
+                -- Winner determination
+                CASE
+                    WHEN ms.mutually_exclusive = true AND ms.eligible_count >= 3
+                        THEN (fo.current_probability = ms.max_current_prob)
+                    ELSE (fo.current_probability > 0.5)
+                END AS is_winner,
+                -- For non-multi markets: keep closest to 50%
                 ROW_NUMBER() OVER (
-                    PARTITION BY mi.market_id
+                    PARTITION BY ms.market_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
-                ) AS rn,
-                -- Is this a "keep all" market? Multi-outcome ME markets
-                -- (championships, awards) with 3+ outcomes
-                (mi.mutually_exclusive = true AND mi.outcome_count >= 3) AS keep_all
+                ) AS rn
             FROM futures_outcomes fo
-            JOIN market_info mi ON mi.market_id = fo.market_id
+            JOIN market_stats ms ON ms.market_id = fo.market_id
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
-              AND (fo.current_probability >= 0.99 OR fo.current_probability <= 0.01)
         ),
         deduped AS (
-            SELECT * FROM resolved_outcomes
-            WHERE keep_all OR rn = 1
+            SELECT * FROM ranked_outcomes WHERE is_multi OR rn = 1
         ),
         bucketed AS (
             SELECT *, LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
@@ -9935,10 +9944,10 @@ async def calibration_data(
         )
         SELECT bucket_idx, source, category,
             COUNT(*) AS n,
-            SUM(CASE WHEN resolved_yes THEN 1 ELSE 0 END) AS winners,
+            SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
             AVG(opening_probability) AS avg_prob,
             SUM(opening_probability::float) AS sum_prob,
-            SUM((opening_probability::float - CASE WHEN resolved_yes THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            SUM((opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM bucketed
         GROUP BY bucket_idx, source, category
         ORDER BY bucket_idx, source, category
