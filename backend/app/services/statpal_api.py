@@ -313,16 +313,32 @@ class StatPalAPIService(BaseAPIClient):
         if not isinstance(data, dict):
             return [data] if data else []
 
-        # v1 season-schedule: {"scores": {"tournament": {"match": [...]}}}
+        # v1 season-schedule: {"scores": {"tournament": {"match": [...], "week": [...]}}}
         # v1 livescores:     {"livescores": {"tournament": {"match": [...]}}}
+        # The "match" array has regular season games. The "week" array has
+        # playoff/postseason games nested as: [{"stage": "Play Offs", "match": [...]}]
         for top_key in ("scores", "livescores"):
             section = data.get(top_key)
             if isinstance(section, dict):
                 tournament = section.get("tournament")
                 if isinstance(tournament, dict):
+                    all_matches = []
+                    # Regular season matches
                     matches = tournament.get("match", [])
                     if isinstance(matches, list):
-                        return matches
+                        all_matches.extend(matches)
+                    # Playoff/postseason matches from "week" array
+                    weeks = tournament.get("week", [])
+                    if isinstance(weeks, list):
+                        for week_entry in weeks:
+                            if isinstance(week_entry, dict):
+                                week_matches = week_entry.get("match", [])
+                                if isinstance(week_matches, list):
+                                    all_matches.extend(week_matches)
+                                elif isinstance(week_matches, dict):
+                                    all_matches.append(week_matches)
+                    if all_matches:
+                        return all_matches
                 # Alternate: {"scores": {"match": [...]}}
                 matches = section.get("match", [])
                 if isinstance(matches, list) and matches:
