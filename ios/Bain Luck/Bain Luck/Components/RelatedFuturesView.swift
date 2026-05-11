@@ -561,55 +561,89 @@ struct RelatedFuturesView: View {
             if !playerOrder.contains(player) { playerOrder.append(player) }
         }
 
-        // Sort players by max probability (most relevant first)
         let sorted = playerOrder
             .map { (name: $0, awards: playerMap[$0]!.sorted { $0.prob > $1.prob }) }
             .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
 
+        let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        let awayShort = awayTeam.split(separator: " ").last.map(String.init) ?? awayTeam
+        let homePlayers = sorted.filter { $0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true }
+        let awayPlayers = sorted.filter { !($0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true) }
+
         let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
-        return LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(sorted.indices, id: \.self) { idx in
-                let player = sorted[idx]
-                let color = teamColorForFuture(player.awards.first!.future, hColor: hColor, aColor: aColor)
-                HStack(spacing: 8) {
-                    PlayerHeadshotView(
-                        player: player.awards.first?.future.matchedPlayer,
-                        name: player.name,
-                        teamColor: color,
-                        size: 28
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(player.name)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                        HStack(spacing: 8) {
-                            ForEach(player.awards.indices, id: \.self) { ai in
-                                let award = player.awards[ai]
-                                HStack(spacing: 3) {
-                                    Text(award.label)
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.secondary)
-                                    Capsule()
-                                        .fill(color.opacity(0.2))
-                                        .frame(width: 30, height: 4)
-                                        .overlay(alignment: .leading) {
-                                            Capsule().fill(color)
-                                                .frame(width: max(2, 30 * award.prob))
-                                        }
-                                    Text("\(Int((award.prob * 100).rounded()))%")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(color)
-                                }
-                            }
-                        }
+        return VStack(alignment: .leading, spacing: 8) {
+            if !awayPlayers.isEmpty {
+                teamAwardHeader(awayTeam, color: aColor)
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(awayPlayers.indices, id: \.self) { idx in
+                        let player = awayPlayers[idx]
+                        let color = aColor
+                        awardPlayerRow(player: player, color: color)
                     }
-                    Spacer()
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
+            }
+            if !homePlayers.isEmpty {
+                teamAwardHeader(homeTeam, color: hColor)
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(homePlayers.indices, id: \.self) { idx in
+                        let player = homePlayers[idx]
+                        let color = hColor
+                        awardPlayerRow(player: player, color: color)
+                    }
+                }
             }
         }
+    }
+
+    private func teamAwardHeader(_ team: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(team)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private func awardPlayerRow(player: (name: String, awards: [(label: String, prob: Double, future: RelatedFuture)]), color: Color) -> some View {
+        HStack(spacing: 8) {
+            PlayerHeadshotView(
+                player: player.awards.first?.future.matchedPlayer,
+                name: player.name,
+                teamColor: color,
+                size: 28
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.name)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    ForEach(player.awards.indices, id: \.self) { ai in
+                        let award = player.awards[ai]
+                        HStack(spacing: 3) {
+                            Text(award.label)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                            Capsule()
+                                .fill(color.opacity(0.2))
+                                .frame(width: 30, height: 4)
+                                .overlay(alignment: .leading) {
+                                    Capsule().fill(color)
+                                        .frame(width: max(2, 30 * award.prob))
+                                }
+                            Text("\(Int((award.prob * 100).rounded()))%")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(color)
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
     }
 
     private func awardTeamGrid(awards: [RelatedFuture], teamColor: Color, teamName: String) -> some View {
