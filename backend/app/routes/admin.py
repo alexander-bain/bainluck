@@ -9819,12 +9819,65 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Use current_probability >= 0.95 as "resolved yes" signal since is_winner
-    # is not populated. Only include outcomes that cleanly resolved (prob near 0 or 1).
+    diag_sql = text("""
+        SELECT
+            fm.id AS market_id, fm.name AS market_name, fm.source,
+            fm.llm_sport_category AS category, fm.mutually_exclusive,
+            fo.name AS outcome_name, fo.opening_probability, fo.current_probability,
+            fo.external_id AS outcome_ext_id
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0.05 AND fo.opening_probability < 0.25
+          AND fo.current_probability >= 0.95
+          AND fm.llm_sport_category IN ('baseball','hockey','golf','entertainment')
+        ORDER BY fm.llm_sport_category, fm.id
+        LIMIT 60
+    """)
+    diag_result = await db.execute(diag_sql)
+    diagnostics = [
+        {
+            "market_id": r.market_id, "market_name": r.market_name,
+            "source": r.source, "category": r.category,
+            "mutually_exclusive": r.mutually_exclusive,
+            "outcome_name": r.outcome_name,
+            "opening_prob": float(r.opening_probability) if r.opening_probability else None,
+            "current_prob": float(r.current_probability) if r.current_probability else None,
+            "outcome_ext_id": r.outcome_ext_id,
+        }
+        for r in diag_result.all()
+    ]
+
+    shape_sql = text("""
+        SELECT
+            fm.llm_sport_category AS category, fm.source,
+            COUNT(DISTINCT fm.id) AS markets, COUNT(*) AS outcomes,
+            ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT fm.id),0), 1) AS avg_outcomes,
+            SUM(CASE WHEN fo.name='Yes' THEN 1 ELSE 0 END) AS yes_outcomes,
+            SUM(CASE WHEN fo.name IN ('No','Under') THEN 1 ELSE 0 END) AS no_outcomes
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved' AND fo.opening_probability IS NOT NULL
+          AND fm.llm_sport_category IN ('baseball','hockey','golf','entertainment',
+                                         'weather','tennis','economics','politics')
+        GROUP BY fm.llm_sport_category, fm.source
+        ORDER BY fm.llm_sport_category, fm.source
+    """)
+    shape_result = await db.execute(shape_sql)
+    shape_info = [
+        {
+            "category": r.category, "source": r.source,
+            "markets": r.markets, "outcomes": r.outcomes,
+            "avg_outcomes": float(r.avg_outcomes),
+            "yes_outcomes": r.yes_outcomes, "no_outcomes": r.no_outcomes,
+        }
+        for r in shape_result.all()
+    ]
+
     sql = text("""
         WITH outcome_data AS (
-            SELECT
-                fo.opening_probability,
+            SELECT fo.opening_probability,
                 (fo.current_probability >= 0.95) AS resolved_yes,
                 fm.source,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category
@@ -9832,26 +9885,20 @@ async def calibration_data(
             JOIN futures_markets fm ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
               AND fo.opening_probability IS NOT NULL
-              AND fo.opening_probability > 0
-              AND fo.opening_probability < 1
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
         bucketed AS (
-            SELECT
-                *,
-                LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
+            SELECT *, LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
             FROM outcome_data
         )
-        SELECT
-            bucket_idx,
-            source,
-            category,
+        SELECT bucket_idx, source, category,
             COUNT(*) AS n,
             SUM(CASE WHEN resolved_yes THEN 1 ELSE 0 END) AS winners,
             AVG(opening_probability) AS avg_prob,
             SUM(opening_probability::float) AS sum_prob,
-            SUM((opening_probability::float - CASE WHEN resolved_yes THEN 1.0 ELSE 0.0 END) ^ 2) AS sum_sq_err
+            SUM((opening_probability::float - CASE WHEN resolved_yes THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM bucketed
         GROUP BY bucket_idx, source, category
         ORDER BY bucket_idx, source, category
@@ -9864,18 +9911,14 @@ async def calibration_data(
         select(func.count()).select_from(FuturesMarket).where(FuturesMarket.status == "resolved")
     )
     total_markets = total_markets_result.scalar()
-
     total_outcomes = sum(r.n for r in rows)
     total_winners = sum(r.winners for r in rows)
 
     return {
         "buckets": [
             {
-                "bucket_idx": r.bucket_idx,
-                "source": r.source,
-                "category": r.category,
-                "n": r.n,
-                "winners": r.winners,
+                "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
+                "n": r.n, "winners": r.winners,
                 "avg_prob": round(float(r.avg_prob), 4),
                 "sum_prob": round(float(r.sum_prob), 4),
                 "sum_sq_err": round(float(r.sum_sq_err), 4),
@@ -9885,6 +9928,8 @@ async def calibration_data(
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
+        "diagnostics": diagnostics,
+        "shape": shape_info,
     }
 
 
