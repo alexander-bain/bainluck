@@ -9771,3 +9771,51 @@ async def get_bug_screenshot(
         raise HTTPException(400, "Invalid screenshot data")
     media_type = "image/png" if image_data[:4] == b"\x89PNG" else "image/jpeg"
     return Response(content=image_data, media_type=media_type)
+
+
+@router.get("/calibration-data")
+async def calibration_data(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return resolved outcomes with opening probabilities for calibration analysis."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        select(
+            FuturesOutcome.opening_probability,
+            FuturesOutcome.is_winner,
+            FuturesMarket.source,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.name.label("market_name"),
+        )
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            FuturesMarket.status == "resolved",
+            FuturesOutcome.opening_probability.isnot(None),
+            FuturesOutcome.opening_probability > 0,
+            FuturesOutcome.opening_probability < 1,
+        )
+        .order_by(FuturesOutcome.opening_probability)
+    )
+    rows = result.all()
+
+    total_markets_result = await db.execute(
+        select(func.count()).select_from(FuturesMarket).where(FuturesMarket.status == "resolved")
+    )
+    total_markets = total_markets_result.scalar()
+
+    return {
+        "rows": [
+            {
+                "opening_probability": float(r.opening_probability),
+                "is_winner": r.is_winner,
+                "source": r.source,
+                "llm_sport_category": r.llm_sport_category,
+                "market_name": r.market_name,
+            }
+            for r in rows
+        ],
+        "total_markets": total_markets,
+    }
