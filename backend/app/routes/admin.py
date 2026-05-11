@@ -9819,11 +9819,67 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
+    # Debug: check how resolution actually works
+    debug_sql = text("""
+        SELECT
+            fm.status,
+            COUNT(DISTINCT fm.id) AS market_count,
+            COUNT(*) AS outcome_count,
+            SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners_by_flag,
+            SUM(CASE WHEN fo.current_probability >= 0.95 THEN 1 ELSE 0 END) AS prob_above_95,
+            SUM(CASE WHEN fo.current_probability <= 0.05 THEN 1 ELSE 0 END) AS prob_below_05,
+            SUM(CASE WHEN fo.current_probability IS NULL THEN 1 ELSE 0 END) AS prob_null
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+        GROUP BY fm.status
+    """)
+    debug_result = await db.execute(debug_sql)
+    debug_rows = debug_result.all()
+    debug_info = [
+        {
+            "status": r.status,
+            "market_count": r.market_count,
+            "outcome_count": r.outcome_count,
+            "winners_by_flag": r.winners_by_flag,
+            "prob_above_95": r.prob_above_95,
+            "prob_below_05": r.prob_below_05,
+            "prob_null": r.prob_null,
+        }
+        for r in debug_rows
+    ]
+
+    # Check a few example resolved markets to understand resolution pattern
+    example_sql = text("""
+        SELECT fm.id, fm.name, fm.source, fm.status,
+               fo.name AS outcome_name, fo.is_winner,
+               fo.opening_probability, fo.current_probability
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+        ORDER BY fm.id
+        LIMIT 30
+    """)
+    example_result = await db.execute(example_sql)
+    examples = [
+        {
+            "market_id": r.id,
+            "market_name": r.name,
+            "source": r.source,
+            "outcome_name": r.outcome_name,
+            "is_winner": r.is_winner,
+            "opening_prob": float(r.opening_probability) if r.opening_probability else None,
+            "current_prob": float(r.current_probability) if r.current_probability else None,
+        }
+        for r in example_result.all()
+    ]
+
     sql = text("""
         WITH outcome_data AS (
             SELECT
                 fo.opening_probability,
                 fo.is_winner,
+                fo.current_probability,
                 fm.source,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category
             FROM futures_outcomes fo
@@ -9845,6 +9901,8 @@ async def calibration_data(
             category,
             COUNT(*) AS n,
             SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
+            SUM(CASE WHEN current_probability >= 0.95 THEN 1 ELSE 0 END) AS resolved_yes,
+            SUM(CASE WHEN current_probability <= 0.05 THEN 1 ELSE 0 END) AS resolved_no,
             AVG(opening_probability) AS avg_prob,
             SUM(opening_probability::float) AS sum_prob,
             SUM((opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) ^ 2) AS sum_sq_err
@@ -9872,6 +9930,8 @@ async def calibration_data(
                 "category": r.category,
                 "n": r.n,
                 "winners": r.winners,
+                "resolved_yes": r.resolved_yes,
+                "resolved_no": r.resolved_no,
                 "avg_prob": round(float(r.avg_prob), 4),
                 "sum_prob": round(float(r.sum_prob), 4),
                 "sum_sq_err": round(float(r.sum_sq_err), 4),
@@ -9881,4 +9941,6 @@ async def calibration_data(
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
+        "debug": debug_info,
+        "examples": examples,
     }
