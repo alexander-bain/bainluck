@@ -5369,6 +5369,48 @@ async def trigger_statpal_schedule_sync(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
+@router.get("/statpal/fixture-debug")
+async def statpal_fixture_debug(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport: str = Query("nba", description="StatPal sport (nba, nhl, mlb)"),
+):
+    """Show raw StatPal fixture data to debug date parsing."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.statpal_api import StatPalAPIService, is_available
+    if not is_available():
+        return {"error": "StatPal API key not configured"}
+
+    svc = StatPalAPIService()
+    fixtures = await svc.get_fixtures(sport)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    none_count = sum(1 for f in fixtures if f.start_time is None)
+    future = [f for f in fixtures if f.start_time and f.start_time > now]
+    past_week = [f for f in fixtures if f.start_time and (now - f.start_time).days < 7 and f.start_time <= now]
+
+    return {
+        "total_fixtures": len(fixtures),
+        "with_start_time": len(fixtures) - none_count,
+        "without_start_time": none_count,
+        "future_fixtures": len(future),
+        "past_week_fixtures": len(past_week),
+        "sample_future": [
+            {"home": f.home_team, "away": f.away_team,
+             "start_time": f.start_time.isoformat() if f.start_time else None,
+             "status": f.status, "fixture_id": f.fixture_id}
+            for f in future[:10]
+        ],
+        "sample_none_time": [
+            {"home": f.home_team, "away": f.away_team,
+             "fixture_id": f.fixture_id, "status": f.status}
+            for f in fixtures[:5] if f.start_time is None
+        ][:5],
+    }
+
+
 @router.post("/statpal/sync-injuries")
 async def trigger_statpal_injury_sync(
     secret: str = Query(..., description="Admin secret for authorization"),
