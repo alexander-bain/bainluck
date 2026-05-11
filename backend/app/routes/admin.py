@@ -9876,25 +9876,30 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Dedup correlated threshold outcomes: for non-mutually-exclusive markets
-    # (player props like "HR 1+, 2+, 3+"), keep only the tightest resolved outcome
-    # per direction per market. For mutually-exclusive markets (championships), keep all.
+    # Two types of markets need different treatment:
+    #
+    # 1. Mutually-exclusive (championships, awards): each outcome is independent,
+    #    keep all of them. Resolution: exactly one winner.
+    #
+    # 2. Non-mutually-exclusive (threshold/ladder markets like "HR 1+, 2+, 3+"):
+    #    outcomes are correlated — if "3+" resolves YES, so do "2+" and "1+".
+    #    For these, keep ONE outcome per market — the one closest to 50%
+    #    (most informative). This gives one calibration data point per market
+    #    rather than N correlated data points that distort the curve.
     sql = text("""
         WITH resolved_outcomes AS (
             SELECT
                 fo.id AS outcome_id,
                 fo.opening_probability,
+                fo.current_probability,
                 (fo.current_probability >= 0.95) AS resolved_yes,
                 fm.id AS market_id,
                 fm.source,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                 fm.mutually_exclusive,
                 ROW_NUMBER() OVER (
-                    PARTITION BY fm.id, (fo.current_probability >= 0.95)
-                    ORDER BY CASE
-                        WHEN fo.current_probability >= 0.95 THEN fo.opening_probability
-                        ELSE -fo.opening_probability
-                    END
+                    PARTITION BY fm.id
+                    ORDER BY ABS(fo.opening_probability - 0.5)
                 ) AS rn
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fo.market_id = fm.id
