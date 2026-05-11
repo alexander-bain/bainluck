@@ -6476,6 +6476,8 @@ async def discover_engagement_summary(
                 "shares": 0,
                 "likes": 0,
                 "group_expands": 0,
+                "context_expands": 0,
+                "context_collapses": 0,
                 "challenge_starts": 0,
                 "challenge_completes": 0,
                 "actions": 0,
@@ -6499,6 +6501,12 @@ async def discover_engagement_summary(
         elif action == "group_expand":
             bucket["group_expands"] += n
             bucket["actions"] += n
+        elif action == "context_expand":
+            bucket["context_expands"] += n
+            bucket["actions"] += n
+        elif action == "context_collapse":
+            bucket["context_collapses"] += n
+            bucket["actions"] += n
         elif action == "challenge_start":
             bucket["challenge_starts"] += n
             bucket["actions"] += n
@@ -6516,6 +6524,8 @@ async def discover_engagement_summary(
         "shares": 0,
         "likes": 0,
         "group_expands": 0,
+        "context_expands": 0,
+        "context_collapses": 0,
         "challenge_starts": 0,
         "challenge_completes": 0,
         "actions": 0,
@@ -6530,6 +6540,12 @@ async def discover_engagement_summary(
                 "open_rate": round(bucket["opens"] / impressions, 4) if impressions else 0,
                 "dismiss_rate": round(bucket["dismisses"] / impressions, 4) if impressions else 0,
                 "share_rate": round(bucket["shares"] / impressions, 4) if impressions else 0,
+                "context_expand_rate": round(bucket["context_expands"] / impressions, 4)
+                if impressions
+                else 0,
+                "challenge_completion_rate": round(bucket["challenge_completes"] / bucket["challenge_starts"], 4)
+                if bucket["challenge_starts"]
+                else 0,
             }
         )
 
@@ -6552,6 +6568,21 @@ async def discover_engagement_summary(
                     "value": round(row["open_rate"] + row["share_rate"], 4),
                     "impressions": impressions,
                     "recommendation": "Consider a small ranking lift or stronger first-page representation.",
+                }
+            )
+        if row["context_expand_rate"] >= 0.08:
+            opportunities.append(
+                {
+                    "kind": "promote",
+                    "priority": round(row["context_expand_rate"] * 120, 2),
+                    "label": label,
+                    "surface": row["surface"],
+                    "category": row["category"],
+                    "item_type": row["item_type"],
+                    "metric": "context_expand_rate",
+                    "value": row["context_expand_rate"],
+                    "impressions": impressions,
+                    "recommendation": "Users are asking for more context here; consider stronger snippet wording or ranking lift.",
                 }
             )
         if row["dismiss_rate"] >= 0.12:
@@ -6610,6 +6641,12 @@ async def discover_engagement_summary(
             "open_rate": round(totals["opens"] / totals["impressions"], 4) if totals["impressions"] else 0,
             "dismiss_rate": round(totals["dismisses"] / totals["impressions"], 4) if totals["impressions"] else 0,
             "share_rate": round(totals["shares"] / totals["impressions"], 4) if totals["impressions"] else 0,
+            "context_expand_rate": round(totals["context_expands"] / totals["impressions"], 4)
+            if totals["impressions"]
+            else 0,
+            "challenge_completion_rate": round(totals["challenge_completes"] / totals["challenge_starts"], 4)
+            if totals["challenge_starts"]
+            else 0,
         },
         "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
         "opportunities": sorted(opportunities, key=lambda r: r["priority"], reverse=True)[:20],

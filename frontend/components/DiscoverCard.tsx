@@ -780,7 +780,19 @@ function generateThreshold(actualProb: number): number {
   return Math.round(threshold * 100);
 }
 
-export function GuessCard({ item, onGuessCompleted }: { item: FeedItem; onGuessCompleted?: () => void }) {
+export function GuessCard({
+  item,
+  onGuessCompleted,
+  showNextButton = true,
+  nextButtonLabel = "Next question →",
+  onNextQuestion,
+}: {
+  item: FeedItem;
+  onGuessCompleted?: () => void;
+  showNextButton?: boolean;
+  nextButtonLabel?: string;
+  onNextQuestion?: () => void;
+}) {
   const isEvent = item.type === "event";
   const futuresData = isEvent ? null : (item.data as FeedFuturesData);
   const eventData = isEvent ? (item.data as FeedEventData) : null;
@@ -912,22 +924,28 @@ export function GuessCard({ item, onGuessCompleted }: { item: FeedItem; onGuessC
                 Share result
               </button>
             </div>
-            <button
-              onClick={() => {
-                const allGuessCards = document.querySelectorAll("[data-guess-card]");
-                const currentCard = document.querySelector(`[data-guess-card][data-market-id="${itemId}"]`);
-                let nextCard: Element | null = null;
-                let foundCurrent = false;
-                for (const card of allGuessCards) {
-                  if (card === currentCard) { foundCurrent = true; continue; }
-                  if (foundCurrent) { nextCard = card; break; }
-                }
-                if (nextCard) nextCard.scrollIntoView({ behavior: "smooth", block: "center" });
-              }}
-              className="w-full py-2.5 rounded-xl bg-amber-500/10 text-amber-700 font-bold text-sm hover:bg-amber-500/20 transition-colors border border-amber-500/20"
-            >
-              Next question →
-            </button>
+            {showNextButton && (
+              <button
+                onClick={() => {
+                  if (onNextQuestion) {
+                    onNextQuestion();
+                    return;
+                  }
+                  const allGuessCards = document.querySelectorAll("[data-guess-card]");
+                  const currentCard = document.querySelector(`[data-guess-card][data-market-id="${itemId}"]`);
+                  let nextCard: Element | null = null;
+                  let foundCurrent = false;
+                  for (const card of allGuessCards) {
+                    if (card === currentCard) { foundCurrent = true; continue; }
+                    if (foundCurrent) { nextCard = card; break; }
+                  }
+                  if (nextCard) nextCard.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+                className="w-full py-2.5 rounded-xl bg-amber-500/10 text-amber-700 font-bold text-sm hover:bg-amber-500/20 transition-colors border border-amber-500/20"
+              >
+                {nextButtonLabel}
+              </button>
+            )}
           </div>
         )}
       </div>

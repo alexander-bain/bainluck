@@ -292,16 +292,19 @@ function ChallengeModal({
   completed,
   onClose,
   onGuessCompleted,
+  onNextQuestion,
 }: {
   items: FeedItem[];
   currentIndex: number;
   completed: boolean;
   onClose: () => void;
   onGuessCompleted: () => void;
+  onNextQuestion: () => void;
 }) {
   const goal = Math.min(5, Math.max(items.length, 1));
   const progress = completed ? 1 : currentIndex / goal;
   const currentItem = items[currentIndex];
+  const isLastQuestion = currentIndex >= goal - 1;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
@@ -352,6 +355,8 @@ function ChallengeModal({
               key={getItemId(currentItem)}
               item={currentItem}
               onGuessCompleted={onGuessCompleted}
+              nextButtonLabel={isLastQuestion ? "Finish challenge" : "Next question"}
+              onNextQuestion={onNextQuestion}
             />
           ) : (
             <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
@@ -532,32 +537,35 @@ export default function DiscoverPage() {
 
   const handleChallengeGuess = useCallback(() => {
     incrementDailyGuesses();
-    window.setTimeout(() => {
-      setChallengeIndex((current) => {
-        const next = current + 1;
-        if (next >= challengeItems.length || next >= 5) {
-          setChallengeComplete(true);
-          trackEvent("feed_card_action", {
-            action: "challenge_complete",
-            content_type: "grid",
-            item_id: "daily_challenge",
-            category: "challenge",
-            item_name: "Today’s Challenge",
-            surface: "discover",
-          });
-          sendDiscoverInteraction({
-            content_type: "grid",
-            item_id: "daily_challenge",
-            category: "challenge",
-            item_name: "Today’s Challenge",
-            score: 0,
-          }, "challenge_complete", undefined, "challenge");
-          return current;
-        }
-        return next;
-      });
-    }, 1100);
-  }, [challengeItems.length, incrementDailyGuesses]);
+  }, [incrementDailyGuesses]);
+
+  const completeChallenge = useCallback(() => {
+    setChallengeComplete(true);
+    trackEvent("feed_card_action", {
+      action: "challenge_complete",
+      content_type: "grid",
+      item_id: "daily_challenge",
+      category: "challenge",
+      item_name: "Today’s Challenge",
+      surface: "discover",
+    });
+    sendDiscoverInteraction({
+      content_type: "grid",
+      item_id: "daily_challenge",
+      category: "challenge",
+      item_name: "Today’s Challenge",
+      score: 0,
+    }, "challenge_complete", undefined, "challenge");
+  }, []);
+
+  const handleChallengeNext = useCallback(() => {
+    const next = challengeIndex + 1;
+    if (next >= challengeItems.length || next >= 5) {
+      completeChallenge();
+      return;
+    }
+    setChallengeIndex(next);
+  }, [challengeIndex, challengeItems.length, completeChallenge]);
 
   // Load more from API when client-side items run out
   useEffect(() => {
@@ -641,6 +649,7 @@ export default function DiscoverPage() {
           completed={challengeComplete}
           onClose={() => setChallengeOpen(false)}
           onGuessCompleted={handleChallengeGuess}
+          onNextQuestion={handleChallengeNext}
         />
       )}
 

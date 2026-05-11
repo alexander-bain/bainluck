@@ -257,10 +257,16 @@ interface DiscoverEngagementGroup {
   shares: number;
   likes: number;
   group_expands: number;
+  context_expands: number;
+  context_collapses: number;
+  challenge_starts: number;
+  challenge_completes: number;
   actions: number;
   open_rate: number;
   dismiss_rate: number;
   share_rate: number;
+  context_expand_rate: number;
+  challenge_completion_rate: number;
 }
 
 interface DiscoverEngagementItem {
@@ -294,10 +300,16 @@ interface DiscoverEngagementResponse {
     shares: number;
     likes: number;
     group_expands: number;
+    context_expands: number;
+    context_collapses: number;
+    challenge_starts: number;
+    challenge_completes: number;
     actions: number;
     open_rate: number;
     dismiss_rate: number;
     share_rate: number;
+    context_expand_rate: number;
+    challenge_completion_rate: number;
   };
   groups: DiscoverEngagementGroup[];
   opportunities: DiscoverEngagementOpportunity[];
@@ -594,6 +606,10 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
     .filter((row) => row.impressions >= 5)
     .sort((a, b) => b.share_rate - a.share_rate)
     .slice(0, 5);
+  const contextSignals = data.groups
+    .filter((row) => row.impressions >= 5)
+    .sort((a, b) => (b.context_expand_rate ?? 0) - (a.context_expand_rate ?? 0))
+    .slice(0, 5);
 
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-4">
@@ -624,6 +640,24 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
           <div className="text-xs text-text-muted">Share rate</div>
           <div className="text-lg font-semibold text-text-primary">{rateText(data.totals.share_rate)}</div>
         </div>
+        <div>
+          <div className="text-xs text-text-muted">Context expands</div>
+          <div className="text-lg font-semibold text-text-primary">{(data.totals.context_expands ?? 0).toLocaleString()}</div>
+          <div className="text-[11px] text-text-muted">{rateText(data.totals.context_expand_rate ?? 0)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Challenge starts</div>
+          <div className="text-lg font-semibold text-text-primary">{(data.totals.challenge_starts ?? 0).toLocaleString()}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Challenge completes</div>
+          <div className="text-lg font-semibold text-text-primary">{(data.totals.challenge_completes ?? 0).toLocaleString()}</div>
+          <div className="text-[11px] text-text-muted">{rateText(data.totals.challenge_completion_rate ?? 0)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Actions</div>
+          <div className="text-lg font-semibold text-text-primary">{data.totals.actions.toLocaleString()}</div>
+        </div>
       </div>
 
       {data.totals.impressions === 0 ? (
@@ -631,10 +665,11 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
           No first-party engagement captured yet. Open `/discover` on web or native after this deploy to start populating this panel.
         </div>
       ) : (
-        <div className="grid lg:grid-cols-3 gap-3">
+        <div className="grid lg:grid-cols-4 gap-3">
           <EngagementList title="Strong Opens" rows={strongestOpens} metric="open_rate" />
           <EngagementList title="High Dismiss" rows={highDismiss} metric="dismiss_rate" warn />
           <EngagementList title="Share Signals" rows={shareSignals} metric="share_rate" />
+          <EngagementList title="Context Expands" rows={contextSignals} metric="context_expand_rate" />
         </div>
       )}
 
@@ -698,7 +733,7 @@ function EngagementList({
 }: {
   title: string;
   rows: DiscoverEngagementGroup[];
-  metric: "open_rate" | "dismiss_rate" | "share_rate";
+  metric: "open_rate" | "dismiss_rate" | "share_rate" | "context_expand_rate";
   warn?: boolean;
 }) {
   return (
@@ -719,7 +754,7 @@ function EngagementList({
                 </span>
               </div>
               <div className="text-[11px] text-text-muted">
-                {row.impressions} impressions, {row.opens} opens, {row.dismisses} dismisses, {row.shares} shares
+                {row.impressions} impressions, {row.opens} opens, {row.dismisses} dismisses, {row.shares} shares, {row.context_expands ?? 0} expands
               </div>
             </div>
           ))}

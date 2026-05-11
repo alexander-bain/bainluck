@@ -79,7 +79,7 @@ Related admin surfaces:
 - `/admin/discover-quality` for feed audit, hook coverage, timing, ground-truth traces, engagement, and opportunity signals.
 - `/api/feed?debug=true&secret=...` for current feed stage timings and quality metadata.
 - `/api/admin/discover-quality/trace/{market_id}` for per-market ranking/quality trace.
-- `/api/admin/discover-engagement` for first-party impression/action rollups, including context expansion and Today’s Challenge starts/completions.
+- `/api/admin/discover-engagement` for first-party impression/action rollups, including context expansion counts/rates and Today’s Challenge starts/completions/completion rate.
 
 ## Adding New Checks
 
