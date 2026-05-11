@@ -1,4 +1,8 @@
-from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+from app.utils.feed_reasons import (
+    generate_futures_context_summary,
+    generate_futures_headline,
+    generate_futures_reason,
+)
 
 
 def test_futures_headline_names_major_mover():
@@ -50,3 +54,25 @@ def test_futures_headline_formats_binary_side_naturally():
     )
 
     assert headline == "No side up 30.0 points from opening"
+
+
+def test_futures_context_summary_expands_generic_resolving_copy():
+    summary = generate_futures_context_summary(
+        headline="Resolving this month",
+        highlight_reasons=["resolving_soon_30d"],
+        leader_name="No",
+        leader_probability=0.61,
+    )
+
+    assert summary == "No leads at 61%; resolves this month"
+
+
+def test_futures_context_summary_combines_signal_and_leader():
+    summary = generate_futures_context_summary(
+        headline="Yes side up 10.2 points today",
+        highlight_reasons=["moderate_movement_24h"],
+        leader_name="No",
+        leader_probability=0.88,
+    )
+
+    assert summary == "Yes side up 10.2 points today; No leads at 88%"

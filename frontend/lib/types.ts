@@ -984,6 +984,7 @@ export interface FeedItem {
   score: number;
   reason: string;
   headline: string | null;
+  context_summary?: string | null;
   data: FeedEventData | FeedFuturesData | FeedTournamentData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
@@ -1725,4 +1726,3 @@ export interface SportHierarchy {
 export interface SportHierarchyListResponse {
   sports: SportHierarchy[];
 }
-

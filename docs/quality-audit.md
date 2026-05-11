@@ -73,6 +73,7 @@ Targets:
 - `fun-market-presence@10=true`
 - `category-spread@20>=6`, max category count `<=5`
 - `snippet-issues@20` should trend down; current checks flag overlong snippets, title repetition, generic resolution copy, and context without concrete signals.
+- Discover cards should use top-level `context_summary` for visible copy and reserve full `hook_description` text for expansion.
 
 Related admin surfaces:
 - `/admin/discover-quality` for feed audit, hook coverage, timing, ground-truth traces, engagement, and opportunity signals.

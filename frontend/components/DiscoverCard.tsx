@@ -144,11 +144,20 @@ function isTrending(item: FeedItem): boolean {
 }
 
 function feedContextSnippet(item: FeedItem): string {
+  if (item.context_summary) return item.context_summary;
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
-    return data.hook_description || item.headline || item.reason || "";
+    return item.headline || item.reason || data.hook_description || "";
   }
   return item.headline || item.reason || "";
+}
+
+function feedExpandedContext(item: FeedItem): string {
+  if (item.type === "futures") {
+    const data = item.data as FeedFuturesData;
+    return data.hook_description || item.reason || feedContextSnippet(item);
+  }
+  return item.reason || feedContextSnippet(item);
 }
 
 const CONTEXT_PREVIEW_CHARS = 145;
@@ -163,15 +172,18 @@ function sentencePreview(text: string, maxChars = CONTEXT_PREVIEW_CHARS): string
   return `${cut.slice(0, wordBoundary > 80 ? wordBoundary : maxChars).trim()}...`;
 }
 
-function ExpandableContextText({ text, className, onExpand, onCollapse }: {
+function ExpandableContextText({ text, expandedText, className, onExpand, onCollapse }: {
   text: string;
+  expandedText?: string;
   className?: string;
   onExpand?: () => void;
   onCollapse?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const compact = sentencePreview(text);
-  const canExpand = compact !== text.trim().replace(/\s+/g, " ");
+  const normalizedText = text.trim().replace(/\s+/g, " ");
+  const fullText = (expandedText || text).trim().replace(/\s+/g, " ");
+  const compact = sentencePreview(normalizedText);
+  const canExpand = fullText !== normalizedText || compact !== normalizedText;
 
   const toggle = () => {
     const next = !expanded;
@@ -182,7 +194,7 @@ function ExpandableContextText({ text, className, onExpand, onCollapse }: {
 
   return (
     <p className={className}>
-      {expanded || !canExpand ? text : compact}
+      {expanded || !canExpand ? fullText : compact}
       {canExpand && (
         <button
           type="button"
@@ -505,7 +517,8 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
   const sportCat = data.sport?.split("_")[0] || "sports";
 
   const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
-  const contextSnippet = item.headline || item.reason || headline;
+  const contextSnippet = feedContextSnippet(item) || headline;
+  const expandedContext = feedExpandedContext(item);
   const timeLabel = isLive ? (data.espn?.period || "Live") : isDone ? "Final" : (() => {
     const d = new Date(data.commence_time);
     const diffH = (d.getTime() - Date.now()) / 36e5;
@@ -575,6 +588,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
         {contextSnippet && (
           <ExpandableContextText
             text={contextSnippet}
+            expandedText={expandedContext}
             className="text-sm text-text-secondary mt-2"
             onExpand={onContextExpand}
             onCollapse={onContextCollapse}
@@ -619,6 +633,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
   const leader = data.top_outcomes?.[0];
   const prob = leader?.probability ?? 0;
   const contextSnippet = feedContextSnippet(item);
+  const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
@@ -660,6 +675,7 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
         {contextSnippet && (
           <ExpandableContextText
             text={contextSnippet}
+            expandedText={expandedContext}
             className="text-sm text-text-secondary mt-1 leading-relaxed"
             onExpand={onContextExpand}
             onCollapse={onContextCollapse}

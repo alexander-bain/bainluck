@@ -62,9 +62,10 @@ def _normalized_words(text: str) -> list[str]:
 def _display_context_text(item: dict[str, Any]) -> str:
     data = item.get("data") or {}
     return (
-        data.get("hook_description")
+        item.get("context_summary")
         or item.get("headline")
         or item.get("reason")
+        or data.get("hook_description")
         or ""
     ).strip()
 

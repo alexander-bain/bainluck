@@ -49,7 +49,12 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
 )
-from app.utils.feed_reasons import generate_event_reason, generate_futures_headline, generate_futures_reason
+from app.utils.feed_reasons import (
+    generate_event_reason,
+    generate_futures_context_summary,
+    generate_futures_headline,
+    generate_futures_reason,
+)
 from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_items
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.name_normalization import names_match as _team_name_matches
@@ -965,6 +970,13 @@ def _score_market_trace(
         leader_probability=leader_prob,
         source_count=source_count,
     ) or highlight_result.primary_reason
+    context_summary = generate_futures_context_summary(
+        headline=headline,
+        highlight_reasons=highlight_result.reasons,
+        leader_name=leader_name,
+        leader_probability=leader_prob,
+        source_count=source_count,
+    )
 
     quality = classify_market_quality(
         market_name=market.name,
@@ -1007,6 +1019,7 @@ def _score_market_trace(
         },
         "highlight": {
             "headline": headline,
+            "context_summary": context_summary,
             "reason": generate_futures_reason(
                 market_name=market.name,
                 highlight_reasons=highlight_result.reasons,
@@ -2135,6 +2148,13 @@ async def _score_futures(
             leader_probability=leader_prob,
             source_count=source_count,
         ) or highlight_result.primary_reason
+        context_summary = generate_futures_context_summary(
+            headline=headline,
+            highlight_reasons=highlight_result.reasons,
+            leader_name=leader_name,
+            leader_probability=leader_prob,
+            source_count=source_count,
+        )
 
         quality = classify_market_quality(
             market_name=market.name,
@@ -2302,6 +2322,7 @@ async def _score_futures(
             "score": personalized_score,
             "reason": reason,
             "headline": headline,
+            "context_summary": context_summary,
             "data": futures_data,
             "_sort_time": sort_time,
             "_quality_class": quality.quality_class,

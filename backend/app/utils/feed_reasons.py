@@ -278,3 +278,47 @@ def generate_futures_headline(
         return f"{leader_name} leads at {round(leader_probability * 100)}%"
 
     return ""
+
+
+def generate_futures_context_summary(
+    *,
+    headline: Optional[str],
+    highlight_reasons: list[str],
+    leader_name: Optional[str] = None,
+    leader_probability: Optional[float] = None,
+    source_count: int = 1,
+) -> str:
+    """Generate short visible context copy for Discover cards.
+
+    This is intentionally tighter than the full reason and avoids using long
+    LLM hook paragraphs as the on-card snippet. Full hooks remain available for
+    "See more" expansion.
+    """
+    headline = (headline or "").strip()
+    reasons = set(highlight_reasons)
+
+    def leader_clause() -> str:
+        if leader_name and leader_probability is not None:
+            return f"{leader_name} leads at {round(leader_probability * 100)}%"
+        return ""
+
+    leader = leader_clause()
+
+    if "resolving_soon_7d" in reasons:
+        return f"{leader}; resolves this week" if leader else "Resolves this week"
+    if "resolving_soon_30d" in reasons and headline == "Resolving this month":
+        return f"{leader}; resolves this month" if leader else "Resolves this month"
+    if "multi_source" in reasons and headline.startswith("Tracked by"):
+        if leader:
+            return f"{leader} across {source_count} sources"
+        return headline
+
+    if headline:
+        if leader and len(headline) < 80:
+            lower_headline = headline.lower()
+            lower_leader = leader_name.lower() if leader_name else ""
+            if lower_leader and lower_leader not in lower_headline:
+                return f"{headline}; {leader}"
+        return headline
+
+    return leader
