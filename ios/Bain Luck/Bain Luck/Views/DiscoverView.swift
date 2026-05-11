@@ -75,6 +75,7 @@ struct DiscoverView: View {
     @State private var resolutions: [Resolution] = []
     @State private var interactionProfile = NativeDiscoverProfile.load()
     @State private var seenImpressions: Set<String> = []
+    @State private var navigationPath = NavigationPath()
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -284,6 +285,7 @@ struct DiscoverView: View {
     }
 
     var body: some View {
+        NavigationStack(path: $navigationPath) {
         ScrollView {
             VStack(spacing: 0) {
                 // Category chips
@@ -324,6 +326,29 @@ struct DiscoverView: View {
                     .padding(.horizontal)
                     .padding(.bottom, 8)
 
+                if vm.loading && vm.items.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading predictions…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 60)
+                } else if let error = vm.error {
+                    VStack(spacing: 12) {
+                        Image(systemName: "wifi.slash")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 60)
+                }
+
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageGrouped = Array(groupedItems.prefix(visibleCount))
                 let columns = [GridItem(.adaptive(minimum: 340), spacing: 16)]
@@ -345,7 +370,7 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeEventDiscoverCard(event: e, feedContext: item.reason ?? item.headline, onOpen: {
+                                            NativeEventDiscoverCard(event: e, feedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
@@ -355,7 +380,7 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeFuturesDiscoverCard(data: f, feedContext: item.reason ?? item.headline, onOpen: {
+                                            NativeFuturesDiscoverCard(data: f, feedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             })
                                         }
@@ -429,6 +454,8 @@ struct DiscoverView: View {
         .sheet(isPresented: $showOnboarding) {
             OnboardingView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+        }
+        .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
     }
 
@@ -570,6 +597,7 @@ struct DiscoverView: View {
 final class DiscoverViewModel: ObservableObject {
     @Published var items: [FeedItem] = []
     @Published var loading = false
+    @Published var error: String?
 
     private static let sportsCategories: Set<String> = [
         "basketball", "football", "baseball", "hockey", "soccer",
@@ -579,10 +607,15 @@ final class DiscoverViewModel: ObservableObject {
     @MainActor
     func load() async {
         loading = true
+        error = nil
         do {
             let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15)
             items = Self.interleave(response.items)
-        } catch { }
+        } catch {
+            if items.isEmpty {
+                self.error = "Couldn't load Discover. Pull to retry."
+            }
+        }
         loading = false
     }
 
@@ -615,6 +648,7 @@ final class DiscoverViewModel: ObservableObject {
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
     let feedContext: String?
+    @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
 
     private var awayColor: Color {
@@ -653,72 +687,73 @@ private struct NativeEventDiscoverCard: View {
     }
 
     var body: some View {
-        NavigationLink(value: Route.eventDetail(id: event.id)) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    HStack(spacing: 6) {
-                        if event.status == "live" {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 7, height: 7)
-                        }
-                        Text(eyebrow)
-                            .font(.system(size: 10, weight: .heavy))
-                            .tracking(0.8)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                HStack(spacing: 6) {
+                    if event.status == "live" {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 7, height: 7)
                     }
+                    Text(eyebrow)
+                        .font(.system(size: 10, weight: .heavy))
+                        .tracking(0.8)
+                }
+                .foregroundStyle(event.status == "live" ? .red : .secondary)
+
+                Spacer()
+
+                Text(statusText)
+                    .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(event.status == "live" ? .red : .secondary)
-
-                    Spacer()
-
-                    Text(statusText)
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(event.status == "live" ? .red : .secondary)
-                }
-
-                HStack(alignment: .center, spacing: 10) {
-                    teamColumn(
-                        name: event.awayTeam,
-                        logo: event.awayTeamData?.logoSmall,
-                        color: awayColor,
-                        probability: event.currentOdds?.awayProbability,
-                        score: event.awayScore,
-                        alignment: .leading
-                    )
-
-                    Text("vs")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28)
-
-                    teamColumn(
-                        name: event.homeTeam,
-                        logo: event.homeTeamData?.logoSmall,
-                        color: homeColor,
-                        probability: event.currentOdds?.homeProbability,
-                        score: event.homeScore,
-                        alignment: .trailing
-                    )
-                }
-
-                if let hp = event.currentOdds?.homeProbability, let ap = event.currentOdds?.awayProbability {
-                    probabilityBar(awayProbability: ap, homeProbability: hp)
-                }
-
-                if let contextText {
-                    Text(contextText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
             }
-            .padding(14)
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
+
+            HStack(alignment: .center, spacing: 10) {
+                teamColumn(
+                    name: event.awayTeam,
+                    logo: event.awayTeamData?.logoSmall,
+                    color: awayColor,
+                    probability: event.currentOdds?.awayProbability,
+                    score: event.awayScore,
+                    alignment: .leading
+                )
+
+                Text("vs")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28)
+
+                teamColumn(
+                    name: event.homeTeam,
+                    logo: event.homeTeamData?.logoSmall,
+                    color: homeColor,
+                    probability: event.currentOdds?.homeProbability,
+                    score: event.homeScore,
+                    alignment: .trailing
+                )
+            }
+
+            if let hp = event.currentOdds?.homeProbability, let ap = event.currentOdds?.awayProbability {
+                probabilityBar(awayProbability: ap, homeProbability: hp)
+            }
+
+            if let contextText {
+                Text(contextText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture().onEnded { onOpen?() })
+        .padding(14)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            navigationPath.append(Route.eventDetail(id: event.id))
+            onOpen?()
+        }
     }
 
     private func teamColumn(
@@ -814,6 +849,7 @@ private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blu
 private struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
     let feedContext: String?
+    @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
 
     private var gradient: (Color, Color) {
@@ -839,110 +875,111 @@ private struct NativeFuturesDiscoverCard: View {
     }
 
     var body: some View {
-        NavigationLink(value: Route.futuresDetail(id: data.id)) {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottomLeading) {
-                    heroBackground
-                        .frame(height: 170)
-                        .clipped()
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                heroBackground
+                    .frame(height: 170)
+                    .clipped()
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text(categoryLabel)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(categoryLabel)
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.24), in: Capsule())
+
+                        Spacer()
+
+                        if isTrending(data) {
+                            Label("Trending", systemImage: "flame.fill")
                                 .font(.system(size: 9, weight: .heavy))
-                                .tracking(0.8)
-                                .foregroundStyle(.white.opacity(0.78))
+                                .foregroundStyle(.orange)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(.black.opacity(0.24), in: Capsule())
-
-                            Spacer()
-
-                            if isTrending(data) {
-                                Label("Trending", systemImage: "flame.fill")
-                                    .font(.system(size: 9, weight: .heavy))
-                                    .foregroundStyle(.orange)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(.black.opacity(0.24), in: Capsule())
-                            }
-                        }
-
-                        Spacer(minLength: 16)
-
-                        if let leader {
-                            HStack(alignment: .bottom, spacing: 10) {
-                                Text("\(Int((leaderProbability * 100).rounded()))%")
-                                    .font(.system(size: 52, weight: .black).monospacedDigit())
-                                    .minimumScaleFactor(0.76)
-                                    .foregroundStyle(.white)
-                                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-
-                                MovementBadge(movement: leader.movement)
-                                    .padding(.bottom, 8)
-                            }
-
-                            Text(leader.name)
-                                .font(.headline.weight(.bold))
-                                .foregroundStyle(.white.opacity(0.92))
-                                .lineLimit(2)
                         }
                     }
-                    .padding(14)
-                }
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(data.name)
-                        .font(.headline.weight(.bold))
-                        .lineLimit(2)
+                    Spacer(minLength: 16)
 
-                    if let contextText {
-                        Text(contextText)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    if let leader {
+                        HStack(alignment: .bottom, spacing: 10) {
+                            Text("\(Int((leaderProbability * 100).rounded()))%")
+                                .font(.system(size: 52, weight: .black).monospacedDigit())
+                                .minimumScaleFactor(0.76)
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+
+                            MovementBadge(movement: leader.movement)
+                                .padding(.bottom, 8)
+                        }
+
+                        Text(leader.name)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(2)
-                    }
-
-                    if let outcomes = data.topOutcomes, outcomes.count > 1 {
-                        VStack(spacing: 7) {
-                            ForEach(Array(outcomes.prefix(3).enumerated()), id: \.element.id) { idx, outcome in
-                                outcomeRow(outcome, isLeader: idx == 0)
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        if let src = data.source {
-                            Text(src.uppercased())
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(.blue)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.blue.opacity(0.10), in: Capsule())
-                        }
-
-                        if let count = data.sourceCount, count > 1 {
-                            Text("\(count) SOURCES")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.secondary.opacity(0.10), in: Capsule())
-                        }
-
-                        Spacer()
                     }
                 }
                 .padding(14)
             }
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(data.name)
+                    .font(.headline.weight(.bold))
+                    .lineLimit(2)
+
+                if let contextText {
+                    Text(contextText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                if let outcomes = data.topOutcomes, outcomes.count > 1 {
+                    VStack(spacing: 7) {
+                        ForEach(Array(outcomes.prefix(3).enumerated()), id: \.element.id) { idx, outcome in
+                            outcomeRow(outcome, isLeader: idx == 0)
+                        }
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    if let src = data.source {
+                        Text(src.uppercased())
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.10), in: Capsule())
+                    }
+
+                    if let count = data.sourceCount, count > 1 {
+                        Text("\(count) SOURCES")
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.10), in: Capsule())
+                    }
+
+                    Spacer()
+                }
+            }
+            .padding(14)
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture().onEnded { onOpen?() })
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            navigationPath.append(Route.futuresDetail(id: data.id))
+            onOpen?()
+        }
     }
 
     @ViewBuilder
@@ -1216,21 +1253,20 @@ private struct NativeGuessCard: View {
         displayPct = 0
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
         withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
+        onGuessCompleted?()
         Task {
-            do {
-                let request = PredictionRequest(
-                    marketId: data.id,
-                    guess: g,
-                    threshold: threshold,
-                    actualProbability: leader?.probability ?? 0,
-                    correct: isCorrect,
-                    category: data.llmSportCategory
-                )
-                _ = try await APIClient.shared.submitPrediction(request)
-                let stats = try await APIClient.shared.fetchPredictionStats()
+            let request = PredictionRequest(
+                marketId: data.id,
+                guess: g,
+                threshold: threshold,
+                actualProbability: leader?.probability ?? 0,
+                correct: isCorrect,
+                category: data.llmSportCategory
+            )
+            _ = try? await APIClient.shared.submitPrediction(request)
+            if let stats = try? await APIClient.shared.fetchPredictionStats() {
                 streak = stats.currentStreak
-                onGuessCompleted?()
-            } catch { }
+            }
         }
     }
 
@@ -1434,21 +1470,20 @@ private struct NativeEventGuessCard: View {
     private func submitGuess(_ g: String) {
         guess = g
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
+        onGuessCompleted?()
         Task {
-            do {
-                let request = PredictionRequest(
-                    marketId: event.id,
-                    guess: g,
-                    threshold: threshold,
-                    actualProbability: event.currentOdds?.homeProbability ?? 0.5,
-                    correct: isCorrect,
-                    category: event.sport?.split(separator: "_").first.map(String.init)
-                )
-                _ = try await APIClient.shared.submitPrediction(request)
-                let stats = try await APIClient.shared.fetchPredictionStats()
+            let request = PredictionRequest(
+                marketId: event.id,
+                guess: g,
+                threshold: threshold,
+                actualProbability: event.currentOdds?.homeProbability ?? 0.5,
+                correct: isCorrect,
+                category: event.sport?.split(separator: "_").first.map(String.init)
+            )
+            _ = try? await APIClient.shared.submitPrediction(request)
+            if let stats = try? await APIClient.shared.fetchPredictionStats() {
                 streak = stats.currentStreak
-                onGuessCompleted?()
-            } catch { }
+            }
         }
     }
 

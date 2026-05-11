@@ -24,20 +24,7 @@ struct MainTabView: View {
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
 
-            NavigationStack {
-                DiscoverView()
-                    .navigationDestination(for: Route.self) { route in
-                        switch route {
-                        case .eventDetail(let id): EventDetailView(eventId: id)
-                        case .futuresDetail(let id): FuturesDetailView(marketId: id)
-                        case .predictionStats: PredictionStatsView()
-                        case .weather: WeatherView()
-                        case .economics: EconomicsView()
-                        case .about: Text("About")
-                        default: EmptyView()
-                        }
-                    }
-            }
+            DiscoverView()
             .tabItem {
                 Label("Discover", systemImage: "safari")
             }

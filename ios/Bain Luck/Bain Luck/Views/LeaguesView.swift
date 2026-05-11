@@ -68,44 +68,7 @@ struct LeaguesView: View {
             .listStyle(.insetGrouped)
             #endif
             .navigationTitle("Leagues")
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .leagueGrid(let slug):
-                    LeagueGridView(slug: slug)
-                case .eventDetail(let id):
-                    EventDetailView(eventId: id)
-                case .futuresDetail(let id):
-                    FuturesDetailView(marketId: id)
-                case .eiRankings:
-                    EmptyView()
-                case .preferences:
-                    PreferencesView()
-                case .sportCategory(let key, let name):
-                    SportCategoryView(categoryKey: key, categoryName: name)
-                case .golfCategory:
-                    GolfCategoryView()
-                case .golfLeaderboard:
-                    GolfCategoryView()
-                case .golfTournament(_, let name):
-                    SportCategoryView(categoryKey: "golf", categoryName: name)
-                case .futuresList:
-                    FuturesListView()
-                case .teamDetail(_):
-                    Text("Team")
-                case .predictionStats:
-                    PredictionStatsView()
-                case .weather:
-                    WeatherView()
-                case .economics:
-                    EconomicsView()
-                case .politics:
-                    PoliticsView()
-                case .entertainment:
-                    EntertainmentView()
-                case .about:
-                    Text("About")
-                }
-            }
+            .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
             .onAppear {
                 AnalyticsService.trackScreen(name: "leagues", type: "leagues_index")
             }

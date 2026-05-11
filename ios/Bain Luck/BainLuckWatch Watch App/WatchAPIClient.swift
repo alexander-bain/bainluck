@@ -37,7 +37,9 @@ actor WatchAPIClient {
             return cached
         }
 
-        let url = URL(string: "\(baseURL)/api/feed?limit=\(limit)&event_pct=0.3")!
+        guard let url = URL(string: "\(baseURL)/api/feed?limit=\(limit)&event_pct=0.3") else {
+            throw WatchAPIError.invalidURL
+        }
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw WatchAPIError.httpError
@@ -58,7 +60,9 @@ actor WatchAPIClient {
         correct: Bool,
         category: String?
     ) async throws {
-        let url = URL(string: "\(baseURL)/api/predictions")!
+        guard let url = URL(string: "\(baseURL)/api/predictions") else {
+            throw WatchAPIError.invalidURL
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -81,9 +85,14 @@ actor WatchAPIClient {
     }
 
     func fetchPredictionStats() async throws -> PredictionStats {
-        var url = URLComponents(string: "\(baseURL)/api/predictions/stats")!
+        guard var url = URLComponents(string: "\(baseURL)/api/predictions/stats") else {
+            throw WatchAPIError.invalidURL
+        }
         url.queryItems = [URLQueryItem(name: "session_id", value: sessionId)]
-        var request = URLRequest(url: url.url!)
+        guard let finalURL = url.url else {
+            throw WatchAPIError.invalidURL
+        }
+        var request = URLRequest(url: finalURL)
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
         let (data, response) = try await session.data(for: request)
@@ -96,6 +105,12 @@ actor WatchAPIClient {
 
 enum WatchAPIError: LocalizedError {
     case httpError
+    case invalidURL
 
-    var errorDescription: String? { "Request failed" }
+    var errorDescription: String? {
+        switch self {
+        case .httpError: "Request failed"
+        case .invalidURL: "Invalid URL"
+        }
+    }
 }

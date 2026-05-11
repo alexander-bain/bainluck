@@ -117,6 +117,26 @@ struct AboutView: View {
                 .padding()
                 .background(Color.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                // Privacy Policy
+                if let url = URL(string: "https://bainluck.com/privacy") {
+                    Link(destination: url) {
+                        HStack {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundStyle(.secondary)
+                            Text("Privacy Policy")
+                                .font(.subheadline).fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding()
         }

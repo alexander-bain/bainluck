@@ -19,7 +19,7 @@ struct Bain_LuckApp: App {
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
     @StateObject private var pinManager = PinManager()
-    @Environment(\.scenePhase) private var scenePhase
+
 
     init() {
         FirebaseApp.configure()
@@ -105,18 +105,6 @@ struct Bain_LuckApp: App {
                     }
                 }
                 .preferredColorScheme(.light)
-                #if os(iOS)
-                .onChange(of: scenePhase) { _, newPhase in
-                    switch newPhase {
-                    case .active:
-                        UIApplication.shared.isIdleTimerDisabled = true
-                    case .background, .inactive:
-                        UIApplication.shared.isIdleTimerDisabled = false
-                    @unknown default:
-                        break
-                    }
-                }
-                #endif
         }
         #if os(macOS)
         MenuBarExtra {

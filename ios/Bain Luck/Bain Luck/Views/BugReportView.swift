@@ -1,5 +1,6 @@
 import SwiftUI
 import Network
+import os
 #if canImport(UIKit)
 import UIKit
 import PencilKit
@@ -319,26 +320,28 @@ struct CanvasOverlay: UIViewRepresentable {
 
 // MARK: - Screenshot Capture
 
+private let bugReportLogger = Logger(subsystem: "com.bainluck", category: "BugReport")
+
 func captureScreenshot() -> PlatformImage? {
     #if os(iOS)
     let scenes = UIApplication.shared.connectedScenes
-    print("[BugReport] Connected scenes: \(scenes.count)")
+    bugReportLogger.debug("Connected scenes: \(scenes.count)")
     guard let windowScene = scenes.compactMap({ $0 as? UIWindowScene }).first else {
-        print("[BugReport] No UIWindowScene found")
+        bugReportLogger.warning("No UIWindowScene found")
         return nil
     }
-    print("[BugReport] Windows: \(windowScene.windows.count), keyWindow: \(windowScene.keyWindow != nil)")
+    bugReportLogger.debug("Windows: \(windowScene.windows.count), keyWindow: \(windowScene.keyWindow != nil)")
     guard let window = windowScene.keyWindow ?? windowScene.windows.first else {
-        print("[BugReport] No window found")
+        bugReportLogger.warning("No window found")
         return nil
     }
-    print("[BugReport] Window size: \(window.bounds.size)")
+    bugReportLogger.debug("Window size: \(window.bounds.size.width)x\(window.bounds.size.height)")
 
     let renderer = UIGraphicsImageRenderer(size: window.bounds.size)
     let image = renderer.image { ctx in
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
     }
-    print("[BugReport] Screenshot captured: \(image.size)")
+    bugReportLogger.debug("Screenshot captured: \(image.size.width)x\(image.size.height)")
     return image
     #elseif os(macOS)
     // SwiftUI's Metal rendering can't be captured via AppKit APIs.
