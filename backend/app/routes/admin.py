@@ -9815,27 +9815,45 @@ async def calibration_data(
     secret: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return resolved outcomes with opening probabilities for calibration analysis."""
+    """Return pre-aggregated calibration buckets for resolved prediction markets."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    result = await db.execute(
-        select(
-            FuturesOutcome.opening_probability,
-            FuturesOutcome.is_winner,
-            FuturesMarket.source,
-            FuturesMarket.llm_sport_category,
-            FuturesMarket.name.label("market_name"),
+    sql = text("""
+        WITH outcome_data AS (
+            SELECT
+                fo.opening_probability,
+                fo.is_winner,
+                fm.source,
+                COALESCE(fm.llm_sport_category, 'uncategorized') AS category
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0
+              AND fo.opening_probability < 1
+        ),
+        bucketed AS (
+            SELECT
+                *,
+                LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
+            FROM outcome_data
         )
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            FuturesMarket.status == "resolved",
-            FuturesOutcome.opening_probability.isnot(None),
-            FuturesOutcome.opening_probability > 0,
-            FuturesOutcome.opening_probability < 1,
-        )
-        .order_by(FuturesOutcome.opening_probability)
-    )
+        SELECT
+            bucket_idx,
+            source,
+            category,
+            COUNT(*) AS n,
+            SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
+            AVG(opening_probability) AS avg_prob,
+            SUM(opening_probability::float) AS sum_prob,
+            SUM((opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END) ^ 2) AS sum_sq_err
+        FROM bucketed
+        GROUP BY bucket_idx, source, category
+        ORDER BY bucket_idx, source, category
+    """)
+
+    result = await db.execute(sql)
     rows = result.all()
 
     total_markets_result = await db.execute(
@@ -9843,16 +9861,24 @@ async def calibration_data(
     )
     total_markets = total_markets_result.scalar()
 
+    total_outcomes = sum(r.n for r in rows)
+    total_winners = sum(r.winners for r in rows)
+
     return {
-        "rows": [
+        "buckets": [
             {
-                "opening_probability": float(r.opening_probability),
-                "is_winner": r.is_winner,
+                "bucket_idx": r.bucket_idx,
                 "source": r.source,
-                "llm_sport_category": r.llm_sport_category,
-                "market_name": r.market_name,
+                "category": r.category,
+                "n": r.n,
+                "winners": r.winners,
+                "avg_prob": round(float(r.avg_prob), 4),
+                "sum_prob": round(float(r.sum_prob), 4),
+                "sum_sq_err": round(float(r.sum_sq_err), 4),
             }
             for r in rows
         ],
         "total_markets": total_markets,
+        "total_outcomes": total_outcomes,
+        "total_winners": total_winners,
     }
