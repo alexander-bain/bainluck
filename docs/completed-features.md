@@ -54,6 +54,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Today’s Challenge focused web flow** — Web Discover now opens Today’s Challenge as a focused modal, presents one Higher/Lower question at a time, advances inside the modal via explicit Next/Finish actions, shows set progress/completion, and records first-party `challenge_start` / `challenge_complete` engagement for admin rollups.
 - ✅ **Discover engagement diagnostics v2** — `/api/admin/discover-engagement` and `/admin/discover-quality` now expose context expansion counts/rates plus Today’s Challenge start/completion counts/rates, making snippet curiosity and challenge funnel health inspectable from the admin viewer.
 - ✅ **Native Discover challenge/context parity** — iOS/macOS Discover now decodes `context_summary`, shows concise expandable snippets with native `context_expand/context_collapse` events, and opens Today's Challenge as a focused sheet with explicit Next/Finish progression plus `challenge_start` / `challenge_complete` tracking.
+- ✅ **Discover personalization trace** — Authenticated feed items now carry a compact `personalization_trace` with base score, final score, multiplier, score delta, category-affinity delta, bounds status, and reasons. `/admin/discover-quality` renders these traces when present so personalization effects are inspectable per card.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

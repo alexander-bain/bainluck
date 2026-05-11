@@ -60,6 +60,20 @@ interface DebugItem {
   ladder: boolean;
   reasons: string[];
   ground_truth: boolean;
+  personalization_trace?: PersonalizationTrace | null;
+}
+
+interface PersonalizationTrace {
+  item_type: string;
+  category: string;
+  base_score: number;
+  final_score: number;
+  score_delta: number;
+  multiplier: number;
+  is_personalized: boolean;
+  reasons: string[];
+  category_affinity_delta: number;
+  bounded: boolean;
 }
 
 interface MissingGroundTruthItem {
@@ -443,6 +457,11 @@ function percentText(value: number | null) {
 
 function rateText(value: number) {
   return `${Math.round(value * 100)}%`;
+}
+
+function signedNumber(value: number, digits = 0) {
+  const fixed = value.toFixed(digits);
+  return value > 0 ? `+${fixed}` : fixed;
 }
 
 function rankText(value: number | null) {
@@ -1291,8 +1310,26 @@ export default function DiscoverQualityPage() {
                               {formatTargetName(item.quality_class)}
                             </StatusPill>
                             {item.ladder && <StatusPill tone="warn">ladder</StatusPill>}
+                            {item.personalization_trace && (
+                              <StatusPill tone={item.personalization_trace.is_personalized ? "ok" : "muted"}>
+                                {`personalized ${item.personalization_trace.multiplier.toFixed(2)}x`}
+                              </StatusPill>
+                            )}
+                            {item.personalization_trace && item.personalization_trace.score_delta !== 0 && (
+                              <StatusPill tone={item.personalization_trace.score_delta > 0 ? "ok" : "warn"}>
+                                {`score ${signedNumber(item.personalization_trace.score_delta)}`}
+                              </StatusPill>
+                            )}
+                            {item.personalization_trace && item.personalization_trace.category_affinity_delta !== 0 && (
+                              <StatusPill tone={item.personalization_trace.category_affinity_delta > 0 ? "ok" : "warn"}>
+                                {`category ${signedNumber(item.personalization_trace.category_affinity_delta, 2)}`}
+                              </StatusPill>
+                            )}
                             {item.reasons.map((reason) => (
                               <StatusPill key={reason} tone="muted">{formatTargetName(reason)}</StatusPill>
+                            ))}
+                            {item.personalization_trace?.reasons.slice(0, 3).map((reason) => (
+                              <StatusPill key={`personalization-${reason}`} tone="muted">{formatTargetName(reason)}</StatusPill>
                             ))}
                           </div>
                         </td>

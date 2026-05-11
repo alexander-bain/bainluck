@@ -1391,6 +1391,49 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     return affinities
 
 
+def _personalization_category_from_sport_key(sport_key: str | None) -> str | None:
+    if not sport_key:
+        return None
+    root = sport_key.split("_")[0].lower()
+    if root == "americanfootball":
+        return "football"
+    if root == "icehockey":
+        return "hockey"
+    return root
+
+
+def _build_personalization_trace(
+    *,
+    ctx: PersonalizationContext,
+    item_type: str,
+    category: str | None,
+    base_score: int | float,
+    final_score: int | float,
+    p_result,
+) -> dict | None:
+    """Return compact per-card personalization diagnostics for authenticated feeds."""
+    if not ctx.is_authenticated:
+        return None
+
+    normalized_category = (category or "other").lower()
+    category_delta = ctx.discover_category_affinities.get(normalized_category, 0.0)
+    multiplier = float(p_result.multiplier)
+    base = int(round(base_score))
+    final = int(round(final_score))
+    return {
+        "item_type": item_type,
+        "category": normalized_category,
+        "base_score": base,
+        "final_score": final,
+        "score_delta": final - base,
+        "multiplier": round(multiplier, 3),
+        "is_personalized": bool(p_result.is_personalized),
+        "reasons": list(p_result.reasons),
+        "category_affinity_delta": round(float(category_delta), 3),
+        "bounded": 0.3 <= multiplier <= 3.0,
+    }
+
+
 async def _score_events(
     db: AsyncSession,
     now: datetime,
@@ -1754,6 +1797,16 @@ async def _score_events(
             "data": event_data,
             "_sort_time": sort_time,
         }
+        personalization_trace = _build_personalization_trace(
+            ctx=ctx,
+            item_type="event",
+            category=_personalization_category_from_sport_key(sport_key),
+            base_score=base_score,
+            final_score=personalized_score,
+            p_result=p_result,
+        )
+        if personalization_trace:
+            item["personalization_trace"] = personalization_trace
 
         # Include personalization debug info when score was boosted/suppressed
         if p_result.is_personalized:
@@ -2333,6 +2386,16 @@ async def _score_futures(
             "_quality_family_key": quality.family_key,
             "_quality_story_key": quality.story_key,
         }
+        personalization_trace = _build_personalization_trace(
+            ctx=ctx,
+            item_type="futures",
+            category=market.llm_sport_category,
+            base_score=base_score,
+            final_score=personalized_score,
+            p_result=p_result,
+        )
+        if personalization_trace:
+            item["personalization_trace"] = personalization_trace
 
         if p_result.is_personalized:
             item["personalized"] = True

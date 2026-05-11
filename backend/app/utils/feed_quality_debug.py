@@ -418,6 +418,7 @@ def diagnose_feed_items(
                     "ladder": False,
                     "reasons": [],
                     "ground_truth": False,
+                    "personalization_trace": item.get("personalization_trace"),
                 }
             )
             continue
@@ -461,6 +462,7 @@ def diagnose_feed_items(
                 "ladder": quality.is_ladder_or_bucket,
                 "reasons": quality.reasons,
                 "ground_truth": matches_ground_truth(name, ground_truth),
+                "personalization_trace": item.get("personalization_trace"),
             }
         )
 
