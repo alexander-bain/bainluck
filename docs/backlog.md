@@ -114,6 +114,54 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
+## Rage Shake Triage #2 (May 11) — Bugs #18-24
+
+3 fixed (#19, #20, #24), 1 waiting on matching cycle (#18), 3 new backlog items (#21, #22, #23).
+
+### BR18. Missing Kalshi for TB vs BOS — WAITING ON MATCHING CYCLE
+
+**Problem:** Kalshi has a Rays vs Red Sox game market but it's not linked on bainluck. Same `tb` abbreviation issue as NHL — `tb_mlb` → "Rays" entry exists in `sport_keys.py` but the matching task needs to re-process unlinked markets.
+
+**Action:** Wait for next `match_prediction_markets` cycle (runs every 15 min). If still unlinked after a cycle, investigate whether the ticker prefix mapping for `tb` is being used correctly for MLB vs NHL disambiguation.
+
+**Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
+**Parallel Safety:** Yellow
+
+### BR21. iPad Futures Browser Needs Photos/Emojis
+
+**Problem:** The FuturesListView on iPad shows a wall of plain text market names — boring and stale-looking. Markets that have `image_url` (Pexels photos) or `hook_description` (LLM blurbs) on the Discover feed should show enriched cards in the Futures browser too.
+
+**Fix needed:**
+1. Add image thumbnails to futures list rows when `image_url` is available
+2. Add a staleness filter — hide markets that are effectively resolved (leader ≥97%) or have no updates for 7+ days
+3. Consider category emoji prefixes (🏛 Politics, 📈 Economics, 🌤 Weather, 🎬 Entertainment) to break up the wall of text
+
+**Files:** `ios/.../Views/FuturesListView.swift`
+**Parallel Safety:** Green
+
+### BR22. Weather Page Needs City Search
+
+**Problem:** Feature request from your son. The Weather page shows city forecast cards but you can't search/filter for a specific city. If you want to find your city's forecast, you have to scroll through all of them.
+
+**Fix:** Add a search/filter text field at the top of the city forecasts section. Filter the displayed cities as the user types. Both web (`frontend/app/weather/page.tsx`) and iOS (`ios/.../Views/WeatherView.swift`) need this.
+
+**Files:** `frontend/app/weather/page.tsx`, `ios/.../Views/WeatherView.swift`
+**Parallel Safety:** Green
+
+### BR23. Weather Cities Need Clickable Probability Graphs
+
+**Problem:** Feature request from your son. City forecast cards show a current probability (e.g., "72% chance above 80°F") but no historical context. Users can't see how the probability has changed over time.
+
+**Fix:** Each city forecast card should link to a detail view showing a probability timeline chart (similar to how event detail pages show win probability over time). This requires:
+1. Historical data: check if `futures_odds_snapshots` has historical data for weather markets
+2. A city weather detail page or modal with a time-series chart
+3. Click/tap handler on the city card to navigate to the detail
+
+**Files:** `frontend/app/weather/page.tsx`, `ios/.../Views/WeatherView.swift`, possibly new `frontend/app/weather/[market_id]/page.tsx`
+**Parallel Safety:** Green
+
+---
+
 ## Tier 1 — High Leverage, Do Next
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
