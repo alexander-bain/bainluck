@@ -9886,42 +9886,48 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Two types of markets need different treatment:
-    #
-    # 1. Mutually-exclusive (championships, awards): each outcome is independent,
-    #    keep all of them. Resolution: exactly one winner.
-    #
-    # 2. Non-mutually-exclusive (threshold/ladder markets like "HR 1+, 2+, 3+"):
-    #    outcomes are correlated — if "3+" resolves YES, so do "2+" and "1+".
-    #    For these, keep ONE outcome per market — the one closest to 50%
-    #    (most informative). This gives one calibration data point per market
-    #    rather than N correlated data points that distort the curve.
+    # Calibration query: one outcome per market for threshold/ladder markets,
+    # all outcomes for multi-outcome markets (championships, awards).
+    # Resolution inferred from current_probability: 1.0 = winner, 0.0 = loser.
+    # Use strict thresholds (0.99/0.01) to avoid partially-updated markets.
+    # Dedup uses outcome_count to detect threshold markets (>2 outcomes + non-ME,
+    # or single-outcome "Yes"-only markets).
     sql = text("""
-        WITH resolved_outcomes AS (
-            SELECT
-                fo.id AS outcome_id,
-                fo.opening_probability,
-                fo.current_probability,
-                (fo.current_probability >= 0.95) AS resolved_yes,
-                fm.id AS market_id,
-                fm.source,
+        WITH market_info AS (
+            SELECT fm.id AS market_id, fm.source, fm.mutually_exclusive,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                fm.mutually_exclusive,
-                ROW_NUMBER() OVER (
-                    PARTITION BY fm.id
-                    ORDER BY ABS(fo.opening_probability - 0.5)
-                ) AS rn
-            FROM futures_outcomes fo
-            JOIN futures_markets fm ON fo.market_id = fm.id
+                COUNT(*) AS outcome_count
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
               AND fo.opening_probability IS NOT NULL
+            GROUP BY fm.id, fm.source, fm.mutually_exclusive, fm.llm_sport_category
+        ),
+        resolved_outcomes AS (
+            SELECT
+                fo.opening_probability,
+                (fo.current_probability >= 0.99) AS resolved_yes,
+                mi.market_id, mi.source, mi.category,
+                mi.outcome_count,
+                -- For threshold markets (>2 outcomes or single-outcome binary):
+                -- keep one per market, closest to 50%
+                ROW_NUMBER() OVER (
+                    PARTITION BY mi.market_id
+                    ORDER BY ABS(fo.opening_probability - 0.5)
+                ) AS rn,
+                -- Is this a "keep all" market? Multi-outcome ME markets
+                -- (championships, awards) with 3+ outcomes
+                (mi.mutually_exclusive = true AND mi.outcome_count >= 3) AS keep_all
+            FROM futures_outcomes fo
+            JOIN market_info mi ON mi.market_id = fo.market_id
+            WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
-              AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+              AND (fo.current_probability >= 0.99 OR fo.current_probability <= 0.01)
         ),
         deduped AS (
             SELECT * FROM resolved_outcomes
-            WHERE mutually_exclusive = true OR rn = 1
+            WHERE keep_all OR rn = 1
         ),
         bucketed AS (
             SELECT *, LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
