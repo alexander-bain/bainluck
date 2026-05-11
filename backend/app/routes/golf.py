@@ -1958,6 +1958,13 @@ async def get_golf_tournament(
                 g["top_20_prob"] = round(probs["top_20"] * 100, 1) if "top_20" in probs else None
                 g["make_cut_prob"] = round(probs["make_cut"] * 100, 1) if "make_cut" in probs else None
                 g["round_leader_prob"] = round(probs["round_leader"] * 100, 1) if "round_leader" in probs else None
+                # Enforce cross-column monotonicity: Win <= Top5 <= Top10 <= Top20 <= MakeCut
+                win = g.get("win_prob") or 0
+                for col in ["top_5_prob", "top_10_prob", "top_20_prob", "make_cut_prob"]:
+                    if g.get(col) is not None and g[col] < win:
+                        g[col] = win
+                    if g.get(col) is not None:
+                        win = g[col]
 
     # ------------------------------------------------------------------
     # Build "Related Futures" — tournament-specific markets NOT in the grid.
