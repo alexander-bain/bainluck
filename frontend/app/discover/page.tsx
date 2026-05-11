@@ -286,6 +286,92 @@ function FeedItemShell({
   );
 }
 
+function ChallengeModal({
+  items,
+  currentIndex,
+  completed,
+  onClose,
+  onGuessCompleted,
+}: {
+  items: FeedItem[];
+  currentIndex: number;
+  completed: boolean;
+  onClose: () => void;
+  onGuessCompleted: () => void;
+}) {
+  const goal = Math.min(5, Math.max(items.length, 1));
+  const progress = completed ? 1 : currentIndex / goal;
+  const currentItem = items[currentIndex];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-[#fafbfc] shadow-2xl border border-surface-border">
+        <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-surface-border px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-black text-text-primary">Today’s Challenge</div>
+              <div className="text-xs text-text-muted">
+                {completed ? "Set complete" : `Question ${Math.min(currentIndex + 1, goal)} of ${goal}`}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid place-items-center w-8 h-8 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors"
+              aria-label="Close challenge"
+            >
+              ×
+            </button>
+          </div>
+          <div className="mt-3 h-2 rounded-full bg-surface-elevated overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber-500 transition-all duration-500"
+              style={{ width: `${progress * 100}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="p-4">
+          {completed ? (
+            <div className="rounded-2xl border border-green-400/40 bg-surface-card p-6 text-center shadow-md">
+              <div className="text-4xl mb-3">🏆</div>
+              <h2 className="text-xl font-black text-text-primary">Challenge complete</h2>
+              <p className="mt-2 text-sm text-text-secondary">
+                Your predictions are counted. Come back tomorrow for a fresh set.
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mt-5 w-full rounded-xl bg-[#111827] py-3 text-sm font-bold text-white hover:bg-black transition-colors"
+              >
+                Back to Discover
+              </button>
+            </div>
+          ) : currentItem ? (
+            <GuessCard
+              key={getItemId(currentItem)}
+              item={currentItem}
+              onGuessCompleted={onGuessCompleted}
+            />
+          ) : (
+            <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
+              <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
+              <p className="mt-2 text-sm text-text-secondary">Check back after the feed refreshes.</p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mt-5 w-full rounded-xl bg-[#111827] py-3 text-sm font-bold text-white hover:bg-black transition-colors"
+              >
+                Back to Discover
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DiscoverPage() {
   usePageTracking({ pageType: "discover", pageTitle: "Discover" });
   useScrollDepth({ pageType: "discover" });
@@ -301,6 +387,9 @@ export default function DiscoverPage() {
   const [hasMore, setHasMore] = useState(true);
   const [pagesLoaded, setPagesLoaded] = useState(0);
   const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
+  const [challengeOpen, setChallengeOpen] = useState(false);
+  const [challengeIndex, setChallengeIndex] = useState(0);
+  const [challengeComplete, setChallengeComplete] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -371,10 +460,10 @@ export default function DiscoverPage() {
     setDismissed((prev) => new Set([...prev, itemId]));
   }, []);
 
-  const scrollToNextGuess = useCallback(() => {
-    const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-guess-card]"));
-    const next = cards.find((card) => card.getBoundingClientRect().top > 72) || cards[0];
-    next?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const startChallenge = useCallback(() => {
+    setChallengeIndex(0);
+    setChallengeComplete(false);
+    setChallengeOpen(true);
     trackEvent("feed_card_action", {
       action: "challenge_start",
       content_type: "grid",
@@ -383,6 +472,13 @@ export default function DiscoverPage() {
       item_name: "Today’s Challenge",
       surface: "discover",
     });
+    sendDiscoverInteraction({
+      content_type: "grid",
+      item_id: "daily_challenge",
+      category: "challenge",
+      item_name: "Today’s Challenge",
+      score: 0,
+    }, "challenge_start", undefined, "challenge");
   }, []);
 
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
@@ -407,6 +503,61 @@ export default function DiscoverPage() {
   }, [data, allItems, dismissed, categoryFilter, interactionProfile]);
 
   const visibleItems = processedItems.slice(0, visibleCount);
+  const challengeItems = useMemo(() => {
+    return processedItems
+      .filter((gi): gi is { type: "single"; item: FeedItem } => {
+        if (gi.type !== "single" || !gi.item) return false;
+        if (gi.item.type === "futures") {
+          const fd = gi.item.data as FeedFuturesData;
+          return Boolean(fd.top_outcomes?.[0]?.probability != null);
+        }
+        if (gi.item.type === "event") {
+          const ed = gi.item.data as FeedEventData;
+          return Boolean(ed.current_odds?.home_probability != null);
+        }
+        return false;
+      })
+      .map((gi) => gi.item)
+      .slice(0, 5);
+  }, [processedItems]);
+
+  const incrementDailyGuesses = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    setDailyGuesses((current) => {
+      const next = current + 1;
+      localStorage.setItem(`daily_guesses_${today}`, next.toString());
+      return next;
+    });
+  }, []);
+
+  const handleChallengeGuess = useCallback(() => {
+    incrementDailyGuesses();
+    window.setTimeout(() => {
+      setChallengeIndex((current) => {
+        const next = current + 1;
+        if (next >= challengeItems.length || next >= 5) {
+          setChallengeComplete(true);
+          trackEvent("feed_card_action", {
+            action: "challenge_complete",
+            content_type: "grid",
+            item_id: "daily_challenge",
+            category: "challenge",
+            item_name: "Today’s Challenge",
+            surface: "discover",
+          });
+          sendDiscoverInteraction({
+            content_type: "grid",
+            item_id: "daily_challenge",
+            category: "challenge",
+            item_name: "Today’s Challenge",
+            score: 0,
+          }, "challenge_complete", undefined, "challenge");
+          return current;
+        }
+        return next;
+      });
+    }, 1100);
+  }, [challengeItems.length, incrementDailyGuesses]);
 
   // Load more from API when client-side items run out
   useEffect(() => {
@@ -483,6 +634,16 @@ export default function DiscoverPage() {
         }} />
       )}
 
+      {challengeOpen && (
+        <ChallengeModal
+          items={challengeItems}
+          currentIndex={challengeIndex}
+          completed={challengeComplete}
+          onClose={() => setChallengeOpen(false)}
+          onGuessCompleted={handleChallengeGuess}
+        />
+      )}
+
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
       <main className="max-w-7xl mx-auto px-4 py-4">
         {isLoading && (
@@ -532,7 +693,7 @@ export default function DiscoverPage() {
         {/* Daily Challenge — passive progress tracker, counts guesses from feed */}
         {!isLoading && processedItems.length > 0 && (
           <div className="mb-4">
-            <DailyChallengeCard guessesToday={dailyGuesses} onStart={scrollToNextGuess} />
+            <DailyChallengeCard guessesToday={dailyGuesses} onStart={startChallenge} />
           </div>
         )}
 
@@ -566,12 +727,7 @@ export default function DiscoverPage() {
               <div key={key} className="break-inside-avoid mb-4">
                 <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace}>
                   {isGuessSlot ? (
-                    <GuessCard item={gi.item!} onGuessCompleted={() => {
-                      const today = new Date().toISOString().slice(0, 10);
-                      const next = dailyGuesses + 1;
-                      setDailyGuesses(next);
-                      localStorage.setItem(`daily_guesses_${today}`, next.toString());
-                    }} />
+                    <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
                   ) : (
                     <DiscoverCard
                       groupedItem={gi}

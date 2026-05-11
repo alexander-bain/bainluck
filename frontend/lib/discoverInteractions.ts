@@ -8,6 +8,8 @@ export type DiscoverAction =
   | "unlike"
   | "share"
   | "group_expand"
+  | "challenge_start"
+  | "challenge_complete"
   | "context_expand"
   | "context_collapse";
 
@@ -48,6 +50,8 @@ const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
   unlike: -1,
   share: 3,
   group_expand: 0.75,
+  challenge_start: 0.5,
+  challenge_complete: 1,
   context_expand: 0.35,
   context_collapse: 0,
 };

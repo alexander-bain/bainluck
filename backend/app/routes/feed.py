@@ -78,6 +78,8 @@ _DISCOVER_ACTIONS = {
     "unlike",
     "share",
     "group_expand",
+    "challenge_start",
+    "challenge_complete",
     "context_expand",
     "context_collapse",
 }
@@ -1367,6 +1369,8 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         "share": 3.0,
         "like": 2.0,
         "group_expand": 0.75,
+        "challenge_start": 0.5,
+        "challenge_complete": 1.0,
         "context_expand": 0.35,
         "context_collapse": 0.0,
         "dismiss": -2.0,

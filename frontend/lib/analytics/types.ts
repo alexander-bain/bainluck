@@ -436,7 +436,7 @@ export interface FeedCardImpressionParams {
 }
 
 export interface FeedCardActionParams {
-  action: 'detail_click' | 'dismiss' | 'like' | 'unlike' | 'share' | 'group_expand' | 'context_expand' | 'context_collapse' | 'challenge_start';
+  action: 'detail_click' | 'dismiss' | 'like' | 'unlike' | 'share' | 'group_expand' | 'context_expand' | 'context_collapse' | 'challenge_start' | 'challenge_complete';
   content_type: 'event' | 'futures' | 'grid';
   item_id: number | string;
   category: string;
