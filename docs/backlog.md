@@ -129,23 +129,13 @@ Added monotonicity enforcement to player props: within each player+stat group, P
 
 Added `_NON_POLITICS_RE` pattern to filter Billboard, Spotify, VIX, sports, weather, etc. from the politics page. Markets with `llm_sport_category="politics"` but clearly non-political names are now excluded.
 
-### MS-5. Entertainment Spotify Race Sums to ~135% (WARNING) — Category Page Audit
+### ~~MS-5. Entertainment Spotify Race Sums to ~135%~~ — FIXED (May 11)
 
-**Problem:** Spotify Race probabilities for the "#1 song" market sum to ~135% instead of ~100%. Independent binary markets (one per artist) are displayed as if they're mutually exclusive outcomes.
+Normalized independent binary market probabilities to sum to ~100% when total exceeds 105%.
 
-**Action:** Either (a) normalize probabilities to sum to 100%, or (b) label clearly as "independent probabilities, not a race."
+### ~~MS-6. Economics Monotonicity Violations~~ — FIXED (May 11)
 
-**Files:** `backend/app/routes/entertainment.py`, `frontend/app/entertainment/page.tsx`
-**Parallel Safety:** Green
-
-### MS-6. Economics Monotonicity Violations (WARNING) — Category Page Audit
-
-**Problem:** Unemployment and crude oil threshold markets have non-monotonic probabilities (e.g., "above 4.5%" at 60% but "above 4.0%" at 55%).
-
-**Action:** Add monotonicity enforcement for threshold ladders in the economics endpoint, same pattern as MS-3.
-
-**Files:** `backend/app/routes/economics.py`
-**Parallel Safety:** Green
+Enforce monotonicity on cumulative probabilities before converting to discrete brackets.
 
 ### MS-7. Chart Stale Tails in 5/8 Events (WARNING) — Chart Timing Audit
 
@@ -174,22 +164,17 @@ Added `_NON_POLITICS_RE` pattern to filter Billboard, Spotify, VIX, sports, weat
 **Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py`
 **Parallel Safety:** Green
 
-### MS-10. NCAAB 14 Teams at 99% (WARNING) — League Page Audit
+### ~~MS-10. NCAAB 14 Teams at 99%~~ — FIXED (May 11)
 
-**Problem:** NCAAB page shows 14 teams at 99% Title Game probability — stale post-tournament data from March Madness that was never cleaned up.
-
-**Action:** Add season-end detection: if the sport is in offseason, either hide resolved markets or show a "Season Complete" banner.
-
-**Files:** `backend/app/routes/leagues.py`
-**Parallel Safety:** Green
+Added all-settled filter: skip markets where every outcome is <3% or >97% (post-season resolved).
 
 ### MS-11. Completed Market Still Shows Live Probability (WARNING) — Market Accuracy Audit
 
-**Problem:** Completed MLB game still shows "Yes: 52%" for a first-inning-run market that should have settled to 0% or 100%.
+**Problem:** Completed MLB game still shows "Yes: 52%" for a first-inning-run market that should have settled to 0% or 100%. This is an **upstream data lag** — Kalshi hasn't settled the market yet. The iOS `SpecialEventMarketsView` already hides 100%/0% outcomes (RS-3 fix), but unsettled markets at ~50% can't be detected without knowing the game result.
 
-**Action:** The `_score_futures` staleness filter should catch this. Check if game-prop markets with `event_id` linked to completed events are being filtered.
+**Workaround:** For completed games, the game-markets endpoint could cross-reference the event's final score to determine whether "first inning run" was Yes or No, and override the stale probability. Low priority since this is a narrow edge case.
 
-**Files:** `backend/app/routes/events.py` (game-markets endpoint)
+**Files:** `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
 ### MS-12. Golf Grid Monotonicity (WARNING) — Grid Audit
