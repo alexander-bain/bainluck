@@ -107,21 +107,6 @@ struct Bain_LuckApp: App {
                 .preferredColorScheme(.light)
         }
         #if os(macOS)
-        MenuBarExtra {
-            MenuBarView()
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                if navCoordinator.liveGameCount > 0 {
-                    Text("\(navCoordinator.liveGameCount)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
-                }
-            }
-        }
-        .menuBarExtraStyle(.window)
-        #endif
-
-        #if os(macOS)
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) { }
@@ -145,12 +130,25 @@ struct Bain_LuckApp: App {
                 .keyboardShortcut("b", modifiers: [.command, .shift])
             }
         }
-        #endif
-
-        #if os(macOS)
         .onChange(of: navCoordinator.liveGameTitle) { _, title in
             NSApplication.shared.mainWindow?.title = title
         }
+        #endif
+
+        #if os(macOS)
+        MenuBarExtra {
+            MenuBarView()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                if navCoordinator.liveGameCount > 0 {
+                    Text("\(navCoordinator.liveGameCount)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
+
         WindowGroup(for: Int.self) { $eventId in
             if let id = eventId {
                 NavigationStack {
