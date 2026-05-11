@@ -17,6 +17,7 @@ import {
   useScrollDepth,
   useEngagementTime,
 } from "@/hooks";
+import { getIdToken } from "@/lib/firebase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -339,7 +340,9 @@ async function fetchDiscoverDebug(secret: string): Promise<FeedDebugResponse> {
     debug: "true",
     secret,
   });
-  const res = await fetch(`${API_URL}/api/feed?${params}`);
+  const token = await getIdToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const res = await fetch(`${API_URL}/api/feed?${params}`, { headers });
   if (!res.ok) throw new Error(`Feed debug API error: ${res.status}`);
   return res.json();
 }
