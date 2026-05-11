@@ -185,6 +185,10 @@ async def get_league_futures(
                 leader_opening = float(sorted_outcomes[0].opening_probability) if sorted_outcomes[0].opening_probability else None
                 if leader_opening is not None and leader_opening >= 0.85:
                     continue
+            # All-settled filter: skip if every outcome is <3% or >97% (post-season resolved)
+            probs = [float(o.current_probability) for o in sorted_outcomes if o.current_probability is not None]
+            if len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs):
+                continue
 
         outcomes_data = [
             {
