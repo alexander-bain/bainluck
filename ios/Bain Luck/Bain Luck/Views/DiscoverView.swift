@@ -434,9 +434,19 @@ struct DiscoverView: View {
                                     NativeGroupCard(title: title, items: items)
                                 case .single(let item):
                                     if isGuessSlot, item.type == "futures", let f = item.futures {
-                                        NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                        SwipeToDismiss {
+                                            recordInteraction(for: item, action: .dismiss)
+                                            dismiss(itemId(item))
+                                        } content: {
+                                            NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                        }
                                     } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
-                                        NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                        SwipeToDismiss {
+                                            recordInteraction(for: item, action: .dismiss)
+                                            dismiss(itemId(item))
+                                        } content: {
+                                            NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                        }
                                     } else if item.type == "event", let e = item.event {
                                         SwipeToDismiss {
                                             recordInteraction(for: item, action: .dismiss)
