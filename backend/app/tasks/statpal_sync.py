@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, update, and_, or_
+from sqlalchemy import select, update, and_, or_, func
 
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
@@ -218,6 +218,58 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     if updated:
                         sport_updated += 1
 
+                # Create events for live games missing from DB (playoff gap fix).
+                # StatPal season-schedule doesn't include playoffs, but livescores does.
+                from app.services.event_registry import (
+                    find_or_create_event, EventIdentity, EventClaim,
+                )
+                live_created = 0
+                for live_fix in live:
+                    if not live_fix.home_team or not live_fix.away_team:
+                        continue
+                    if not live_fix.start_time:
+                        continue
+                    key = _fixture_match_key(live_fix.home_team, live_fix.away_team)
+                    # Check if we already have this game
+                    existing = await session.execute(
+                        select(Event.id).where(
+                            Event.sport_id == sport_id,
+                            func.lower(Event.home_team_name) == live_fix.home_team.lower(),
+                            func.lower(Event.away_team_name) == live_fix.away_team.lower(),
+                            Event.commence_time.between(
+                                live_fix.start_time - timedelta(hours=6),
+                                live_fix.start_time + timedelta(hours=6),
+                            ),
+                        ).limit(1)
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+                    # Create the missing event
+                    claim_id = live_fix.fixture_id or f"statpal_live_{live_fix.home_team}_{live_fix.away_team}"
+                    identity = EventIdentity(
+                        sport_key=our_key,
+                        home_team_name=live_fix.home_team,
+                        away_team_name=live_fix.away_team,
+                        commence_time=live_fix.start_time,
+                        claim=EventClaim("statpal", claim_id),
+                        commence_time_source="statpal",
+                        status="live",
+                    )
+                    event, was_created = await find_or_create_event(
+                        session, identity,
+                    )
+                    if was_created:
+                        live_created += 1
+                        if live_fix.home_score is not None:
+                            event.home_score = live_fix.home_score
+                        if live_fix.away_score is not None:
+                            event.away_score = live_fix.away_score
+                        logger.info(
+                            "Created event from live StatPal: %s vs %s (%s)",
+                            live_fix.away_team, live_fix.home_team, our_key,
+                        )
+                sport_created += live_created
+
                 total_updated += sport_updated
                 total_created += sport_created
                 details.append({
@@ -226,6 +278,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     "events_updated": sport_updated,
                     "events_created": sport_created,
                     "live_games": len(live),
+                    "live_created": live_created,
                 })
 
                 # Rate limit between sports
