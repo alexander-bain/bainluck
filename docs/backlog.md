@@ -62,13 +62,13 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ Native parity pass shipped: redesigned event/futures/guess cards, fifth-card Higher/Lower cadence, share links, local category tuning, and Firebase analytics parity.
 - ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
 - ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
+- ✅ Authenticated feed items now expose per-card `personalization_trace` diagnostics, and `/admin/discover-quality` renders multiplier, score delta, category-affinity delta, and reasons when present.
 
 **Next phases:**
-1. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
-2. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-3. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
-4. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-5. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
+1. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+2. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
+3. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+4. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
@@ -301,10 +301,16 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 4. **Politics** — Best of the bunch (has senate map, color-coded candidates) but market cards below the hero are still plain text lists with no visual richness.
 5. **Preferences** — Functional but boring. The interest selector (Love/Big/Wild/Nah) looks like a data table. Needs card-based design with visual weight.
 
+**Claude Design Handoffs (web reference for native parity):**
+- Entertainment: `https://api.anthropic.com/v1/design/h/NVy7_G25Hw2F2WPBkuQqJg?open_file=Entertainment.html`
+- Politics v1: `https://api.anthropic.com/v1/design/h/nEWFwz9OLZG7YqV9JxY6lw?open_file=Politics+Page.html`
+- Politics v2: `https://api.anthropic.com/v1/design/h/RrDcEtPZy_66ZWaWEGhscw?open_file=Politics+Page.html`
+- Economics: `https://api.anthropic.com/v1/design/h/eIsTOAYPL_It9o3O4zleDw?open_file=handoff%2Feconomics%2Freference%2FEconomics.html`
+- Weather: `https://api.anthropic.com/v1/design/h/S18AFhL5cujQX0CfDqlkBA`
+
 **Action:**
 - Fix Economics data parsing error (blocking)
-- Design pass on all 5 category pages: add card backgrounds, images, color accents, visual hierarchy
-- Reference the web versions (which Claude Design helped polish) as the design target
+- Design pass on all 5 category pages: use the Claude Design handoffs above as the visual target
 - Weather page especially needs a complete visual rethink — temperature distributions should use color gradients and compact visualizations, not text tables
 
 **Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
