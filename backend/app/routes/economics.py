@@ -180,6 +180,11 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     # Sort by threshold ascending (lowest first)
     raw.sort(key=lambda x: x[2])
 
+    # Enforce monotonicity: P(above lower threshold) >= P(above higher threshold)
+    for i in range(1, len(raw)):
+        if raw[i][0] > raw[i - 1][0]:
+            raw[i] = (raw[i - 1][0], raw[i][1], raw[i][2])
+
     # Convert cumulative to discrete:
     # P(in bracket i) = P(above threshold_i) - P(above threshold_{i+1})
     # P(above highest) stays as-is (the top bracket)
