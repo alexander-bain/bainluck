@@ -5408,6 +5408,16 @@ async def statpal_fixture_debug(
              "fixture_id": f.fixture_id, "status": f.status}
             for f in fixtures[:5] if f.start_time is None
         ][:5],
+        "date_range": {
+            "earliest": min((f.start_time for f in fixtures if f.start_time), default=None),
+            "latest": max((f.start_time for f in fixtures if f.start_time), default=None),
+        } if fixtures else {},
+        "sample_all": [
+            {"home": f.home_team, "away": f.away_team,
+             "start_time": f.start_time.isoformat() if f.start_time else None,
+             "fixture_id": f.fixture_id, "status": f.status}
+            for f in fixtures[-5:]
+        ],
     }
 
 
