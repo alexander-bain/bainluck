@@ -5485,18 +5485,32 @@ async def statpal_probe_endpoints(
     raw_debug = {}
     if raw_data and isinstance(raw_data, dict):
         raw_debug["top_keys"] = list(raw_data.keys())[:10]
-        for key in ("data", "schedule", "games", "fixtures", "matches", "results", "response"):
-            if key in raw_data and isinstance(raw_data[key], list):
-                items = raw_data[key]
-                raw_debug[f"{key}_count"] = len(items)
-                if items:
-                    raw_debug[f"{key}_last_2"] = [
-                        {k: v for k, v in (item.items() if isinstance(item, dict) else [])
-                         if k in ("id", "date", "time", "home_team", "away_team", "status",
-                                  "home", "away", "teams", "round", "week", "stage",
-                                  "start_time", "datetime", "fixture_id")}
-                        for item in items[-2:]
-                    ]
+        # Drill into scores → tournament structure
+        scores = raw_data.get("scores")
+        if isinstance(scores, dict):
+            raw_debug["scores_keys"] = list(scores.keys())[:10]
+            tournament = scores.get("tournament")
+            if isinstance(tournament, dict):
+                raw_debug["tournament_type"] = "dict"
+                raw_debug["tournament_keys"] = list(tournament.keys())[:10]
+                matches = tournament.get("match", [])
+                raw_debug["match_count"] = len(matches) if isinstance(matches, list) else "not_a_list"
+                raw_debug["tournament_league"] = tournament.get("league")
+                raw_debug["tournament_season"] = tournament.get("season")
+            elif isinstance(tournament, list):
+                raw_debug["tournament_type"] = "LIST"
+                raw_debug["tournament_count"] = len(tournament)
+                for i, t in enumerate(tournament[:5]):
+                    if isinstance(t, dict):
+                        league = t.get("league", "?")
+                        match_count = len(t.get("match", [])) if isinstance(t.get("match"), list) else "?"
+                        raw_debug[f"tournament_{i}"] = {
+                            "league": league,
+                            "match_count": match_count,
+                            "keys": list(t.keys())[:8],
+                        }
+            else:
+                raw_debug["tournament_type"] = type(tournament).__name__ if tournament else "missing"
 
     for label, endpoint, params in probes:
         try:
