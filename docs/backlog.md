@@ -160,6 +160,36 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `frontend/app/weather/page.tsx`, `ios/.../Views/WeatherView.swift`, possibly new `frontend/app/weather/[market_id]/page.tsx`
 **Parallel Safety:** Green
 
+### BR-PIN. Cross-Platform Pin Sync + My Stuff Display
+
+**Problem:** When a signed-in user pins a market or event, the pin should be persistent and visible across all platforms (web, iOS, macOS). Currently pins may be stored locally or only synced one way. Pinned items should show prominently on the My Stuff tab.
+
+**Requirements:**
+1. **Server-side persistence:** Pins stored in the `user_pins` table (already exists) must be the source of truth for signed-in users
+2. **Cross-platform sync:** Pinning on web should show on iOS/macOS and vice versa. `PinManager` already has `syncLocalToServer()` — verify it runs on sign-in and that the reverse (server → local) also works
+3. **My Stuff display:** Pinned events and markets should appear as a dedicated section on My Stuff (web + iOS), showing current probabilities and status
+4. **Real-time feel:** After pinning, the item should appear in My Stuff immediately (optimistic update), not after a refresh
+
+**Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py` (pin endpoints)
+**Parallel Safety:** Yellow
+
+### BR-NAV. Native App Tab Redesign + Sticky Tabs
+
+**Problem:** The iOS tab bar order and behavior need updating:
+1. **Tab order should be:** Discover (leftmost) → Sports → Search → Categories → My Stuff
+2. **Sticky tabs:** When a user leaves and returns to the app, it should re-open to the tab they were on last (not reset to Sports every time)
+
+**Current state:** Tab order is Sports → Discover → Leagues → Search → My Stuff. No tab persistence — app always opens to Sports.
+
+**Fix:**
+1. Reorder `AppTab` enum and `TabView` items in `MainTabView.swift` to: Discover, Sports, Search, Categories (was Leagues), My Stuff
+2. Save `selectedTab` to `UserDefaults` on every tab change
+3. On app launch, restore the last-used tab from `UserDefaults`
+4. The "Categories" tab replaces "Leagues" and includes a dropdown or grid of all categories (Sports leagues, Politics, Entertainment, Economics, Weather)
+
+**Files:** `ios/.../Services/NavigationCoordinator.swift`, `ios/.../Views/MainTabView.swift`
+**Parallel Safety:** Yellow (touches nav — coordinate with other sessions)
+
 ---
 
 ## Tier 1 — High Leverage, Do Next
