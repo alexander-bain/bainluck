@@ -166,7 +166,7 @@ _CULTURE_RE = re.compile(
     r"\b("
     r"super bowl|eurovision|survivor|academy|emmy|grammy|billboard|spotify|"
     r"album|song|movie|box office|oscars?|rott?en tomatoes|kimmel|taylor swift|"
-    r"beyonce|drake|kardashian|iceman"
+    r"beyonce|drake|kardashian|iceman|pregnan(?:t|cy)|baby|engaged|married|divorce"
     r")\b",
     re.IGNORECASE,
 )
@@ -183,7 +183,7 @@ _ABSURD_BUT_REAL_RE = re.compile(
     r"\b("
     r"aliens?|ufo|extraterrestrial|bigfoot|loch ness|simulation|"
     r"will .+ apologize|will .+ say \"|what will .+ wear|"
-    r"hot dog|nathan's|meme|memecoin"
+    r"hot dog|nathan's|meme|memecoin|pregnan(?:t|cy)"
     r")\b",
     re.IGNORECASE,
 )
@@ -678,6 +678,14 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     def swap_positions(a: int, b: int) -> None:
         selected[a], selected[b] = selected[b], selected[a]
 
+    fun_archetypes = {
+        "culture_moment",
+        "weird_news",
+        "absurd_but_real",
+        "big_name",
+        "sports_drama",
+    }
+
     # Keep at least four non-politics/geopolitics cards in the top 10 when
     # already-selected cards can satisfy that without dropping stronger stories.
     top10_size = min(10, len(selected))
@@ -708,6 +716,46 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
         if replacement_idx is None or candidate_idx is None:
             break
         swap_positions(replacement_idx, candidate_idx)
+
+    # Guarantee the opening screen has one genuinely social/fun card when a
+    # strong candidate exists. Sports_story does not count here; this lane is
+    # for culture, celebrity, weird news, or big-name drama.
+    top10 = selected[:top10_size]
+    if not any(_discover_archetype_group(item) in fun_archetypes for item in top10):
+        candidate_idx = next(
+            (
+                idx for idx in range(top10_size, first_page_size)
+                if _discover_archetype_group(selected[idx]) in fun_archetypes
+                and selected[idx].get("score", 0) >= 88
+            ),
+            None,
+        )
+        if candidate_idx is not None:
+            replacement_idx = next(
+                (
+                    idx for idx in range(top10_size - 1, -1, -1)
+                    if _discover_archetype_group(selected[idx]) not in {
+                        "breaking_news",
+                        "health_weather_risk",
+                    }
+                ),
+                top10_size - 1,
+            )
+            swap_positions(replacement_idx, candidate_idx)
+        else:
+            selected_keys = {_feed_item_key(item) for item in selected}
+            candidate = next(
+                (
+                    item for item in all_items
+                    if _feed_item_key(item) not in selected_keys
+                    and _discover_archetype_group(item) in fun_archetypes
+                    and item.get("score", 0) >= 88
+                ),
+                None,
+            )
+            if candidate is not None and top10_size > 0:
+                replacement_idx = top10_size - 1
+                selected[replacement_idx] = candidate
 
     # Keep diplomatic clusters from exceeding the strict world-event cap in the
     # first 20. Prefer replacements already selected for the first page, then

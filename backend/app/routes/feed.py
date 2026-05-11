@@ -64,7 +64,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_DISCOVER_ACTIONS = {"impression", "detail_click", "open", "dismiss", "like", "unlike", "share", "group_expand"}
+_DISCOVER_ACTIONS = {
+    "impression",
+    "detail_click",
+    "open",
+    "dismiss",
+    "like",
+    "unlike",
+    "share",
+    "group_expand",
+    "context_expand",
+    "context_collapse",
+}
 _DISCOVER_ITEM_TYPES = {"event", "futures", "grid", "tournament"}
 _DISCOVER_SURFACES = {"web", "native", "unknown"}
 
@@ -1343,6 +1354,8 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         "share": 3.0,
         "like": 2.0,
         "group_expand": 0.75,
+        "context_expand": 0.35,
+        "context_collapse": 0.0,
         "dismiss": -2.0,
     }
     for category, action, count in rows:

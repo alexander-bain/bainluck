@@ -861,6 +861,30 @@ class TestDiscoverFirstPageMixer:
             for item in first_page
         )
 
+    def test_mixer_pulls_real_fun_market_into_top_10(self):
+        items = [
+            self._item(i, "politics", 100 - i, name=f"2028 election variant {i}")
+            for i in range(5)
+        ] + [
+            self._item(100, "economics", 95, name="How many Fed rate cuts in 2026?"),
+            self._item(101, "basketball", 94, name="Will Cleveland Cavaliers advance to the 2026 NBA Finals?"),
+            self._item(102, "geopolitics", 93, name="US-Iran nuclear deal by May 31?"),
+            self._item(103, "tech", 92, name="GPT-5.6 released by...?"),
+            self._item(104, "economics", 91, name="Fed Decision in July?"),
+            self._item(105, "entertainment", 90, name="Will Taylor Swift be pregnant in 2026?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=11)
+        top10 = mixed[:10]
+
+        assert any(
+            editorial_archetype(
+                item["data"]["name"],
+                item["data"]["llm_sport_category"],
+            ) in {"culture_moment", "absurd_but_real", "big_name", "sports_drama", "weird_news"}
+            for item in top10
+        )
+
 
 class TestEditorialArchetypes:
     def test_editorial_archetype_detects_positive_story_roles(self):
@@ -875,6 +899,7 @@ class TestEditorialArchetypes:
             "Will Mike Vrabel be fired before the Patriots' next game?": "sports_drama",
             "Will Elon win his case against OpenAI?": "company_drama",
             "Will the U.S. confirm that aliens exist before 2027?": "absurd_but_real",
+            "Will Taylor Swift be pregnant in 2026?": "absurd_but_real",
         }
 
         for name, expected in examples.items():

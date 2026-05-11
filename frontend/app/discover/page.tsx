@@ -371,6 +371,20 @@ export default function DiscoverPage() {
     setDismissed((prev) => new Set([...prev, itemId]));
   }, []);
 
+  const scrollToNextGuess = useCallback(() => {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-guess-card]"));
+    const next = cards.find((card) => card.getBoundingClientRect().top > 72) || cards[0];
+    next?.scrollIntoView({ behavior: "smooth", block: "center" });
+    trackEvent("feed_card_action", {
+      action: "challenge_start",
+      content_type: "grid",
+      item_id: "daily_challenge",
+      category: "challenge",
+      item_name: "Today’s Challenge",
+      surface: "discover",
+    });
+  }, []);
+
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
     const firstPage = data?.items ?? [];
     const raw = [...firstPage, ...allItems];
@@ -518,7 +532,7 @@ export default function DiscoverPage() {
         {/* Daily Challenge — passive progress tracker, counts guesses from feed */}
         {!isLoading && processedItems.length > 0 && (
           <div className="mb-4">
-            <DailyChallengeCard guessesToday={dailyGuesses} />
+            <DailyChallengeCard guessesToday={dailyGuesses} onStart={scrollToNextGuess} />
           </div>
         )}
 

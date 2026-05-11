@@ -146,9 +146,54 @@ function isTrending(item: FeedItem): boolean {
 function feedContextSnippet(item: FeedItem): string {
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
-    return data.hook_description || item.reason || item.headline || "";
+    return data.hook_description || item.headline || item.reason || "";
   }
-  return item.reason || item.headline || "";
+  return item.headline || item.reason || "";
+}
+
+const CONTEXT_PREVIEW_CHARS = 145;
+
+function sentencePreview(text: string, maxChars = CONTEXT_PREVIEW_CHARS): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= maxChars) return trimmed;
+  const sentenceEnd = trimmed.slice(0, maxChars + 1).search(/[.!?]\s/);
+  if (sentenceEnd >= 64) return trimmed.slice(0, sentenceEnd + 1);
+  const cut = trimmed.slice(0, maxChars);
+  const wordBoundary = cut.lastIndexOf(" ");
+  return `${cut.slice(0, wordBoundary > 80 ? wordBoundary : maxChars).trim()}...`;
+}
+
+function ExpandableContextText({ text, className, onExpand, onCollapse }: {
+  text: string;
+  className?: string;
+  onExpand?: () => void;
+  onCollapse?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const compact = sentencePreview(text);
+  const canExpand = compact !== text.trim().replace(/\s+/g, " ");
+
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next) onExpand?.();
+    else onCollapse?.();
+  };
+
+  return (
+    <p className={className}>
+      {expanded || !canExpand ? text : compact}
+      {canExpand && (
+        <button
+          type="button"
+          onClick={toggle}
+          className="ml-1 text-xs font-semibold text-accent-brand hover:underline"
+        >
+          {expanded ? "Show less" : "See more"}
+        </button>
+      )}
+    </p>
+  );
 }
 
 function MovementBadge({ m }: { m: number | null | undefined }) {
@@ -228,7 +273,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   const trending = isTrending(item);
   const analytics = getDiscoverItemAnalytics(item);
 
-  const trackAction = useCallback((action: "detail_click" | "like" | "unlike" | "share") => {
+  const trackAction = useCallback((action: "detail_click" | "like" | "unlike" | "share" | "context_expand" | "context_collapse") => {
     trackEvent("feed_card_action", {
       action,
       ...analytics,
@@ -267,8 +312,8 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
       )}
 
       <div style={cardStyle}>
-        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
-        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
+        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
         {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
       </div>
     </div>
@@ -446,8 +491,8 @@ function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentTy
 
 // ── Event Card ──
 
-function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare }: {
-  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void;
+function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: {
+  item: FeedItem; data: FeedEventData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void; onContextExpand?: () => void; onContextCollapse?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const homeColor = data.home_team_data?.primary_color || "#374151";
@@ -460,7 +505,7 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
   const sportCat = data.sport?.split("_")[0] || "sports";
 
   const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
-  const contextSnippet = item.reason || headline;
+  const contextSnippet = item.headline || item.reason || headline;
   const timeLabel = isLive ? (data.espn?.period || "Live") : isDone ? "Final" : (() => {
     const d = new Date(data.commence_time);
     const diffH = (d.getTime() - Date.now()) / 36e5;
@@ -527,7 +572,14 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
           </div>
         )}
 
-        {contextSnippet && <p className="text-sm text-text-secondary mt-2">{contextSnippet}</p>}
+        {contextSnippet && (
+          <ExpandableContextText
+            text={contextSnippet}
+            className="text-sm text-text-secondary mt-2"
+            onExpand={onContextExpand}
+            onCollapse={onContextCollapse}
+          />
+        )}
 
         {/* Expandable context */}
         {contextLines.length > 0 && (
@@ -558,8 +610,8 @@ function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailC
 
 // ── Futures Card ──
 
-function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare }: {
-  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void;
+function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: {
+  item: FeedItem; data: FeedFuturesData; liked: boolean; setLiked: (v: boolean) => void; onDismiss?: () => void; trending: boolean; onDetailClick?: () => void; onShare?: () => void; onContextExpand?: () => void; onContextCollapse?: () => void;
 }) {
   const [showContext, setShowContext] = useState(false);
   const catStyle = getCat(data.llm_sport_category);
@@ -605,7 +657,14 @@ function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, onDetai
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.name}</h3>
         </Link>
 
-        {contextSnippet && <p className="text-sm text-text-secondary mt-1 leading-relaxed">{contextSnippet}</p>}
+        {contextSnippet && (
+          <ExpandableContextText
+            text={contextSnippet}
+            className="text-sm text-text-secondary mt-1 leading-relaxed"
+            onExpand={onContextExpand}
+            onCollapse={onContextCollapse}
+          />
+        )}
 
         {data.top_outcomes.length > 1 && (
           <>
@@ -864,36 +923,47 @@ export function GuessCard({ item, onGuessCompleted }: { item: FeedItem; onGuessC
 
 const DAILY_GOAL = 5;
 
-export function DailyChallengeCard({ guessesToday }: {
+export function DailyChallengeCard({ guessesToday, onStart }: {
   guessesToday: number;
+  onStart?: () => void;
 }) {
   const completed = guessesToday >= DAILY_GOAL;
   const progress = Math.min(guessesToday / DAILY_GOAL, 1);
+  const remaining = Math.max(DAILY_GOAL - guessesToday, 0);
 
   return (
-    <div className={`rounded-2xl overflow-hidden border-2 ${completed ? "border-green-400/50" : "border-amber-400/30"} bg-surface-card shadow-md`}>
-      <div className="px-4 py-3 flex items-center gap-3">
-        <span className="text-2xl">{completed ? "🏆" : "🎯"}</span>
-        <div className="flex-1">
-          <div className="text-sm font-bold">
-            {completed ? "Daily Challenge Complete!" : "Today’s Challenge"}
-          </div>
-          <div className="text-xs text-text-muted">
-            {completed
-              ? "Come back tomorrow for a new challenge"
-              : `Make ${DAILY_GOAL} predictions today · ${guessesToday}/${DAILY_GOAL}`}
+    <div className={`rounded-2xl overflow-hidden border ${completed ? "border-green-400/50" : "border-amber-400/40"} bg-surface-card shadow-md`}>
+      <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <span className="grid place-items-center w-10 h-10 rounded-xl bg-amber-500/10 text-xl">{completed ? "🏆" : "🎯"}</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-bold">
+              {completed ? "Daily Challenge Complete" : "Today’s Challenge"}
+            </div>
+            <div className="text-xs text-text-muted">
+              {completed
+                ? "Come back tomorrow for a new set"
+                : `${remaining} ${remaining === 1 ? "prediction" : "predictions"} left to finish today’s set`}
+            </div>
           </div>
         </div>
-        {!completed && (
-          <div className="w-12 h-12 relative">
-            <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
-              <circle cx="18" cy="18" r="15" fill="none" stroke="#e5e7eb" strokeWidth="3" />
-              <circle cx="18" cy="18" r="15" fill="none" stroke="#f59e0b" strokeWidth="3"
-                strokeDasharray={`${progress * 94.25} 94.25`}
-                strokeLinecap="round" className="transition-all duration-500" />
-            </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold">{guessesToday}</span>
+        <div className="flex-1">
+          <div className="h-2 rounded-full bg-surface-elevated overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${completed ? "bg-green-500" : "bg-amber-500"}`}
+              style={{ width: `${progress * 100}%` }}
+            />
           </div>
+          <div className="mt-1 text-[10px] font-semibold text-text-muted text-right">{guessesToday}/{DAILY_GOAL}</div>
+        </div>
+        {!completed && (
+          <button
+            type="button"
+            onClick={onStart}
+            className="shrink-0 rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-white hover:bg-amber-600 transition-colors"
+          >
+            Play next
+          </button>
         )}
       </div>
     </div>

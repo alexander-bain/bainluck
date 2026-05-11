@@ -62,6 +62,8 @@ def main() -> int:
     print(f"ground-truth-hit@50:     {summary['ground_truth_hit_count_50']}/50")
     print(f"positive-archetypes@20:  {summary['positive_archetype_hits']}/{summary['positive_targets_total']}")
     print(f"strict-variety@20:       {summary['strict_variety_hits']}/{summary['strict_targets_total']}")
+    print(f"fun-market-presence@10:  {summary['fun_market_presence_10']}")
+    print(f"snippet-issues@20:      {summary['snippet_issue_count']}/20 {summary['snippet_issue_distribution']}")
     print(f"category-spread@20:      {summary['category_spread']} categories, max={summary['max_category_count']}")
     print(f"category distribution@20:{summary['category_distribution']}")
     print(f"archetype distribution@20:{summary['archetype_distribution']}")
@@ -88,6 +90,10 @@ def main() -> int:
             print(f"     reasons={','.join(c['reasons'][:6])}")
         if c["headline"] or c["reason"]:
             print(f"     why={c['headline'] or c['reason']} ({c['archetype']})")
+        if c.get("snippet_issues"):
+            visible_issues = [i for i in c["snippet_issues"] if i != "missing"]
+            if visible_issues:
+                print(f"     snippet_issues={','.join(visible_issues)}")
 
     if boring20 or duplicate_families:
         print()

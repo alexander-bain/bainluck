@@ -7,7 +7,9 @@ export type DiscoverAction =
   | "like"
   | "unlike"
   | "share"
-  | "group_expand";
+  | "group_expand"
+  | "context_expand"
+  | "context_collapse";
 
 export interface DiscoverItemAnalytics {
   content_type: "event" | "futures" | "grid";
@@ -46,6 +48,8 @@ const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
   unlike: -1,
   share: 3,
   group_expand: 0.75,
+  context_expand: 0.35,
+  context_collapse: 0,
 };
 
 function normalizeCategory(category: string | null | undefined): string {

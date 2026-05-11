@@ -45,6 +45,55 @@ _HIGH_VALUE_ARCHETYPES = {
     "big_name",
     "absurd_but_real",
 }
+
+_FUN_ARCHETYPES = {
+    "culture_moment",
+    "weird_news",
+    "absurd_but_real",
+    "big_name",
+    "sports_drama",
+}
+
+
+def _normalized_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _display_context_text(item: dict[str, Any]) -> str:
+    data = item.get("data") or {}
+    return (
+        data.get("hook_description")
+        or item.get("headline")
+        or item.get("reason")
+        or ""
+    ).strip()
+
+
+def _snippet_quality_issues(name: str, context: str) -> list[str]:
+    """Flag feed snippets that are present but weak on-card copy."""
+    if not context:
+        return ["missing"]
+
+    issues: list[str] = []
+    compact = " ".join(context.split())
+    if len(compact) > 180:
+        issues.append("too_long")
+
+    name_tokens = _normalized_words(name)
+    context_tokens = _normalized_words(compact)
+    if name_tokens and context_tokens:
+        prefix_len = min(len(name_tokens), 8)
+        if context_tokens[:prefix_len] == name_tokens[:prefix_len]:
+            issues.append("repeats_title")
+
+    lower = compact.lower()
+    if re.search(r"\bresolving (soon|this month)\b", lower) and not re.search(r"\d", compact):
+        issues.append("generic_resolution")
+    if len(context_tokens) > 18 and not re.search(r"\d|up|down|new favorite|tracked by|leads at|movement|source", lower):
+        issues.append("no_concrete_signal")
+    return issues
+
+
 def load_default_ground_truth_items() -> list[dict[str, Any]]:
     """Load local curated Kalshi/Polymarket examples when present."""
     root = Path(__file__).resolve().parents[2]
@@ -344,6 +393,7 @@ def diagnose_feed_items(
             away = data.get("away_team") or ""
             name = f"{away} at {home}".strip() or name
             category = data.get("sport_name") or data.get("sport") or "sports"
+            context = _display_context_text(item)
             diagnosed.append(
                 {
                     "rank": idx,
@@ -356,6 +406,8 @@ def diagnose_feed_items(
                     "source": "event",
                     "headline": item.get("headline"),
                     "reason": item.get("reason"),
+                    "context": context,
+                    "snippet_issues": _snippet_quality_issues(name, context),
                     "hook": False,
                     "image": bool(data.get("home_team_data") or data.get("away_team_data")),
                     "explanation_ok": bool(item.get("headline") or item.get("reason")),
@@ -378,6 +430,7 @@ def diagnose_feed_items(
         )
         hook = data.get("hook_description")
         headline = item.get("headline")
+        context = _display_context_text(item)
         explanation_ok = has_specific_explanation(
             hook_description=hook,
             headline=headline,
@@ -396,6 +449,8 @@ def diagnose_feed_items(
                 "source": data.get("source") or "?",
                 "headline": headline,
                 "reason": item.get("reason"),
+                "context": context,
+                "snippet_issues": _snippet_quality_issues(name, context),
                 "hook": bool(hook),
                 "image": bool(data.get("image_url")),
                 "explanation_ok": explanation_ok,
@@ -427,6 +482,16 @@ def summarize_feed_diagnostics(
     ground_truth_50 = [c for c in diagnosed[:50] if c["ground_truth"]]
     categories = Counter(c["category"] for c in top)
     archetypes = Counter(c["archetype"] for c in top)
+    snippet_issues = Counter(
+        issue
+        for c in top
+        for issue in c.get("snippet_issues", [])
+        if issue != "missing"
+    )
+    snippet_issue_cards = [
+        c for c in top
+        if any(issue != "missing" for issue in c.get("snippet_issues", []))
+    ]
 
     positive_targets = {
         "world_event": any(c["archetype"] == "world_event" for c in top),
@@ -442,14 +507,7 @@ def summarize_feed_diagnostics(
     ]
     top10_fun = [
         c for c in top10
-        if c["archetype"] in {
-            "culture_moment",
-            "weird_news",
-            "absurd_but_real",
-            "sports_story",
-            "sports_drama",
-            "big_name",
-        }
+        if c["archetype"] in _FUN_ARCHETYPES
     ]
     strict_targets = {
         "top10_non_politics_geopolitics>=4": len(top10_non_politics) >= 4,
@@ -478,8 +536,11 @@ def summarize_feed_diagnostics(
         "max_category_count": max(categories.values(), default=0),
         "category_distribution": dict(categories.most_common()),
         "archetype_distribution": dict(archetypes.most_common()),
+        "snippet_issue_count": len(snippet_issue_cards),
+        "snippet_issue_distribution": dict(snippet_issues.most_common()),
         "positive_targets": positive_targets,
         "strict_targets": strict_targets,
+        "fun_market_presence_10": bool(top10_fun),
     }
 
 

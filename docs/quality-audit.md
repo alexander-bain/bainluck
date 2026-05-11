@@ -70,7 +70,9 @@ Targets:
 - `explanation-coverage@20=20/20`
 - `positive-archetypes@20>=5/6`
 - `strict-variety@20>=4/5`
+- `fun-market-presence@10=true`
 - `category-spread@20>=6`, max category count `<=5`
+- `snippet-issues@20` should trend down; current checks flag overlong snippets, title repetition, generic resolution copy, and context without concrete signals.
 
 Related admin surfaces:
 - `/admin/discover-quality` for feed audit, hook coverage, timing, ground-truth traces, engagement, and opportunity signals.
