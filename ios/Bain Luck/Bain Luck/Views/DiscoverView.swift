@@ -80,6 +80,7 @@ struct DiscoverView: View {
     @State private var interactionProfile = NativeDiscoverProfile.load()
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
+    @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
     @State private var showChallenge = false
     @State private var challengeIndex = 0
     @State private var challengeComplete = false
@@ -319,35 +320,37 @@ struct DiscoverView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
+        VStack(spacing: 0) {
+            // Category chips (sticky — outside ScrollView)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(categories, id: \.key) { cat in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) { categoryFilter = cat.key }
+                            AnalyticsService.trackDiscoverCategoryFilter(category: cat.key)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(cat.emoji)
+                                    .font(.system(size: 11))
+                                Text(cat.label)
+                                    .font(.system(size: 12, weight: categoryFilter == cat.key ? .bold : .medium))
+                            }
+                            .foregroundStyle(categoryFilter == cat.key ? .white : .secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(categoryFilter == cat.key ? Color.primary : Color.secondary.opacity(0.08))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .background(.background)
+
         ScrollView {
             VStack(spacing: 0) {
-                // Category chips
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(categories, id: \.key) { cat in
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) { categoryFilter = cat.key }
-                                AnalyticsService.trackDiscoverCategoryFilter(category: cat.key)
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Text(cat.emoji)
-                                        .font(.system(size: 11))
-                                    Text(cat.label)
-                                        .font(.system(size: 12, weight: categoryFilter == cat.key ? .bold : .medium))
-                                }
-                                .foregroundStyle(categoryFilter == cat.key ? .white : .secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(categoryFilter == cat.key ? Color.primary : Color.secondary.opacity(0.08))
-                                .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                }
-
                 // Resolution cards
                 ForEach(resolutions.prefix(3), id: \.marketName) { res in
                     NativeResolutionCard(resolution: res)
@@ -385,6 +388,37 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
+                }
+
+                // Swipe hint (shown once)
+                if showSwipeHint {
+                    HStack(spacing: 12) {
+                        Image(systemName: "hand.draw.fill")
+                            .font(.title3)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Swipe cards to dismiss")
+                                .font(.caption.weight(.semibold))
+                            Text("Tap any card to explore the full market")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            withAnimation { showSwipeHint = false }
+                            UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 // Cards (paginated — show `visibleCount` at a time)
@@ -448,6 +482,7 @@ struct DiscoverView: View {
                 .padding(.bottom)
             }
         }
+        }
         .navigationTitle("Discover")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
@@ -498,7 +533,7 @@ struct DiscoverView: View {
             }
         }
         .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
+            WelcomeView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
         }
         .sheet(isPresented: $showChallenge) {
@@ -541,6 +576,10 @@ struct DiscoverView: View {
     private func dismiss(_ id: String) {
         dismissed.insert(id)
         Self.saveDismissed(dismissed)
+        if showSwipeHint {
+            withAnimation { showSwipeHint = false }
+            UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
+        }
     }
 
     private static func loadDismissed() -> Set<String> {

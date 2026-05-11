@@ -291,6 +291,25 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Services/NavigationCoordinator.swift`, `ios/.../Views/MainTabView.swift`
 **Parallel Safety:** Yellow (touches nav — coordinate with other sessions)
 
+### NATIVE-DESIGN. Native Category Pages Are Broken/Ugly (HIGH-PRI)
+
+**Problem:** The iOS/macOS category pages (Economics, Entertainment, Weather, Politics, Preferences) are visually broken and unpolished. Key issues from May 11 screenshots:
+
+1. **Economics** — Shows "Error: The data couldn't be read because it isn't in the correct format." Page is completely broken.
+2. **Entertainment** — Dense wall of text, no visual hierarchy, market cards are plain white boxes with no images or color. Looks like a database dump.
+3. **Weather** — City forecast grid is an overwhelming spreadsheet of temperature buckets and percentages. No visual design — just raw data tables. Needs temperature visualization (gauges, color gradients) instead of text lists.
+4. **Politics** — Best of the bunch (has senate map, color-coded candidates) but market cards below the hero are still plain text lists with no visual richness.
+5. **Preferences** — Functional but boring. The interest selector (Love/Big/Wild/Nah) looks like a data table. Needs card-based design with visual weight.
+
+**Action:**
+- Fix Economics data parsing error (blocking)
+- Design pass on all 5 category pages: add card backgrounds, images, color accents, visual hierarchy
+- Reference the web versions (which Claude Design helped polish) as the design target
+- Weather page especially needs a complete visual rethink — temperature distributions should use color gradients and compact visualizations, not text tables
+
+**Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
+**Parallel Safety:** Green (each page is independent)
+
 ---
 
 ## Tier 1 — High Leverage, Do Next
