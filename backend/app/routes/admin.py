@@ -5480,6 +5480,24 @@ async def statpal_probe_endpoints(
 
     now = datetime.now(timezone.utc)
 
+    # Grab RAW JSON to see if playoffs are present but dropped by parser
+    raw_data = await svc._get(sport, "season-schedule", {})
+    raw_debug = {}
+    if raw_data and isinstance(raw_data, dict):
+        raw_debug["top_keys"] = list(raw_data.keys())[:10]
+        for key in ("data", "schedule", "games", "fixtures", "matches", "results", "response"):
+            if key in raw_data and isinstance(raw_data[key], list):
+                items = raw_data[key]
+                raw_debug[f"{key}_count"] = len(items)
+                if items:
+                    raw_debug[f"{key}_last_2"] = [
+                        {k: v for k, v in (item.items() if isinstance(item, dict) else [])
+                         if k in ("id", "date", "time", "home_team", "away_team", "status",
+                                  "home", "away", "teams", "round", "week", "stage",
+                                  "start_time", "datetime", "fixture_id")}
+                        for item in items[-2:]
+                    ]
+
     for label, endpoint, params in probes:
         try:
             data = await svc._get(sport, endpoint, params)
@@ -5503,6 +5521,7 @@ async def statpal_probe_endpoints(
         except Exception as e:
             results[label] = {"status": f"error: {str(e)[:100]}", "count": 0}
 
+    results["_raw_debug"] = raw_debug
     return results
 
 
