@@ -5369,6 +5369,76 @@ async def trigger_statpal_schedule_sync(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
+@router.get("/events/creation-lead-time")
+async def event_creation_lead_time(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport: str = Query("basketball_nba", description="Sport key"),
+    days: int = Query(14, description="Look back N days"),
+    db: AsyncSession = Depends(get_db),
+):
+    """How far in advance are Tier 1 events created before their commence_time?"""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import text as _text
+
+    await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
+
+    result = await db.execute(_text("""
+        SELECT
+            e.id,
+            e.home_team_name,
+            e.away_team_name,
+            e.commence_time,
+            e.created_at,
+            e.status,
+            e.external_id,
+            e.statpal_fixture_id,
+            e.commence_time_source,
+            EXTRACT(EPOCH FROM (e.commence_time - e.created_at)) / 3600 AS lead_hours
+        FROM events e
+        JOIN sports s ON e.sport_id = s.id
+        WHERE s.key = :sport
+          AND e.commence_time > NOW() - INTERVAL :days_str
+          AND e.created_at IS NOT NULL
+          AND e.commence_time IS NOT NULL
+        ORDER BY e.commence_time DESC
+        LIMIT 50
+    """), {"sport": sport, "days_str": f"{days} days"})
+    rows = result.all()
+
+    events = []
+    for r in rows:
+        events.append({
+            "id": r.id,
+            "matchup": f"{r.away_team_name} vs {r.home_team_name}",
+            "commence": r.commence_time.isoformat()[:16] if r.commence_time else None,
+            "created": r.created_at.isoformat()[:16] if r.created_at else None,
+            "lead_hours": round(r.lead_hours, 1) if r.lead_hours else None,
+            "status": r.status,
+            "source": r.commence_time_source,
+            "has_odds_api": r.external_id is not None,
+            "has_statpal": r.statpal_fixture_id is not None,
+        })
+
+    lead_hours = [e["lead_hours"] for e in events if e["lead_hours"] is not None]
+    return {
+        "sport": sport,
+        "events_analyzed": len(events),
+        "lead_time_stats": {
+            "min_hours": round(min(lead_hours), 1) if lead_hours else None,
+            "max_hours": round(max(lead_hours), 1) if lead_hours else None,
+            "median_hours": round(sorted(lead_hours)[len(lead_hours) // 2], 1) if lead_hours else None,
+            "avg_hours": round(sum(lead_hours) / len(lead_hours), 1) if lead_hours else None,
+            "under_6h": sum(1 for h in lead_hours if h < 6),
+            "under_24h": sum(1 for h in lead_hours if h < 24),
+            "under_48h": sum(1 for h in lead_hours if h < 48),
+        },
+        "events": events,
+    }
+
+
 @router.get("/statpal/fixture-debug")
 async def statpal_fixture_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
@@ -6406,6 +6476,8 @@ async def discover_engagement_summary(
                 "shares": 0,
                 "likes": 0,
                 "group_expands": 0,
+                "challenge_starts": 0,
+                "challenge_completes": 0,
                 "actions": 0,
             },
         )
@@ -6427,6 +6499,12 @@ async def discover_engagement_summary(
         elif action == "group_expand":
             bucket["group_expands"] += n
             bucket["actions"] += n
+        elif action == "challenge_start":
+            bucket["challenge_starts"] += n
+            bucket["actions"] += n
+        elif action == "challenge_complete":
+            bucket["challenge_completes"] += n
+            bucket["actions"] += n
         else:
             bucket["actions"] += n
 
@@ -6438,6 +6516,8 @@ async def discover_engagement_summary(
         "shares": 0,
         "likes": 0,
         "group_expands": 0,
+        "challenge_starts": 0,
+        "challenge_completes": 0,
         "actions": 0,
     }
     for bucket in groups.values():
