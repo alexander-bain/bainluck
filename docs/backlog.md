@@ -50,23 +50,26 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem:** The worst Discover feed quality failures are now fixed, but the product should keep improving toward a world-class personalized prediction feed across web and native.
 
-**Current production state (May 8):**
+**Current production state (May 11):**
 - ✅ Audit quality is clean: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`, `explanation-coverage@20=20/20`, `positive-archetypes@20=6/6`, `strict-variety@20=5/5`.
 - ✅ Deterministic explanations are first-class and do not depend on LLM hooks for first-page comprehension.
 - ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
 - ✅ First-page category/archetype/story mixer caps politics/geopolitics/economics overload while preserving score order as much as possible.
 - ✅ Discover debug/admin viewer exists at `/admin/discover-quality`: feed quality metrics, timing, hook coverage, ground-truth traces, per-market trace, engagement rates, top actioned cards, and promote/investigate/downrank opportunity signals.
+- ✅ Context snippets use concise `context_summary` copy with instant `See more` expansion; admin engagement now tracks context expansion counts/rates.
+- ✅ Web Today’s Challenge opens as a focused modal with explicit Next/Finish progression and first-party start/completion funnel metrics.
 - ✅ Web shareability shipped: stable UTM share URLs, card-specific share copy, generated OG images, shared-link CTAs, and share/open analytics.
 - ✅ Native parity pass shipped: redesigned event/futures/guess cards, fifth-card Higher/Lower cadence, share links, local category tuning, and Firebase analytics parity.
 - ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
 - ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
 
 **Next phases:**
-1. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
-2. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-3. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
-4. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-5. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
+1. Native parity for the focused Today’s Challenge flow and concise/expandable context snippets.
+2. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
+3. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+4. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
+5. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+6. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
@@ -110,39 +113,21 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 10-module automated audit. 3 critical, 9 warning, 4 info findings. Results in `Manus/audit_results/2026-05-11/`.
 
-### MS-1. Weather Page Frozen on April 20 Data (CRITICAL) — Category Page Audit
+### ~~MS-1. Weather Page Frozen~~ — FALSE ALARM (verified May 11)
 
-**Problem:** The entire weather page is showing 3-week-old data (April 20). Featured markets, city forecasts, and rain probabilities are all stale. The weather data pipeline appears to have stopped updating.
+Weather API returning current data (May 12 markets, Austin 84°F, LA 91°F). Manus finding was from outage window. Data pipeline is healthy.
 
-**Action:** Check weather polling task (`poll_weather_markets`) in Celery beat schedule. Verify Kalshi weather markets are being ingested. Check `updated_at` timestamps on weather-category futures_markets.
+### ~~MS-2. NBA Knicks Championship Odds~~ — FALSE ALARM (verified May 11)
 
-**Files:** `backend/app/tasks/kalshi.py` (weather polling), `backend/app/routes/weather.py`
-**Parallel Safety:** Yellow
+Knicks at 1.0% is correct — all 3 sources (Kalshi, Polymarket, Odds API) agree. Grid shows OKC 60.5%, Spurs 19.5%, Pistons 4.8%. Manus was likely comparing against a different market or cached page during the outage.
 
-### MS-2. NBA Knicks Championship Odds Stale (CRITICAL) — Grid Audit
+### ~~MS-3. Player Prop Monotonicity Violations~~ — FIXED (May 11)
 
-**Problem:** NBA championship grid shows Knicks at 1.0% while Kalshi (13%) and Polymarket (14%) both show them as serious contenders. The grid data is not updating from live market prices.
+Added monotonicity enforcement to player props: within each player+stat group, P(Over X) must decrease as X increases. Uses existing `_enforce_monotonicity()`. Drops violating thresholds.
 
-**Action:** Check if the Knicks' futures market has a stale `current_probability` or if the grid query is pulling from the wrong snapshot. Run `audit_grid_accuracy.py` to verify.
+### ~~MS-4. Politics Page Misclassified Markets~~ — FIXED (May 11)
 
-**Files:** `backend/app/routes/playoffs.py`, `backend/scripts/audit_grid_accuracy.py`
-**Parallel Safety:** Yellow
-
-### MS-3. Player Prop Monotonicity Violations (CRITICAL) — Market Accuracy Audit
-
-**Problem:** Jake LaRavia shows P(20+ pts) = 48% but P(10+ pts) = 27% — mathematically impossible. Higher thresholds must have lower probabilities. This affects user trust.
-
-**Action:** Add monotonicity enforcement in the game-markets endpoint: for each player, sort threshold props and enforce P(lower threshold) >= P(higher threshold). Flag violations in admin dashboard.
-
-**Files:** `backend/app/routes/events.py` (game-markets endpoint, player prop enrichment)
-**Parallel Safety:** Yellow
-
-### MS-4. Politics Page Misclassified Markets (WARNING) — Category Page Audit
-
-**Problem:** Billboard, Sports, and VIX markets appearing on the Politics page. The `_classify_theme()` function is too permissive — some Kalshi ticker prefixes map to the wrong category.
-
-**Files:** `backend/app/routes/politics.py` (`_classify_theme`)
-**Parallel Safety:** Green
+Added `_NON_POLITICS_RE` pattern to filter Billboard, Spotify, VIX, sports, weather, etc. from the politics page. Markets with `llm_sport_category="politics"` but clearly non-political names are now excluded.
 
 ### MS-5. Entertainment Spotify Race Sums to ~135% (WARNING) — Category Page Audit
 
