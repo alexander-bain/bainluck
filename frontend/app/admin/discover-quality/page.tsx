@@ -133,6 +133,32 @@ interface FeedDebugResponse {
   };
 }
 
+type PersonalizationFilter = "all" | "personalized" | "boosted" | "suppressed" | "neutral" | "missing";
+
+interface PersonalizationRollup {
+  total: number;
+  traced: number;
+  personalized: number;
+  boosted: number;
+  suppressed: number;
+  neutral: number;
+  missing: number;
+  avgMultiplier: number | null;
+  avgScoreDelta: number | null;
+  categories: Array<{
+    category: string;
+    count: number;
+    avgMultiplier: number;
+    avgScoreDelta: number;
+    boosted: number;
+    suppressed: number;
+  }>;
+  reasons: Array<{
+    reason: string;
+    count: number;
+  }>;
+}
+
 interface CandidatePoolTrace {
   name: string;
   limit: number;
@@ -471,6 +497,89 @@ function rankText(value: number | null) {
   return value === null ? "out" : `#${value}`;
 }
 
+function PersonalizationPanel({ rollup }: { rollup: PersonalizationRollup }) {
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Personalization</h2>
+          <p className="text-xs text-text-muted mt-1">
+            Authenticated debug traces across the current top 50.
+          </p>
+        </div>
+        <StatusPill tone={rollup.traced > 0 ? "ok" : "muted"}>
+          {rollup.traced > 0 ? `${rollup.traced} traced` : "anonymous"}
+        </StatusPill>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+        <div>
+          <div className="text-text-muted">Personalized</div>
+          <div className="text-text-primary font-semibold">{rollup.personalized}/{rollup.total}</div>
+        </div>
+        <div>
+          <div className="text-text-muted">Boosted</div>
+          <div className="text-accent-live font-semibold">{rollup.boosted}</div>
+        </div>
+        <div>
+          <div className="text-text-muted">Suppressed</div>
+          <div className="text-accent-danger font-semibold">{rollup.suppressed}</div>
+        </div>
+        <div>
+          <div className="text-text-muted">Avg multiplier</div>
+          <div className="text-text-primary font-semibold">
+            {rollup.avgMultiplier === null ? "none" : `${rollup.avgMultiplier.toFixed(2)}x`}
+          </div>
+        </div>
+        <div>
+          <div className="text-text-muted">Avg score delta</div>
+          <div className="text-text-primary font-semibold">
+            {rollup.avgScoreDelta === null ? "none" : signedNumber(rollup.avgScoreDelta, 1)}
+          </div>
+        </div>
+      </div>
+
+      {rollup.categories.length > 0 ? (
+        <div className="space-y-2">
+          <div className="text-xs font-medium text-text-primary">Category Effects</div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {rollup.categories.slice(0, 6).map((row) => (
+              <div key={row.category} className="rounded-lg bg-surface-elevated/50 border border-surface-border p-2">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-medium text-text-primary">{formatTargetName(row.category)}</span>
+                  <span className="text-text-muted">{row.count} cards</span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  <StatusPill tone={row.avgScoreDelta >= 0 ? "ok" : "warn"}>
+                    {`score ${signedNumber(row.avgScoreDelta, 1)}`}
+                  </StatusPill>
+                  <StatusPill tone="muted">{`${row.avgMultiplier.toFixed(2)}x`}</StatusPill>
+                  {row.boosted > 0 && <StatusPill tone="ok">{`${row.boosted} boosted`}</StatusPill>}
+                  {row.suppressed > 0 && <StatusPill tone="warn">{`${row.suppressed} suppressed`}</StatusPill>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-text-muted">
+          Sign in before loading this admin page to inspect personalized ranking effects.
+        </div>
+      )}
+
+      {rollup.reasons.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {rollup.reasons.slice(0, 8).map((row) => (
+            <StatusPill key={row.reason} tone="muted">
+              {`${formatTargetName(row.reason)}: ${row.count}`}
+            </StatusPill>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
   const phases = trace.rank_phases;
   return (
@@ -799,6 +908,7 @@ export default function DiscoverQualityPage() {
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
+  const [personalizationFilter, setPersonalizationFilter] = useState<PersonalizationFilter>("all");
   const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
@@ -854,6 +964,74 @@ export default function DiscoverQualityPage() {
     () => Object.keys(data?.missing_ground_truth_summary?.bucket_counts || {}).sort(),
     [data]
   );
+  const personalizationRollup = useMemo<PersonalizationRollup>(() => {
+    const items = data?.debug_items || [];
+    const tracedItems = items.filter((item) => item.personalization_trace);
+    const categoryMap = new Map<string, {
+      count: number;
+      multiplierTotal: number;
+      scoreDeltaTotal: number;
+      boosted: number;
+      suppressed: number;
+    }>();
+    const reasonMap = new Map<string, number>();
+
+    tracedItems.forEach((item) => {
+      const trace = item.personalization_trace!;
+      const categoryKey = trace.category || item.category || "other";
+      const existing = categoryMap.get(categoryKey) || {
+        count: 0,
+        multiplierTotal: 0,
+        scoreDeltaTotal: 0,
+        boosted: 0,
+        suppressed: 0,
+      };
+      existing.count += 1;
+      existing.multiplierTotal += trace.multiplier;
+      existing.scoreDeltaTotal += trace.score_delta;
+      if (trace.score_delta > 0) existing.boosted += 1;
+      if (trace.score_delta < 0) existing.suppressed += 1;
+      categoryMap.set(categoryKey, existing);
+
+      trace.reasons.forEach((reason) => {
+        reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1);
+      });
+    });
+
+    const scoreDeltaTotal = tracedItems.reduce(
+      (total, item) => total + (item.personalization_trace?.score_delta || 0),
+      0
+    );
+    const multiplierTotal = tracedItems.reduce(
+      (total, item) => total + (item.personalization_trace?.multiplier || 0),
+      0
+    );
+
+    return {
+      total: items.length,
+      traced: tracedItems.length,
+      personalized: tracedItems.filter((item) => item.personalization_trace?.is_personalized).length,
+      boosted: tracedItems.filter((item) => (item.personalization_trace?.score_delta || 0) > 0).length,
+      suppressed: tracedItems.filter((item) => (item.personalization_trace?.score_delta || 0) < 0).length,
+      neutral: tracedItems.filter((item) => (item.personalization_trace?.score_delta || 0) === 0).length,
+      missing: items.length - tracedItems.length,
+      avgMultiplier: tracedItems.length > 0 ? multiplierTotal / tracedItems.length : null,
+      avgScoreDelta: tracedItems.length > 0 ? scoreDeltaTotal / tracedItems.length : null,
+      categories: Array.from(categoryMap.entries())
+        .map(([categoryName, row]) => ({
+          category: categoryName,
+          count: row.count,
+          avgMultiplier: row.multiplierTotal / row.count,
+          avgScoreDelta: row.scoreDeltaTotal / row.count,
+          boosted: row.boosted,
+          suppressed: row.suppressed,
+        }))
+        .sort((a, b) => Math.abs(b.avgScoreDelta) - Math.abs(a.avgScoreDelta)),
+      reasons: Array.from(reasonMap.entries())
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count),
+    };
+  }, [data]);
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -861,12 +1039,18 @@ export default function DiscoverQualityPage() {
       if (category !== "all" && item.category !== category) return false;
       if (archetype !== "all" && item.archetype !== archetype) return false;
       if (quality !== "all" && item.quality_class !== quality) return false;
+      const trace = item.personalization_trace;
+      if (personalizationFilter === "personalized" && !trace?.is_personalized) return false;
+      if (personalizationFilter === "boosted" && (!trace || trace.score_delta <= 0)) return false;
+      if (personalizationFilter === "suppressed" && (!trace || trace.score_delta >= 0)) return false;
+      if (personalizationFilter === "neutral" && (!trace || trace.score_delta !== 0)) return false;
+      if (personalizationFilter === "missing" && trace) return false;
       if (query && !`${item.name} ${item.headline || ""} ${item.reason || ""}`.toLowerCase().includes(query)) {
         return false;
       }
       return true;
     });
-  }, [archetype, category, data, quality, search]);
+  }, [archetype, category, data, personalizationFilter, quality, search]);
 
   const filteredMissingGroundTruth = useMemo(() => {
     return (data?.missing_ground_truth || []).filter((item) => {
@@ -1072,6 +1256,8 @@ export default function DiscoverQualityPage() {
             </div>
           </div>
 
+          <PersonalizationPanel rollup={personalizationRollup} />
+
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
@@ -1244,7 +1430,7 @@ export default function DiscoverQualityPage() {
                 <Filter className="w-4 h-4" />
                 Top 50 Diagnostics
               </div>
-              <div className="grid md:grid-cols-4 gap-2">
+              <div className="grid md:grid-cols-5 gap-2">
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -1263,7 +1449,16 @@ export default function DiscoverQualityPage() {
                   <option value="all">All quality</option>
                   {qualities.map((item) => <option key={item} value={item}>{formatTargetName(item)}</option>)}
                 </select>
+                <select value={personalizationFilter} onChange={(e) => setPersonalizationFilter(e.target.value as PersonalizationFilter)} className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-sm text-text-primary">
+                  <option value="all">All personalization</option>
+                  <option value="personalized">{`Personalized (${personalizationRollup.personalized})`}</option>
+                  <option value="boosted">{`Boosted (${personalizationRollup.boosted})`}</option>
+                  <option value="suppressed">{`Suppressed (${personalizationRollup.suppressed})`}</option>
+                  <option value="neutral">{`Neutral (${personalizationRollup.neutral})`}</option>
+                  <option value="missing">{`Missing trace (${personalizationRollup.missing})`}</option>
+                </select>
               </div>
+              <div className="text-xs text-text-muted">{filteredItems.length} shown</div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
