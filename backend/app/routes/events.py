@@ -3115,6 +3115,23 @@ async def get_game_markets(
                 merged_props.append(best)
         player_props = merged_props
 
+    # 9c. Enforce monotonicity on player props — within each player+stat group,
+    # P(Over X) must decrease as X increases. Drops violating thresholds.
+    if len(player_props) > 1:
+        from collections import defaultdict
+        player_stat_groups: dict[tuple, list[dict]] = defaultdict(list)
+        for p in player_props:
+            oname = p.get("outcome_name", "")
+            colon_idx = oname.find(":")
+            player_part = oname[:colon_idx].strip().lower() if colon_idx > 0 else oname.lower()
+            stat = p.get("market_name", "").split(":")[-1].strip().lower() if ":" in p.get("market_name", "") else "other"
+            player_stat_groups[(player_part, stat)].append(p)
+        monotonic_props = []
+        for group in player_stat_groups.values():
+            group.sort(key=lambda x: x.get("threshold", 0) or 0)
+            monotonic_props.extend(_enforce_monotonicity(group))
+        player_props = monotonic_props
+
     # 10. Enrich player props with headshot URLs + team assignment from rosters
     if player_props and event.sport_id:
         # player_name_lower → {"headshot": url, "team": "home"|"away"}
