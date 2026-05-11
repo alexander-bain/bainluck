@@ -5466,6 +5466,16 @@ async def statpal_probe_endpoints(
         ("schedule (no params)", "schedule", {}),
         ("upcoming-schedule", "upcoming-schedule", {}),
         ("season-schedule (date=2026-05-11)", "season-schedule", {"date": "2026-05-11"}),
+        ("daily-schedule", "daily-schedule", {}),
+        ("daily-schedule (date=today)", "daily-schedule", {"date": "2026-05-11"}),
+        ("games", "games", {}),
+        ("games/today", "games/today", {}),
+        ("results", "results", {}),
+        ("matches", "matches", {}),
+        ("events", "events", {}),
+        ("playoff-schedule", "playoff-schedule", {}),
+        ("postseason-schedule", "postseason-schedule", {}),
+        ("playoffs", "playoffs", {}),
     ]
 
     now = datetime.now(timezone.utc)
