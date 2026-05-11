@@ -9886,54 +9886,51 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # For calibration, determine winners without arbitrary probability thresholds:
+    # Only use markets with CLEAN resolution: every outcome's current_probability
+    # is near 0 or near 1 (sum of near-zero + near-one = total outcomes).
+    # This excludes partially-updated markets that distort calibration.
     #
-    # Multi-outcome ME markets (championships, awards): winner = outcome with
-    # highest current_probability within the market. All outcomes participate.
-    #
-    # Binary/threshold markets (1-2 outcome, or non-ME): keep one outcome per
-    # market (closest to 50%). Winner = current_probability > 0.5.
+    # For threshold/ladder markets: keep one outcome per market (closest to 50%).
+    # For multi-outcome ME markets (3+ outcomes): keep all.
     sql = text("""
-        WITH market_stats AS (
+        WITH market_resolution AS (
             SELECT fm.id AS market_id, fm.source,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                 fm.mutually_exclusive,
+                COUNT(*) AS total_outcomes,
+                COUNT(*) FILTER (WHERE fo.current_probability >= 0.95) AS near_one,
+                COUNT(*) FILTER (WHERE fo.current_probability <= 0.05) AS near_zero,
                 COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                   AND fo.opening_probability > 0
-                                  AND fo.opening_probability < 1) AS eligible_count,
-                MAX(fo.current_probability) AS max_current_prob
+                                  AND fo.opening_probability < 1) AS eligible
             FROM futures_markets fm
             JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
             GROUP BY fm.id, fm.source, fm.mutually_exclusive, fm.llm_sport_category
-            HAVING COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
-                                     AND fo.opening_probability > 0
-                                     AND fo.opening_probability < 1) >= 1
+        ),
+        clean_markets AS (
+            SELECT * FROM market_resolution
+            WHERE eligible >= 1
+              AND (near_one + near_zero) >= total_outcomes * 0.8
+              AND near_one >= 1
         ),
         ranked_outcomes AS (
             SELECT
                 fo.opening_probability,
-                fo.current_probability,
-                ms.market_id, ms.source, ms.category,
-                ms.mutually_exclusive, ms.eligible_count,
-                -- For ME markets with 3+ outcomes: winner = highest current_prob
-                (ms.mutually_exclusive = true AND ms.eligible_count >= 3) AS is_multi,
-                -- Winner determination
-                CASE
-                    WHEN ms.mutually_exclusive = true AND ms.eligible_count >= 3
-                        THEN (fo.current_probability = ms.max_current_prob)
-                    ELSE (fo.current_probability > 0.5)
-                END AS is_winner,
-                -- For non-multi markets: keep closest to 50%
+                (fo.current_probability >= 0.95) AS is_winner,
+                cm.market_id, cm.source, cm.category,
+                cm.mutually_exclusive, cm.eligible,
+                (cm.mutually_exclusive = true AND cm.eligible >= 3) AS is_multi,
                 ROW_NUMBER() OVER (
-                    PARTITION BY ms.market_id
+                    PARTITION BY cm.market_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
                 ) AS rn
             FROM futures_outcomes fo
-            JOIN market_stats ms ON ms.market_id = fo.market_id
+            JOIN clean_markets cm ON cm.market_id = fo.market_id
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
+              AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
         deduped AS (
             SELECT * FROM ranked_outcomes WHERE is_multi OR rn = 1
