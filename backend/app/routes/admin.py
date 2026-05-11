@@ -4147,7 +4147,7 @@ async def prediction_market_tier1_gaps(
     )
     from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
-    await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
+    await db.execute(_text("SET LOCAL statement_timeout = '45s'"))
 
     _TIER1_PREFIXES = [
         p for p in KALSHI_GAME_TICKER_PREFIXES
