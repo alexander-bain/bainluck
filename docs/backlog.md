@@ -141,6 +141,29 @@ Enforce monotonicity on cumulative probabilities before converting to discrete b
 
 iOS `gameEndDate` was using `completedAt + 2min` as primary source (30-45 min late). Now prefers ESPN/stat_model data points, matching the parent `sharedChartDomain` logic. Web was already correct.
 
+### BUG-DUP. Duplicate Events in Feed (CRITICAL) — May 11
+
+**Problem:** Buffalo Sabres vs Montréal Canadiens appears twice in "Just Happened" (event IDs 14633633 and 14636305). OKC vs Lakers also has two duplicate events (14634501 and 14633254). The event dedup system is creating multiple Event records for the same game.
+
+**Action:** Check `event_registry.py` — the 4-step cascade (exact source ID → cross-source ID → structured match → create) is failing to match. Likely cause: different source IDs from Odds API vs ESPN for the same game, and the structured match (sport + time ± 4h + teams) is failing due to a team name mismatch or time offset.
+
+**Immediate fix:** Run the dedup merge task (`merge_duplicate_events`) to clean up existing duplicates. Then investigate why the cascade is failing for these games.
+
+**Files:** `backend/app/services/event_registry.py`, `backend/app/tasks/merge_events.py`
+**Parallel Safety:** Red (touches event creation)
+
+### BUG-NBA. Missing NBA Playoff Games (CRITICAL) — May 11
+
+**Problem:** Only 3 NBA events exist in the database (2 duplicates of OKC vs Lakers + 1 Wolves vs Spurs), despite NBA playoffs being in progress. The Top Markets section shows NBA Finals futures ("Will Boston Celtics advance?"), confirming the markets exist, but the corresponding game events are not being created.
+
+**Action:** Check if the Odds API is returning NBA events. The `poll_odds` task should be creating events for `basketball_nba`. Verify:
+1. Is `basketball_nba` in `SPORT_POLLING_TIERS`?
+2. Is the Odds API quota mode allowing NBA polling?
+3. Are NBA games being returned by the API but failing event creation?
+
+**Files:** `backend/app/tasks/odds_polling.py`, `backend/app/services/event_registry.py`, `backend/app/config/sport_polling_tiers.py`
+**Parallel Safety:** Yellow
+
 ### MS-8. MLB Chart Rendering Failure (WARNING) — Chart Timing Audit
 
 **Problem:** Rays vs Red Sox chart has massive gaps and fails to converge to a final state. Possibly a data gap in win_prob_snapshots or a source that stopped mid-game.
