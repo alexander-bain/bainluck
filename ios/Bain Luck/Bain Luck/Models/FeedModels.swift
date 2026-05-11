@@ -60,6 +60,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let score: Int
     let reason: String?
     let headline: String?
+    let contextSummary: String?
 
     // One of these will be populated based on `type`
     let event: FeedEventData?
@@ -78,7 +79,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, score, reason, headline, data
+        case type, score, reason, headline, contextSummary, data
         case personalized, baseScore, multiplier, personalizationReasons
     }
 
@@ -88,6 +89,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         score = try c.decodeIfPresent(Int.self, forKey: .score) ?? 0
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         headline = try c.decodeIfPresent(String.self, forKey: .headline)
+        contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
         personalized = try c.decodeIfPresent(Bool.self, forKey: .personalized)
         baseScore = try c.decodeIfPresent(Int.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)

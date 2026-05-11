@@ -93,3 +93,70 @@ async def check_aggregation_quality():
         pass
 
     return stats
+
+
+async def check_tier1_event_coverage():
+    """Alert when Tier 1 Kalshi game markets exist without matching events.
+
+    Checks unlinked Kalshi game tickers for NBA/NHL/MLB/NFL with ticker dates
+    within 36 hours. Any gap means a fan could open a game page and not see
+    Kalshi data because the event doesn't exist yet.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, func, or_
+    from app.tasks.base import get_task_session
+    from app.models.models import FuturesMarket
+    from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    _TIER1_PREFIXES = [
+        p for p in KALSHI_GAME_TICKER_PREFIXES
+        if any(p.startswith(s) for s in ("kxnba", "kxnhl", "kxmlb", "kxnfl"))
+    ]
+    # Only check moneyline tickers (kx{sport}game) to avoid counting
+    # spread/total/prop duplicates for the same game
+    _GAME_ONLY = [p for p in _TIER1_PREFIXES if "game" in p]
+
+    now = datetime.now(timezone.utc)
+    alerts = []
+
+    async with get_task_session() as session:
+        ticker_conditions = [
+            func.lower(FuturesMarket.external_id).like(f"{p}%")
+            for p in _GAME_ONLY
+        ]
+        result = await session.execute(
+            select(FuturesMarket.external_id, FuturesMarket.name)
+            .where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.status == "open",
+                or_(*ticker_conditions),
+            )
+        )
+        unlinked = result.all()
+
+        for row in unlinked:
+            game_date = extract_game_date_from_ticker(row.external_id)
+            if not game_date:
+                continue
+            hours_until = (game_date - now).total_seconds() / 3600
+            if -6 < hours_until < 36:
+                alerts.append({
+                    "ticker": row.external_id,
+                    "name": row.name,
+                    "game_date": game_date.isoformat(),
+                    "hours_until": round(hours_until, 1),
+                })
+
+    if alerts:
+        logger.warning(
+            "TIER 1 EVENT GAP: %d Kalshi game markets within 36h have no matching event: %s",
+            len(alerts),
+            ", ".join(a["ticker"][:30] for a in alerts[:5]),
+        )
+
+    return {
+        "tier1_gaps": len(alerts),
+        "alerts": alerts,
+    }

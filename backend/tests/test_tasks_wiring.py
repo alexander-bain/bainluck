@@ -200,6 +200,7 @@ class TestBeatScheduleCompleteness:
         "enrich-market-images",
         "merge-duplicate-events",
         "check-aggregation-quality",
+        "check-tier1-coverage",
     }
 
     def test_no_missing_entries(self):

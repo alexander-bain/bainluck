@@ -17,6 +17,8 @@ private enum NativeDiscoverAction {
     case detailOpen
     case dismiss
     case share
+    case contextExpand
+    case contextCollapse
 }
 
 private struct NativeDiscoverProfile {
@@ -35,6 +37,8 @@ private struct NativeDiscoverProfile {
         case .detailOpen: weight = 1.5
         case .dismiss: weight = -2.0
         case .share: weight = 3.0
+        case .contextExpand: weight = 0.35
+        case .contextCollapse: weight = 0.0
         }
         categoryScores[key] = min(30, max(-10, (categoryScores[key] ?? 0) + weight))
         save()
@@ -76,6 +80,9 @@ struct DiscoverView: View {
     @State private var interactionProfile = NativeDiscoverProfile.load()
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
+    @State private var showChallenge = false
+    @State private var challengeIndex = 0
+    @State private var challengeComplete = false
 
     private let categories: [(key: String, label: String, emoji: String)] = [
         ("all", "All", "✨"), ("sports", "Sports", "🏆"),
@@ -181,6 +188,8 @@ struct DiscoverView: View {
         case .detailOpen: actionName = "open"
         case .dismiss: actionName = "dismiss"
         case .share: actionName = "share"
+        case .contextExpand: actionName = "context_expand"
+        case .contextCollapse: actionName = "context_collapse"
         }
         AnalyticsService.trackDiscoverCardAction(
             action: actionName,
@@ -200,6 +209,30 @@ struct DiscoverView: View {
                 rank: nil,
                 surface: "native",
                 source: source
+            )
+            _ = try? await APIClient.shared.recordDiscoverInteraction(event)
+        }
+    }
+
+    private func recordChallengeAction(_ actionName: String) {
+        AnalyticsService.trackDiscoverCardAction(
+            action: actionName,
+            itemId: "daily_challenge",
+            itemType: "grid",
+            category: "challenge",
+            source: "challenge"
+        )
+        Task {
+            let event = DiscoverInteractionEvent(
+                action: actionName,
+                itemType: "grid",
+                itemId: "daily_challenge",
+                category: "challenge",
+                itemName: "Today's Challenge",
+                score: 0,
+                rank: nil,
+                surface: "native",
+                source: "challenge"
             )
             _ = try? await APIClient.shared.recordDiscoverInteraction(event)
         }
@@ -322,7 +355,12 @@ struct DiscoverView: View {
                 }
 
                 // Daily Challenge card
-                NativeDailyChallengeCard(guessesToday: dailyGuesses)
+                NativeDailyChallengeCard(guessesToday: dailyGuesses) {
+                    challengeIndex = 0
+                    challengeComplete = false
+                    showChallenge = true
+                    recordChallengeAction("challenge_start")
+                }
                     .padding(.horizontal)
                     .padding(.bottom, 8)
 
@@ -370,8 +408,12 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeEventDiscoverCard(event: e, feedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
+                                            NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
+                                            }, onContextExpand: {
+                                                recordInteraction(for: item, action: .contextExpand, source: "context")
+                                            }, onContextCollapse: {
+                                                recordInteraction(for: item, action: .contextCollapse, source: "context")
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
@@ -380,8 +422,12 @@ struct DiscoverView: View {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
-                                            NativeFuturesDiscoverCard(data: f, feedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
+                                            NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
+                                            }, onContextExpand: {
+                                                recordInteraction(for: item, action: .contextExpand, source: "context")
+                                            }, onContextCollapse: {
+                                                recordInteraction(for: item, action: .contextCollapse, source: "context")
                                             })
                                         }
                                         .contextMenu { discoverCardMenu(item) }
@@ -455,6 +501,16 @@ struct DiscoverView: View {
             OnboardingView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
         }
+        .sheet(isPresented: $showChallenge) {
+            NativeChallengeSheet(
+                items: challengeItems,
+                currentIndex: $challengeIndex,
+                completed: $challengeComplete,
+                onClose: { showChallenge = false },
+                onGuessCompleted: { incrementDaily() },
+                onComplete: { recordChallengeAction("challenge_complete") }
+            )
+        }
         .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
     }
@@ -511,6 +567,21 @@ struct DiscoverView: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         return "daily_guesses_\(fmt.string(from: Date()))"
+    }
+
+    private var challengeItems: [FeedItem] {
+        groupedItems.compactMap { grouped in
+            guard case .single(let item) = grouped else { return nil }
+            if item.type == "futures", item.futures?.topOutcomes?.first?.probability != nil {
+                return item
+            }
+            if item.type == "event", item.event?.currentOdds?.homeProbability != nil {
+                return item
+            }
+            return nil
+        }
+        .prefix(DAILY_GOAL)
+        .map { $0 }
     }
 
     @ViewBuilder
@@ -643,13 +714,64 @@ final class DiscoverViewModel: ObservableObject {
     }
 }
 
+// MARK: - Expandable Context
+
+private struct ExpandableNativeContextText: View {
+    let text: String
+    let expandedText: String?
+    let font: Font
+    var onExpand: (() -> Void)? = nil
+    var onCollapse: (() -> Void)? = nil
+    @State private var expanded = false
+
+    private var compactText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var fullText: String {
+        (expandedText ?? text).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canExpand: Bool {
+        fullText != compactText || compactText.count > 130
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(expanded || !canExpand ? fullText : compactText)
+                .font(font)
+                .foregroundStyle(.secondary)
+                .lineLimit(expanded ? nil : 2)
+
+            if canExpand {
+                Button {
+                    expanded.toggle()
+                    if expanded {
+                        onExpand?()
+                    } else {
+                        onCollapse?()
+                    }
+                } label: {
+                    Text(expanded ? "Show less" : "See more")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
 // MARK: - Event Card
 
 private struct NativeEventDiscoverCard: View {
     let event: FeedEventData
     let feedContext: String?
+    let expandedContext: String?
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
+    var onContextExpand: (() -> Void)? = nil
+    var onContextCollapse: (() -> Void)? = nil
 
     private var awayColor: Color {
         Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
@@ -738,10 +860,13 @@ private struct NativeEventDiscoverCard: View {
             }
 
             if let contextText {
-                Text(contextText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                ExpandableNativeContextText(
+                    text: contextText,
+                    expandedText: expandedContext,
+                    font: .caption,
+                    onExpand: onContextExpand,
+                    onCollapse: onContextCollapse
+                )
             }
         }
         .padding(14)
@@ -849,8 +974,11 @@ private let defaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blu
 private struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
     let feedContext: String?
+    let expandedContext: String?
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
+    var onContextExpand: (() -> Void)? = nil
+    var onContextCollapse: (() -> Void)? = nil
 
     private var gradient: (Color, Color) {
         categoryGradients[data.llmSportCategory?.lowercased() ?? ""] ?? defaultGradient
@@ -869,8 +997,8 @@ private struct NativeFuturesDiscoverCard: View {
     }
 
     private var contextText: String? {
-        if let hook = data.hookDescription, !hook.isEmpty { return hook }
         if let feedContext, !feedContext.isEmpty { return feedContext }
+        if let hook = data.hookDescription, !hook.isEmpty { return hook }
         return nil
     }
 
@@ -933,10 +1061,13 @@ private struct NativeFuturesDiscoverCard: View {
                     .lineLimit(2)
 
                 if let contextText {
-                    Text(contextText)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    ExpandableNativeContextText(
+                        text: contextText,
+                        expandedText: expandedContext ?? data.hookDescription,
+                        font: .subheadline,
+                        onExpand: onContextExpand,
+                        onCollapse: onContextCollapse
+                    )
                 }
 
                 if let outcomes = data.topOutcomes, outcomes.count > 1 {
@@ -1057,6 +1188,7 @@ private let DAILY_GOAL = 5
 
 private struct NativeDailyChallengeCard: View {
     let guessesToday: Int
+    var onStart: (() -> Void)? = nil
     private var completed: Bool { guessesToday >= DAILY_GOAL }
     private var progress: Double { min(Double(guessesToday) / Double(DAILY_GOAL), 1.0) }
 
@@ -1077,7 +1209,11 @@ private struct NativeDailyChallengeCard: View {
 
             Spacer()
 
-            if !completed {
+            if completed {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
+            } else {
                 ZStack {
                     Circle()
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 3)
@@ -1090,6 +1226,18 @@ private struct NativeDailyChallengeCard: View {
                         .font(.caption.weight(.bold).monospacedDigit())
                 }
                 .frame(width: 40, height: 40)
+
+                Button {
+                    onStart?()
+                } label: {
+                    Text("Play")
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.orange, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding()
@@ -1097,6 +1245,147 @@ private struct NativeDailyChallengeCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16)
             .stroke(completed ? Color.green.opacity(0.5) : Color.orange.opacity(0.3), lineWidth: 2))
+    }
+}
+
+private struct NativeChallengeSheet: View {
+    let items: [FeedItem]
+    @Binding var currentIndex: Int
+    @Binding var completed: Bool
+    let onClose: () -> Void
+    let onGuessCompleted: () -> Void
+    let onComplete: () -> Void
+    @State private var completionRecorded = false
+
+    private var goal: Int {
+        min(DAILY_GOAL, max(items.count, 1))
+    }
+
+    private var progress: Double {
+        completed ? 1.0 : min(Double(currentIndex) / Double(goal), 1.0)
+    }
+
+    private var currentItem: FeedItem? {
+        guard currentIndex < items.count else { return nil }
+        return items[currentIndex]
+    }
+
+    private var isLastQuestion: Bool {
+        currentIndex >= goal - 1
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Today's Challenge")
+                            .font(.headline.weight(.black))
+                        Text(completed ? "Set complete" : "Question \(min(currentIndex + 1, goal)) of \(goal)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 32)
+                            .background(Color.secondary.opacity(0.10), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal)
+                .padding(.top, 16)
+
+                ProgressView(value: progress)
+                    .tint(.orange)
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if completed {
+                            VStack(spacing: 14) {
+                                Text("🏆")
+                                    .font(.system(size: 44))
+                                Text("Challenge complete")
+                                    .font(.title3.weight(.black))
+                                Text("Your predictions are counted. Come back tomorrow for a fresh set.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Button("Back to Discover", action: onClose)
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 13)
+                                    .background(Color.primary, in: RoundedRectangle(cornerRadius: 14))
+                            }
+                            .padding(20)
+                            .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 20))
+                        } else if let item = currentItem {
+                            challengeCard(for: item)
+                        } else {
+                            VStack(spacing: 12) {
+                                Text("No challenge cards right now")
+                                    .font(.headline.weight(.bold))
+                                Text("Check back after the feed refreshes.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Button("Back to Discover", action: onClose)
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 13)
+                                    .background(Color.primary, in: RoundedRectangle(cornerRadius: 14))
+                            }
+                            .padding(20)
+                            .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 20))
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .background(Color.groupedBackground.ignoresSafeArea())
+            .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
+        }
+    }
+
+    @ViewBuilder
+    private func challengeCard(for item: FeedItem) -> some View {
+        let label = isLastQuestion ? "Finish" : "Next"
+        if item.type == "futures", let futures = item.futures {
+            NativeGuessCard(
+                data: futures,
+                onNextQuestion: advance,
+                nextButtonLabel: label,
+                onGuessCompleted: onGuessCompleted
+            )
+        } else if item.type == "event", let event = item.event {
+            NativeEventGuessCard(
+                event: event,
+                onNextQuestion: advance,
+                nextButtonLabel: label,
+                onGuessCompleted: onGuessCompleted
+            )
+        }
+    }
+
+    private func advance() {
+        let next = currentIndex + 1
+        if next >= items.count || next >= DAILY_GOAL {
+            completed = true
+            if !completionRecorded {
+                completionRecorded = true
+                onComplete()
+            }
+            return
+        }
+        currentIndex = next
     }
 }
 
@@ -1234,6 +1523,7 @@ private struct NativeCompactFuturesRow: View {
 private struct NativeGuessCard: View {
     let data: FeedFuturesData
     var onNextQuestion: (() -> Void)? = nil
+    var nextButtonLabel: String = "Next"
     var onGuessCompleted: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
@@ -1410,7 +1700,7 @@ private struct NativeGuessCard: View {
                 .buttonStyle(.plain)
                 if let onNextQuestion {
                     Button { onNextQuestion() } label: {
-                        Label("Next", systemImage: "arrow.down")
+                        Label(nextButtonLabel, systemImage: nextButtonLabel == "Finish" ? "checkmark" : "arrow.down")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                     }
@@ -1442,6 +1732,7 @@ private struct NativeGuessCard: View {
 private struct NativeEventGuessCard: View {
     let event: FeedEventData
     var onNextQuestion: (() -> Void)? = nil
+    var nextButtonLabel: String = "Next"
     var onGuessCompleted: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
@@ -1629,7 +1920,7 @@ private struct NativeEventGuessCard: View {
                 .buttonStyle(.plain)
                 if let onNextQuestion {
                     Button { onNextQuestion() } label: {
-                        Label("Next", systemImage: "arrow.down")
+                        Label(nextButtonLabel, systemImage: nextButtonLabel == "Finish" ? "checkmark" : "arrow.down")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                     }

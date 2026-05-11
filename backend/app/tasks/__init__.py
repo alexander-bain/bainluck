@@ -553,6 +553,15 @@ def compute_matching_metrics(self):
     return run_async(_compute_matching_metrics_impl())
 
 
+# --- Tier 1 Event Coverage Monitoring ---
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.check_tier1_coverage")
+def check_tier1_coverage(self):
+    """Alert when Tier 1 Kalshi game markets have no matching event."""
+    from app.tasks.monitoring import check_tier1_event_coverage
+    return run_async(check_tier1_event_coverage())
+
+
 # --- Data Quality Monitoring ---
 
 @celery_app.task(bind=True, name="app.tasks.check_data_quality")
@@ -795,6 +804,10 @@ celery_app.conf.beat_schedule = {
     "track-statpal-usage": {
         "task": "app.tasks.track_statpal_usage",
         "schedule": crontab(minute="*/15"),  # Every 15 minutes
+    },
+    "check-tier1-coverage": {
+        "task": "app.tasks.check_tier1_coverage",
+        "schedule": crontab(minute=30),  # Every hour at :30
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

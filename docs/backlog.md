@@ -56,20 +56,19 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
 - ✅ First-page category/archetype/story mixer caps politics/geopolitics/economics overload while preserving score order as much as possible.
 - ✅ Discover debug/admin viewer exists at `/admin/discover-quality`: feed quality metrics, timing, hook coverage, ground-truth traces, per-market trace, engagement rates, top actioned cards, and promote/investigate/downrank opportunity signals.
-- ✅ Context snippets use concise `context_summary` copy with instant `See more` expansion; admin engagement now tracks context expansion counts/rates.
-- ✅ Web Today’s Challenge opens as a focused modal with explicit Next/Finish progression and first-party start/completion funnel metrics.
+- ✅ Web and native context snippets use concise `context_summary` copy with instant `See more` expansion; admin engagement tracks context expansion counts/rates.
+- ✅ Web and native Today’s Challenge open as focused flows with explicit Next/Finish progression and first-party start/completion funnel metrics.
 - ✅ Web shareability shipped: stable UTM share URLs, card-specific share copy, generated OG images, shared-link CTAs, and share/open analytics.
 - ✅ Native parity pass shipped: redesigned event/futures/guess cards, fifth-card Higher/Lower cadence, share links, local category tuning, and Firebase analytics parity.
 - ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
 - ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
 
 **Next phases:**
-1. Native parity for the focused Today’s Challenge flow and concise/expandable context snippets.
-2. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
-3. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-4. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
-5. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-6. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
+1. Expose server-side personalization traces in feed debug/admin so individual category boosts and card reasons are inspectable.
+2. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+3. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
+4. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+5. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
