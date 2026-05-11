@@ -358,6 +358,11 @@ def _build_music(themed: dict) -> dict:
                 side_markets.append(row)
 
     spotify_race.sort(key=lambda r: -r["prob"])
+    # Normalize Spotify race probabilities to sum to ~100% (independent binary markets)
+    spotify_sum = sum(r["prob"] for r in spotify_race if r["prob"] > 0)
+    if spotify_sum > 1.05 and spotify_race:
+        for r in spotify_race:
+            r["prob"] = round(r["prob"] / spotify_sum, 4)
     billboard_watch.sort(key=lambda r: -r["prob"])
 
     billboard_groups, billboard_ungrouped = _group_threshold_markets(billboard_watch)
