@@ -5439,6 +5439,63 @@ async def event_creation_lead_time(
     }
 
 
+@router.get("/statpal/probe-endpoints")
+async def statpal_probe_endpoints(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport: str = Query("nba", description="StatPal sport"),
+):
+    """Probe StatPal with different endpoints/params to find playoff schedules."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.statpal_api import StatPalAPIService, is_available
+    if not is_available():
+        return {"error": "StatPal API key not configured"}
+
+    from datetime import datetime, timezone
+    svc = StatPalAPIService()
+    results = {}
+
+    probes = [
+        ("season-schedule (default)", "season-schedule", {}),
+        ("season-schedule (season=2025-2026)", "season-schedule", {"season": "2025-2026"}),
+        ("season-schedule (season=2026)", "season-schedule", {"season": "2026"}),
+        ("season-schedule (season=playoffs)", "season-schedule", {"season": "playoffs"}),
+        ("season-schedule (season=postseason)", "season-schedule", {"season": "postseason"}),
+        ("fixtures (no params)", "fixtures", {}),
+        ("schedule (no params)", "schedule", {}),
+        ("upcoming-schedule", "upcoming-schedule", {}),
+        ("season-schedule (date=2026-05-11)", "season-schedule", {"date": "2026-05-11"}),
+    ]
+
+    now = datetime.now(timezone.utc)
+
+    for label, endpoint, params in probes:
+        try:
+            data = await svc._get(sport, endpoint, params)
+            if data is None:
+                results[label] = {"status": "null/error", "count": 0}
+                continue
+            fixtures = svc._parse_fixtures(data, sport)
+            future = [f for f in fixtures if f.start_time and f.start_time > now]
+            latest = max((f.start_time for f in fixtures if f.start_time), default=None)
+            results[label] = {
+                "status": "ok",
+                "total": len(fixtures),
+                "future": len(future),
+                "latest_date": latest.isoformat()[:10] if latest else None,
+                "sample_future": [
+                    {"home": f.home_team, "away": f.away_team,
+                     "time": f.start_time.isoformat()[:16] if f.start_time else None}
+                    for f in future[:5]
+                ],
+            }
+        except Exception as e:
+            results[label] = {"status": f"error: {str(e)[:100]}", "count": 0}
+
+    return results
+
+
 @router.get("/statpal/fixture-debug")
 async def statpal_fixture_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
