@@ -4201,13 +4201,14 @@ async def prediction_market_tier1_gaps(
         if matchup.team_b:
             teams_to_search.append(matchup.team_b)
 
-        from app.utils.prediction_market_matching import _expand_team_search_terms, _escape_like
+        def _esc(s: str) -> str:
+            return s.replace("%", r"\%").replace("_", r"\_")
+
         ilike_conditions = []
         for team in teams_to_search:
-            for search_term in _expand_team_search_terms(team):
-                pattern = f"%{_escape_like(search_term)}%"
-                ilike_conditions.append(Event.home_team_name.ilike(pattern))
-                ilike_conditions.append(Event.away_team_name.ilike(pattern))
+            pattern = f"%{_esc(team)}%"
+            ilike_conditions.append(Event.home_team_name.ilike(pattern))
+            ilike_conditions.append(Event.away_team_name.ilike(pattern))
 
         ref_time = ticker_date or market.commence_time or now
         time_delta = timedelta(hours=36) if ticker_date else timedelta(days=7)
