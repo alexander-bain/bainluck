@@ -108,13 +108,15 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
+        -- Detect default/placeholder pricing: if 50%+ of outcomes in a
+        -- multi-outcome market share the exact same opening_probability,
+        -- those outcomes had no real price discovery. Exclude them.
         mode_prices AS (
-            SELECT vm_id, adj_opening_probability AS mode_price,
-                   COUNT(*) AS mode_count, eligible
+            SELECT vm_id, adj_opening_probability AS mode_price
             FROM ranked_outcomes
-            WHERE is_multi AND eligible >= 20
+            WHERE is_multi AND eligible >= 3
             GROUP BY vm_id, adj_opening_probability, eligible
-            HAVING COUNT(*) > eligible * 0.5
+            HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
         ),
         deduped AS (
             SELECT ro.* FROM ranked_outcomes ro
@@ -122,13 +124,12 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
             WHERE
                 CASE
-                    WHEN ro.is_multi AND ro.eligible >= 20
-                        THEN ro.adj_opening_probability > 0.005
-                         AND ro.adj_opening_probability < 0.50
-                         AND mp.vm_id IS NULL
+                    -- Multi-outcome: exclude default-priced + extreme tails
                     WHEN ro.is_multi
                         THEN ro.adj_opening_probability > 0.005
                          AND ro.adj_opening_probability < 0.98
+                         AND mp.vm_id IS NULL
+                    -- Binary/threshold: one outcome per virtual market
                     ELSE ro.rn = 1
                 END
         ),

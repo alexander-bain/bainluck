@@ -317,8 +317,55 @@ async def _backfill_from_current_probability():
     return stats
 
 
+async def _backfill_polymarket_group_ids():
+    """Set group_id on Polymarket markets from market_metadata.polymarket_event_id.
+
+    Uses data already in the DB — no API calls. Only sets group_id where
+    currently NULL, and only when the event_id groups 2+ markets together.
+    """
+    stats = {"updated": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    WITH event_groups AS (
+                        SELECT market_metadata->>'polymarket_event_id' AS event_id,
+                               COUNT(*) AS market_count
+                        FROM futures_markets
+                        WHERE source = 'polymarket'
+                          AND group_id IS NULL
+                          AND market_metadata->>'polymarket_event_id' IS NOT NULL
+                        GROUP BY market_metadata->>'polymarket_event_id'
+                        HAVING COUNT(*) >= 2
+                    )
+                    UPDATE futures_markets fm
+                    SET group_id = 'polymarket:' || eg.event_id
+                    FROM event_groups eg
+                    WHERE fm.source = 'polymarket'
+                      AND fm.group_id IS NULL
+                      AND fm.market_metadata->>'polymarket_event_id' = eg.event_id
+                """)
+            )
+            stats["updated"] = result.rowcount
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Polymarket group_id backfill error: %s", e)
+
+    logger.info(
+        "Polymarket group_id backfill: %d markets updated, %d errors",
+        stats["updated"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     """Run all winner backfill tasks."""
+    # Phase 0: Backfill group_id from metadata (no API, fast)
+    group_stats = await _backfill_polymarket_group_ids()
+
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
 
@@ -327,6 +374,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
 
     return {
+        "group_id_backfill": group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }

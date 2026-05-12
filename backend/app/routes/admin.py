@@ -10021,16 +10021,12 @@ async def calibration_data(
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
-        -- For large multi-outcome markets: detect default/placeholder pricing.
-        -- If 50%+ of outcomes share the same opening_probability, it's a default
-        -- price with no real price discovery. Exclude those outcomes.
         mode_prices AS (
-            SELECT vm_id, adj_opening_probability AS mode_price,
-                   COUNT(*) AS mode_count, eligible
+            SELECT vm_id, adj_opening_probability AS mode_price
             FROM ranked_outcomes
-            WHERE is_multi AND eligible >= 20
+            WHERE is_multi AND eligible >= 3
             GROUP BY vm_id, adj_opening_probability, eligible
-            HAVING COUNT(*) > eligible * 0.5
+            HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
         ),
         deduped AS (
             SELECT ro.* FROM ranked_outcomes ro
@@ -10038,19 +10034,10 @@ async def calibration_data(
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
             WHERE
                 CASE
-                    -- Large multi-outcome markets (20+): exclude default-priced and
-                    -- unrealistic probabilities. In a 20+ player field, no individual
-                    -- should have opening_probability > 50% — if they do, the data
-                    -- is unreliable (likely inverted or placeholder).
-                    WHEN ro.is_multi AND ro.eligible >= 20
-                        THEN ro.adj_opening_probability > 0.005
-                         AND ro.adj_opening_probability < 0.50
-                         AND mp.vm_id IS NULL
-                    -- Smaller multi-outcome (3-19): normal tail filter
                     WHEN ro.is_multi
                         THEN ro.adj_opening_probability > 0.005
                          AND ro.adj_opening_probability < 0.98
-                    -- Binary/threshold: one outcome per virtual market
+                         AND mp.vm_id IS NULL
                     ELSE ro.rn = 1
                 END
         ),
