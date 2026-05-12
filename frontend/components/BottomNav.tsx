@@ -15,16 +15,16 @@ export default function BottomNav() {
 
   const tabs = [
     {
-      label: "Sports",
+      label: "Discover",
       href: "/",
-      icon: FeedIcon,
-      isActive: pathname === "/" || pathname === "",
+      icon: DiscoverIcon,
+      isActive: pathname === "/" || pathname === "" || pathname === "/discover",
     },
     {
-      label: "Discover",
-      href: "/discover",
-      icon: DiscoverIcon,
-      isActive: pathname === "/discover",
+      label: "Sports",
+      href: "/sports",
+      icon: FeedIcon,
+      isActive: pathname === "/sports",
     },
     {
       label: "Search",

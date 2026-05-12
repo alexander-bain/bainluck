@@ -32,14 +32,14 @@ export default function DesktopNav() {
 
   const tabs = [
     {
-      label: "Sports",
+      label: "Discover",
       href: "/",
-      isActive: pathname === "/" || pathname === "",
+      isActive: pathname === "/" || pathname === "" || pathname === "/discover",
     },
     {
-      label: "Discover",
-      href: "/discover",
-      isActive: pathname === "/discover",
+      label: "Sports",
+      href: "/sports",
+      isActive: pathname === "/sports",
     },
     {
       label: "My Stuff",

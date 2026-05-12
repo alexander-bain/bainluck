@@ -109,6 +109,16 @@ export default function UserMenu() {
               </svg>
               Continue with Apple
             </button>
+
+            <div className="border-t border-surface-border mt-1 pt-1">
+              <Link
+                href="/about"
+                onClick={() => setShowProviders(false)}
+                className="block px-4 py-2 text-sm text-text-muted hover:bg-surface-elevated transition-colors"
+              >
+                About Bain Luck
+              </Link>
+            </div>
           </div>
         )}
       </div>
@@ -157,6 +167,14 @@ export default function UserMenu() {
             className="block px-4 py-2 text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
           >
             Preferences
+          </Link>
+
+          <Link
+            href="/about"
+            onClick={() => setIsOpen(false)}
+            className="block px-4 py-2 text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
+          >
+            About
           </Link>
 
           <button
