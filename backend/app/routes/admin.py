@@ -10005,18 +10005,7 @@ async def calibration_data(
         -- vs binary/threshold (keep one outcome)
         ranked_outcomes AS (
             SELECT
-                -- For multi-outcome markets with 10+ outcomes: if opening_probability
-                -- > 0.50, it's likely inverted (stores "No" price, not "Yes" price).
-                -- In a 20-player field, no single player should be >50%.
-                -- Invert both the probability and the winner flag.
-                CASE WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
-                          AND cv.eligible >= 10
-                          AND fo.opening_probability > 0.50
-                     THEN 1.0 - fo.opening_probability
-                     ELSE fo.opening_probability
-                END AS adj_opening_probability,
-                -- Winner = current_probability >= 0.95 regardless of opening inversion.
-                -- The winner is who WON, not whose opening price was inverted.
+                fo.opening_probability AS adj_opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
@@ -10050,11 +10039,18 @@ async def calibration_data(
               ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
             WHERE
                 CASE
-                    -- Multi-outcome markets: filter tails + default-priced outcomes
+                    -- Large multi-outcome markets (20+): exclude default-priced and
+                    -- unrealistic probabilities. In a 20+ player field, no individual
+                    -- should have opening_probability > 50% — if they do, the data
+                    -- is unreliable (likely inverted or placeholder).
+                    WHEN ro.is_multi AND ro.eligible >= 20
+                        THEN ro.adj_opening_probability > 0.005
+                         AND ro.adj_opening_probability < 0.50
+                         AND mp.vm_id IS NULL
+                    -- Smaller multi-outcome (3-19): normal tail filter
                     WHEN ro.is_multi
                         THEN ro.adj_opening_probability > 0.005
                          AND ro.adj_opening_probability < 0.98
-                         AND mp.vm_id IS NULL  -- exclude default-priced outcomes
                     -- Binary/threshold: one outcome per virtual market
                     ELSE ro.rn = 1
                 END
