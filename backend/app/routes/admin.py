@@ -10015,6 +10015,40 @@ async def calibration_data(
     total_outcomes = sum(r.n for r in rows)
     total_winners = sum(r.winners for r in rows)
 
+    # Diagnostic: check event_id coverage for problem categories
+    diag_sql = text("""
+        SELECT llm_sport_category AS cat, source,
+            COUNT(*) AS markets,
+            COUNT(event_id) AS with_event_id,
+            COUNT(group_id) AS with_group_id
+        FROM futures_markets
+        WHERE status = 'resolved'
+          AND llm_sport_category IN ('soccer','football','golf','entertainment','motorsports')
+        GROUP BY llm_sport_category, source
+        ORDER BY llm_sport_category, source
+    """)
+    diag_rows = await db.execute(diag_sql)
+
+    # Golf 90-100%: what are these outcomes?
+    golf_sql = text("""
+        SELECT fo.name AS outcome_name, fo.opening_probability, fo.current_probability,
+               fm.name AS market_name, fm.eligible_count
+        FROM futures_outcomes fo
+        JOIN (
+            SELECT fm.id, fm.name,
+                COUNT(*) FILTER (WHERE fo2.opening_probability > 0 AND fo2.opening_probability < 1) AS eligible_count
+            FROM futures_markets fm
+            JOIN futures_outcomes fo2 ON fo2.market_id = fm.id
+            WHERE fm.status = 'resolved' AND fm.llm_sport_category = 'golf' AND fm.source = 'kalshi'
+            GROUP BY fm.id, fm.name
+        ) fm ON fm.id = fo.market_id
+        WHERE fo.opening_probability > 0.90 AND fo.opening_probability < 0.98
+          AND fo.current_probability IS NOT NULL
+        ORDER BY fo.opening_probability DESC
+        LIMIT 15
+    """)
+    golf_rows = await db.execute(golf_sql)
+
     return {
         "buckets": [
             {
@@ -10029,6 +10063,17 @@ async def calibration_data(
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
+        "diag_event_ids": [
+            {"cat": r.cat, "source": r.source, "markets": r.markets,
+             "with_event_id": r.with_event_id, "with_group_id": r.with_group_id}
+            for r in diag_rows.all()
+        ],
+        "diag_golf_90": [
+            {"outcome": r.outcome_name, "opening": float(r.opening_probability),
+             "current": float(r.current_probability), "market": r.market_name,
+             "eligible": r.eligible_count}
+            for r in golf_rows.all()
+        ],
     }
 
 
