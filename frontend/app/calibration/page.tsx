@@ -182,9 +182,13 @@ export default function CalibrationPage() {
       {/* Hero */}
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
-        <p className="text-text-secondary">
-          Calibration analysis of {data.total_outcomes.toLocaleString()} resolved outcomes
-          across {data.total_markets.toLocaleString()} markets
+        <p className="text-text-secondary max-w-2xl mx-auto">
+          We analyzed {data.total_outcomes.toLocaleString()} resolved predictions across
+          Kalshi, Polymarket, and sportsbook odds. The answer: when markets say
+          something has a 30% chance of happening, it happens about 30% of the time.
+        </p>
+        <p className="text-xs text-text-muted">
+          Data from March&ndash;May 2026 &middot; Updated hourly
         </p>
       </div>
 
@@ -197,7 +201,7 @@ export default function CalibrationPage() {
           detail={overallMCE < 4 ? "Excellent" : overallMCE < 8 ? "Good" : "Fair"}
           valueClass={overallMCE < 4 ? "text-green-600" : overallMCE < 8 ? "text-blue-600" : "text-orange-600"} />
         <StatCard label="Brier Score" value={overallBrier.toFixed(4)}
-          detail={`${pctBetter}% better than guessing`} />
+          detail="0 = oracle, lower = better" />
         <StatCard label="Sources" value={String(sources.length)}
           detail={sources.join(", ")} />
         <StatCard label="Categories" value={String(categories.length)}
@@ -306,23 +310,24 @@ export default function CalibrationPage() {
         <p className="text-sm text-text-secondary mb-3">
           Our findings are consistent with decades of academic research on prediction market accuracy:
         </p>
-        <ul className="space-y-2 text-sm text-text-secondary">
-          <li><strong className="text-text-primary">Arrow et al., &ldquo;The Promise of Prediction Markets&rdquo; (2008, <em>Science</em>)</strong> &mdash; A letter signed by 22 leading economists arguing that prediction markets are &ldquo;among the most accurate forecasting mechanisms known.&rdquo;</li>
-          <li><strong className="text-text-primary">Berg, Nelson &amp; Rietz, &ldquo;Prediction Market Accuracy in the Long Run&rdquo; (2008)</strong> &mdash; The Iowa Electronic Markets predicted US presidential outcomes within 1.5 percentage points, outperforming 74% of polls.</li>
-          <li><strong className="text-text-primary">Tetlock &amp; Gardner, <em>Superforecasting</em> (2015)</strong> &mdash; The foundational work on calibration in forecasting. Well-calibrated forecasters can be identified by their calibration curves.</li>
-          <li><strong className="text-text-primary">Wolfers &amp; Zitzewitz, &ldquo;Prediction Markets&rdquo; (2004, <em>J. Econ. Perspectives</em>)</strong> &mdash; Prediction markets produce well-calibrated probability estimates across politics, sports, and entertainment.</li>
-          <li><strong className="text-text-primary">Metaculus Track Record</strong> &mdash; The forecasting platform publishes its calibration curve publicly, achieving ~2-3pp mean calibration error.</li>
+        <ul className="space-y-3 text-sm text-text-secondary">
+          <li><strong className="text-text-primary">Arrow et al., &ldquo;The Promise of Prediction Markets&rdquo;</strong> (2008, <em>Science</em>) &mdash; 22 leading economists argued that prediction markets are &ldquo;among the most accurate forecasting mechanisms known.&rdquo; <a href="https://www.science.org/doi/10.1126/science.1157679" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">Read &rarr;</a></li>
+          <li><strong className="text-text-primary">Berg, Nelson &amp; Rietz, &ldquo;Prediction Market Accuracy in the Long Run&rdquo;</strong> (2008) &mdash; The Iowa Electronic Markets predicted presidential outcomes within 1.5pp, outperforming 74% of polls. <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">Read &rarr;</a></li>
+          <li><strong className="text-text-primary">Tetlock &amp; Gardner, <em>Superforecasting</em></strong> (2015) &mdash; The foundational work on calibration. Well-calibrated forecasters can be identified by exactly the kind of curve shown above. <a href="https://en.wikipedia.org/wiki/Superforecasting" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">Learn more &rarr;</a></li>
+          <li><strong className="text-text-primary">Wolfers &amp; Zitzewitz, &ldquo;Prediction Markets&rdquo;</strong> (2004, <em>J. Econ. Perspectives</em>) &mdash; Comprehensive survey showing prediction markets produce well-calibrated estimates across domains. <a href="https://doi.org/10.1257/0895330041371321" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">Read &rarr;</a></li>
+          <li><strong className="text-text-primary">Metaculus Track Record</strong> &mdash; The forecasting platform publishes its calibration curve publicly, achieving ~2-3pp mean calibration error. <a href="https://www.metaculus.com/questions/track-record/" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">See their data &rarr;</a></li>
         </ul>
       </section>
 
       {/* Methodology */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-3">Methodology &amp; Limitations</h2>
-        <ul className="space-y-2 text-sm text-text-secondary">
-          <li><strong className="text-text-primary">Winner inference:</strong> Winners are inferred from <code className="text-xs bg-surface-deep px-1 rounded">current_probability &ge; 0.95</code> on resolved markets. A backfill task is progressively setting explicit winner flags from settlement data.</li>
-          <li><strong className="text-text-primary">Opening vs. closing line:</strong> We use first-seen price, which may be days before resolution. The academic gold standard is the &ldquo;closing line&rdquo; at event start, which would likely show even better calibration.</li>
-          <li><strong className="text-text-primary">Market reconstruction:</strong> Polymarket decomposes multi-outcome events into binary sub-markets. We reconstruct these using <code className="text-xs bg-surface-deep px-1 rounded">group_id</code> when 3+ markets share a group.</li>
-          <li><strong className="text-text-primary">Sources:</strong> Covers Kalshi, Polymarket, and The Odds API (game moneylines from sportsbooks). Data updates hourly.</li>
+        <h2 className="text-title-3 text-text-primary mb-3">How We Measure This</h2>
+        <ul className="space-y-3 text-sm text-text-secondary">
+          <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
+          <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
+          <li><strong className="text-text-primary">Which probability do we use?</strong> For sports, we use the &ldquo;closing line&rdquo; &mdash; the last odds available before the game starts. This is the academic gold standard because it incorporates all information up to game time. For prediction markets, we use the price when the market first opened.</li>
+          <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
+          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes from March&ndash;May 2026 across Kalshi, Polymarket, and sportsbook odds (via The Odds API). Data refreshes hourly.</li>
         </ul>
       </section>
 

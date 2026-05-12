@@ -33,6 +33,11 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
                 fm.mutually_exclusive
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
+              -- Exclude Kalshi game-level markets (linked to events):
+              -- these have unreliable opening_probability from early bid/ask
+              -- spreads. Game-level calibration comes from Odds API events
+              -- data instead (ground truth from scores).
+              AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
         ),
         group_sizes AS (
             SELECT group_id, source, COUNT(*) AS group_size
@@ -146,7 +151,25 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     result = await db.execute(sql)
     rows = result.all()
 
+    # Use closing line (last odds snapshot before commence_time) when available,
+    # falling back to opening probability. Closing line is the academic gold
+    # standard — it incorporates all information up to game time.
     events_sql = text("""
+        WITH closing_lines AS (
+            SELECT DISTINCT ON (e.id)
+                e.id AS event_id,
+                os.home_win_probability AS closing_home_prob,
+                1.0 - os.home_win_probability AS closing_away_prob
+            FROM events e
+            JOIN odds_snapshots os ON os.event_id = e.id
+            WHERE e.status = 'completed'
+              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+              AND e.home_score != e.away_score
+              AND os.home_win_probability IS NOT NULL
+              AND os.home_win_probability > 0 AND os.home_win_probability < 1
+              AND os.captured_at < e.commence_time
+            ORDER BY e.id, os.captured_at DESC
+        )
         SELECT
             LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
             'odds_api' AS source,
@@ -157,23 +180,29 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
             SUM(prob::float) AS sum_prob,
             SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM (
-            SELECT opening_home_probability AS prob,
-                   (home_score > away_score) AS won, sport_id
-            FROM events
-            WHERE status = 'completed'
-              AND opening_home_probability IS NOT NULL
-              AND opening_home_probability > 0 AND opening_home_probability < 1
-              AND home_score IS NOT NULL AND away_score IS NOT NULL
-              AND home_score != away_score
+            -- Home team: use closing line if available, else opening
+            SELECT COALESCE(cl.closing_home_prob, e.opening_home_probability) AS prob,
+                   (e.home_score > e.away_score) AS won, e.sport_id
+            FROM events e
+            LEFT JOIN closing_lines cl ON cl.event_id = e.id
+            WHERE e.status = 'completed'
+              AND COALESCE(cl.closing_home_prob, e.opening_home_probability) IS NOT NULL
+              AND COALESCE(cl.closing_home_prob, e.opening_home_probability) > 0
+              AND COALESCE(cl.closing_home_prob, e.opening_home_probability) < 1
+              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+              AND e.home_score != e.away_score
             UNION ALL
-            SELECT opening_away_probability AS prob,
-                   (away_score > home_score) AS won, sport_id
-            FROM events
-            WHERE status = 'completed'
-              AND opening_away_probability IS NOT NULL
-              AND opening_away_probability > 0 AND opening_away_probability < 1
-              AND home_score IS NOT NULL AND away_score IS NOT NULL
-              AND home_score != away_score
+            -- Away team
+            SELECT COALESCE(cl.closing_away_prob, e.opening_away_probability) AS prob,
+                   (e.away_score > e.home_score) AS won, e.sport_id
+            FROM events e
+            LEFT JOIN closing_lines cl ON cl.event_id = e.id
+            WHERE e.status = 'completed'
+              AND COALESCE(cl.closing_away_prob, e.opening_away_probability) IS NOT NULL
+              AND COALESCE(cl.closing_away_prob, e.opening_away_probability) > 0
+              AND COALESCE(cl.closing_away_prob, e.opening_away_probability) < 1
+              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+              AND e.home_score != e.away_score
         ) outcomes
         JOIN sports s ON s.id = outcomes.sport_id
         GROUP BY bucket_idx, s.key
