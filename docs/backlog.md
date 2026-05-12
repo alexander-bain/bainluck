@@ -222,9 +222,9 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
-## Rage Shake Triage #3 (May 11) — Bugs #25-30
+## Rage Shake Triage #3 (May 11) — Bugs #25-30 — ALL 6 FIXED (May 12)
 
-### BR25. Celtics 99% "Not Making Finals" but Also Shows 45% Yes (P2)
+### ~~BR25. Celtics 99% "Not Making Finals" but Also Shows 45% Yes~~ — FIXED (May 12)
 
 **Problem:** Mac native app, Feed → Top Markets shows a Celtics market saying 99% chance of NOT making NBA Finals (correct — they're eliminated), but ALSO displays "45% Yes" which is contradictory and inaccurate. The market data is stale or the display logic is showing the wrong outcome's probability.
 
@@ -235,7 +235,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Components/FuturesCardView.swift`, `backend/app/routes/feed.py` (feed filtering)
 **Parallel Safety:** Yellow
 
-### BR26. League Page Broken + Lowercase "nba" (P1)
+### ~~BR26. League Page Broken + Lowercase "nba"~~ — FIXED (May 12)
 
 **Problem:** Two issues on iOS Leagues tab:
 1. League abbreviation displayed as lowercase "nba" instead of "NBA" on the league grid page header
@@ -248,7 +248,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Views/LeagueGridView.swift`
 **Parallel Safety:** Green
 
-### BR27. Winner Market Probabilities Sum to Much More Than 100% (P2)
+### ~~BR27. Winner Market Probabilities Sum to Much More Than 100%~~ — FIXED (May 12)
 
 **Problem:** A "winner" market on Discover shows outcome probabilities that sum well over 100%. This makes the product look broken to users.
 
@@ -259,7 +259,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `backend/app/routes/feed.py` or `ios/.../Views/DiscoverView.swift` (card rendering)
 **Parallel Safety:** Yellow
 
-### BR28. "2 Sources" Badge but Only Shows Polymarket (P2)
+### ~~BR28. "2 Sources" Badge but Only Shows Polymarket~~ — FIXED (May 12)
 
 **Problem:** Discover card shows "2 SOURCES" badge but the card body only mentions Polymarket. The second source is present in the data but not displayed, making the badge misleading.
 
@@ -270,7 +270,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Views/DiscoverView.swift` (NativeFuturesDiscoverCard source chip area)
 **Parallel Safety:** Green
 
-### BR29. Higher/Lower Questions Shown for Closed/Resolved Events (P2)
+### ~~BR29. Higher/Lower Questions Shown for Closed/Resolved Events~~ — FIXED (May 12)
 
 **Problem:** Discover is asking Higher/Lower prediction questions about events that have already closed or resolved. Users shouldn't be asked to guess on settled outcomes.
 
@@ -281,7 +281,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Views/DiscoverView.swift` (guess slot logic, ~line 436-439), possibly also `backend/app/routes/feed.py` (exclude resolved items from feed)
 **Parallel Safety:** Green
 
-### BR30. Stale Met Gala Card in Discover + Probabilities Not Trending to 0/100 (P2)
+### ~~BR30. Stale Met Gala Card in Discover + Probabilities Not Trending to 0/100~~ — FIXED (May 12)
 
 **Problem:** Two related issues:
 1. A Kim Kardashian Met Gala market appears in Discover despite the Met Gala having already happened — stale resolved markets shouldn't show in the feed
