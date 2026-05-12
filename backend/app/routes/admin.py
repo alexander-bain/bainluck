@@ -9983,16 +9983,16 @@ async def calibration_data(
             SELECT * FROM ranked_outcomes
             WHERE
                 CASE
-                    -- Polymarket game sub-markets: each game decomposes into
-                    -- separate binary markets (Win/Draw/Lose, O/U, spreads).
-                    -- These are correlated, not independent predictions.
-                    -- Kalshi game markets are single-market binary and calibrate well.
-                    -- Exclude by event_id linkage OR by category for 3-way sports
-                    -- where event_id coverage is incomplete.
-                    WHEN source = 'polymarket' AND eligible <= 2
-                         AND (event_id IS NOT NULL
-                              OR category IN ('soccer','football','cricket',
-                                              'rugby','pickleball'))
+                    -- Polymarket game sub-markets can't be used for calibration:
+                    -- they decompose each game into correlated binary sub-markets
+                    -- (Win/Draw/Lose, spreads, props) that aren't independent.
+                    -- Exclude by event_id linkage or by 3-way sport category.
+                    -- Also exclude all Polymarket soccer/football/cricket entirely:
+                    -- their market structure is incompatible with binary calibration.
+                    WHEN source = 'polymarket'
+                         AND (category IN ('soccer','football','cricket',
+                                           'rugby','pickleball')
+                              OR (event_id IS NOT NULL AND eligible <= 2))
                         THEN false
                     -- Large field ME markets (20+ outcomes: golf, motorsports):
                     -- keep all but cut >0.90 (inverted Kalshi field prices)
