@@ -67,12 +67,16 @@ export default function AboutPage() {
         <Link href="/calibration" className="block bg-surface-card rounded-xl p-6 border border-surface-border hover:border-accent-brand transition-colors group">
           <div className="flex items-start gap-4">
             <div className="text-3xl">📊</div>
-            <div>
+            <div className="flex-1">
               <h2 className="text-title-3 text-text-primary group-hover:text-accent-brand transition-colors">Do Prediction Markets Predict Anything?</h2>
               <p className="text-sm text-text-secondary mt-1">
-                We analyzed 180,000+ resolved outcomes across Kalshi, Polymarket, and sportsbooks.
-                When markets say something has a 30% chance, does it really happen 30% of the time? See the data.
+                We analyzed 474,000+ resolved outcomes across Kalshi, Polymarket, and sportsbooks.
+                When markets say something has a 30% chance, does it really happen 30% of the time?
               </p>
+              <span className="inline-flex items-center gap-1 text-sm font-semibold text-accent-brand mt-3">
+                View calibration report
+                <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+              </span>
             </div>
           </div>
         </Link>
@@ -142,7 +146,7 @@ export default function AboutPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { value: "8", label: "Data Sources" },
-            { value: "90K+", label: "Markets Tracked" },
+            { value: "130K+", label: "Markets Tracked" },
             { value: "20+", label: "Sportsbooks" },
             { value: "~32s", label: "Live Updates" },
           ].map((s) => (

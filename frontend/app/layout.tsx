@@ -87,29 +87,24 @@ export default function RootLayout({
               <footer className="hidden md:block bg-surface-card border-t border-surface-border mt-auto">
                 <div className="max-w-content mx-auto px-6 py-4">
                   <nav className="flex items-center justify-center gap-6">
-                    <Link
-                      href="/sport"
-                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
-                    >
-                      <span>🏆</span>
-                      <span>Leagues</span>
+                    <Link href="/politics" className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm">
+                      <span>🏛</span><span>Politics</span>
                     </Link>
                     <span className="text-surface-border">·</span>
-                    <Link
-                      href="/ei"
-                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
-                    >
-                      <span>⚡</span>
-                      <span>Excitement Index</span>
+                    <Link href="/entertainment" className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm">
+                      <span>🎬</span><span>Entertainment</span>
                     </Link>
-
                     <span className="text-surface-border">·</span>
-                    <Link
-                      href="/about"
-                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
-                    >
-                      <span>🍀</span>
-                      <span>About</span>
+                    <Link href="/economics" className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm">
+                      <span>📈</span><span>Economics</span>
+                    </Link>
+                    <span className="text-surface-border">·</span>
+                    <Link href="/weather" className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm">
+                      <span>🌤</span><span>Weather</span>
+                    </Link>
+                    <span className="text-surface-border">·</span>
+                    <Link href="/about" className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm">
+                      <span>🍀</span><span>About</span>
                     </Link>
                   </nav>
                 </div>
