@@ -430,7 +430,11 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 5. **Football + hockey** — Football (n=532) is too small and structurally broken. Hockey (17pp) needs investigation. Both will improve as `is_winner` backfill coverage grows.
 
-6. **Nightly refresh** — Celery task to refresh and cache calibration data.
+6. **Default-price filter for S&P/Nasdaq ladders** — Kalshi economics markets have 400 outcomes all at `opening_probability = 0.500` (placeholder, no real trading). The existing `mode_prices` filter catches these for `is_multi AND eligible >= 20`, but some slip through (markets with fewer siblings or where mode_price isn't quite 50%). Tighten: flag any market where 50%+ of outcomes have identical `opening_probability` regardless of market size.
+
+7. **Nightly refresh** — Celery task to refresh and cache calibration data.
+
+8. **`commence_time` grouping attempt reverted** — Tried grouping ungrouped markets by `(source, category, commence_time)` but too loose: would group unrelated S&P + Nasdaq + Gold markets. The right fix is `group_id` backfill from the Polymarket Gamma API, querying resolved events to get their group structure.
 
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
