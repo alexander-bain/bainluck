@@ -82,6 +82,26 @@ export default function AboutPage() {
         </Link>
       </section>
 
+      {/* Source Intelligence CTA */}
+      <section>
+        <Link href="/source-intelligence" className="block bg-surface-card rounded-xl p-6 border border-surface-border hover:border-accent-brand transition-colors group">
+          <div className="flex items-start gap-4">
+            <div className="text-3xl">🔬</div>
+            <div className="flex-1">
+              <h2 className="text-title-3 text-text-primary group-hover:text-accent-brand transition-colors">When Sources Disagree, Who&apos;s Right?</h2>
+              <p className="text-sm text-text-secondary mt-1">
+                We track 6 independent probability sources for every game. When sportsbooks, prediction markets,
+                and statistical models diverge, which one ends up closest to the truth?
+              </p>
+              <span className="inline-flex items-center gap-1 text-sm font-semibold text-accent-brand mt-3">
+                View source intelligence
+                <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+              </span>
+            </div>
+          </div>
+        </Link>
+      </section>
+
       {/* How It Works */}
       <section className="space-y-4">
         <h2 className="text-title-2 text-text-primary">How It Works</h2>

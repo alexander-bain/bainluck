@@ -1588,3 +1588,68 @@ export async function fetchCalibration(): Promise<CalibrationData> {
   return apiFetch<CalibrationData>("/api/calibration");
 }
 
+export interface SourceCoverageSport {
+  sport: string;
+  total: number;
+  betting: number;
+  espn: number;
+  stat_model: number;
+  kalshi: number;
+  polymarket: number;
+  mlb: number;
+}
+
+export interface SourceAccuracy {
+  source: string;
+  observations: number;
+  brier: number;
+  mae: number;
+  buckets: { idx: number; n: number; avg_prob: number; actual: number }[];
+}
+
+export interface PairwiseDisagreement {
+  source_a: string;
+  source_b: string;
+  count: number;
+  avg_divergence: number;
+  a_closer_pct: number;
+  by_phase: Record<string, { comparisons: number; a_closer_pct: number }>;
+  by_sport: Record<string, { comparisons: number; a_closer_pct: number }>;
+}
+
+export interface CaseStudy {
+  event_id: number;
+  home_team: string;
+  away_team: string;
+  sport: string;
+  score: string;
+  home_won: boolean;
+  max_divergence: number;
+  date: string;
+  series: Record<string, { t: string; p: number }[]>;
+}
+
+export interface SourceIntelligenceData {
+  generated_at: string;
+  coverage: {
+    total_events: number;
+    multi_source_events: number;
+    by_source_count: { sources: number; events: number }[];
+    by_sport: SourceCoverageSport[];
+  };
+  source_accuracy: SourceAccuracy[];
+  disagreements: {
+    total_comparisons: number;
+    rate_5pp: number;
+    rate_10pp: number;
+    rate_20pp: number;
+    by_sport: { sport: string; comparisons: number; rate_5pp: number }[];
+    pairwise: PairwiseDisagreement[];
+  };
+  case_studies: CaseStudy[];
+}
+
+export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData> {
+  return apiFetch<SourceIntelligenceData>("/api/source-intelligence");
+}
+

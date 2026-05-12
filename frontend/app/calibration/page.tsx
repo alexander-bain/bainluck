@@ -337,6 +337,8 @@ export default function CalibrationPage() {
           {data.total_outcomes.toLocaleString()} resolved outcomes &middot; {sources.length} sources &middot; {categories.length} categories
         </p>
         <p className="mt-1">
+          <Link href="/source-intelligence" className="text-accent-brand hover:underline">When Sources Disagree</Link>
+          {" "}&middot;{" "}
           <Link href="/about" className="text-accent-brand hover:underline">About Bain Luck</Link>
         </p>
       </footer>
