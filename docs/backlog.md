@@ -66,10 +66,16 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ Polymarket email-highlight sheet can now feed the Discover audit through CSV path/URL env vars, producing `email-hit@20` / `email-hit@50` coverage without changing ranking.
 
 **Next phases:**
-1. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-2. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
-3. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-4. Use engagement opportunity signals and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
+1. Automate the Polymarket email-highlight ground truth pipeline:
+   - Keep the Apps Script as the Gmail parser, but publish a clean audit export tab or CSV/JSON endpoint with stable columns.
+   - Add a scheduled backend/admin import path that fetches the export, validates headers, records row count/freshness, and makes it available to `audit_feed_quality.py` without a manual CSV download.
+   - Alert or surface an admin warning when the export is stale for more than 48 hours, row count drops sharply, or parse coverage changes unexpectedly.
+2. Add matching diagnostics for email-highlight rows: matched `futures_markets.id`, current Discover rank, score bucket, missing reason, category/story family, and whether the card had usable image/context/explanation treatment.
+3. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
+4. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+5. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
+6. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+7. Use engagement opportunity signals and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
