@@ -274,22 +274,19 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py` (pin endpoints)
 **Parallel Safety:** Yellow
 
-### BR-NAV. Native App Tab Redesign + Sticky Tabs
+### ~~BR-NAV. Native App Tab Redesign + Sticky Tabs~~ — MOSTLY DONE (May 11)
 
-**Problem:** The iOS tab bar order and behavior need updating:
-1. **Tab order should be:** Discover (leftmost) → Sports → Search → Categories → My Stuff
-2. **Sticky tabs:** When a user leaves and returns to the app, it should re-open to the tab they were on last (not reset to Sports every time)
+**Completed:**
+- ✅ Tab order: Discover → Sports → Browse → Search → My Stuff
+- ✅ Default tab changed to Discover
+- ✅ "Leagues" tab renamed to "Browse" with Prediction Markets section (Politics, Entertainment, Economics, Weather) + leagues
+- ✅ Sports tab pills now navigate to league grids (NBA, NFL, MLB, NHL) and rich category views (Politics, Entertainment, Economics, Weather) instead of useless SportCategoryView
+- ✅ Discover category chips are sticky (pinned to top while scrolling)
 
-**Current state:** Tab order is Sports → Discover → Leagues → Search → My Stuff. No tab persistence — app always opens to Sports.
+**Remaining:**
+- Tab persistence (save/restore last-used tab to UserDefaults) — deferred, low priority
 
-**Fix:**
-1. Reorder `AppTab` enum and `TabView` items in `MainTabView.swift` to: Discover, Sports, Search, Categories (was Leagues), My Stuff
-2. Save `selectedTab` to `UserDefaults` on every tab change
-3. On app launch, restore the last-used tab from `UserDefaults`
-4. The "Categories" tab replaces "Leagues" and includes a dropdown or grid of all categories (Sports leagues, Politics, Entertainment, Economics, Weather)
-
-**Files:** `ios/.../Services/NavigationCoordinator.swift`, `ios/.../Views/MainTabView.swift`
-**Parallel Safety:** Yellow (touches nav — coordinate with other sessions)
+**Files:** `ios/.../Services/NavigationCoordinator.swift`, `ios/.../Views/MainTabView.swift`, `ios/.../Views/LeaguesView.swift`, `ios/.../Components/SportFilterChips.swift`
 
 ### NATIVE-DESIGN. Native Category Pages Are Broken/Ugly (HIGH-PRI)
 
@@ -308,9 +305,11 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 - Economics: `https://api.anthropic.com/v1/design/h/eIsTOAYPL_It9o3O4zleDw?open_file=handoff%2Feconomics%2Freference%2FEconomics.html`
 - Weather: `https://api.anthropic.com/v1/design/h/S18AFhL5cujQX0CfDqlkBA`
 
-**Action:**
-- Fix Economics data parsing error (blocking)
-- Design pass on all 5 category pages: use the Claude Design handoffs above as the visual target
+**Completed (May 11):**
+- ✅ Economics data parsing error fixed (removed `rateCuts` field — backend sends nested arrays, iOS expected market objects, field unused in view)
+
+**Remaining:**
+- Design pass on Entertainment, Weather, Politics, Preferences: use the Claude Design handoffs above as the visual target
 - Weather page especially needs a complete visual rethink — temperature distributions should use color gradients and compact visualizations, not text tables
 
 **Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`

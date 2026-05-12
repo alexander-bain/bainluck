@@ -1,5 +1,35 @@
 # Completed Features (Shipped)
 
+## May 11, 2026 — TestFlight Launch + iOS Polish
+
+### TestFlight Readiness (14 fixes)
+- ✅ **Swipe-to-navigate bug fixed** — Discover cards no longer accidentally navigate when swiping. Replaced `NavigationLink` with programmatic navigation via `NavigationPath`.
+- ✅ **Idle timer disabled app-wide** removed — was draining battery on every foreground.
+- ✅ **Discover error + loading states** — empty catch block replaced with proper error UI and loading spinner.
+- ✅ **Guess card error handling** — `onGuessCompleted` now always fires; API failures don't block the UI.
+- ✅ **Route consistency** — extracted shared `RouteDestination` view. Eliminated `Text("Team")`, `Text("About")` placeholder views across all tabs.
+- ✅ **iPad Discover NavigationStack** — moved NavigationStack inside DiscoverView so it works on both iPhone and iPad.
+- ✅ **print() → os.Logger** in BugReportView screenshot capture.
+- ✅ **Watch app force unwraps** replaced with safe `guard let` pattern.
+- ✅ **Entitlements cleanup** — removed duplicate `aps-environment` key.
+- ✅ **macOS scene modifier chain fixed** — `.defaultSize` and `.commands` were in disconnected `#if os(macOS)` block.
+- ✅ **Privacy manifest** (`PrivacyInfo.xcprivacy`) created — declares UserDefaults usage, no tracking.
+- ✅ **Privacy policy page** at `bainluck.com/privacy` + in-app link from AboutView.
+- ✅ **Economics page crash fixed** — removed `rateCuts` field (backend/iOS type mismatch, field unused).
+- ✅ **Xcode warnings cleaned** — removed unused `isSoccer`, `awayShort` variables.
+
+### Native UX Improvements
+- ✅ **Discover tab is now default + leftmost** — app opens to Discover, not Sports.
+- ✅ **Sticky category chips** — Discover filter chips pinned to top while scrolling.
+- ✅ **Swipe hint** — inline "Swipe cards to dismiss" banner shown once for new users, auto-dismisses on first swipe.
+- ✅ **Guess cards swipeable** — Higher/Lower cards now wrapped in SwipeToDismiss for consistent gesture behavior.
+- ✅ **4-card welcome onboarding** — replaces old 5-step preferences wizard for first launch. Cards: probability explainer, calibration accuracy, gesture tutorial, sign-in value prop.
+- ✅ **Sign-in page redesigned** — replaced generic icon+buttons with 4-perk value proposition (team following, personalized Discover, streaks, prediction history).
+- ✅ **Prediction stats in My Stuff** — accuracy %, total predictions, current streak, best streak shown at top of team feed. Taps through to full stats view.
+- ✅ **Search keyboard no longer auto-focuses** — removed aggressive keyboard pop-up on tab switch.
+- ✅ **Browse tab (was Leagues)** — added Prediction Markets section (Politics, Entertainment, Economics, Weather) with colored icons. League rows use SF Symbols instead of emoji.
+- ✅ **Sports tab pills → league grids** — NBA/NFL/MLB/NHL chips navigate to championship grid pages. Politics/Entertainment/Economics/Weather chips navigate to rich dedicated views. Removed chips for sports without dedicated pages (Tennis, MMA, Crypto).
+
 ## May 11, 2026 — Matching Quality + StatPal Playoff Fix
 
 ### StatPal Playoff Parser Fix (Critical)
