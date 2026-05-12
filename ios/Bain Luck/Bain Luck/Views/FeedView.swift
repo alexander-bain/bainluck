@@ -229,10 +229,10 @@ struct FeedView: View {
 
     private var feedList: some View {
         List {
-            // Category chips — navigate to sport category pages
+            // League & category chips — navigate to league grids or category pages
             Section {
-                SportFilterChips(selectedCategory: $selectedCategory) { category in
-                    path.append(Route.sportCategory(key: category.id, name: category.name))
+                SportFilterChips(selectedCategory: $selectedCategory) { route in
+                    path.append(route)
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)

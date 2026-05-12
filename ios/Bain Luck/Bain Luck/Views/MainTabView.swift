@@ -32,7 +32,7 @@ struct MainTabView: View {
 
             LeaguesView()
                 .tabItem {
-                    Label("Leagues", systemImage: "trophy.fill")
+                    Label("Browse", systemImage: "square.grid.2x2")
                 }
                 .tag(AppTab.leagues)
 
@@ -89,7 +89,7 @@ struct MainTabView: View {
                     }
                     .tag(AppTab.feed)
 
-                    Label("Leagues", systemImage: "trophy.fill")
+                    Label("Browse", systemImage: "square.grid.2x2")
                         .tag(AppTab.leagues)
 
                     Label("Search", systemImage: "magnifyingglass")

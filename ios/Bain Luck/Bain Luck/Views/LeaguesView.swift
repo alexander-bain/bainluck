@@ -6,30 +6,46 @@ struct LeagueInfo: Identifiable {
     let slug: String
     let label: String
     let fullName: String
-    let emoji: String
+    let icon: String
     let group: String
 
     var id: String { slug }
 }
 
 private let allLeagues: [LeagueInfo] = [
-    LeagueInfo(slug: "nba", label: "NBA", fullName: "National Basketball Association", emoji: "\u{1F3C0}", group: "Major US Leagues"),
-    LeagueInfo(slug: "nfl", label: "NFL", fullName: "National Football League", emoji: "\u{1F3C8}", group: "Major US Leagues"),
-    LeagueInfo(slug: "mlb", label: "MLB", fullName: "Major League Baseball", emoji: "\u{26BE}", group: "Major US Leagues"),
-    LeagueInfo(slug: "nhl", label: "NHL", fullName: "National Hockey League", emoji: "\u{1F3D2}", group: "Major US Leagues"),
-    LeagueInfo(slug: "ncaa-basketball", label: "NCAAB", fullName: "NCAA Men's Basketball", emoji: "\u{1F3C0}", group: "College"),
-    LeagueInfo(slug: "ncaa-women-basketball", label: "WNCAAB", fullName: "NCAA Women's Basketball", emoji: "\u{1F3C0}", group: "College"),
-    LeagueInfo(slug: "ncaa-football", label: "NCAAF", fullName: "NCAA Football", emoji: "\u{1F3C8}", group: "College"),
-    LeagueInfo(slug: "wnba", label: "WNBA", fullName: "Women's NBA", emoji: "\u{1F3C0}", group: "Other US Leagues"),
-    LeagueInfo(slug: "mls", label: "MLS", fullName: "Major League Soccer", emoji: "\u{26BD}", group: "Other US Leagues"),
-    LeagueInfo(slug: "epl", label: "EPL", fullName: "English Premier League", emoji: "\u{26BD}", group: "Soccer"),
-    LeagueInfo(slug: "la-liga", label: "La Liga", fullName: "Spanish La Liga", emoji: "\u{26BD}", group: "Soccer"),
-    LeagueInfo(slug: "champions-league", label: "UCL", fullName: "UEFA Champions League", emoji: "\u{26BD}", group: "Soccer"),
-    LeagueInfo(slug: "bundesliga", label: "Bundesliga", fullName: "German Bundesliga", emoji: "\u{26BD}", group: "Soccer"),
-    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour & Majors", emoji: "\u{26F3}", group: "Individual"),
+    LeagueInfo(slug: "nba", label: "NBA", fullName: "National Basketball Association", icon: "basketball.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "nfl", label: "NFL", fullName: "National Football League", icon: "football.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "mlb", label: "MLB", fullName: "Major League Baseball", icon: "baseball.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "nhl", label: "NHL", fullName: "National Hockey League", icon: "hockey.puck.fill", group: "Major US Leagues"),
+    LeagueInfo(slug: "ncaa-basketball", label: "NCAAB", fullName: "NCAA Men's Basketball", icon: "basketball.fill", group: "College"),
+    LeagueInfo(slug: "ncaa-women-basketball", label: "WNCAAB", fullName: "NCAA Women's Basketball", icon: "basketball.fill", group: "College"),
+    LeagueInfo(slug: "ncaa-football", label: "NCAAF", fullName: "NCAA Football", icon: "football.fill", group: "College"),
+    LeagueInfo(slug: "wnba", label: "WNBA", fullName: "Women's NBA", icon: "basketball.fill", group: "Other US Leagues"),
+    LeagueInfo(slug: "mls", label: "MLS", fullName: "Major League Soccer", icon: "soccerball", group: "Other US Leagues"),
+    LeagueInfo(slug: "epl", label: "EPL", fullName: "English Premier League", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "la-liga", label: "La Liga", fullName: "Spanish La Liga", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "champions-league", label: "UCL", fullName: "UEFA Champions League", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "bundesliga", label: "Bundesliga", fullName: "German Bundesliga", icon: "soccerball", group: "Soccer"),
+    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour & Majors", icon: "figure.golf", group: "Individual"),
 ]
 
 private let groupOrder = ["Major US Leagues", "College", "Other US Leagues", "Soccer", "Individual"]
+
+private struct CategoryLink: Identifiable {
+    let id: String
+    let label: String
+    let desc: String
+    let icon: String
+    let color: Color
+    let route: Route
+}
+
+private let categoryLinks: [CategoryLink] = [
+    CategoryLink(id: "politics", label: "Politics", desc: "Elections, policy, geopolitics", icon: "building.columns.fill", color: .indigo, route: .politics),
+    CategoryLink(id: "entertainment", label: "Entertainment", desc: "Awards, box office, culture", icon: "film.fill", color: .pink, route: .entertainment),
+    CategoryLink(id: "economics", label: "Economics", desc: "Fed rates, inflation, GDP", icon: "chart.bar.fill", color: .purple, route: .economics),
+    CategoryLink(id: "weather", label: "Weather", desc: "Temperature, rainfall, storms", icon: "cloud.sun.fill", color: .orange, route: .weather),
+]
 
 // MARK: - View
 
@@ -39,6 +55,28 @@ struct LeaguesView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                Section("Prediction Markets") {
+                    ForEach(categoryLinks) { cat in
+                        NavigationLink(value: cat.route) {
+                            HStack(spacing: 12) {
+                                Image(systemName: cat.icon)
+                                    .font(.body)
+                                    .foregroundStyle(.white)
+                                    .frame(width: 32, height: 32)
+                                    .background(cat.color, in: RoundedRectangle(cornerRadius: 8))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(cat.label)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text(cat.desc)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+
                 ForEach(groupOrder, id: \.self) { group in
                     let leagues = allLeagues.filter { $0.group == group }
                     if !leagues.isEmpty {
@@ -46,8 +84,11 @@ struct LeaguesView: View {
                             ForEach(leagues) { league in
                                 NavigationLink(value: league.slug == "golf" ? Route.golfCategory : Route.leagueGrid(slug: league.slug)) {
                                     HStack(spacing: 12) {
-                                        Text(league.emoji)
-                                            .font(.title2)
+                                        Image(systemName: league.icon)
+                                            .font(.body)
+                                            .foregroundStyle(.white)
+                                            .frame(width: 32, height: 32)
+                                            .background(Color.secondary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(league.label)
                                                 .font(.subheadline)
@@ -57,7 +98,7 @@ struct LeaguesView: View {
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
-                                    .padding(.vertical, 4)
+                                    .padding(.vertical, 2)
                                 }
                             }
                         }
@@ -67,7 +108,7 @@ struct LeaguesView: View {
             #if os(iOS)
             .listStyle(.insetGrouped)
             #endif
-            .navigationTitle("Leagues")
+            .navigationTitle("Browse")
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
             .onAppear {
                 AnalyticsService.trackScreen(name: "leagues", type: "leagues_index")

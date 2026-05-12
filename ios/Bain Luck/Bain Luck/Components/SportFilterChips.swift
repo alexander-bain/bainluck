@@ -5,10 +5,9 @@ import SwiftUI
 struct SportCategory: Identifiable, Hashable {
     let id: String
     let name: String
-    /// Sport key prefixes for matching events (e.g., "basketball" matches "basketball_nba")
     let sportPrefixes: [String]
-    /// LLM categories for matching futures (e.g., "basketball", "politics")
     let futuresCategories: [String]
+    let route: Route?
 
     func matches(_ item: FeedItem) -> Bool {
         if id == "all" { return true }
@@ -23,25 +22,24 @@ struct SportCategory: Identifiable, Hashable {
 }
 
 let sportCategories: [SportCategory] = [
-    .init(id: "all", name: "All", sportPrefixes: [], futuresCategories: []),
-    .init(id: "basketball", name: "Basketball", sportPrefixes: ["basketball"], futuresCategories: ["basketball"]),
-    .init(id: "football", name: "Football", sportPrefixes: ["americanfootball"], futuresCategories: ["football"]),
-    .init(id: "baseball", name: "Baseball", sportPrefixes: ["baseball"], futuresCategories: ["baseball"]),
-    .init(id: "hockey", name: "Hockey", sportPrefixes: ["icehockey"], futuresCategories: ["hockey"]),
-    .init(id: "soccer", name: "Soccer", sportPrefixes: ["soccer"], futuresCategories: ["soccer"]),
-    .init(id: "golf", name: "Golf", sportPrefixes: ["golf"], futuresCategories: ["golf"]),
-    .init(id: "tennis", name: "Tennis", sportPrefixes: ["tennis"], futuresCategories: ["tennis"]),
-    .init(id: "mma", name: "MMA", sportPrefixes: ["mma"], futuresCategories: ["mma", "boxing"]),
-    .init(id: "politics", name: "Politics", sportPrefixes: [], futuresCategories: ["politics"]),
-    .init(id: "entertainment", name: "Entertainment", sportPrefixes: [], futuresCategories: ["entertainment"]),
-    .init(id: "crypto", name: "Crypto", sportPrefixes: [], futuresCategories: ["crypto"]),
+    .init(id: "all", name: "All", sportPrefixes: [], futuresCategories: [], route: nil),
+    .init(id: "basketball", name: "NBA", sportPrefixes: ["basketball"], futuresCategories: ["basketball"], route: .leagueGrid(slug: "nba")),
+    .init(id: "football", name: "NFL", sportPrefixes: ["americanfootball"], futuresCategories: ["football"], route: .leagueGrid(slug: "nfl")),
+    .init(id: "baseball", name: "MLB", sportPrefixes: ["baseball"], futuresCategories: ["baseball"], route: .leagueGrid(slug: "mlb")),
+    .init(id: "hockey", name: "NHL", sportPrefixes: ["icehockey"], futuresCategories: ["hockey"], route: .leagueGrid(slug: "nhl")),
+    .init(id: "soccer", name: "Soccer", sportPrefixes: ["soccer"], futuresCategories: ["soccer"], route: .leagueGrid(slug: "epl")),
+    .init(id: "golf", name: "Golf", sportPrefixes: ["golf"], futuresCategories: ["golf"], route: .golfCategory),
+    .init(id: "politics", name: "Politics", sportPrefixes: [], futuresCategories: ["politics"], route: .politics),
+    .init(id: "entertainment", name: "Entmt", sportPrefixes: [], futuresCategories: ["entertainment"], route: .entertainment),
+    .init(id: "economics", name: "Econ", sportPrefixes: [], futuresCategories: ["economics"], route: .economics),
+    .init(id: "weather", name: "Weather", sportPrefixes: [], futuresCategories: ["weather"], route: .weather),
 ]
 
 // MARK: - Filter Chips View
 
 struct SportFilterChips: View {
     @Binding var selectedCategory: String
-    var onCategoryTap: ((SportCategory) -> Void)? = nil
+    var onNavigate: ((Route) -> Void)? = nil
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -50,13 +48,11 @@ struct SportFilterChips: View {
                     ForEach(sportCategories) { category in
                         chipButton(category)
                     }
-                    // Trailing spacer so content doesn't hide under gradient
                     Spacer().frame(width: 20)
                 }
                 .padding(.horizontal)
             }
 
-            // Fade hint showing more chips to the right
             LinearGradient(
                 colors: [
                     Color.groupedBackground.opacity(0),
@@ -75,13 +71,11 @@ struct SportFilterChips: View {
         let isSelected = selectedCategory == category.id
         return Button {
             if isAll {
-                // "All" always acts as a filter reset
                 withAnimation(.easeInOut(duration: 0.2)) {
                     selectedCategory = "all"
                 }
-            } else {
-                // Other categories navigate to their detail page
-                onCategoryTap?(category)
+            } else if let route = category.route {
+                onNavigate?(route)
             }
         } label: {
             HStack(spacing: 4) {
@@ -109,11 +103,10 @@ struct SportFilterChips: View {
         case "hockey": return "hockey.puck.fill"
         case "soccer": return "soccerball"
         case "golf": return "figure.golf"
-        case "tennis": return "tennis.racket"
-        case "mma": return "figure.boxing"
         case "politics": return "building.columns.fill"
-        case "entertainment": return "star.fill"
-        case "crypto": return "bitcoinsign.circle.fill"
+        case "entertainment": return "film.fill"
+        case "economics": return "chart.bar.fill"
+        case "weather": return "cloud.sun.fill"
         default: return "sportscourt"
         }
     }
