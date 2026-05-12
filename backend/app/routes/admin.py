@@ -9983,21 +9983,22 @@ async def calibration_data(
             SELECT * FROM ranked_outcomes
             WHERE
                 CASE
-                    -- Multi-outcome ME markets with 20+ outcomes (golf, motorsports):
-                    -- exclude opening_prob > 0.90 — these are inverted Kalshi field
-                    -- prices (0.97 = "97% won't win" stored as Yes price)
-                    WHEN is_multi AND eligible >= 20
-                        THEN opening_probability > 0.02
-                         AND opening_probability < 0.90
-                    -- Other multi-outcome ME markets (3-19 outcomes): normal tail filter
-                    WHEN is_multi
-                        THEN opening_probability > 0.02
-                         AND opening_probability < 0.98
-                    -- Binary/threshold: one per event, but exclude 3-way game sports
-                    -- where binary dedup is structurally wrong (soccer, football, cricket)
+                    -- 3-way game sports linked to events: exclude entirely.
+                    -- Win/draw/lose sub-markets can't be treated as independent
+                    -- binary predictions. (Must come before is_multi check.)
                     WHEN category IN ('soccer', 'football', 'cricket')
                          AND event_id IS NOT NULL
                         THEN false
+                    -- Large field ME markets (20+ outcomes: golf, motorsports):
+                    -- keep all but cut >0.90 (inverted Kalshi field prices)
+                    WHEN is_multi AND eligible >= 20
+                        THEN opening_probability > 0.02
+                         AND opening_probability < 0.90
+                    -- Other multi-outcome ME markets (3-19 outcomes)
+                    WHEN is_multi
+                        THEN opening_probability > 0.02
+                         AND opening_probability < 0.98
+                    -- Binary/threshold: one per event (or market if no event_id)
                     ELSE rn_event = 1
                 END
         ),
