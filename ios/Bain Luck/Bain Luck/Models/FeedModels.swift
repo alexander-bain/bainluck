@@ -140,6 +140,7 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let llmSportCategory: String?
     let source: String?
     let sourceCount: Int?
+    let sources: [String]?
     let marketTier: Int?
     let status: String?
     let resolutionDate: String?

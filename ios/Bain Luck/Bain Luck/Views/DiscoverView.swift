@@ -433,14 +433,17 @@ struct DiscoverView: View {
                                 case .group(let title, let items):
                                     NativeGroupCard(title: title, items: items)
                                 case .single(let item):
-                                    if isGuessSlot, item.type == "futures", let f = item.futures {
+                                    if isGuessSlot, item.type == "futures", let f = item.futures,
+                                       f.status != "closed", f.status != "resolved",
+                                       (f.topOutcomes?.first?.probability ?? 0) < 0.95 {
                                         SwipeToDismiss {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
                                         } content: {
                                             NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                                         }
-                                    } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil {
+                                    } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
+                                              e.status != "completed", e.status != "closed" {
                                         SwipeToDismiss {
                                             recordInteraction(for: item, action: .dismiss)
                                             dismiss(itemId(item))
@@ -1128,22 +1131,20 @@ private struct NativeFuturesDiscoverCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    if let src = data.source {
+                    if let sources = data.sources, sources.count > 1 {
+                        Text(sources.map { $0.uppercased() }.joined(separator: " + "))
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.10), in: Capsule())
+                    } else if let src = data.source {
                         Text(src.uppercased())
                             .font(.system(size: 9, weight: .heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Color.blue.opacity(0.10), in: Capsule())
-                    }
-
-                    if let count = data.sourceCount, count > 1 {
-                        Text("\(count) SOURCES")
-                            .font(.system(size: 9, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.secondary.opacity(0.10), in: Capsule())
                     }
 
                     Spacer()

@@ -2138,8 +2138,8 @@ async def _score_futures(
         if all_settled:
             continue
 
-        # 2) Leader at ≥97% with no interesting journey
-        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
+        # 2) Leader at ≥95% with no interesting journey
+        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.95
         if is_effectively_resolved:
             leader_opening = None
             for o in outcomes_data:
@@ -2157,6 +2157,8 @@ async def _score_futures(
         if market.updated_at:
             days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
             if days_stale > 7 and not has_any_movement:
+                continue
+            if market.resolution_date is None and days_stale > 14 and not has_any_movement:
                 continue
 
         # Get source count from canonical key
@@ -2322,6 +2324,13 @@ async def _score_futures(
             for o in sorted_outcomes[:3]  # Show top 3 in feed card
         ]
 
+        # Normalize probabilities when independent binary markets sum > 105%
+        prob_sum = sum(o["probability"] for o in top_outcomes_data if o["probability"])
+        if prob_sum > 1.05:
+            for o in top_outcomes_data:
+                if o["probability"]:
+                    o["probability"] = round(o["probability"] / prob_sum, 4)
+
         futures_data = {
             "id": market.id,
             "name": market.name,
@@ -2330,6 +2339,7 @@ async def _score_futures(
             "llm_sport_category": market.llm_sport_category,
             "source": market.source,
             "source_count": source_count,
+            "sources": (_canonical_source_names_cache or {}).get(market.canonical_market_key, [market.source]) if market.canonical_market_key else [market.source],
             "market_tier": market.market_tier,
             "status": market.status,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
@@ -2422,6 +2432,7 @@ async def _score_futures(
 
 
 _canonical_source_counts_cache: Optional[dict[str, int]] = None
+_canonical_source_names_cache: Optional[dict[str, list[str]]] = None
 _canonical_source_counts_ts: float = 0.0
 _CANONICAL_CACHE_TTL = 300  # 5 minutes
 
@@ -2476,7 +2487,7 @@ async def _get_canonical_source_counts(
     """
     import time
 
-    global _canonical_source_counts_cache, _canonical_source_counts_ts
+    global _canonical_source_counts_cache, _canonical_source_names_cache, _canonical_source_counts_ts
     now = time.time()
     if _canonical_source_counts_cache is not None and (now - _canonical_source_counts_ts) < _CANONICAL_CACHE_TTL:
         if keys is None:
@@ -2494,6 +2505,7 @@ async def _get_canonical_source_counts(
         select(
             FuturesMarket.canonical_market_key,
             func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+            func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
         )
         .where(FuturesMarket.canonical_market_key.isnot(None))
     )
@@ -2502,11 +2514,15 @@ async def _get_canonical_source_counts(
     query = query.group_by(FuturesMarket.canonical_market_key)
 
     result = await db.execute(query)
-    cache = {row.canonical_market_key: row.source_count for row in result.all()}
+    rows = result.all()
+    cache = {row.canonical_market_key: row.source_count for row in rows}
+    names_cache = {row.canonical_market_key: sorted(row.sources) if row.sources else [] for row in rows}
     if keys is not None:
+        _canonical_source_names_cache = {**((_canonical_source_names_cache or {})), **names_cache}
         return cache
 
     _canonical_source_counts_cache = cache
+    _canonical_source_names_cache = names_cache
     _canonical_source_counts_ts = now
     return cache
 

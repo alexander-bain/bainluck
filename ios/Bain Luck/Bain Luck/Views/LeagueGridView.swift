@@ -25,7 +25,7 @@ final class LeagueGridViewModel: ObservableObject {
     }
 
     var displayName: String {
-        grid?.name ?? slug.replacingOccurrences(of: "-", with: " ").capitalized
+        grid?.name ?? slug.replacingOccurrences(of: "-", with: " ").uppercased()
     }
 
     var conferences: [String] {
