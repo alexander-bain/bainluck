@@ -9941,13 +9941,12 @@ async def calibration_data(
     sql = text("""
         WITH market_info AS (
             SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
+                fm.commence_time,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                 fm.mutually_exclusive
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
         ),
-        -- Reconstruct virtual markets: group sub-markets by group_id or event_id
-        -- when 3+ sibling markets share the same key (= multi-outcome event)
         group_sizes AS (
             SELECT group_id, source, COUNT(*) AS group_size
             FROM market_info
@@ -9960,23 +9959,37 @@ async def calibration_data(
             WHERE event_id IS NOT NULL
             GROUP BY event_id, source
         ),
+        time_groups AS (
+            SELECT source, category, commence_time, COUNT(*) AS time_group_size
+            FROM market_info
+            WHERE commence_time IS NOT NULL
+              AND group_id IS NULL AND event_id IS NULL
+            GROUP BY source, category, commence_time
+        ),
         virtual_market AS (
             SELECT
                 mi.market_id, mi.source, mi.category, mi.event_id,
-                -- Virtual market ID: group_id (if 3+ siblings) > event_id (if 3+) > market_id
                 CASE WHEN gs.group_size >= 3
                      THEN 'g:' || mi.group_id
                      WHEN es.event_size >= 3
                      THEN 'e:' || mi.event_id::text
+                     WHEN tg.time_group_size >= 3
+                     THEN 't:' || mi.source || ':' || mi.category || ':' || mi.commence_time::text
                      ELSE 'm:' || mi.market_id::text
                 END AS vm_id,
-                COALESCE(gs.group_size >= 3, false) OR COALESCE(es.event_size >= 3, false) AS is_grouped,
+                COALESCE(gs.group_size >= 3, false)
+                  OR COALESCE(es.event_size >= 3, false)
+                  OR COALESCE(tg.time_group_size >= 3, false) AS is_grouped,
                 mi.mutually_exclusive
             FROM market_info mi
             LEFT JOIN group_sizes gs
               ON gs.group_id = mi.group_id AND gs.source = mi.source
             LEFT JOIN event_sizes es
               ON es.event_id = mi.event_id AND es.source = mi.source
+            LEFT JOIN time_groups tg
+              ON tg.source = mi.source AND tg.category = mi.category
+                 AND tg.commence_time = mi.commence_time
+                 AND mi.group_id IS NULL AND mi.event_id IS NULL
         ),
         -- Compute resolution quality per virtual market
         vm_stats AS (
