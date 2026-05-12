@@ -152,9 +152,10 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     rows = result.all()
 
     # Ground-truth sports calibration from events table.
-    # Uses closing line (last odds snapshot before commence_time) when available,
-    # falling back to opening probability. LATERAL join is fast because
-    # odds_snapshots has indexes on both event_id and captured_at.
+    # Uses opening probability (vig-removed consensus across 20+ sportsbooks).
+    # Closing line (LATERAL join on odds_snapshots) was attempted but times out
+    # on Heroku's 30s limit. TODO: pre-compute closing line in backfill task
+    # and store on events table for instant reads.
     events_sql = text("""
         SELECT
             LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
@@ -166,51 +167,23 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
             SUM(prob::float) AS sum_prob,
             SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM (
-            SELECT
-                COALESCE(cl.home_win_probability, e.opening_home_probability) AS prob,
-                (e.home_score > e.away_score) AS won, e.sport_id
-            FROM events e
-            LEFT JOIN LATERAL (
-                SELECT home_win_probability
-                FROM odds_snapshots os
-                WHERE os.event_id = e.id
-                  AND os.captured_at < e.commence_time
-                  AND os.home_win_probability IS NOT NULL
-                  AND os.home_win_probability > 0
-                  AND os.home_win_probability < 1
-                ORDER BY os.captured_at DESC
-                LIMIT 1
-            ) cl ON true
-            WHERE e.status = 'completed'
-              AND e.commence_time > NOW() - INTERVAL '6 months'
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) IS NOT NULL
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) > 0
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) < 1
-              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-              AND e.home_score != e.away_score
+            SELECT opening_home_probability AS prob,
+                   (home_score > away_score) AS won, sport_id
+            FROM events
+            WHERE status = 'completed'
+              AND opening_home_probability IS NOT NULL
+              AND opening_home_probability > 0 AND opening_home_probability < 1
+              AND home_score IS NOT NULL AND away_score IS NOT NULL
+              AND home_score != away_score
             UNION ALL
-            SELECT
-                1.0 - COALESCE(cl.home_win_probability, e.opening_home_probability) AS prob,
-                (e.away_score > e.home_score) AS won, e.sport_id
-            FROM events e
-            LEFT JOIN LATERAL (
-                SELECT home_win_probability
-                FROM odds_snapshots os
-                WHERE os.event_id = e.id
-                  AND os.captured_at < e.commence_time
-                  AND os.home_win_probability IS NOT NULL
-                  AND os.home_win_probability > 0
-                  AND os.home_win_probability < 1
-                ORDER BY os.captured_at DESC
-                LIMIT 1
-            ) cl ON true
-            WHERE e.status = 'completed'
-              AND e.commence_time > NOW() - INTERVAL '6 months'
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) IS NOT NULL
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) > 0
-              AND COALESCE(cl.home_win_probability, e.opening_home_probability) < 1
-              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-              AND e.home_score != e.away_score
+            SELECT opening_away_probability AS prob,
+                   (away_score > home_score) AS won, sport_id
+            FROM events
+            WHERE status = 'completed'
+              AND opening_away_probability IS NOT NULL
+              AND opening_away_probability > 0 AND opening_away_probability < 1
+              AND home_score IS NOT NULL AND away_score IS NOT NULL
+              AND home_score != away_score
         ) outcomes
         JOIN sports s ON s.id = outcomes.sport_id
         GROUP BY bucket_idx, s.key
