@@ -993,12 +993,16 @@ class BugReport(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255))
     session_id: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(Text)
     screenshot_base64: Mapped[Optional[str]] = mapped_column(Text)
     app_state: Mapped[Optional[dict]] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(20), default="new", index=True)
     admin_notes: Mapped[Optional[str]] = mapped_column(Text)
+    backlog_ref: Mapped[Optional[str]] = mapped_column(String(20))
+    resolution_summary: Mapped[Optional[str]] = mapped_column(Text)
+    notification_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

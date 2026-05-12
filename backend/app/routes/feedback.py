@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator as pydantic_field_validator
 from sqlalchemy import select, update, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import BugReport
+from app.models.models import BugReport, User
 from app.services import get_db
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,14 @@ async def submit_bug_report(
     session_id = request.headers.get("x-session-id")
     user_id = getattr(request.state, "user_id", None)
 
+    user_email = None
+    if user_id:
+        user_row = await db.execute(select(User.email).where(User.id == user_id))
+        user_email = user_row.scalar_one_or_none()
+
     report = BugReport(
         user_id=user_id,
+        user_email=user_email,
         session_id=session_id,
         description=body.description,
         screenshot_base64=body.screenshot_base64,

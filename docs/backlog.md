@@ -157,6 +157,36 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
+## Bug Report Lifecycle: Auto-Status + "Your Bug Was Fixed" Emails
+
+**Goal:** When a bug report is resolved, automatically notify the filer with a personal, LLM-written email explaining what was fixed and thanking them. Creates a retention loop that encourages more bug reports.
+
+**Phases:**
+
+### Phase 1: Backend data foundations (DO NOW)
+- Add `resolution_summary` text field to `BugReport` model — when we mark a bug fixed, store a short description of what was done (e.g., "Lowered staleness threshold from 97% to 95% so resolved markets no longer appear in Discover")
+- Add `backlog_ref` field — ties the bug report to a backlog item ID (e.g., "BR27") so we can batch-resolve related reports
+- Look up and store the filer's email at submission time (join `users` table via `user_id`) — store as `user_email` on the report so it's available without a join later
+- Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`
+
+### Phase 2: "Your bug was fixed" email (NEXT)
+- Choose email provider: SendGrid free tier (100/day) or Gmail SMTP via existing Google OAuth
+- When status changes to `"fixed"` and `user_email` is present, generate a personal email via GPT-4o-mini:
+  - Input: bug description, resolution_summary, user's first name
+  - Tone: warm, specific, grateful. "You reported X, we fixed it by doing Y. Thanks for making Bain Luck better."
+  - Include a link back to the app
+- Send the email via the chosen provider
+- Add `notification_sent_at` timestamp to BugReport to prevent double-sends
+
+### Phase 3: Automation (LATER)
+- When a commit message references "BR{N}" (e.g., "Fix BR27: normalize probabilities"), automatically mark the corresponding bug report as `fixed`
+- Surface unresolved bug reports in the admin dashboard with age badges
+
+**Files:** `backend/app/models/models.py` (BugReport), `backend/app/routes/admin.py` (PATCH endpoint), `backend/app/routes/feedback.py` (submission), new `backend/app/tasks/bug_notifications.py`
+**Parallel Safety:** Green
+
+---
+
 ## Rage Shake Triage #2 (May 11) — Bugs #18-24
 
 3 fixed (#19, #20, #24), 1 waiting on matching cycle (#18), 3 new backlog items (#21, #22, #23).

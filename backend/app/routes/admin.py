@@ -9859,6 +9859,8 @@ async def update_bug_report(
     secret: str = Query(None),
     status: str = Query(None),
     admin_notes: str = Query(None),
+    resolution_summary: str = Query(None),
+    backlog_ref: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if not await _check_admin_auth(secret, request, db):
@@ -9874,6 +9876,10 @@ async def update_bug_report(
         if len(admin_notes) > 5000:
             raise HTTPException(400, "Admin notes too long (max 5000 chars)")
         values["admin_notes"] = admin_notes
+    if resolution_summary is not None:
+        values["resolution_summary"] = resolution_summary
+    if backlog_ref is not None:
+        values["backlog_ref"] = backlog_ref
 
     if values:
         result = await db.execute(
