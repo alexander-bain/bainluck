@@ -222,6 +222,80 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
+## Rage Shake Triage #3 (May 11) — Bugs #25-30
+
+### BR25. Celtics 99% "Not Making Finals" but Also Shows 45% Yes (P2)
+
+**Problem:** Mac native app, Feed → Top Markets shows a Celtics market saying 99% chance of NOT making NBA Finals (correct — they're eliminated), but ALSO displays "45% Yes" which is contradictory and inaccurate. The market data is stale or the display logic is showing the wrong outcome's probability.
+
+**Root cause (likely):** The FuturesCardView is showing the leading outcome's probability (99% No) in the header but also displaying the "Yes" outcome with its stale probability (45%) instead of the complement (1%). Kalshi may not have settled the market yet, so the "Yes" price hasn't updated to near-zero.
+
+**Action:** Check how FuturesCardView renders multi-outcome markets. The "Yes" probability should be the complement of the displayed leader, not a stale independent value. Also: markets where the leader is ≥97% on a binary should be filtered from the feed as effectively resolved.
+
+**Files:** `ios/.../Components/FuturesCardView.swift`, `backend/app/routes/feed.py` (feed filtering)
+**Parallel Safety:** Yellow
+
+### BR26. League Page Broken + Lowercase "nba" (P1)
+
+**Problem:** Two issues on iOS Leagues tab:
+1. League abbreviation displayed as lowercase "nba" instead of "NBA" on the league grid page header
+2. The native league grid page itself may be broken/empty
+
+**Root cause (likely):** `LeagueGridView` receives the `slug` (lowercase "nba") and displays it as the title without uppercasing. The grid data may fail to load due to an API response shape mismatch.
+
+**Action:** Fix the title to uppercase the slug or use a display name. Investigate whether the grid loads data correctly.
+
+**Files:** `ios/.../Views/LeagueGridView.swift`
+**Parallel Safety:** Green
+
+### BR27. Winner Market Probabilities Sum to Much More Than 100% (P2)
+
+**Problem:** A "winner" market on Discover shows outcome probabilities that sum well over 100%. This makes the product look broken to users.
+
+**Root cause (likely):** Independent binary markets from Kalshi (each outcome is a separate "Will X win?" contract) are displayed without normalization. Each binary market has its own 0-100% probability, and summing them exceeds 100% because they include vig/overround.
+
+**Action:** For multi-outcome markets displayed on cards, normalize probabilities to sum to ~100% before display. This is already done for some category pages (entertainment Spotify race — MS-5) but not for Discover cards.
+
+**Files:** `backend/app/routes/feed.py` or `ios/.../Views/DiscoverView.swift` (card rendering)
+**Parallel Safety:** Yellow
+
+### BR28. "2 Sources" Badge but Only Shows Polymarket (P2)
+
+**Problem:** Discover card shows "2 SOURCES" badge but the card body only mentions Polymarket. The second source is present in the data but not displayed, making the badge misleading.
+
+**Root cause (likely):** The `sourceCount` field comes from the backend and counts sources correctly, but the card UI only renders the primary `source` field (one source name). The secondary source is in the data but not surfaced in the card layout.
+
+**Action:** Either show both source names (e.g., "Kalshi + Polymarket") or remove the source count badge when only one source name is displayed.
+
+**Files:** `ios/.../Views/DiscoverView.swift` (NativeFuturesDiscoverCard source chip area)
+**Parallel Safety:** Green
+
+### BR29. Higher/Lower Questions Shown for Closed/Resolved Events (P2)
+
+**Problem:** Discover is asking Higher/Lower prediction questions about events that have already closed or resolved. Users shouldn't be asked to guess on settled outcomes.
+
+**Root cause (likely):** The guess card slot logic (`isGuessSlot`) doesn't check whether the market/event is still open. It places a guess card every 5th item regardless of the item's resolution status.
+
+**Action:** Add a filter: skip guess card rendering for items where the event status is "completed"/"closed" or the futures market has a leader ≥97% (effectively settled).
+
+**Files:** `ios/.../Views/DiscoverView.swift` (guess slot logic, ~line 436-439), possibly also `backend/app/routes/feed.py` (exclude resolved items from feed)
+**Parallel Safety:** Green
+
+### BR30. Stale Met Gala Card in Discover + Probabilities Not Trending to 0/100 (P2)
+
+**Problem:** Two related issues:
+1. A Kim Kardashian Met Gala market appears in Discover despite the Met Gala having already happened — stale resolved markets shouldn't show in the feed
+2. The probabilities on the card haven't trended toward 0% or 100% as expected for a resolved event, suggesting the market data isn't being updated post-resolution
+
+**Root cause (likely):** The feed doesn't filter out markets whose resolution date has passed. Kalshi/Polymarket may not have settled the market yet, so the probability is stuck at its last trading value. The feed quality filters catch boring/ladder markets but don't check `resolution_date < now()`.
+
+**Action:** Add a resolution-date filter to the feed: exclude markets where `close_time` or `resolution_date` is in the past. Also investigate why post-resolution probability updates aren't flowing (the `poll_live_prediction_markets` task may skip markets that are no longer "active" on the exchange).
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** Yellow
+
+---
+
 ## Rage Shake Triage #2 (May 11) — Bugs #18-24
 
 3 fixed (#19, #20, #24), 1 waiting on matching cycle (#18), 3 new backlog items (#21, #22, #23).
