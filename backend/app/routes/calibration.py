@@ -182,6 +182,7 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
                 LIMIT 1
             ) cl ON true
             WHERE e.status = 'completed'
+              AND e.commence_time > NOW() - INTERVAL '6 months'
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) IS NOT NULL
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) > 0
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) < 1
@@ -204,6 +205,7 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
                 LIMIT 1
             ) cl ON true
             WHERE e.status = 'completed'
+              AND e.commence_time > NOW() - INTERVAL '6 months'
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) IS NOT NULL
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) > 0
               AND COALESCE(cl.home_win_probability, e.opening_home_probability) < 1
