@@ -9996,13 +9996,25 @@ async def calibration_data(
         -- vs binary/threshold (keep one outcome)
         ranked_outcomes AS (
             SELECT
-                fo.opening_probability,
-                (fo.current_probability >= 0.95) AS is_winner,
+                -- For multi-outcome markets with 10+ outcomes: if opening_probability
+                -- > 0.50, it's likely inverted (stores "No" price, not "Yes" price).
+                -- In a 20-player field, no single player should be >50%.
+                -- Invert both the probability and the winner flag.
+                CASE WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
+                          AND cv.eligible >= 10
+                          AND fo.opening_probability > 0.50
+                     THEN 1.0 - fo.opening_probability
+                     ELSE fo.opening_probability
+                END AS adj_opening_probability,
+                CASE WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
+                          AND cv.eligible >= 10
+                          AND fo.opening_probability > 0.50
+                     THEN (fo.current_probability <= 0.05)
+                     ELSE (fo.current_probability >= 0.95)
+                END AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
-                -- Multi-outcome: either native (ME + 3+ outcomes) or reconstructed from group
                 (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3)) AS is_multi,
-                -- For non-multi: keep closest to 50%
                 ROW_NUMBER() OVER (
                     PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
@@ -10019,26 +10031,24 @@ async def calibration_data(
             SELECT * FROM ranked_outcomes
             WHERE
                 CASE
-                    -- Large multi-outcome markets (20+): filter inverted field prices
-                    WHEN is_multi AND eligible >= 20
-                        THEN opening_probability > 0.02 AND opening_probability < 0.90
-                    -- Other multi-outcome markets: mild tail filter
+                    -- Multi-outcome markets: filter extreme tails
                     WHEN is_multi
-                        THEN opening_probability > 0.02 AND opening_probability < 0.98
+                        THEN adj_opening_probability > 0.005
+                         AND adj_opening_probability < 0.98
                     -- Binary/threshold: one outcome per virtual market
                     ELSE rn = 1
                 END
         ),
         bucketed AS (
-            SELECT *, LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
+            SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
             FROM deduped
         )
         SELECT bucket_idx, source, category,
             COUNT(*) AS n,
             SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
-            AVG(opening_probability) AS avg_prob,
-            SUM(opening_probability::float) AS sum_prob,
-            SUM((opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+            AVG(adj_opening_probability) AS avg_prob,
+            SUM(adj_opening_probability::float) AS sum_prob,
+            SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM bucketed
         GROUP BY bucket_idx, source, category
         ORDER BY bucket_idx, source, category
