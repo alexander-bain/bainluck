@@ -17,18 +17,18 @@ struct MainTabView: View {
 
     private var iPhoneLayout: some View {
         TabView(selection: $navCoordinator.selectedTab) {
+            DiscoverView()
+                .tabItem {
+                    Label("Discover", systemImage: "safari")
+                }
+                .tag(AppTab.discover)
+
             FeedView()
                 .tabItem {
                     Label("Sports", systemImage: "rectangle.stack.fill")
                 }
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
-
-            DiscoverView()
-            .tabItem {
-                Label("Discover", systemImage: "safari")
-            }
-            .tag(AppTab.discover)
 
             LeaguesView()
                 .tabItem {
@@ -70,6 +70,9 @@ struct MainTabView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: tabSelection) {
                 Section {
+                    Label("Discover", systemImage: "safari")
+                        .tag(AppTab.discover)
+
                     HStack {
                         Label("Sports", systemImage: "rectangle.stack.fill")
                         Spacer()
@@ -85,9 +88,6 @@ struct MainTabView: View {
                         }
                     }
                     .tag(AppTab.feed)
-
-                    Label("Discover", systemImage: "safari")
-                        .tag(AppTab.discover)
 
                     Label("Leagues", systemImage: "trophy.fill")
                         .tag(AppTab.leagues)

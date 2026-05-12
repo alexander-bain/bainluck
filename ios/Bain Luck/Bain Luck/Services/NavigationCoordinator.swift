@@ -21,7 +21,7 @@ enum AppTab: Int, Hashable {
 /// Coordinates deep link and universal link URL handling with tab navigation.
 @MainActor
 final class NavigationCoordinator: ObservableObject {
-    @Published var selectedTab: AppTab = .feed
+    @Published var selectedTab: AppTab = .discover
     @Published var pendingRoute: Route?
     @Published var pendingSearchQuery: String?
     @Published var liveGameCount: Int = 0

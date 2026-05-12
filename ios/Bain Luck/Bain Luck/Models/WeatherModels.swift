@@ -63,7 +63,6 @@ nonisolated struct EconomicsThemes: Decodable, Sendable {
 nonisolated struct EconomicsFedTheme: Decodable, Sendable {
     let count: Int
     let fomcMeetings: [FOMCMeeting]?
-    let rateCuts: [EconomicsMarket]?
     let sideMarkets: [EconomicsMarket]?
 }
 
