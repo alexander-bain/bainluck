@@ -13,10 +13,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Missing secret or path" }, { status: 400 });
   }
 
-  // Only allow specific admin paths
   const allowed = [
     "/api/admin/backfill-winners/status",
     "/api/admin/calibration-data",
+    "/api/calibration",
   ];
   if (!allowed.includes(path)) {
     return NextResponse.json({ error: "Path not allowed" }, { status: 403 });
