@@ -9922,15 +9922,21 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Only use markets with CLEAN resolution: every outcome's current_probability
-    # is near 0 or near 1 (sum of near-zero + near-one = total outcomes).
-    # This excludes partially-updated markets that distort calibration.
+    # Calibration query with three targeted fixes:
     #
-    # For threshold/ladder markets: keep one outcome per market (closest to 50%).
-    # For multi-outcome ME markets (3+ outcomes): keep all.
+    # 1. CLEAN RESOLUTION: Only include markets where 80%+ of outcomes have
+    #    current_probability near 0 or 1 (excludes partially-updated markets).
+    #
+    # 2. EVENT-LEVEL DEDUP: For markets linked to the same event (e.g.,
+    #    Polymarket soccer win/draw/lose sub-markets), keep ONE outcome per
+    #    (event_id, source). Fixes 3-way sports inflation.
+    #
+    # 3. TAIL FILTERING: For multi-outcome ME markets (golf tournaments with
+    #    30+ outcomes), exclude opening_probability > 0.98 or < 0.02 — these
+    #    are stale tail outcomes that distort extreme buckets.
     sql = text("""
-        WITH market_resolution AS (
-            SELECT fm.id AS market_id, fm.source,
+        WITH market_info AS (
+            SELECT fm.id AS market_id, fm.source, fm.event_id,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                 fm.mutually_exclusive,
                 COUNT(*) AS total_outcomes,
@@ -9942,10 +9948,11 @@ async def calibration_data(
             FROM futures_markets fm
             JOIN futures_outcomes fo ON fo.market_id = fm.id
             WHERE fm.status = 'resolved'
-            GROUP BY fm.id, fm.source, fm.mutually_exclusive, fm.llm_sport_category
+            GROUP BY fm.id, fm.source, fm.event_id, fm.mutually_exclusive,
+                     fm.llm_sport_category
         ),
         clean_markets AS (
-            SELECT * FROM market_resolution
+            SELECT * FROM market_info
             WHERE eligible >= 1
               AND (near_one + near_zero) >= total_outcomes * 0.8
               AND near_one >= 1
@@ -9954,13 +9961,17 @@ async def calibration_data(
             SELECT
                 fo.opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
-                cm.market_id, cm.source, cm.category,
+                cm.market_id, cm.event_id, cm.source, cm.category,
                 cm.mutually_exclusive, cm.eligible,
+                -- Multi-outcome ME markets (championships, tournaments): keep all
                 (cm.mutually_exclusive = true AND cm.eligible >= 3) AS is_multi,
+                -- Event-level dedup: for markets sharing an event_id, keep one
+                -- outcome per (event, source) — fixes 3-way sports
                 ROW_NUMBER() OVER (
-                    PARTITION BY cm.market_id
+                    PARTITION BY COALESCE(cm.event_id::text, cm.market_id::text),
+                                 cm.source
                     ORDER BY ABS(fo.opening_probability - 0.5)
-                ) AS rn
+                ) AS rn_event
             FROM futures_outcomes fo
             JOIN clean_markets cm ON cm.market_id = fo.market_id
             WHERE fo.opening_probability IS NOT NULL
@@ -9969,7 +9980,15 @@ async def calibration_data(
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
         deduped AS (
-            SELECT * FROM ranked_outcomes WHERE is_multi OR rn = 1
+            SELECT * FROM ranked_outcomes
+            WHERE
+                CASE
+                    -- Multi-outcome ME markets: keep all, but filter extreme tails
+                    WHEN is_multi THEN opening_probability > 0.02
+                                       AND opening_probability < 0.98
+                    -- Everything else: one per event (or market if no event_id)
+                    ELSE rn_event = 1
+                END
         ),
         bucketed AS (
             SELECT *, LEAST(FLOOR(opening_probability * 10)::int, 9) AS bucket_idx
