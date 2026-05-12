@@ -92,6 +92,7 @@ struct MyStuffView: View {
     @EnvironmentObject var navCoordinator: NavigationCoordinator
     @EnvironmentObject var pinManager: PinManager
     @StateObject private var vm = MyStuffViewModel()
+    @State private var predictionStats: PredictionStats?
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
     @State private var landscapeColumns = false
@@ -130,6 +131,9 @@ struct MyStuffView: View {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
             updateLandscapeColumns()
         }
+        .task {
+            predictionStats = try? await APIClient.shared.fetchPredictionStats()
+        }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateLandscapeColumns()
@@ -146,65 +150,93 @@ struct MyStuffView: View {
     // MARK: - State 1: Sign In
 
     private var signInView: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 32) {
+                VStack(spacing: 12) {
+                    Text("🍀")
+                        .font(.system(size: 48))
+                    Text("Your Predictions,\nYour Teams")
+                        .font(.largeTitle.weight(.black))
+                        .multilineTextAlignment(.center)
+                    Text("Sign in to unlock everything")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 40)
 
-            Image(systemName: "person.crop.circle")
-                .font(.system(size: 56))
-                .foregroundStyle(.secondary)
+                VStack(spacing: 12) {
+                    signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy across devices")
+                    signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "Get a personalized feed of your teams' odds and futures")
+                    signInPerk(icon: "tv.fill", color: .blue, title: "Second screen", desc: "Live win probability during games — better than any broadcast")
+                    signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, streaks, and category breakdowns")
+                }
+                .padding(.horizontal, 24)
 
-            Text("See your teams in one place")
-                .font(.title2)
-                .fontWeight(.semibold)
+                VStack(spacing: 12) {
+                    Button {
+                        authManager.signInWithApple()
+                    } label: {
+                        HStack {
+                            Image(systemName: "apple.logo")
+                            Text("Sign in with Apple")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .foregroundStyle(.white)
+                        .background(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
 
-            Text("Sign in to follow teams and get personalized odds.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                    Button {
+                        authManager.signInWithGoogle()
+                    } label: {
+                        HStack {
+                            Image(systemName: "g.circle.fill")
+                            Text("Sign in with Google")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .foregroundStyle(.white)
+                        .background(Color(red: 0.26, green: 0.52, blue: 0.96))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if let error = authManager.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                    }
+                }
                 .padding(.horizontal, 40)
 
-            Button {
-                authManager.signInWithApple()
-            } label: {
-                HStack {
-                    Image(systemName: "apple.logo")
-                    Text("Sign in with Apple")
-                        .fontWeight(.semibold)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .foregroundStyle(.white)
-                .background(.black)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .padding(.horizontal, 40)
-
-            Button {
-                authManager.signInWithGoogle()
-            } label: {
-                HStack {
-                    Image(systemName: "g.circle.fill")
-                    Text("Sign in with Google")
-                        .fontWeight(.semibold)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .foregroundStyle(.white)
-                .background(Color(red: 0.26, green: 0.52, blue: 0.96))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .padding(.horizontal, 40)
-
-            if let error = authManager.error {
-                Text(error)
+                Text("You can browse everything without signing in.")
                     .font(.caption)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
+                    .foregroundStyle(.tertiary)
+                    .padding(.bottom, 40)
             }
+        }
+    }
 
+    private func signInPerk(icon: String, color: Color, title: String, desc: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(color)
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(desc)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
         }
+        .padding(14)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - State 2: Onboarding Prompt
@@ -331,6 +363,46 @@ struct MyStuffView: View {
 
     private var teamFeedList: some View {
         List {
+            if let stats = predictionStats, stats.total > 0 {
+                Section {
+                    NavigationLink(value: Route.predictionStats) {
+                        HStack(spacing: 16) {
+                            VStack(spacing: 2) {
+                                Text("\(Int(stats.accuracy * 100))%")
+                                    .font(.title2.weight(.black).monospacedDigit())
+                                    .foregroundStyle(stats.accuracy >= 0.6 ? .green : stats.accuracy >= 0.45 ? .primary : .red)
+                                Text("Accuracy")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(width: 70)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 12) {
+                                    Label("\(stats.total) predictions", systemImage: "target")
+                                    if stats.currentStreak > 1 {
+                                        Label("\(stats.currentStreak) streak", systemImage: "flame.fill")
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                                .font(.caption.weight(.semibold))
+
+                                if stats.bestStreak > 1 {
+                                    Text("Best streak: \(stats.bestStreak)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Label("Predictions", systemImage: "chart.bar.fill")
+                }
+            }
+
             if !pinnedItems.isEmpty {
                 feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
             }

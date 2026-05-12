@@ -253,9 +253,6 @@ struct SearchView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "search", type: "search")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                isSearchFocused = true
-            }
             updateLandscapeColumns()
         }
         .task {
