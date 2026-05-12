@@ -12,8 +12,10 @@ struct WelcomeView: View {
                 discoverPage.tag(2)
                 signInPage.tag(3)
             }
+            #if os(iOS)
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
+            #endif
 
             Button {
                 if currentPage < 3 {
