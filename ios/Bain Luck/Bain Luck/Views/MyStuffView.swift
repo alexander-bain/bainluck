@@ -165,10 +165,10 @@ struct MyStuffView: View {
                 .padding(.top, 40)
 
                 VStack(spacing: 12) {
-                    signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy across devices")
-                    signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "Get a personalized feed of your teams' odds and futures")
-                    signInPerk(icon: "tv.fill", color: .blue, title: "Second screen", desc: "Live win probability during games — better than any broadcast")
-                    signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, streaks, and category breakdowns")
+                    signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "See all your teams' odds, futures, and playoff paths in one place")
+                    signInPerk(icon: "safari.fill", color: .blue, title: "Personalized Discover", desc: "Your feed learns what you care about and surfaces more of it")
+                    signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy and streaks across devices")
+                    signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, category breakdowns, and badges")
                 }
                 .padding(.horizontal, 24)
 
