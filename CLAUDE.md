@@ -56,7 +56,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS/macOS App | SwiftUI (shared codebase, 60+ Swift files) | TestFlight / direct |
+| iOS/macOS App | SwiftUI (shared codebase, 75+ Swift files) | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -78,9 +78,11 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
 - **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,450+ tests)
+- **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
+- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (158 contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
-- **Frontend tests**: `cd frontend && npx jest`
+- **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
 - **Procfile validates imports**: Release phase runs `python3 -c "from app.main import app"` before Alembic. If the app can't import, the release fails and the broken code never reaches the web dyno.
 - **CI runs both**: GitHub Actions runs backend pytest + frontend `npm run build` on every push to master.
 
@@ -100,19 +102,19 @@ bainluck/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI entry point
-│   │   ├── models/models.py     # SQLAlchemy models (26 models)
+│   │   ├── models/models.py     # SQLAlchemy models (30 models)
 │   │   ├── routes/              # API endpoints
 │   │   ├── services/            # External API clients + event_registry.py
 │   │   ├── config/              # win_prob_sources.py, league_configs.py
-│   │   ├── tasks/               # Celery tasks (23 modules)
+│   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,400+ pytest items
+│   └── tests/                   # 3,450+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
 │   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 60+ Swift files)
+├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 75+ Swift files)
 └── docs/                        # Documentation
 ```
 
@@ -262,6 +264,10 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 32. **Entertainment `kind` classification: avoid greedy ticker prefixes** — `kxrt` matched any ticker starting with those letters, causing political markets to be classified as Rotten Tomatoes. Use full prefixes (`kxrottentomatoes`) or name-based regex for ambiguous cases.
 33. **iPad Stage Manager breaks `connectedScenes.first`** — On iPad with Stage Manager, `UIApplication.shared.connectedScenes.first` can return a background scene. Always filter with `.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive })` and prefer `isKeyWindow`. Applies to Google Sign-In presentation, Apple Sign-In anchor, and any UIKit window access.
 34. **Bug report admin status mismatch** — Frontend uses `actioned`/`dismissed` statuses; backend `_VALID_STATUSES` must include them. The PATCH endpoint silently returns 400 if a status isn't in the set, and the frontend doesn't check `res.ok`.
+35. **`NWPathMonitor.currentPath` is unsatisfied until started** — Creating `NWPathMonitor()` and immediately reading `.currentPath` always returns `.unsatisfied` (offline). Must call `monitor.start(queue:)` and use `pathUpdateHandler` or `withCheckedContinuation` to get the real network state. All iOS bug reports were showing `network: offline` because of this.
+36. **StatPal `season-schedule` puts playoffs in `tournament.week`, not `tournament.match`** — Regular season games are in `tournament.match` (the array our parser originally read). Playoff/postseason games are in `tournament.week` as `[{"stage": "Play Offs", "match": [...]}]`. Both arrays must be parsed in `_extract_match_items()`. Missing this caused ALL playoff games to be silently dropped for months.
+37. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers.
+38. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
 
 ---
 

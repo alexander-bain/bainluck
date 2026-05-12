@@ -8,7 +8,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + `GET /api/admin/prediction-markets/tier1-compliance`
 
-**Current state (May 7, 2026):** Open link rate: **68.2%**. Kalshi baseball open: **95.5%**. Tier 1 compliance: **100%** for today's games (NHL). MLB Kalshi matching fixed (ticker abbreviation bug — ATH, WSH_MLB added).
+**Current state (May 11, 2026):** Overall Kalshi open link rate: **93.9%**. Link-rate denominator fixed (removed season futures pollution). NHL `tb_nhl`/`uta_nhl` abbreviation fixes deployed. StatPal playoff parser bug fixed — all NBA/NHL playoff games now flowing from `tournament.week`. Tier 1 event coverage monitoring task added (hourly). Event merge task fixed for duplicate-with-data cases (43K backlog draining).
 
 **Target: 100%** Tier 1 compliance — every MLB/NBA/NHL/NFL/PGA event with all sources linked.
 
@@ -411,33 +411,29 @@ Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV su
 **Files:** `frontend/app/events/[id]/page.tsx`
 **Parallel Safety:** Yellow (frontend only)
 
-### 0t-2. 47% of Events Have Zero Period Markers
+### 0t-2. Period Markers for Non-ESPN Events — PARTIALLY FIXED (May 11)
 
 **Problem:** 21/45 completed events have no game state indicators (period/quarter/inning vertical lines on charts). All are non-ESPN events: soccer, tennis, KBO/NPB baseball.
 
-**Current coverage:** ESPN-matched events have markers via `espn_history.period` + `game_state_backfill.py`. Non-ESPN events have nothing.
+**May 11 fix:** StatPal livescores now writes `raw_status` (e.g., "Q3", "1H", "HT") to `Event.period` every 30 seconds during live games. This gives period markers for all StatPal-covered sports (NBA, NHL, MLB, NFL, soccer). Previously this data was normalized to "live" and discarded.
 
-**Fix options (needs investigation):**
-- Can StatPal provide period/half data for these events?
-- Can we match more events to ESPN? (the coverage gap might be addressable)
-- For sports like soccer, official APIs (e.g., API-Football) provide halftime timestamps
-- Do NOT generate synthetic/guessed markers — only use authoritative sources
+**Remaining gap:** Non-ESPN, non-StatPal events (KBO/NPB baseball, some tennis) still have no period source. Soccer synthetic halftime fallback (`commence_time + 47min`) still exists as a backup for non-live games.
 
-**Files:** `backend/app/tasks/game_state_backfill.py`, `backend/app/routes/events.py`
+**Files:** `backend/app/services/statpal_api.py` (raw_status), `backend/app/tasks/statpal_sync.py` (write to Event.period)
 **Parallel Safety:** Green
 
 ### ~~0t-3. Chart Domain Mismatch~~ — LIKELY FIXED
 
 `sharedChartDomain` (computed in `events/[id]/page.tsx` lines 382-488) already passes identical `chartStartTime`, `chartEndTime`, and `sharedTicks` to both OddsChart and ScoreDifferentialChart. Game-end source filtering clips post-game prediction market drift. Needs live verification.
 
-### 1b-monitor. Hockey Kalshi Link Rate — MONITOR
+### ~~1b-monitor. Hockey Kalshi Link Rate~~ — FIXED (May 11)
 
-**Context:** Health check (April 27) found Hockey Kalshi at 59%, Polymarket at 23.8% — both well below 80% target. The ticker-based fallback (1b) shipped April 27; check if it moved the needle.
+**May 8-11 fixes:**
+1. Fixed link-rate denominator — removed `event_id IS NOT NULL` clause that pulled in season futures, and reverted series tickers from game-level map. Guardrail tests added.
+2. Fixed NHL team abbreviations — `tb_nhl` → "Lightning" (was mapping to NFL Buccaneers), `uta_nhl` → "Mammoth" (was "Utah Hockey").
+3. Hockey Kalshi open rate was 80.5% → denominator cleaned → honest rate 74.6% → abbreviation fixes deployed → matching task re-processing.
 
-**Action:** Re-check `/api/admin/prediction-markets/link-rate` hockey rates. If 1b didn't help, prioritize 1c (sport key validation) next.
-
-**Files:** `backend/app/tasks/prediction_market_matching.py`
-**Parallel Safety:** Yellow
+**Files:** `backend/app/utils/sport_keys.py`, `backend/app/utils/prediction_market_matching.py`, `backend/app/routes/admin.py`
 
 ### macOS Polish (4 remaining of 7)
 

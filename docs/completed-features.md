@@ -1,5 +1,37 @@
 # Completed Features (Shipped)
 
+## May 11, 2026 — Matching Quality + StatPal Playoff Fix
+
+### StatPal Playoff Parser Fix (Critical)
+- ✅ **StatPal playoff games were silently dropped** — `_extract_match_items()` only read `tournament.match` (regular season). Playoff games live in `tournament.week` as `[{"stage": "Play Offs", "match": [...]}]`. 16-line parser fix immediately surfaced CLE-DET Game 5 and all other NBA/NHL playoff fixtures.
+- ✅ **StatPal period data now captured** — `raw_status` preserved on `StatPalFixture` (e.g., "Q3", "1H", "HT"). Written to `Event.period` in livescores sync. Previously normalized to "live" and discarded.
+- ✅ **Quarter-level scores parsed** — `q1`/`q2`/`q3`/`q4`/`ot` scores from StatPal now available on fixtures.
+
+### Link Rate Denominator + Matching Fixes
+- ✅ **Link-rate denominator fixed** — Removed `event_id IS NOT NULL` clause that pulled season futures into the game-market denominator. Reverted series tickers from game-level map. Added guardrail test: no overlap between game and futures ticker maps.
+- ✅ **NHL team abbreviations fixed** — `tb_nhl` → "Lightning" (was mapping to NFL Buccaneers), `uta_nhl` → "Mammoth" (was "Utah Hockey"). ~285 unlinked NHL spread/total/prop markets should now match.
+- ✅ **Tier 1 gap analysis endpoint** — `GET /admin/prediction-markets/tier1-gaps` diagnoses every unlinked Tier 1 game market with specific failure reason.
+- ✅ **Event creation lead-time audit endpoint** — `GET /admin/events/creation-lead-time` measures how far in advance events are created vs their commence_time.
+
+### Event Dedup Fix
+- ✅ **Merge task handles both-have-data duplicates** — Previously skipped when both events had external_id + snapshots (e.g., OKC-LAL from two Odds API regions showing 94% vs 80%). Now merges: reassigns all 8 FK tables, deletes orphan.
+- ✅ **Merge task batched + committed per-merge** — Limited to 200 pairs per run (was unbounded, timing out on 43K backlog). Per-merge commit so work survives timeouts. 43K backlog drains at ~200/run.
+
+### Tier 1 Coverage Monitoring
+- ✅ **Hourly monitoring task** — `check_tier1_coverage` finds unlinked Kalshi game tickers within 36h and logs WARNING. Catches cases where Kalshi has markets but no event exists.
+- ✅ **StatPal livescores event creation** — Schedule sync now creates events from live StatPal fixtures that don't have matching events. Catches playoff games that slip through.
+
+### iOS Bug Fixes (Bug Reports #18-24)
+- ✅ **Bug #19: Award futures grouped by team** — Players from both teams were mixed in one list. Now grouped with colored team headers.
+- ✅ **Bug #20: Internal taxonomy tags hidden** — "National Interest", "Incredible", "Playoff Race" tags removed from iOS event detail UI. Tags still used functionally for series detection.
+- ✅ **Bug #24: Daily Challenge copy improved** — "Make 5 predictions" → "Tap Higher or Lower on 5 cards" for first-time user clarity.
+
+### Other Improvements
+- ✅ **macOS context menus** — Copy Link + Share added to Feed, Discover, and My Stuff context menus.
+- ✅ **Trending searches on iOS** — Search view now fetches trending queries from API instead of hardcoded chips.
+- ✅ **macOS live title bar** — Window title shows top live game score, polling every 30s.
+- ✅ **Swipe overlay visuals** — Green checkmark (right) and red X (left) on Discover card swipe.
+
 ## May 8, 2026 — Rage Shake Marathon (14/14 bugs resolved)
 
 ### Rage Shake Triage + Fixes (Sessions 6-7)
