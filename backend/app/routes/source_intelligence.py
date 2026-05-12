@@ -43,7 +43,9 @@ async def _query_coverage(db: AsyncSession) -> dict:
         SELECT
             s.key AS sport,
             COUNT(DISTINCT e.id) AS total,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'betting') AS betting,
+            COUNT(DISTINCT e.id) FILTER (
+                WHERE e.opening_home_probability IS NOT NULL
+            ) AS betting,
             COUNT(DISTINCT e.id) FILTER (WHERE src = 'espn') AS espn,
             COUNT(DISTINCT e.id) FILTER (WHERE src = 'stat_model') AS stat_model,
             COUNT(DISTINCT e.id) FILTER (WHERE src = 'kalshi') AS kalshi,
@@ -64,12 +66,14 @@ async def _query_coverage(db: AsyncSession) -> dict:
     overlap_sql = text(f"""
         SELECT source_count AS sources, COUNT(*) AS events
         FROM (
-            SELECT e.id, COUNT(DISTINCT wp.source) AS source_count
+            SELECT e.id,
+                (SELECT COUNT(DISTINCT source) FROM win_prob_snapshots wp WHERE wp.event_id = e.id)
+                + CASE WHEN e.opening_home_probability IS NOT NULL THEN 1 ELSE 0 END
+                AS source_count
             FROM events e
-            JOIN win_prob_snapshots wp ON wp.event_id = e.id
             WHERE {_BASE_FILTER}
-            GROUP BY e.id
         ) sub
+        WHERE source_count > 0
         GROUP BY source_count
         ORDER BY source_count
     """)
@@ -103,29 +107,44 @@ async def _query_coverage(db: AsyncSession) -> dict:
 async def _query_source_accuracy(db: AsyncSession) -> list:
     """Query 2: Per-source closing accuracy vs actual outcome."""
 
+    # win_prob_snapshots sources (espn, stat_model, kalshi, polymarket, mlb)
+    # UNION with sportsbook data from events.opening_home_probability
     sql = text(f"""
+        WITH wp_closing AS (
+            SELECT DISTINCT ON (wp.event_id, wp.source)
+                wp.event_id, wp.source, wp.home_win_probability
+            FROM win_prob_snapshots wp
+            JOIN events e ON e.id = wp.event_id
+            WHERE {_BASE_FILTER}
+              AND wp.home_win_probability IS NOT NULL
+              AND wp.home_win_probability > 0
+              AND wp.home_win_probability < 1
+            ORDER BY wp.event_id, wp.source, wp.captured_at DESC
+        ),
+        all_closing AS (
+            SELECT event_id, source, home_win_probability FROM wp_closing
+            UNION ALL
+            SELECT e.id, 'betting', e.opening_home_probability
+            FROM events e
+            WHERE {_BASE_FILTER}
+              AND e.opening_home_probability IS NOT NULL
+              AND e.opening_home_probability > 0
+              AND e.opening_home_probability < 1
+        )
         SELECT
-            wp.source,
-            LEAST(FLOOR(wp.home_win_probability * 10)::int, 9) AS idx,
+            c.source,
+            LEAST(FLOOR(c.home_win_probability * 10)::int, 9) AS idx,
             COUNT(*) AS n,
-            AVG(wp.home_win_probability::float) AS avg_prob,
+            AVG(c.home_win_probability::float) AS avg_prob,
             SUM(CASE WHEN e.home_score > e.away_score THEN 1 ELSE 0 END) AS winners,
-            AVG(ABS(wp.home_win_probability::float
+            AVG(ABS(c.home_win_probability::float
                 - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)) AS mae,
-            AVG((wp.home_win_probability::float
+            AVG((c.home_win_probability::float
                 - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)^2) AS brier
-        FROM (
-            SELECT DISTINCT ON (event_id, source)
-                event_id, source, home_win_probability
-            FROM win_prob_snapshots
-            WHERE home_win_probability IS NOT NULL
-              AND home_win_probability > 0 AND home_win_probability < 1
-            ORDER BY event_id, source, captured_at DESC
-        ) wp
-        JOIN events e ON e.id = wp.event_id
-        WHERE {_BASE_FILTER}
-        GROUP BY wp.source, idx
-        ORDER BY wp.source, idx
+        FROM all_closing c
+        JOIN events e ON e.id = c.event_id
+        GROUP BY c.source, idx
+        ORDER BY c.source, idx
     """)
 
     result = await db.execute(sql)
@@ -172,10 +191,9 @@ async def _query_disagreements(db: AsyncSession) -> dict:
     # the core question: when sources' closing probabilities diverge,
     # which was closer to the truth?
     sql = text(f"""
-        WITH closing AS (
+        WITH wp_closing AS (
             SELECT DISTINCT ON (wp.event_id, wp.source)
-                wp.event_id, wp.source, wp.home_win_probability,
-                wp.captured_at
+                wp.event_id, wp.source, wp.home_win_probability
             FROM win_prob_snapshots wp
             JOIN events e ON e.id = wp.event_id
             WHERE {_BASE_FILTER}
@@ -183,6 +201,16 @@ async def _query_disagreements(db: AsyncSession) -> dict:
               AND wp.home_win_probability > 0
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
+        ),
+        closing AS (
+            SELECT event_id, source, home_win_probability FROM wp_closing
+            UNION ALL
+            SELECT e.id, 'betting', e.opening_home_probability
+            FROM events e
+            WHERE {_BASE_FILTER}
+              AND e.opening_home_probability IS NOT NULL
+              AND e.opening_home_probability > 0
+              AND e.opening_home_probability < 1
         ),
         pairs AS (
             SELECT
