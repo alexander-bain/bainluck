@@ -155,6 +155,12 @@ Each category page follows the same pattern:
 **iOS Authentication** (`ios/.../Services/AuthManager.swift`):
 Backend-session-token pattern, NOT typical Firebase client auth. iOS SDK handles OAuth popup (Apple native / Google GID SDK) → raw credential sent to Bain Luck backend (`POST /api/auth/apple` or `/api/auth/google-access-token`) → backend verifies with identity provider, creates Firebase user, issues PyJWT session token (HS256, 30-day TTL) → iOS stores in Keychain, sends as `Bearer` on all API calls. Originated as Safari ITP workaround; iOS uses the same flow. Silent Google restore on token expiry. Apple credential revocation checked on foreground.
 
+**Market Grouping via `group_id`** (`FuturesMarket.group_id`):
+Markets that belong to the same real-world question (e.g., "Who wins Best Picture?" with 10 nominee sub-markets on Polymarket) share a `group_id`. This powers: Discover feed dedup (one card per question, not 10), cross-source matching on category pages, calibration curve accuracy, and related-market grouping on detail pages. Set during polling (`tasks/polymarket.py`: `f"polymarket:{event.id}"` for multi-market events). `market_metadata->>'polymarket_event_id'` stores the Polymarket event ID for backfilling `group_id` on markets that were ingested before the grouping logic was added.
+
+**Calibration Pipeline** (`routes/calibration.py`, `tasks/backfill_winners.py`):
+Public endpoint at `GET /api/calibration` (1h cache) returns pre-aggregated calibration buckets across 3 sources (Kalshi, Polymarket, Odds API). Virtual market reconstruction groups Polymarket sub-markets via `group_id` + `event_id` fallback. Default-price filter excludes outcomes where 50%+ share the same `opening_probability` (no real trading). `backfill_winners` task runs every 6h to set `is_winner` on resolved outcomes. Frontend page at `/calibration`. See `docs/architecture-reference.md` for full details.
+
 **Rage Shake Bug Reporting** (`ios/.../Utils/RageShake.swift`, `routes/admin.py`, `frontend/app/admin/bug-reports/`):
 Shake phone or `Cmd+Shift+F` (macOS) → screenshot + app state (page, device, network, user) → `POST /api/feedback/bug-report` → admin page at `/admin/bug-reports`. Auto-diagnosis generates severity (P0-P3), root cause, and a Claude Code prompt with screenshot download command. Status flow: new → reviewed (auto on click) → actioned (added to backlog) / dismissed.
 
@@ -340,7 +346,9 @@ When fixing ANY data quality, matching, or display issue:
 | Politics page | https://bainluck.com/politics |
 | Entertainment page | https://bainluck.com/entertainment |
 | Economics page | https://bainluck.com/economics |
-| Calibration report | https://bainluck.com/calibration |
+| Calibration page | https://bainluck.com/calibration |
+| Calibration API | `GET /api/calibration` (public, 1h cache) |
+| Backfill status | `GET /api/admin/backfill-winners/status` |
 | Privacy policy | https://bainluck.com/privacy |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
 | Politics API | `GET /api/politics` |
