@@ -199,7 +199,35 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     )
     total_markets = total_markets_result.scalar()
 
+    # Diagnostic: sample outcomes from problem areas
+    diag_sql = text("""
+        SELECT fm.name AS market_name, fm.source, fm.group_id,
+               fm.llm_sport_category AS category,
+               fo.name AS outcome_name, fo.opening_probability,
+               fo.current_probability,
+               (SELECT COUNT(*) FROM futures_outcomes fo2
+                WHERE fo2.market_id = fm.id) AS sibling_count
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability > 0.35 AND fo.opening_probability < 0.55
+          AND fo.current_probability IS NOT NULL
+          AND fm.llm_sport_category IN ('entertainment', 'economics', 'golf')
+          AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
+        ORDER BY fm.llm_sport_category, fm.source, RANDOM()
+        LIMIT 40
+    """)
+    diag_result = await db.execute(diag_sql)
+    diagnostics = [
+        {"market": r.market_name, "source": r.source, "category": r.category,
+         "outcome": r.outcome_name, "opening": float(r.opening_probability),
+         "current": float(r.current_probability), "siblings": r.sibling_count,
+         "group_id": r.group_id}
+        for r in diag_result.all()
+    ]
+
     response = {
+        "diagnostics": diagnostics,
         "buckets": [
             {
                 "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
