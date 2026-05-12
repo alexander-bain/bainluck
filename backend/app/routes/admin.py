@@ -9987,9 +9987,12 @@ async def calibration_data(
                     -- separate binary markets (Win/Draw/Lose, O/U, spreads).
                     -- These are correlated, not independent predictions.
                     -- Kalshi game markets are single-market binary and calibrate well.
-                    WHEN source = 'polymarket'
-                         AND event_id IS NOT NULL
-                         AND eligible <= 2
+                    -- Exclude by event_id linkage OR by category for 3-way sports
+                    -- where event_id coverage is incomplete.
+                    WHEN source = 'polymarket' AND eligible <= 2
+                         AND (event_id IS NOT NULL
+                              OR category IN ('soccer','football','cricket',
+                                              'rugby','pickleball'))
                         THEN false
                     -- Large field ME markets (20+ outcomes: golf, motorsports):
                     -- keep all but cut >0.90 (inverted Kalshi field prices)
