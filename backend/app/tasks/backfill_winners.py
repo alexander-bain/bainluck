@@ -268,11 +268,65 @@ async def _backfill_polymarket_winners():
     return stats
 
 
+async def _backfill_from_current_probability():
+    """Set is_winner from current_probability for ALL sources.
+
+    For cleanly-resolved markets (all outcomes at 0 or 1), current_probability
+    IS the settlement price. Works for Kalshi, Polymarket, DataGolf, odds_api.
+    """
+    stats = {"winners_set": 0, "losers_set": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    WITH cleanly_resolved AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND COUNT(*) FILTER (
+                               WHERE fo.current_probability >= 0.95
+                                  OR fo.current_probability <= 0.05
+                           ) = COUNT(*)
+                           AND COUNT(*) >= 1
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability >= 0.95)
+                    FROM cleanly_resolved cr
+                    WHERE fo.market_id = cr.market_id
+                      AND fo.current_probability IS NOT NULL
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows = result.all()
+            stats["winners_set"] = sum(1 for r in rows if r[0])
+            stats["losers_set"] = sum(1 for r in rows if not r[0])
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Current-probability winner backfill error: %s", e)
+
+    logger.info(
+        "Current-probability winner backfill: %d winners, %d losers, %d errors",
+        stats["winners_set"], stats["losers_set"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     """Run all winner backfill tasks."""
+    # Phase 1: Set is_winner from current_probability (all sources, fast)
+    prob_stats = await _backfill_from_current_probability()
+
+    # Phase 2: Kalshi API settlement data (fills in markets that didn't
+    # fully resolve their probabilities)
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
-    poly_stats = await _backfill_polymarket_winners()
+
     return {
-        "kalshi": kalshi_stats,
-        "polymarket": poly_stats,
+        "from_probability": prob_stats,
+        "kalshi_api": kalshi_stats,
     }
