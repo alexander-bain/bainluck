@@ -470,14 +470,17 @@ async def _process_event_batch(
                     event.title, llm_sport_category, league, category,
                 )
 
-                # Determine group hierarchy from Polymarket event structure
-                has_multiple_markets = len(event.markets) > 1
-                if event.neg_risk or has_multiple_markets:
-                    poly_group_id = f"polymarket:{event.id}"
-                    poly_group_type = "negrisk" if event.neg_risk else "polymarket_event"
+                # Always assign group_id so markets can be grouped for calibration,
+                # feed dedup, and category pages. Single-market events get group_id
+                # too — the calibration query's group_size >= 3 threshold naturally
+                # ignores groups of size 1.
+                poly_group_id = f"polymarket:{event.id}"
+                if event.neg_risk:
+                    poly_group_type = "negrisk"
+                elif len(event.markets) > 1:
+                    poly_group_type = "polymarket_event"
                 else:
-                    poly_group_id = None
-                    poly_group_type = None
+                    poly_group_type = "polymarket_single"
 
                 # Build market_metadata with event-level context
                 poly_metadata: dict = {}

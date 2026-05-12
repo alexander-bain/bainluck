@@ -371,14 +371,13 @@ async def _poll_kalshi_markets():
                         market_name, sport_category, league, category,
                     )
 
-                    # Determine group hierarchy from Kalshi event structure
-                    has_multiple_markets = len(event.markets) > 1
-                    if has_multiple_markets or event.mutually_exclusive:
-                        kalshi_group_id = f"kalshi:{event.event_ticker}"
+                    # Always assign group_id for calibration, feed dedup, and
+                    # category page grouping.
+                    kalshi_group_id = f"kalshi:{event.event_ticker}"
+                    if len(event.markets) > 1 or event.mutually_exclusive:
                         kalshi_group_type = "kalshi_event"
                     else:
-                        kalshi_group_id = None
-                        kalshi_group_type = None
+                        kalshi_group_type = "kalshi_single"
 
                     # Build market_metadata with event-level context
                     kalshi_metadata: dict = {}

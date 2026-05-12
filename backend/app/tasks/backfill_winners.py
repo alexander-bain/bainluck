@@ -318,10 +318,11 @@ async def _backfill_from_current_probability():
 
 
 async def _backfill_polymarket_group_ids():
-    """Set group_id on Polymarket markets from market_metadata.polymarket_event_id.
+    """Set group_id on Polymarket markets from metadata or external_id.
 
     Uses data already in the DB — no API calls. Only sets group_id where
-    currently NULL, and only when the event_id groups 2+ markets together.
+    currently NULL. Sub-markets already have group_id from insertion
+    (group_type='polymarket_sub_market'), so this only affects parent markets.
     """
     stats = {"updated": 0, "errors": []}
 
@@ -329,22 +330,13 @@ async def _backfill_polymarket_group_ids():
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
-                    WITH event_groups AS (
-                        SELECT market_metadata->>'polymarket_event_id' AS event_id,
-                               COUNT(*) AS market_count
-                        FROM futures_markets
-                        WHERE source = 'polymarket'
-                          AND group_id IS NULL
-                          AND market_metadata->>'polymarket_event_id' IS NOT NULL
-                        GROUP BY market_metadata->>'polymarket_event_id'
-                        HAVING COUNT(*) >= 2
+                    UPDATE futures_markets
+                    SET group_id = 'polymarket:' || COALESCE(
+                        market_metadata->>'polymarket_event_id',
+                        external_id
                     )
-                    UPDATE futures_markets fm
-                    SET group_id = 'polymarket:' || eg.event_id
-                    FROM event_groups eg
-                    WHERE fm.source = 'polymarket'
-                      AND fm.group_id IS NULL
-                      AND fm.market_metadata->>'polymarket_event_id' = eg.event_id
+                    WHERE source = 'polymarket'
+                      AND group_id IS NULL
                 """)
             )
             stats["updated"] = result.rowcount
@@ -361,10 +353,41 @@ async def _backfill_polymarket_group_ids():
     return stats
 
 
+async def _backfill_kalshi_group_ids():
+    """Set group_id on Kalshi markets from external_id (= event_ticker)."""
+    stats = {"updated": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    UPDATE futures_markets
+                    SET group_id = 'kalshi:' || external_id
+                    WHERE source = 'kalshi'
+                      AND group_id IS NULL
+                """)
+            )
+            stats["updated"] = result.rowcount
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Kalshi group_id backfill error: %s", e)
+
+    logger.info(
+        "Kalshi group_id backfill: %d markets updated, %d errors",
+        stats["updated"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     """Run all winner backfill tasks."""
-    # Phase 0: Backfill group_id from metadata (no API, fast)
+    # Phase 0a: Backfill Polymarket group_id (no API, fast)
     group_stats = await _backfill_polymarket_group_ids()
+
+    # Phase 0b: Backfill Kalshi group_id (no API, fast)
+    kalshi_group_stats = await _backfill_kalshi_group_ids()
 
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
@@ -374,7 +397,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
 
     return {
-        "group_id_backfill": group_stats,
+        "polymarket_group_id": group_stats,
+        "kalshi_group_id": kalshi_group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }
