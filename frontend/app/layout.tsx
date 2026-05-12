@@ -12,6 +12,7 @@ import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
+const MobileSearchTrigger = dynamic(() => import("@/components/MobileSearchTrigger"), { ssr: false });
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -62,8 +63,11 @@ export default function RootLayout({
 
                     <DesktopNav />
 
+                    <div className="md:hidden flex-1 min-w-0 mx-2">
+                      <MobileSearchTrigger />
+                    </div>
+
                     <div className="flex items-center gap-3">
-                      {/* Desktop: full search bar */}
                       <div className="hidden md:block w-64 lg:w-80">
                         <SearchBar compact />
                       </div>
