@@ -110,6 +110,8 @@ All task names pinned with `name="app.tasks.*"`. Thin wrappers in `__init__.py` 
 - `collapse_snapshots` (daily) — pure SQL retention
 - `calculate_ei` — Excitement Index computation
 
+- `backfill_winners` (6h) — sets `is_winner` on `FuturesOutcome` from settlement data. Phase 1: source-agnostic from `current_probability` on cleanly-resolved markets. Phase 2: Kalshi API `result='yes'|'no'` for partially-resolved markets.
+
 New tasks go in `tasks/` submodule with async impl + thin wrapper in `__init__.py`:
 ```python
 # __init__.py:
@@ -118,6 +120,32 @@ def my_task(self):
     from app.tasks.my_module import _my_task_impl
     return run_async(_my_task_impl())
 ```
+
+---
+
+## Calibration Pipeline
+
+Answers "Do prediction markets predict anything?" by comparing opening probabilities to actual outcomes across all resolved markets.
+
+### Data Sources (3)
+- **Kalshi + Polymarket** (`futures_markets` / `futures_outcomes`): `opening_probability` vs `current_probability` on resolved markets. Virtual market reconstruction via `group_id` for Polymarket multi-outcome events.
+- **Odds API** (`events` table): `opening_home_probability` / `opening_away_probability` vs `home_score` / `away_score`. Ground truth — no inference needed.
+
+### Key Transformations
+- **Virtual market reconstruction**: When 3+ Polymarket markets share a `group_id`, treat as one multi-outcome market (structurally identical to a Kalshi championship market).
+- **Inverted field price correction**: In markets with 10+ outcomes, `opening_probability > 0.50` is inverted (stores "No" price). Corrected to `1 - opening_probability`.
+- **Threshold dedup**: For non-ME markets (player props), keep one outcome per virtual market (closest to 50%).
+- **Clean resolution filter**: Only markets where 80%+ of outcomes resolved to near-0 or near-1.
+
+### Endpoints
+- `GET /api/admin/calibration-data` — pre-aggregated buckets for report generation
+- `POST /api/admin/backfill-winners` — trigger `is_winner` backfill (supports `dry_run`, `limit`)
+- `GET /api/admin/backfill-winners/status` — backfill progress per source
+
+### Files
+- `backend/app/tasks/backfill_winners.py` — `is_winner` backfill task
+- `backend/app/routes/admin.py` — calibration endpoint (SQL query with virtual market logic)
+- `backend/scripts/build_calibration_report_svg.py` — static HTML report generator
 
 ---
 

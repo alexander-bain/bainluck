@@ -1,5 +1,23 @@
 # Completed Features (Shipped)
 
+## May 11, 2026 — Prediction Market Calibration Analysis
+
+### Calibration Pipeline + Static Report
+- ✅ **Calibration analysis endpoint** (`GET /api/admin/calibration-data`) — pre-aggregated calibration buckets across 3 sources (Kalshi, Polymarket, Odds API). 195K resolved outcomes.
+- ✅ **Odds API ground-truth integration** — completed events with opening probabilities and final scores produce calibration data points with known winners (no inference needed). 13,806 outcomes from 6,903 games.
+- ✅ **Virtual market reconstruction** — Polymarket multi-outcome events (e.g., "Who wins the presidency?" with 10 candidate sub-markets) are reconstructed into single multi-outcome markets via `group_id`, structurally matching how Kalshi stores championship markets.
+- ✅ **Inverted field price correction** — Kalshi markets with 10+ outcomes where `opening_probability > 0.50` are detected as inverted "No" prices and flipped.
+- ✅ **Correlated threshold dedup** — player prop markets ("HR 1+, 2+, 3+") collapsed to one calibration data point per market (closest to 50%).
+- ✅ **Clean resolution filter** — only includes markets where 80%+ of outcomes resolved to near-0 or near-1.
+- ✅ **`is_winner` backfill task** (`backfill_winners`) — sets `is_winner` from `current_probability` on cleanly-resolved markets. 52K of 131K markets backfilled on first run. Scheduled every 6h.
+- ✅ **Backfill status endpoint** (`GET /api/admin/backfill-winners/status`) — shows backfill progress per source.
+- ✅ **Static HTML report** with SVG charts (no JS dependencies), external studies section, methodology & limitations.
+- ✅ **Report builder script** (`backend/scripts/build_calibration_report_svg.py`) — generates the report from endpoint data.
+
+**Results:** MCE 5.1pp, Brier 0.18 (28% better than random). 7 of 10 probability buckets within 5pp of perfect calibration.
+
+**Files:** `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py` (calibration-data + backfill-winners endpoints), `backend/scripts/build_calibration_report_svg.py`
+
 ## May 11, 2026 — TestFlight Launch + iOS Polish
 
 ### TestFlight Readiness (14 fixes)

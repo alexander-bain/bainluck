@@ -326,6 +326,29 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ## Tier 1 — High Leverage, Do Next
 
+### Calibration Page — User-Facing `/calibration` or `/about/calibration`
+
+**What shipped (May 11):** Backend calibration endpoint, static HTML report, `is_winner` backfill task, Odds API integration, virtual market reconstruction. MCE 5.1pp, Brier 0.18, 195K outcomes, 3 sources. See `docs/completed-features.md` for full details.
+
+**Remaining work to make it user-facing:**
+
+1. **Build live Next.js page** at `/calibration` — render SVG calibration curve from `/api/admin/calibration-data`. Category tabs, source comparison, external studies. This is the frontend work; the data pipeline is done.
+
+2. **Closing line capture** — snapshot probabilities at event start time from `futures_odds_snapshots` instead of using `opening_probability` (first-seen price, can be weeks early). Academic gold standard. Biggest remaining improvement to calibration accuracy.
+
+3. **Kalshi API settlement backfill** — The current backfill sets `is_winner` from `current_probability`, which works for cleanly-resolved markets (52K of 131K done). For the remaining 79K with intermediate `current_probability`, need to fetch `result='yes'|'no'` from Kalshi's settled events API. First attempt failed (API returns recent events first; our DB has older events). Fix: query by specific event tickers that need backfill, not by paginating all settled events.
+
+4. **Fix 40-50% bucket** (MCE -13.6pp) — Driven by Polymarket sub-markets without `group_id` (~25% of Polymarket markets). These can't be reconstructed into multi-outcome markets. Fix: backfill `group_id` on Polymarket markets using the Gamma API's `groupItemTitle` or event structure.
+
+5. **Golf calibration** (MCE ~15pp) — Kalshi golf tournament markets have structural issues: inverted field prices partially corrected but deeper problems with how 30+ outcome markets store opening probabilities. The `is_winner` backfill from Kalshi API (item 3) should help significantly.
+
+6. **Nightly refresh Celery task** — Add a scheduled task that refreshes calibration data and optionally pushes updated stats to a cache so the page loads instantly.
+
+**External studies to link on the page:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
+
+**Files:** `backend/app/routes/admin.py` (calibration-data endpoint), `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
+**Parallel Safety:** Green (new page, new endpoints — no conflicts)
+
 ### Production Observability — Latency, Crash Rate, Quality Indicators
 
 We measure per-request latency (X-Response-Time header, slow-request logging >500ms/>1s) but have no aggregation, dashboards, or percentile tracking. Can't answer "what's our p50/p95?" or "which endpoints are slowest?" or "what's our crash rate over time?"
