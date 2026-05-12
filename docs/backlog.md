@@ -170,13 +170,35 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 - Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
-- Choose email provider: SendGrid free tier (100/day) or Gmail SMTP via existing Google OAuth
-- When status changes to `"fixed"` and `user_email` is present, generate a personal email via GPT-4o-mini:
-  - Input: bug description, resolution_summary, user's first name
-  - Tone: warm, specific, grateful. "You reported X, we fixed it by doing Y. Thanks for making Bain Luck better."
-  - Include a link back to the app
-- Send the email via the chosen provider
-- Add `notification_sent_at` timestamp to BugReport to prevent double-sends
+
+**Email provider decision:** SendGrid free tier (100 emails/day, no credit card) is simplest. Alternative: Gmail SMTP via existing Google OAuth service account, but that's more complex and has sending limits. Recommend SendGrid.
+
+**Implementation steps:**
+1. Sign up for SendGrid, get API key, add as `SENDGRID_API_KEY` Heroku config var
+2. Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`
+3. In the admin PATCH endpoint (`routes/admin.py`), when `status` changes to `"fixed"` and `resolution_summary` is provided:
+   - Look up the bug report's `user_email` and `description`
+   - If `user_email` exists and `notification_sent_at` is NULL, enqueue the Celery task
+4. The Celery task:
+   - Calls OpenAI GPT-4o-mini with a prompt:
+     ```
+     Write a short, warm email (3-4 sentences) to {first_name} thanking them for reporting a bug in Bain Luck.
+     Bug they reported: "{description}"
+     What we fixed: "{resolution_summary}"
+     Tone: personal, grateful, specific. End with encouragement to keep reporting bugs.
+     Do not use subject line — just the body. No gambling references.
+     ```
+   - Sends via SendGrid: from `bugs@bainluck.com` (or `noreply@bainluck.com`), subject "Your bug report was fixed 🍀"
+   - Sets `notification_sent_at = now()` on the BugReport row
+5. Add `send_bug_fixed_email` to Celery beat or call it inline (inline is fine for <100/day volume)
+
+**Safeguards:**
+- Only send if `user_email` is not NULL and `notification_sent_at` is NULL (no double-sends)
+- Only send when transitioning TO `"fixed"` status (not on re-saves)
+- Log all sends for audit
+
+**Files:** `backend/app/tasks/bug_notifications.py` (new), `backend/app/routes/admin.py` (trigger), `backend/app/tasks/__init__.py` (register task)
+**Dependencies:** SendGrid account + API key, OpenAI API key (already configured)
 
 ### Phase 3: Automation (LATER)
 - When a commit message references "BR{N}" (e.g., "Fix BR27: normalize probabilities"), automatically mark the corresponding bug report as `fixed`
