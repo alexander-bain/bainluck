@@ -566,7 +566,6 @@ struct RelatedFuturesView: View {
             .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
 
         let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
-        let awayShort = awayTeam.split(separator: " ").last.map(String.init) ?? awayTeam
         let homePlayers = sorted.filter { $0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true }
         let awayPlayers = sorted.filter { !($0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true) }
 

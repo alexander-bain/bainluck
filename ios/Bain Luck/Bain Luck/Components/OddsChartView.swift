@@ -524,9 +524,6 @@ struct OddsChartView: View {
         // Soccer halftime detection: if we have no meaningful period markers
         // but ESPN history shows a time gap >8 minutes (halftime break),
         // insert a "HT" marker at the gap.
-        let isSoccer = commenceTime?.contains("soccer") == true
-            || homeTeamName?.lowercased().contains("fc") == true
-            || status == "live" || status == "completed"  // best-effort check
         if firstSeen.isEmpty || firstSeen.allSatisfy({ $0.label.allSatisfy(\.isNumber) }),
            let espnHistory = history.espnHistory, espnHistory.count >= 5 {
             let espnDates = espnHistory.compactMap { $0.timestamp.asDate }.sorted()

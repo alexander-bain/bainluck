@@ -41,7 +41,7 @@ struct WelcomeView: View {
                     .padding(.bottom, 16)
             }
         }
-        .background(Color(.systemBackground))
+        .background(.background)
         .onAppear {
             AnalyticsService.trackScreen(name: "welcome", type: "onboarding")
         }
