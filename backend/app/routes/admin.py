@@ -9983,11 +9983,11 @@ async def calibration_data(
             SELECT * FROM ranked_outcomes
             WHERE
                 CASE
-                    -- 3-way game sports linked to events: exclude entirely.
-                    -- Win/draw/lose sub-markets can't be treated as independent
-                    -- binary predictions. (Must come before is_multi check.)
-                    WHEN category IN ('soccer', 'football', 'cricket')
-                         AND event_id IS NOT NULL
+                    -- Game-level sub-markets linked to events: exclude entirely.
+                    -- These are binary sub-markets (Win/Draw/Lose, O/U, spreads)
+                    -- that can't be treated as independent predictions — they're
+                    -- correlated outcomes for the same game event.
+                    WHEN event_id IS NOT NULL AND eligible <= 2
                         THEN false
                     -- Large field ME markets (20+ outcomes: golf, motorsports):
                     -- keep all but cut >0.90 (inverted Kalshi field prices)
