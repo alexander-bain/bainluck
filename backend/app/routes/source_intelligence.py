@@ -6,7 +6,7 @@ and determines which source was closest to the actual outcome.
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -345,65 +345,113 @@ async def _query_disagreements(db: AsyncSession) -> dict:
 
 
 async def _query_case_studies(db: AsyncSession) -> list:
-    """Query 5: Top dramatic disagreements with full time-series.
+    """Query 5: Top sustained disagreements with full time-series.
 
-    Uses closing-price comparison per event (not time-bucketed) for speed.
+    Finds events where sources held genuinely different views for sustained
+    periods during live play. Filters out:
+    - Transient spikes (single snapshots at 0% or 100%)
+    - Pregame divergence (flat lines hours before game)
+    - Stale prices (extreme values at game end)
     """
 
+    # Use the median probability per source per event (robust to spikes)
+    # and find events where two sources' medians diverge significantly.
+    # Only consider live-game snapshots (after commence_time, before
+    # completed_at or 4h after commence) with moderate probabilities (5-95%).
     peak_sql = text(f"""
-        WITH closing AS (
-            SELECT DISTINCT ON (wp.event_id, wp.source)
+        WITH live_snaps AS (
+            SELECT
                 wp.event_id, wp.source, wp.home_win_probability
             FROM win_prob_snapshots wp
             JOIN events e ON e.id = wp.event_id
             WHERE {_BASE_FILTER}
               AND wp.home_win_probability IS NOT NULL
-              AND wp.home_win_probability > 0.02
-              AND wp.home_win_probability < 0.98
-            ORDER BY wp.event_id, wp.source, wp.captured_at DESC
+              AND wp.home_win_probability > 0.05
+              AND wp.home_win_probability < 0.95
+              AND wp.captured_at >= e.commence_time
+              AND wp.captured_at <= COALESCE(
+                  e.completed_at,
+                  e.commence_time + INTERVAL '4 hours'
+              )
         ),
-        event_peaks AS (
+        source_medians AS (
             SELECT
-                c1.event_id,
-                MAX(ABS(c1.home_win_probability - c2.home_win_probability)) AS max_div,
-                COUNT(DISTINCT c1.source) AS source_count
-            FROM closing c1
-            JOIN closing c2
-                ON c1.event_id = c2.event_id
-                AND c1.source < c2.source
-            GROUP BY c1.event_id
-            HAVING COUNT(DISTINCT c1.source) >= 3
+                event_id, source,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY home_win_probability
+                ) AS median_prob,
+                COUNT(*) AS snap_count
+            FROM live_snaps
+            GROUP BY event_id, source
+            HAVING COUNT(*) >= 3
+        ),
+        event_divergence AS (
+            SELECT
+                s1.event_id,
+                s1.source AS source_a,
+                s2.source AS source_b,
+                ABS(s1.median_prob - s2.median_prob) AS median_div,
+                GREATEST(s1.snap_count, s2.snap_count) AS max_snaps
+            FROM source_medians s1
+            JOIN source_medians s2
+                ON s1.event_id = s2.event_id
+                AND s1.source < s2.source
+        ),
+        ranked AS (
+            SELECT
+                event_id,
+                MAX(median_div) AS max_div,
+                MAX(max_snaps) AS richness
+            FROM event_divergence
+            WHERE median_div > 0.08
+            GROUP BY event_id
+            HAVING COUNT(DISTINCT source_a) + COUNT(DISTINCT source_b) >= 3
+            ORDER BY MAX(median_div) DESC
+            LIMIT 20
         )
         SELECT
-            ep.event_id,
-            ep.max_div,
+            r.event_id,
+            r.max_div,
+            r.richness,
             e.home_team_name,
             e.away_team_name,
             s.key AS sport,
             e.home_score,
             e.away_score,
-            e.commence_time
-        FROM event_peaks ep
-        JOIN events e ON e.id = ep.event_id
+            e.commence_time,
+            e.completed_at
+        FROM ranked r
+        JOIN events e ON e.id = r.event_id
         JOIN sports s ON s.id = e.sport_id
-        WHERE ep.max_div > 0.10
-        ORDER BY ep.max_div DESC
-        LIMIT 5
+        ORDER BY r.max_div DESC
     """)
 
     peak_result = await db.execute(peak_sql)
     peaks = peak_result.all()
 
     case_studies = []
-    for p in peaks:
+    for p in peaks[:5]:
+        # Only fetch live-game snapshots for the chart
         ts_sql = text("""
             SELECT source, captured_at, home_win_probability
             FROM win_prob_snapshots
             WHERE event_id = :eid
               AND home_win_probability IS NOT NULL
+              AND captured_at >= :start
+              AND captured_at <= :end
             ORDER BY captured_at
         """)
-        ts_result = await db.execute(ts_sql, {"eid": p.event_id})
+        game_end = p.completed_at or (
+            p.commence_time + timedelta(hours=4)
+        ) if p.commence_time else None
+        if not p.commence_time or not game_end:
+            continue
+
+        ts_result = await db.execute(ts_sql, {
+            "eid": p.event_id,
+            "start": p.commence_time,
+            "end": game_end,
+        })
         ts_rows = ts_result.all()
 
         series: dict = {}
@@ -415,6 +463,10 @@ async def _query_case_studies(db: AsyncSession) -> list:
                 "t": tr.captured_at.isoformat(),
                 "p": round(float(tr.home_win_probability), 4),
             })
+
+        # Skip if fewer than 2 sources have data
+        if len(series) < 2:
+            continue
 
         case_studies.append({
             "event_id": p.event_id,
