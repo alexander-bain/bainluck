@@ -62,6 +62,22 @@ export default function AboutPage() {
         </div>
       </section>
 
+      {/* Calibration CTA */}
+      <section>
+        <Link href="/calibration" className="block bg-surface-card rounded-xl p-6 border border-surface-border hover:border-accent-brand transition-colors group">
+          <div className="flex items-start gap-4">
+            <div className="text-3xl">📊</div>
+            <div>
+              <h2 className="text-title-3 text-text-primary group-hover:text-accent-brand transition-colors">Do Prediction Markets Predict Anything?</h2>
+              <p className="text-sm text-text-secondary mt-1">
+                We analyzed 180,000+ resolved outcomes across Kalshi, Polymarket, and sportsbooks.
+                When markets say something has a 30% chance, does it really happen 30% of the time? See the data.
+              </p>
+            </div>
+          </div>
+        </Link>
+      </section>
+
       {/* How It Works */}
       <section className="space-y-4">
         <h2 className="text-title-2 text-text-primary">How It Works</h2>

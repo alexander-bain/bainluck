@@ -1565,3 +1565,26 @@ export async function fetchTrendingSearches(): Promise<{ trending: { query: stri
   return apiFetch<{ trending: { query: string; count: number }[] }>("/api/events/search/trending");
 }
 
+export interface CalibrationBucket {
+  bucket_idx: number;
+  source: string;
+  category: string;
+  n: number;
+  winners: number;
+  avg_prob: number;
+  sum_prob: number;
+  sum_sq_err: number;
+}
+
+export interface CalibrationData {
+  buckets: CalibrationBucket[];
+  total_markets: number;
+  total_outcomes: number;
+  total_winners: number;
+  generated_at: string;
+}
+
+export async function fetchCalibration(): Promise<CalibrationData> {
+  return apiFetch<CalibrationData>("/api/calibration");
+}
+
