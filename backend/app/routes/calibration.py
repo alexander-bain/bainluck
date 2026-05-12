@@ -199,25 +199,14 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     )
     total_markets = total_markets_result.scalar()
 
-    # Diagnostic: grouping coverage for problem categories
     diag_sql = text("""
         SELECT fm.llm_sport_category AS category, fm.source,
             COUNT(*) AS total,
             COUNT(fm.group_id) AS has_group,
-            COUNT(*) FILTER (WHERE fm.mutually_exclusive AND (
-                SELECT COUNT(*) FROM futures_outcomes fo2
-                WHERE fo2.market_id = fm.id
-                AND fo2.opening_probability > 0 AND fo2.opening_probability < 1
-            ) >= 3) AS native_multi,
-            COUNT(*) FILTER (WHERE (
-                SELECT COUNT(*) FROM futures_outcomes fo2
-                WHERE fo2.market_id = fm.id
-                AND fo2.opening_probability > 0 AND fo2.opening_probability < 1
-            ) = 1) AS single_outcome
+            COUNT(fm.event_id) AS has_event_id
         FROM futures_markets fm
         WHERE fm.status = 'resolved'
-          AND fm.llm_sport_category IN ('entertainment', 'economics', 'golf',
-                                         'hockey', 'weather', 'politics', 'tennis')
+          AND fm.llm_sport_category IN ('entertainment','economics','golf','hockey')
           AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
         GROUP BY fm.llm_sport_category, fm.source
         ORDER BY fm.llm_sport_category, fm.source
