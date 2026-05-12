@@ -199,23 +199,28 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     )
     total_markets = total_markets_result.scalar()
 
-    # Diagnostic: sample outcomes from problem areas
+    # Diagnostic: grouping coverage for problem categories
     diag_sql = text("""
-        SELECT fm.name AS market_name, fm.source, fm.group_id,
-               fm.llm_sport_category AS category,
-               fo.name AS outcome_name, fo.opening_probability,
-               fo.current_probability,
-               (SELECT COUNT(*) FROM futures_outcomes fo2
-                WHERE fo2.market_id = fm.id) AS sibling_count
-        FROM futures_outcomes fo
-        JOIN futures_markets fm ON fo.market_id = fm.id
+        SELECT fm.llm_sport_category AS category, fm.source,
+            COUNT(*) AS total,
+            COUNT(fm.group_id) AS has_group,
+            COUNT(*) FILTER (WHERE fm.mutually_exclusive AND (
+                SELECT COUNT(*) FROM futures_outcomes fo2
+                WHERE fo2.market_id = fm.id
+                AND fo2.opening_probability > 0 AND fo2.opening_probability < 1
+            ) >= 3) AS native_multi,
+            COUNT(*) FILTER (WHERE (
+                SELECT COUNT(*) FROM futures_outcomes fo2
+                WHERE fo2.market_id = fm.id
+                AND fo2.opening_probability > 0 AND fo2.opening_probability < 1
+            ) = 1) AS single_outcome
+        FROM futures_markets fm
         WHERE fm.status = 'resolved'
-          AND fo.opening_probability > 0.35 AND fo.opening_probability < 0.55
-          AND fo.current_probability IS NOT NULL
-          AND fm.llm_sport_category IN ('entertainment', 'economics', 'golf')
+          AND fm.llm_sport_category IN ('entertainment', 'economics', 'golf',
+                                         'hockey', 'weather', 'politics', 'tennis')
           AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
-        ORDER BY fm.llm_sport_category, fm.source, RANDOM()
-        LIMIT 40
+        GROUP BY fm.llm_sport_category, fm.source
+        ORDER BY fm.llm_sport_category, fm.source
     """)
     diag_result = await db.execute(diag_sql)
     diagnostics = [
