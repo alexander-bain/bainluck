@@ -80,16 +80,9 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
 
-### 0n. Navigation Redesign — NEEDS DESIGN BRIEF
+### ~~0n. Navigation Redesign~~ — DONE (May 11-12)
 
-**Problem:** Inconsistent nav across platforms. Desktop web: Feed | Search | Weather | Economics | My Stuff. Mobile web: Feed | Search | My Stuff. iOS/Mac: Feed | Leagues | Search | My Stuff.
-
-**Proposed:** Feed | Categories (dropdown + full page) | My Stuff + Search bar. Categories include Sport (with league subcategories), Weather, Economics, Politics, Entertainment.
-
-**Requires:** Design brief before implementation.
-
-**Files:** `components/DesktopNav.tsx`, `components/BottomNav.tsx`, `ios/.../MainTabView.swift`, new `/categories` routing
-**Parallel Safety:** Red
+Shipped across web and native. Discover is default landing page (`/`). Sports at `/sports`. Desktop: Discover | Sports | Browse (dropdown) | My Stuff. Mobile bottom nav: Discover | Sports | Search | My Stuff. Native: Discover | Sports | Browse | Search | My Stuff. Browse dropdown/tab has Politics, Entertainment, Economics, Weather. About behind user menu. Footer removed. Tab persistence deferred.
 
 ### 0s. League Pages — Phases 3 & 4 REMAINING
 
@@ -117,91 +110,27 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ## Manus Sweep Findings (May 11, 2026)
 
-10-module automated audit. 3 critical, 9 warning, 4 info findings. Results in `Manus/audit_results/2026-05-11/`.
+10-module automated audit. Results in `Manus/audit_results/2026-05-11/`. 10 of 14 resolved, 4 open.
 
-### ~~MS-1. Weather Page Frozen~~ — FALSE ALARM (verified May 11)
+**Resolved:** ~~MS-1~~ (false alarm), ~~MS-2~~ (false alarm), ~~MS-3~~ (prop monotonicity), ~~MS-4~~ (politics misclassification), ~~MS-5~~ (Spotify normalization), ~~MS-6~~ (economics monotonicity), ~~MS-7~~ (chart stale tails), ~~MS-9~~ (soccer halftime), ~~MS-10~~ (NCAAB settled markets), ~~MS-12~~ (golf grid monotonicity), ~~BUG-NBA~~ (not a bug), ~~BUG-DUP~~ (event merge task handles it).
 
-Weather API returning current data (May 12 markets, Austin 84°F, LA 91°F). Manus finding was from outage window. Data pipeline is healthy.
+### MS-8. MLB Chart Rendering Failure (WARNING)
 
-### ~~MS-2. NBA Knicks Championship Odds~~ — FALSE ALARM (verified May 11)
-
-Knicks at 1.0% is correct — all 3 sources (Kalshi, Polymarket, Odds API) agree. Grid shows OKC 60.5%, Spurs 19.5%, Pistons 4.8%. Manus was likely comparing against a different market or cached page during the outage.
-
-### ~~MS-3. Player Prop Monotonicity Violations~~ — FIXED (May 11)
-
-Added monotonicity enforcement to player props: within each player+stat group, P(Over X) must decrease as X increases. Uses existing `_enforce_monotonicity()`. Drops violating thresholds.
-
-### ~~MS-4. Politics Page Misclassified Markets~~ — FIXED (May 11)
-
-Added `_NON_POLITICS_RE` pattern to filter Billboard, Spotify, VIX, sports, weather, etc. from the politics page. Markets with `llm_sport_category="politics"` but clearly non-political names are now excluded.
-
-### ~~MS-5. Entertainment Spotify Race Sums to ~135%~~ — FIXED (May 11)
-
-Normalized independent binary market probabilities to sum to ~100% when total exceeds 105%.
-
-### ~~MS-6. Economics Monotonicity Violations~~ — FIXED (May 11)
-
-Enforce monotonicity on cumulative probabilities before converting to discrete brackets.
-
-### ~~MS-7. Chart Stale Tails~~ — FIXED (May 11)
-
-iOS `gameEndDate` was using `completedAt + 2min` as primary source (30-45 min late). Now prefers ESPN/stat_model data points, matching the parent `sharedChartDomain` logic. Web was already correct.
-
-### BUG-DUP. Duplicate Events in Feed (CRITICAL) — May 11
-
-**Problem:** Buffalo Sabres vs Montréal Canadiens appears twice in "Just Happened" (event IDs 14633633 and 14636305). OKC vs Lakers also has two duplicate events (14634501 and 14633254). The event dedup system is creating multiple Event records for the same game.
-
-**Action:** Check `event_registry.py` — the 4-step cascade (exact source ID → cross-source ID → structured match → create) is failing to match. Likely cause: different source IDs from Odds API vs ESPN for the same game, and the structured match (sport + time ± 4h + teams) is failing due to a team name mismatch or time offset.
-
-**Immediate fix:** Run the dedup merge task (`merge_duplicate_events`) to clean up existing duplicates. Then investigate why the cascade is failing for these games.
-
-**Files:** `backend/app/services/event_registry.py`, `backend/app/tasks/merge_events.py`
-**Parallel Safety:** Red (touches event creation)
-
-### ~~BUG-NBA. Missing NBA Playoff Games~~ — NOT A BUG (May 11)
-
-DB has 60 NBA events (most completed). Odds API itself only returns 3 upcoming events — between playoff rounds. `basketball_nba` is active, Tier 1, polling works. Completed games correctly filtered from feed. The duplicate OKC vs Lakers is covered by BUG-DUP.
-
-### MS-8. MLB Chart Rendering Failure (WARNING) — Chart Timing Audit
-
-**Problem:** Rays vs Red Sox chart has massive gaps and fails to converge to a final state. Possibly a data gap in win_prob_snapshots or a source that stopped mid-game.
-
-**Action:** Check win_prob_snapshots for this event — look for time gaps >10 minutes. May need to filter out sources with sparse data.
-
-**Files:** `backend/app/routes/events.py` (history endpoint)
-**Parallel Safety:** Yellow
-
-### ~~MS-9. Soccer Missing Half-Time Markers~~ — FIXED (May 11)
-
-Soccer ESPN data reports minutes ("19'") not named periods. Added halftime detection from ESPN data time gaps: >8 minute gap = halftime break → insert 1H/HT/2H markers.
-
-**Remaining:** 3-way odds confusion (Home/Draw/Away) still open — needs design decision on whether to show 2-way or 3-way probabilities for soccer. Lower priority.
-
-### ~~MS-10. NCAAB 14 Teams at 99%~~ — FIXED (May 11)
-
-Added all-settled filter: skip markets where every outcome is <3% or >97% (post-season resolved).
-
-### MS-11. Completed Market Still Shows Live Probability (WARNING) — Market Accuracy Audit
-
-**Problem:** Completed MLB game still shows "Yes: 52%" for a first-inning-run market that should have settled to 0% or 100%. This is an **upstream data lag** — Kalshi hasn't settled the market yet. The iOS `SpecialEventMarketsView` already hides 100%/0% outcomes (RS-3 fix), but unsettled markets at ~50% can't be detected without knowing the game result.
-
-**Workaround:** For completed games, the game-markets endpoint could cross-reference the event's final score to determine whether "first inning run" was Yes or No, and override the stale probability. Low priority since this is a narrow edge case.
+**Problem:** Rays vs Red Sox chart has massive gaps. Possibly a data gap in win_prob_snapshots.
 
 **Files:** `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
-### ~~MS-12. Golf Grid Monotonicity~~ — FIXED (May 11)
+### MS-11. Completed Market Shows Stale Live Probability (WARNING)
 
-Added cross-column enforcement: Win <= Top5 <= Top10 <= Top20 <= MakeCut. Lower placement probs are raised to match win prob if violated.
+**Problem:** Completed MLB game shows "Yes: 52%" for a settled market — upstream data lag from Kalshi. Low priority edge case.
 
-### MS-13. Missing Sport Coverage (INFO) — Market Completeness Audit
+**Files:** `backend/app/routes/events.py`
+**Parallel Safety:** Yellow
 
-**Problem:** UFC/MMA, Tennis, Formula 1, and Esports have significant upstream markets on Kalshi/Polymarket but no dedicated pages or navigation on bainluck. NFL Win Totals and NBA Series Winner markets are also missing.
+### MS-13. Missing Sport Coverage (INFO)
 
-**Action:** Lower priority — these are feature gaps, not bugs. Track as expansion opportunities.
-
-**Files:** Various new routes
-**Parallel Safety:** Green
+UFC/MMA, Tennis, F1, Esports have upstream markets but no dedicated pages. Feature gap, not bug.
 
 ### MS-14. EPL/UFC/Tennis Pages Non-Functional (INFO) — League Page Audit
 
@@ -222,77 +151,9 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
-## Rage Shake Triage #3 (May 11) — Bugs #25-30 — ALL 6 FIXED (May 12)
+## ~~Rage Shake Triage #3 (May 11) — Bugs #25-30~~ — ALL 6 FIXED (May 12)
 
-### ~~BR25. Celtics 99% "Not Making Finals" but Also Shows 45% Yes~~ — FIXED (May 12)
-
-**Problem:** Mac native app, Feed → Top Markets shows a Celtics market saying 99% chance of NOT making NBA Finals (correct — they're eliminated), but ALSO displays "45% Yes" which is contradictory and inaccurate. The market data is stale or the display logic is showing the wrong outcome's probability.
-
-**Root cause (likely):** The FuturesCardView is showing the leading outcome's probability (99% No) in the header but also displaying the "Yes" outcome with its stale probability (45%) instead of the complement (1%). Kalshi may not have settled the market yet, so the "Yes" price hasn't updated to near-zero.
-
-**Action:** Check how FuturesCardView renders multi-outcome markets. The "Yes" probability should be the complement of the displayed leader, not a stale independent value. Also: markets where the leader is ≥97% on a binary should be filtered from the feed as effectively resolved.
-
-**Files:** `ios/.../Components/FuturesCardView.swift`, `backend/app/routes/feed.py` (feed filtering)
-**Parallel Safety:** Yellow
-
-### ~~BR26. League Page Broken + Lowercase "nba"~~ — FIXED (May 12)
-
-**Problem:** Two issues on iOS Leagues tab:
-1. League abbreviation displayed as lowercase "nba" instead of "NBA" on the league grid page header
-2. The native league grid page itself may be broken/empty
-
-**Root cause (likely):** `LeagueGridView` receives the `slug` (lowercase "nba") and displays it as the title without uppercasing. The grid data may fail to load due to an API response shape mismatch.
-
-**Action:** Fix the title to uppercase the slug or use a display name. Investigate whether the grid loads data correctly.
-
-**Files:** `ios/.../Views/LeagueGridView.swift`
-**Parallel Safety:** Green
-
-### ~~BR27. Winner Market Probabilities Sum to Much More Than 100%~~ — FIXED (May 12)
-
-**Problem:** A "winner" market on Discover shows outcome probabilities that sum well over 100%. This makes the product look broken to users.
-
-**Root cause (likely):** Independent binary markets from Kalshi (each outcome is a separate "Will X win?" contract) are displayed without normalization. Each binary market has its own 0-100% probability, and summing them exceeds 100% because they include vig/overround.
-
-**Action:** For multi-outcome markets displayed on cards, normalize probabilities to sum to ~100% before display. This is already done for some category pages (entertainment Spotify race — MS-5) but not for Discover cards.
-
-**Files:** `backend/app/routes/feed.py` or `ios/.../Views/DiscoverView.swift` (card rendering)
-**Parallel Safety:** Yellow
-
-### ~~BR28. "2 Sources" Badge but Only Shows Polymarket~~ — FIXED (May 12)
-
-**Problem:** Discover card shows "2 SOURCES" badge but the card body only mentions Polymarket. The second source is present in the data but not displayed, making the badge misleading.
-
-**Root cause (likely):** The `sourceCount` field comes from the backend and counts sources correctly, but the card UI only renders the primary `source` field (one source name). The secondary source is in the data but not surfaced in the card layout.
-
-**Action:** Either show both source names (e.g., "Kalshi + Polymarket") or remove the source count badge when only one source name is displayed.
-
-**Files:** `ios/.../Views/DiscoverView.swift` (NativeFuturesDiscoverCard source chip area)
-**Parallel Safety:** Green
-
-### ~~BR29. Higher/Lower Questions Shown for Closed/Resolved Events~~ — FIXED (May 12)
-
-**Problem:** Discover is asking Higher/Lower prediction questions about events that have already closed or resolved. Users shouldn't be asked to guess on settled outcomes.
-
-**Root cause (likely):** The guess card slot logic (`isGuessSlot`) doesn't check whether the market/event is still open. It places a guess card every 5th item regardless of the item's resolution status.
-
-**Action:** Add a filter: skip guess card rendering for items where the event status is "completed"/"closed" or the futures market has a leader ≥97% (effectively settled).
-
-**Files:** `ios/.../Views/DiscoverView.swift` (guess slot logic, ~line 436-439), possibly also `backend/app/routes/feed.py` (exclude resolved items from feed)
-**Parallel Safety:** Green
-
-### ~~BR30. Stale Met Gala Card in Discover + Probabilities Not Trending to 0/100~~ — FIXED (May 12)
-
-**Problem:** Two related issues:
-1. A Kim Kardashian Met Gala market appears in Discover despite the Met Gala having already happened — stale resolved markets shouldn't show in the feed
-2. The probabilities on the card haven't trended toward 0% or 100% as expected for a resolved event, suggesting the market data isn't being updated post-resolution
-
-**Root cause (likely):** The feed doesn't filter out markets whose resolution date has passed. Kalshi/Polymarket may not have settled the market yet, so the probability is stuck at its last trading value. The feed quality filters catch boring/ladder markets but don't check `resolution_date < now()`.
-
-**Action:** Add a resolution-date filter to the feed: exclude markets where `close_time` or `resolution_date` is in the past. Also investigate why post-resolution probability updates aren't flowing (the `poll_live_prediction_markets` task may skip markets that are no longer "active" on the exchange).
-
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
-**Parallel Safety:** Yellow
+~~BR25~~ (stale 45% Yes — staleness threshold lowered to 95%), ~~BR26~~ (lowercase "nba" — `.uppercased()`), ~~BR27~~ (probabilities >100% — feed normalization when sum >105%), ~~BR28~~ ("2 sources" badge — now shows "KALSHI + POLYMARKET" via `sources` array), ~~BR29~~ (guess cards on closed events — status + probability checks), ~~BR30~~ (stale Met Gala — 14-day NULL resolution_date filter). Details in `docs/completed-features.md`.
 
 ---
 
@@ -355,19 +216,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py` (pin endpoints)
 **Parallel Safety:** Yellow
 
-### ~~BR-NAV. Native App Tab Redesign + Sticky Tabs~~ — MOSTLY DONE (May 11)
-
-**Completed:**
-- ✅ Tab order: Discover → Sports → Browse → Search → My Stuff
-- ✅ Default tab changed to Discover
-- ✅ "Leagues" tab renamed to "Browse" with Prediction Markets section (Politics, Entertainment, Economics, Weather) + leagues
-- ✅ Sports tab pills now navigate to league grids (NBA, NFL, MLB, NHL) and rich category views (Politics, Entertainment, Economics, Weather) instead of useless SportCategoryView
-- ✅ Discover category chips are sticky (pinned to top while scrolling)
-
-**Remaining:**
-- Tab persistence (save/restore last-used tab to UserDefaults) — deferred, low priority
-
-**Files:** `ios/.../Services/NavigationCoordinator.swift`, `ios/.../Views/MainTabView.swift`, `ios/.../Views/LeaguesView.swift`, `ios/.../Components/SportFilterChips.swift`
+### ~~BR-NAV. Native App Tab Redesign~~ — DONE (May 11), merged into 0n above
 
 ### NATIVE-DESIGN. Native Category Pages Are Broken/Ugly (HIGH-PRI)
 

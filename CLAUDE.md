@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **North Star**: The most engaging way to explore what the world thinks will happen.
 **Target User**: Casual fans who want probability-first context — not betting advice.
-**Live Site**: https://bainluck.com | **Discover Feed**: https://bainluck.com/discover
+**Live Site**: https://bainluck.com (Discover is the default landing page) | **Sports Feed**: https://bainluck.com/sports
 
 ---
 
@@ -332,12 +332,16 @@ When fixing ANY data quality, matching, or display issue:
 
 | What | Where |
 |------|-------|
-| Discover feed | https://bainluck.com/discover |
+| Discover feed (default) | https://bainluck.com (also /discover) |
+| Sports feed | https://bainluck.com/sports |
 | Prediction stats | https://bainluck.com/discover/stats |
 | Admin dashboard | https://bainluck.com/admin |
 | Weather page | https://bainluck.com/weather |
 | Politics page | https://bainluck.com/politics |
 | Entertainment page | https://bainluck.com/entertainment |
+| Economics page | https://bainluck.com/economics |
+| Calibration report | https://bainluck.com/calibration |
+| Privacy policy | https://bainluck.com/privacy |
 | Weather API | `GET /api/weather/{featured,cities,rain,events,climate,wildcards}` |
 | Politics API | `GET /api/politics` |
 | Entertainment API | `GET /api/entertainment` |

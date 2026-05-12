@@ -1,5 +1,26 @@
 # Completed Features (Shipped)
 
+## May 12, 2026 — Bug Fixes + Web Nav Redesign
+
+### Bug Reports #25-30 (all fixed)
+- ✅ **BR25: Stale binary probabilities** — lowered feed staleness threshold from 97% to 95% leader probability.
+- ✅ **BR26: Lowercase league title** — `LeagueGridView` fallback uses `.uppercased()` instead of `.capitalized`.
+- ✅ **BR27: Probabilities sum >100%** — feed normalizes independent binary market probabilities when sum exceeds 105%.
+- ✅ **BR28: "2 sources" but only one shown** — feed response now includes `sources` array; card shows "KALSHI + POLYMARKET".
+- ✅ **BR29: Guess cards on closed events** — iOS guess slot skips completed/closed events and futures with leader ≥95%.
+- ✅ **BR30: Stale Met Gala card** — added 14-day filter for markets with NULL resolution_date and zero movement.
+
+### Web Navigation Redesign
+- ✅ **Discover is now the default landing page** — bainluck.com loads Discover feed. Sports feed moved to `/sports`.
+- ✅ **Desktop nav reordered** — Discover | Sports | Browse (dropdown) | My Stuff. Browse dropdown contains Politics, Entertainment, Economics, Weather.
+- ✅ **Mobile bottom nav reordered** — Discover | Sports | Search | My Stuff.
+- ✅ **About moved to user menu** — accessible from profile dropdown (both signed-in and signed-out states).
+- ✅ **Footer removed** — all links now reachable via Browse dropdown and user menu.
+
+### Web About Page
+- ✅ **Markets tracked updated** — "90K+" → "130K+" (current count from calibration).
+- ✅ **Calibration link improved** — added "View calibration report →" CTA with arrow icon. Outcome count updated to 474K.
+
 ## May 11, 2026 — Prediction Market Calibration Analysis
 
 ### Calibration Pipeline + Static Report
