@@ -14,7 +14,13 @@
 - ✅ **Static HTML report** with SVG charts (no JS dependencies), external studies section, methodology & limitations.
 - ✅ **Report builder script** (`backend/scripts/build_calibration_report_svg.py`) — generates the report from endpoint data.
 
-**Results:** MCE 5.1pp, Brier 0.18 (28% better than random). 7 of 10 probability buckets within 5pp of perfect calibration.
+**Results:** MCE **4.8pp**, Brier **0.1745** (30% better than random). 7 of 10 probability buckets within 5pp of perfect calibration. 181K resolved outcomes across 3 sources.
+
+### Data Quality Fixes (same day)
+- ✅ **Winner flag inversion bug fixed** — multi-outcome market inversion was flipping winner detection backwards, causing golf 0-10% bucket to show 44.6% actual (should be ~1%). Removed broken inversion; unrealistic opening probabilities (>50% in 20+ outcome fields) now excluded instead.
+- ✅ **event_id fallback grouping** — for Polymarket sub-markets without `group_id`, `event_id` is now used as fallback for virtual market reconstruction. Fixes football and other game-level sub-markets.
+- ✅ **Default-price filter** — Kalshi golf markets with 80 outcomes all at `opening_probability = 0.97` (no real trading) are detected (50%+ of outcomes sharing same price) and excluded. Golf MCE improved from 20pp to 8.4pp.
+- ✅ **Admin proxy route** (`/api/admin-proxy`) for browser-accessible backfill triggers and status checks.
 
 **Files:** `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py` (calibration-data + backfill-winners endpoints), `backend/scripts/build_calibration_report_svg.py`
 

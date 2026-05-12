@@ -402,26 +402,40 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ### Calibration Page — User-Facing `/calibration` or `/about/calibration`
 
-**What shipped (May 11):** Backend calibration endpoint, static HTML report, `is_winner` backfill task, Odds API integration, virtual market reconstruction. MCE 5.1pp, Brier 0.18, 195K outcomes, 3 sources. See `docs/completed-features.md` for full details.
+**Current state (May 11, end of day):** MCE **4.8pp**, Brier **0.1745** (30% better than random), **181K outcomes** across 3 sources (Kalshi, Polymarket, Odds API). 7 of 10 probability buckets within 5pp of perfect calibration. Static HTML report at `calibration_report.html`. `is_winner` backfill task running every 6h (52K of 131K markets backfilled).
+
+**Data pipeline shipped:**
+- ✅ Backend calibration endpoint (`GET /api/admin/calibration-data`) with virtual market reconstruction from `group_id` + `event_id` fallback
+- ✅ Odds API ground-truth integration (13,806 outcomes from completed games with scores)
+- ✅ `is_winner` backfill task (`backfill_winners`, every 6h) — sets winner flag from settlement data
+- ✅ Backfill status endpoint (`GET /api/admin/backfill-winners/status`)
+- ✅ Default-price filter for large field markets (50%+ of outcomes sharing same opening_probability)
+- ✅ Static HTML report builder with SVG charts, external studies, methodology section
+- ✅ Admin proxy route for browser-accessible triggers (`/api/admin-proxy`)
+
+**Per-category calibration (✓ = MCE < 8pp):**
+- ✓ Weather (4.5pp), Tennis (3.6pp), Esports (3.8pp), Politics (6.4pp), Soccer (7.7pp), MMA (7.8pp), Geopolitics (6.2pp)
+- ~ Golf (8.4pp, was 20pp), Basketball (8.7pp), Entertainment (9.6pp), Economics (9.3pp), Baseball (10.4pp)
+- ✗ Football (25.9pp, n=532 — Polymarket sub-markets without group_id/event_id), Hockey (17.0pp), Cricket (12.0pp)
 
 **Remaining work to make it user-facing:**
 
-1. **Build live Next.js page** at `/calibration` — render SVG calibration curve from `/api/admin/calibration-data`. Category tabs, source comparison, external studies. This is the frontend work; the data pipeline is done.
+1. **Build live Next.js page** at `/calibration` — render SVG calibration curve from the endpoint. Category tabs, source comparison, external studies section. The data pipeline is done; this is frontend work.
 
-2. **Closing line capture** — snapshot probabilities at event start time from `futures_odds_snapshots` instead of using `opening_probability` (first-seen price, can be weeks early). Academic gold standard. Biggest remaining improvement to calibration accuracy.
+2. **Closing line capture** — snapshot probabilities at event start time from `futures_odds_snapshots`. Currently uses first-seen price (can be weeks early). Academic gold standard for calibration.
 
-3. **Kalshi API settlement backfill** — The current backfill sets `is_winner` from `current_probability`, which works for cleanly-resolved markets (52K of 131K done). For the remaining 79K with intermediate `current_probability`, need to fetch `result='yes'|'no'` from Kalshi's settled events API. First attempt failed (API returns recent events first; our DB has older events). Fix: query by specific event tickers that need backfill, not by paginating all settled events.
+3. **Kalshi API settlement backfill** — 79K Kalshi markets have intermediate `current_probability` (not cleanly 0/1). Kalshi API returns `result='yes'|'no'` for settled markets. First attempt failed (API paginates by recency, our DB has older events). Fix: query by specific event ticker, not paginate all settled.
 
-4. **Fix 40-50% bucket** (MCE -13.6pp) — Driven by Polymarket sub-markets without `group_id` (~25% of Polymarket markets). These can't be reconstructed into multi-outcome markets. Fix: backfill `group_id` on Polymarket markets using the Gamma API's `groupItemTitle` or event structure.
+4. **Fix 40-50% bucket** (MCE -14.7pp) — Polymarket sub-markets without `group_id`. Fix: backfill `group_id` via Gamma API.
 
-5. **Golf calibration** (MCE ~15pp) — Kalshi golf tournament markets have structural issues: inverted field prices partially corrected but deeper problems with how 30+ outcome markets store opening probabilities. The `is_winner` backfill from Kalshi API (item 3) should help significantly.
+5. **Football + hockey** — Football (n=532) is too small and structurally broken. Hockey (17pp) needs investigation. Both will improve as `is_winner` backfill coverage grows.
 
-6. **Nightly refresh Celery task** — Add a scheduled task that refreshes calibration data and optionally pushes updated stats to a cache so the page loads instantly.
+6. **Nightly refresh** — Celery task to refresh and cache calibration data.
 
-**External studies to link on the page:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
+**External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
-**Files:** `backend/app/routes/admin.py` (calibration-data endpoint), `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
-**Parallel Safety:** Green (new page, new endpoints — no conflicts)
+**Files:** `backend/app/routes/admin.py`, `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
+**Parallel Safety:** Green
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
 

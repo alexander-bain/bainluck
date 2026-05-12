@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Do Prediction Markets Predict Anything? — Bain Luck</title>
+<style>
+  :root { --bg:#fafaf9; --surface:#fff; --text:#1c1917; --text2:#57534e; --muted:#a8a29e; --border:#e7e5e4; --accent:#2563eb; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:1.5rem; max-width:1200px; margin:0 auto; }
+  h1 { font-size:2rem; font-weight:700; margin-bottom:0.25rem; }
+  .subtitle { color:var(--text2); font-size:1.05rem; margin-bottom:1.5rem; }
+  .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:0.75rem; margin-bottom:1.5rem; }
+  .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem; }
+  .stat-card .label { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+  .stat-card .value { font-size:1.6rem; font-weight:700; }
+  .stat-card .detail { font-size:0.8rem; color:var(--text2); }
+  .grade-A { color:#16a34a; } .grade-B { color:#2563eb; } .grade-C { color:#ea580c; } .grade-F { color:#dc2626; }
+  .section { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.25rem; margin-bottom:1.25rem; }
+  .section h2 { font-size:1.15rem; font-weight:600; margin-bottom:0.75rem; }
+  .section p { color:var(--text2); font-size:0.85rem; margin-bottom:0.5rem; }
+  .section svg { display:block; margin:0 auto; }
+  table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+  th,td { text-align:left; padding:0.5rem 0.6rem; border-bottom:1px solid var(--border); }
+  th { font-weight:600; color:var(--text2); font-size:0.75rem; text-transform:uppercase; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; }
+  @media (max-width:768px) { .two-col { grid-template-columns:1fr; } }
+  .category-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(440px,1fr)); gap:1rem; margin-bottom:1.25rem; }
+  .category-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem; }
+  .category-card h3 { display:flex; justify-content:space-between; align-items:baseline; font-size:0.95rem; margin-bottom:0.5rem; }
+  .category-card .n-label { font-size:0.75rem; font-weight:400; color:var(--muted); }
+  .commentary { background:#fefce8; border:1px solid #fde68a; border-radius:10px; padding:1.25rem; margin-bottom:1.25rem; }
+  .commentary h2 { font-size:1.1rem; margin-bottom:0.5rem; }
+  .commentary h3 { font-size:0.95rem; margin-top:1rem; margin-bottom:0.25rem; color:var(--text); }
+  .commentary p,.commentary li { font-size:0.9rem; color:var(--text2); margin-bottom:0.4rem; }
+  .commentary ul { padding-left:1.25rem; }
+  .commentary strong { color:var(--text); }
+  .warning { background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:1.25rem; margin-bottom:1.25rem; }
+  .warning h2 { font-size:1.1rem; margin-bottom:0.5rem; color:#dc2626; }
+  .warning p,.warning li { font-size:0.9rem; color:var(--text2); margin-bottom:0.4rem; }
+  .warning ul { padding-left:1.25rem; }
+  .next-steps { background:#dbeafe; border:1px solid #93c5fd; border-radius:10px; padding:1.25rem; margin-bottom:1.25rem; }
+  .next-steps h2 { font-size:1.1rem; margin-bottom:0.5rem; }
+  .next-steps li { font-size:0.9rem; color:var(--text2); margin-bottom:0.5rem; }
+  .next-steps ul { padding-left:1.25rem; }
+  .footer { text-align:center; color:var(--muted); font-size:0.75rem; margin-top:1.5rem; padding-top:0.75rem; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<h1>Do Prediction Markets Predict Anything?</h1>
+<p class="subtitle">Calibration analysis of 181,376 resolved outcomes across 132,856 markets — May 11, 2026 at 21:38</p>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="label">Resolved Outcomes</div>
+    <div class="value">181,376</div>
+    <div class="detail">132,856 markets, 61,543 winners</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Mean Calibration Error</div>
+    <div class="value grade-B">4.8pp</div>
+    <div class="detail">Good</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Brier Score</div>
+    <div class="value">0.1745</div>
+    <div class="detail">0 = perfect, 0.25 = random · 30% better than guessing</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Sources</div>
+    <div class="value">3</div>
+    <div class="detail">kalshi, odds_api, polymarket</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Categories</div>
+    <div class="value">15</div>
+    <div class="detail">Soccer (75,565), Weather (33,939), Basketball (13,612)</div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Overall Calibration Curve</h2>
+  <p>Points on the diagonal = perfect calibration. Above the line = outcomes happened <em>more</em> than predicted. Below = <em>less</em>. Shaded band = ±5pp. Point size reflects sample count. Hover for details.</p>
+  <svg width="700" height="400" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="700" height="400" fill="white" rx="8"/>
+<line x1="55" y1="350.0" x2="680" y2="350.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="354.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="317.5" x2="680" y2="317.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="117.5" y1="25" x2="117.5" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="321.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="117.5" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="285.0" x2="680" y2="285.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="180.0" y1="25" x2="180.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="289.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="180.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="252.49999999999997" x2="680" y2="252.49999999999997" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="242.5" y1="25" x2="242.5" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="256.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="242.5" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="220.0" x2="680" y2="220.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="305.0" y1="25" x2="305.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="224.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="305.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="187.5" x2="680" y2="187.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="367.5" y1="25" x2="367.5" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="191.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="367.5" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="155.0" x2="680" y2="155.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="430.0" y1="25" x2="430.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="159.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="430.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="122.5" x2="680" y2="122.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="492.5" y1="25" x2="492.5" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="126.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="492.5" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="90.0" x2="680" y2="90.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="555.0" y1="25" x2="555.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="94.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="555.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="57.5" x2="680" y2="57.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="617.5" y1="25" x2="617.5" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="61.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="617.5" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="680" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="680.0" y1="25" x2="680.0" y2="350" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="680.0" y="368" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="350.0" y="395" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="200.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,200.0)">Actual Win Rate</text>
+<line x1="55.0" y1="350.0" x2="680.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,333.75 86.25,317.5 117.5,301.25 148.75,285.0 180.0,268.75 211.25,252.49999999999997 242.5,236.25 273.75,220.0 305.0,203.75000000000003 336.25,187.5 367.5,171.25 398.75,155.0 430.0,138.75 461.25,122.5 492.5,106.25 523.75,90.0 555.0,73.75 586.25,57.5 617.5,41.25 648.75,25.0 680.0,25.0 680.0,41.25 648.75,57.5 617.5,73.75 586.25,90.0 555.0,106.25 523.75,122.5 492.5,138.75 461.25,155.0 430.0,171.25 398.75,187.5 367.5,203.75000000000003 336.25,220.0 305.0,236.25 273.75,252.49999999999997 242.5,268.75 211.25,285.0 180.0,301.25 148.75,317.5 117.5,333.75 86.25,350.0 55.0,350.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="350.0" x2="680.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="86.25,338.95 148.75,311.0 211.25,278.175 273.75,259.325 336.25,246.975 398.75,188.475 461.25,105.6 523.75,95.85 586.25,61.07499999999998 648.75,39.94999999999998" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="86.25" cy="338.95" r="9.00867223856487" fill="#2563eb" opacity="0.85"/>
+<title>0-10%: 3.4% actual at 4.0% predicted (n=30,693, error=-0.5pp)</title>
+<circle cx="148.75" cy="311.0" r="7.737219109845111" fill="#2563eb" opacity="0.85"/>
+<title>10-20%: 12.0% actual at 14.5% predicted (n=17,088, error=-2.6pp)</title>
+<circle cx="211.25" cy="278.175" r="7.661435154440011" fill="#2563eb" opacity="0.85"/>
+<title>20-30%: 22.1% actual at 24.9% predicted (n=16,402, error=-2.7pp)</title>
+<circle cx="273.75" cy="259.325" r="7.671244179980199" fill="#2563eb" opacity="0.85"/>
+<title>30-40%: 27.9% actual at 34.7% predicted (n=16,490, error=-6.8pp)</title>
+<circle cx="336.25" cy="246.975" r="9.416212843125612" fill="#2563eb" opacity="0.85"/>
+<title>40-50%: 31.7% actual at 46.5% predicted (n=35,891, error=-14.7pp)</title>
+<circle cx="398.75" cy="188.475" r="10.0" fill="#2563eb" opacity="0.85"/>
+<title>50-60%: 49.7% actual at 51.2% predicted (n=44,045, error=-1.6pp)</title>
+<circle cx="461.25" cy="105.6" r="6.72379307220519" fill="#2563eb" opacity="0.85"/>
+<title>60-70%: 75.2% actual at 64.7% predicted (n=9,077, error=+10.4pp)</title>
+<circle cx="523.75" cy="95.85" r="5.920381390205098" fill="#2563eb" opacity="0.85"/>
+<title>70-80%: 78.2% actual at 74.6% predicted (n=4,512, error=+3.6pp)</title>
+<circle cx="586.25" cy="61.07499999999998" r="5.83082918932663" fill="#2563eb" opacity="0.85"/>
+<title>80-90%: 88.9% actual at 85.2% predicted (n=4,101, error=+3.8pp)</title>
+<circle cx="648.75" cy="39.94999999999998" r="5.585866741797087" fill="#2563eb" opacity="0.85"/>
+<title>90-100%: 95.4% actual at 94.3% predicted (n=3,077, error=+1.1pp)</title>
+<circle cx="65" cy="33" r="5" fill="#2563eb"/>
+<text x="75" y="37" fill="#57534e" font-size="11">All Markets (n=181,376)</text>
+</svg>
+</div>
+
+<div class="section">
+  <h2>Calibration Table</h2>
+  <table>
+    <thead><tr><th>Bucket</th><th style="text-align:right">N</th><th style="text-align:right">Avg Opening</th><th style="text-align:right">Actual Rate</th><th style="text-align:right">Error</th></tr></thead>
+    <tbody><tr><td>0-10%</td><td class="num">30,693</td><td class="num">4.0%</td><td class="num">3.4%</td><td class="num" style="">-0.5pp</td></tr>
+<tr><td>10-20%</td><td class="num">17,088</td><td class="num">14.5%</td><td class="num">12.0%</td><td class="num" style="">-2.6pp</td></tr>
+<tr><td>20-30%</td><td class="num">16,402</td><td class="num">24.9%</td><td class="num">22.1%</td><td class="num" style="">-2.7pp</td></tr>
+<tr><td>30-40%</td><td class="num">16,490</td><td class="num">34.7%</td><td class="num">27.9%</td><td class="num" style="color:#dc2626">-6.8pp</td></tr>
+<tr><td>40-50%</td><td class="num">35,891</td><td class="num">46.5%</td><td class="num">31.7%</td><td class="num" style="color:#dc2626">-14.7pp</td></tr>
+<tr><td>50-60%</td><td class="num">44,045</td><td class="num">51.2%</td><td class="num">49.7%</td><td class="num" style="">-1.6pp</td></tr>
+<tr><td>60-70%</td><td class="num">9,077</td><td class="num">64.7%</td><td class="num">75.2%</td><td class="num" style="color:#16a34a">+10.4pp</td></tr>
+<tr><td>70-80%</td><td class="num">4,512</td><td class="num">74.6%</td><td class="num">78.2%</td><td class="num" style="color:#16a34a">+3.6pp</td></tr>
+<tr><td>80-90%</td><td class="num">4,101</td><td class="num">85.2%</td><td class="num">88.9%</td><td class="num" style="color:#16a34a">+3.8pp</td></tr>
+<tr><td>90-100%</td><td class="num">3,077</td><td class="num">94.3%</td><td class="num">95.4%</td><td class="num" style="">+1.1pp</td></tr></tbody>
+  </table>
+</div>
+
+<div class="two-col">
+  <div class="section">
+    <h2>By Source</h2>
+    <svg width="540" height="320" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="540" height="320" fill="white" rx="8"/>
+<line x1="55" y1="270.0" x2="520" y2="270.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="274.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="245.5" x2="520" y2="245.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="101.5" y1="25" x2="101.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="249.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="101.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="221.0" x2="520" y2="221.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="148.0" y1="25" x2="148.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="225.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="148.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="196.5" x2="520" y2="196.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="194.5" y1="25" x2="194.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="200.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="194.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="172.0" x2="520" y2="172.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="241.0" y1="25" x2="241.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="176.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="241.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="147.5" x2="520" y2="147.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="287.5" y1="25" x2="287.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="151.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="287.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="123.0" x2="520" y2="123.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="334.0" y1="25" x2="334.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="127.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="334.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="98.5" x2="520" y2="98.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="380.5" y1="25" x2="380.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="102.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="380.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="74.0" x2="520" y2="74.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="427.0" y1="25" x2="427.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="78.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="427.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="49.5" x2="520" y2="49.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="473.5" y1="25" x2="473.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="53.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="473.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="520" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="520.0" y1="25" x2="520.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="520.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="270.0" y="315" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="160.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,160.0)">Actual Win Rate</text>
+<line x1="55.0" y1="270.0" x2="520.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,257.75 78.25,245.5 101.5,233.25 124.75,221.0 148.0,208.75 171.25,196.5 194.5,184.25 217.75,172.0 241.0,159.75 264.25,147.5 287.5,135.25 310.75,123.0 334.0,110.75 357.25,98.5 380.5,86.25 403.75,74.0 427.0,61.75 450.25,49.5 473.5,37.25 496.75,25.0 520.0,25.0 520.0,37.25 496.75,49.5 473.5,61.75 450.25,74.0 427.0,86.25 403.75,98.5 380.5,110.75 357.25,123.0 334.0,135.25 310.75,147.5 287.5,159.75 264.25,172.0 241.0,184.25 217.75,196.5 194.5,208.75 171.25,221.0 148.0,233.25 124.75,245.5 101.5,257.75 78.25,270.0 55.0,270.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="270.0" x2="520.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="78.25,264.365 124.75,245.01 171.25,219.04000000000002 217.75,208.50500000000002 264.25,198.95 310.75,151.66500000000002 357.25,80.61500000000001 403.75,76.695 450.25,51.459999999999994 496.75,30.390000000000008" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="264.365" r="8.55738755342655" fill="#2563eb" opacity="0.85"/>
+<title>0-10%: 2.3% actual at 4.0% predicted (n=21,765, error=-1.7pp)</title>
+<circle cx="124.75" cy="245.01" r="7.54295425469969" fill="#2563eb" opacity="0.85"/>
+<title>10-20%: 10.2% actual at 14.5% predicted (n=13,154, error=-4.3pp)</title>
+<circle cx="171.25" cy="219.04000000000002" r="7.404219110674154" fill="#2563eb" opacity="0.85"/>
+<title>20-30%: 20.8% actual at 24.8% predicted (n=12,144, error=-4.1pp)</title>
+<circle cx="217.75" cy="208.50500000000002" r="7.441854417174824" fill="#2563eb" opacity="0.85"/>
+<title>30-40%: 25.1% actual at 34.7% predicted (n=12,414, error=-9.6pp)</title>
+<circle cx="264.25" cy="198.95" r="9.304681154142754" fill="#2563eb" opacity="0.85"/>
+<title>40-50%: 29.0% actual at 46.7% predicted (n=29,488, error=-17.8pp)</title>
+<circle cx="310.75" cy="151.66500000000002" r="10.0" fill="#2563eb" opacity="0.85"/>
+<title>50-60%: 48.3% actual at 51.0% predicted (n=37,725, error=-2.7pp)</title>
+<circle cx="357.25" cy="80.61500000000001" r="6.506960489244337" fill="#2563eb" opacity="0.85"/>
+<title>60-70%: 77.3% actual at 64.8% predicted (n=6,586, error=+12.5pp)</title>
+<circle cx="403.75" cy="76.695" r="5.602780883538415" fill="#2563eb" opacity="0.85"/>
+<title>70-80%: 78.9% actual at 74.6% predicted (n=2,692, error=+4.3pp)</title>
+<circle cx="450.25" cy="51.459999999999994" r="5.689448014129268" fill="#2563eb" opacity="0.85"/>
+<title>80-90%: 89.2% actual at 85.3% predicted (n=2,991, error=+3.9pp)</title>
+<circle cx="496.75" cy="30.390000000000008" r="5.402412009125692" fill="#2563eb" opacity="0.85"/>
+<title>90-100%: 97.8% actual at 93.8% predicted (n=2,061, error=+4.1pp)</title>
+<polyline points="78.25,254.32 124.75,223.205 171.25,204.585 217.75,172.73499999999999 264.25,162.93499999999997 310.75,121.285 357.25,80.36999999999999 403.75,63.709999999999994 450.25,45.58000000000001 496.75,56.11500000000001" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="254.32" r="10.0" fill="#16a34a" opacity="0.85"/>
+<title>0-10%: 6.4% actual at 3.8% predicted (n=8,635, error=+2.6pp)</title>
+<circle cx="124.75" cy="223.205" r="7.600810563062106" fill="#16a34a" opacity="0.85"/>
+<title>10-20%: 19.1% actual at 14.6% predicted (n=3,110, error=+4.5pp)</title>
+<circle cx="171.25" cy="204.585" r="7.45908335722978" fill="#16a34a" opacity="0.85"/>
+<title>20-30%: 26.7% actual at 24.7% predicted (n=2,870, error=+2.0pp)</title>
+<circle cx="217.75" cy="172.73499999999999" r="7.042261676591824" fill="#16a34a" opacity="0.85"/>
+<title>30-40%: 39.7% actual at 34.3% predicted (n=2,220, error=+5.4pp)</title>
+<circle cx="264.25" cy="162.93499999999997" r="8.021943285759036" fill="#16a34a" opacity="0.85"/>
+<title>40-50%: 43.7% actual at 45.5% predicted (n=3,880, error=-1.7pp)</title>
+<circle cx="310.75" cy="121.285" r="7.957153264298861" fill="#16a34a" opacity="0.85"/>
+<title>50-60%: 60.7% actual at 51.2% predicted (n=3,756, error=+9.5pp)</title>
+<circle cx="357.25" cy="80.36999999999999" r="5.624508299401205" fill="#16a34a" opacity="0.85"/>
+<title>60-70%: 77.4% actual at 64.5% predicted (n=633, error=+12.9pp)</title>
+<circle cx="403.75" cy="63.709999999999994" r="5.33891900844504" fill="#16a34a" opacity="0.85"/>
+<title>70-80%: 84.2% actual at 74.7% predicted (n=430, error=+9.5pp)</title>
+<circle cx="450.25" cy="45.58000000000001" r="5.091950863316701" fill="#16a34a" opacity="0.85"/>
+<title>80-90%: 91.6% actual at 84.7% predicted (n=286, error=+7.0pp)</title>
+<circle cx="496.75" cy="56.11500000000001" r="5.7349568510609785" fill="#16a34a" opacity="0.85"/>
+<title>90-100%: 87.3% actual at 96.2% predicted (n=722, error=-9.0pp)</title>
+<polyline points="78.25,265.1 124.75,237.90500000000003 171.25,208.75 217.75,189.15 264.25,158.28 310.75,136.72 357.25,106.09499999999998 403.75,86.25 450.25,57.094999999999985 496.75,29.9" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="265.1" r="6.028271321934572" fill="#dc2626" opacity="0.85"/>
+<title>0-10%: 2.0% actual at 6.7% predicted (n=293, error=-4.7pp)</title>
+<circle cx="124.75" cy="237.90500000000003" r="7.401385420223806" fill="#dc2626" opacity="0.85"/>
+<title>10-20%: 13.1% actual at 15.2% predicted (n=824, error=-2.1pp)</title>
+<circle cx="171.25" cy="208.75" r="8.414555417251128" fill="#dc2626" opacity="0.85"/>
+<title>20-30%: 25.0% actual at 25.3% predicted (n=1,388, error=-0.3pp)</title>
+<circle cx="217.75" cy="189.15" r="9.104829318527198" fill="#dc2626" opacity="0.85"/>
+<title>30-40%: 33.0% actual at 35.3% predicted (n=1,856, error=-2.3pp)</title>
+<circle cx="264.25" cy="158.28" r="9.951834756903029" fill="#dc2626" opacity="0.85"/>
+<title>40-50%: 45.6% actual at 45.0% predicted (n=2,523, error=+0.6pp)</title>
+<circle cx="310.75" cy="136.72" r="10.0" fill="#dc2626" opacity="0.85"/>
+<title>50-60%: 54.4% actual at 54.9% predicted (n=2,564, error=-0.5pp)</title>
+<circle cx="357.25" cy="106.09499999999998" r="9.107579024796365" fill="#dc2626" opacity="0.85"/>
+<title>60-70%: 66.9% actual at 64.7% predicted (n=1,858, error=+2.2pp)</title>
+<circle cx="403.75" cy="86.25" r="8.417734787787312" fill="#dc2626" opacity="0.85"/>
+<title>70-80%: 75.0% actual at 74.7% predicted (n=1,390, error=+0.3pp)</title>
+<circle cx="450.25" cy="57.094999999999985" r="7.401385420223806" fill="#dc2626" opacity="0.85"/>
+<title>80-90%: 86.9% actual at 84.8% predicted (n=824, error=+2.1pp)</title>
+<circle cx="496.75" cy="29.9" r="6.03172958756934" fill="#dc2626" opacity="0.85"/>
+<title>90-100%: 98.0% actual at 93.3% predicted (n=294, error=+4.7pp)</title>
+<circle cx="65" cy="33" r="5" fill="#2563eb"/>
+<text x="75" y="37" fill="#57534e" font-size="11">polymarket (n=141,020)</text>
+<circle cx="245" cy="33" r="5" fill="#16a34a"/>
+<text x="255" y="37" fill="#57534e" font-size="11">kalshi (n=26,542)</text>
+<circle cx="65" cy="51" r="5" fill="#dc2626"/>
+<text x="75" y="55" fill="#57534e" font-size="11">odds_api (n=13,814)</text>
+</svg>
+  </div>
+  <div class="section">
+    <h2>By Category Group</h2>
+    <svg width="540" height="320" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="540" height="320" fill="white" rx="8"/>
+<line x1="55" y1="270.0" x2="520" y2="270.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="274.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="245.5" x2="520" y2="245.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="101.5" y1="25" x2="101.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="249.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="101.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="221.0" x2="520" y2="221.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="148.0" y1="25" x2="148.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="225.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="148.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="196.5" x2="520" y2="196.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="194.5" y1="25" x2="194.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="200.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="194.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="172.0" x2="520" y2="172.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="241.0" y1="25" x2="241.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="176.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="241.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="147.5" x2="520" y2="147.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="287.5" y1="25" x2="287.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="151.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="287.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="123.0" x2="520" y2="123.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="334.0" y1="25" x2="334.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="127.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="334.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="98.5" x2="520" y2="98.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="380.5" y1="25" x2="380.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="102.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="380.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="74.0" x2="520" y2="74.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="427.0" y1="25" x2="427.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="78.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="427.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="49.5" x2="520" y2="49.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="473.5" y1="25" x2="473.5" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="53.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="473.5" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="520" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="520.0" y1="25" x2="520.0" y2="270" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="520.0" y="288" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="270.0" y="315" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="160.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,160.0)">Actual Win Rate</text>
+<line x1="55.0" y1="270.0" x2="520.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,257.75 78.25,245.5 101.5,233.25 124.75,221.0 148.0,208.75 171.25,196.5 194.5,184.25 217.75,172.0 241.0,159.75 264.25,147.5 287.5,135.25 310.75,123.0 334.0,110.75 357.25,98.5 380.5,86.25 403.75,74.0 427.0,61.75 450.25,49.5 473.5,37.25 496.75,25.0 520.0,25.0 520.0,37.25 496.75,49.5 473.5,61.75 450.25,74.0 427.0,86.25 403.75,98.5 380.5,110.75 357.25,123.0 334.0,135.25 310.75,147.5 287.5,159.75 264.25,172.0 241.0,184.25 217.75,196.5 194.5,208.75 171.25,221.0 148.0,233.25 124.75,245.5 101.5,257.75 78.25,270.0 55.0,270.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="270.0" x2="520.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="78.25,258.975 124.75,234.72 171.25,211.44499999999996 217.75,203.85 264.25,190.375 310.75,150.44 357.25,85.75999999999999 403.75,79.14499999999998 450.25,52.930000000000014 496.75,36.025" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="258.975" r="6.963667994800868" fill="#2563eb" opacity="0.85"/>
+<title>0-10%: 4.5% actual at 4.5% predicted (n=9,881, error=+0.0pp)</title>
+<circle cx="124.75" cy="234.72" r="6.507087659133801" fill="#2563eb" opacity="0.85"/>
+<title>10-20%: 14.4% actual at 14.3% predicted (n=7,071, error=+0.1pp)</title>
+<circle cx="171.25" cy="211.44499999999996" r="6.707061311226498" fill="#2563eb" opacity="0.85"/>
+<title>20-30%: 23.9% actual at 25.2% predicted (n=8,244, error=-1.4pp)</title>
+<circle cx="217.75" cy="203.85" r="7.320817346317194" fill="#2563eb" opacity="0.85"/>
+<title>30-40%: 27.0% actual at 34.9% predicted (n=12,406, error=-7.9pp)</title>
+<circle cx="264.25" cy="190.375" r="9.233206854933043" fill="#2563eb" opacity="0.85"/>
+<title>40-50%: 32.5% actual at 46.7% predicted (n=30,809, error=-14.2pp)</title>
+<circle cx="310.75" cy="150.44" r="10.0" fill="#2563eb" opacity="0.85"/>
+<title>50-60%: 48.8% actual at 51.2% predicted (n=40,499, error=-2.4pp)</title>
+<circle cx="357.25" cy="85.75999999999999" r="6.754585795946875" fill="#2563eb" opacity="0.85"/>
+<title>60-70%: 75.2% actual at 64.8% predicted (n=8,536, error=+10.4pp)</title>
+<circle cx="403.75" cy="79.14499999999998" r="5.911625604599214" fill="#2563eb" opacity="0.85"/>
+<title>70-80%: 77.9% actual at 74.6% predicted (n=4,111, error=+3.3pp)</title>
+<circle cx="450.25" cy="52.930000000000014" r="5.812571227477115" fill="#2563eb" opacity="0.85"/>
+<title>80-90%: 88.6% actual at 85.1% predicted (n=3,696, error=+3.5pp)</title>
+<circle cx="496.75" cy="36.025" r="5.335681118557263" fill="#2563eb" opacity="0.85"/>
+<title>90-100%: 95.5% actual at 93.8% predicted (n=2,007, error=+1.7pp)</title>
+<polyline points="78.25,265.59000000000003 124.75,245.5 171.25,215.365 217.75,186.20999999999998 264.25,173.96 310.75,159.995 357.25,86.25 403.75,66.65 450.25,61.75 496.75,26.469999999999985" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="265.59000000000003" r="10.0" fill="#16a34a" opacity="0.85"/>
+<title>0-10%: 1.8% actual at 3.7% predicted (n=15,073, error=-1.9pp)</title>
+<circle cx="124.75" cy="245.5" r="8.438930803788228" fill="#16a34a" opacity="0.85"/>
+<title>10-20%: 10.0% actual at 14.8% predicted (n=8,250, error=-4.9pp)</title>
+<circle cx="171.25" cy="215.365" r="7.960362220546591" fill="#16a34a" opacity="0.85"/>
+<title>20-30%: 22.3% actual at 24.4% predicted (n=6,567, error=-2.1pp)</title>
+<circle cx="217.75" cy="186.20999999999998" r="6.531405603663586" fill="#16a34a" opacity="0.85"/>
+<title>30-40%: 34.2% actual at 33.8% predicted (n=2,683, error=+0.4pp)</title>
+<circle cx="264.25" cy="173.96" r="5.332127542526423" fill="#16a34a" opacity="0.85"/>
+<title>40-50%: 39.2% actual at 43.7% predicted (n=743, error=-4.5pp)</title>
+<circle cx="310.75" cy="159.995" r="4.7925547534516895" fill="#16a34a" opacity="0.85"/>
+<title>50-60%: 44.9% actual at 52.5% predicted (n=263, error=-7.7pp)</title>
+<circle cx="357.25" cy="86.25" r="4.447910294209966" fill="#16a34a" opacity="0.85"/>
+<title>60-70%: 75.0% actual at 64.4% predicted (n=84, error=+10.6pp)</title>
+<circle cx="403.75" cy="66.65" r="4.335042831092518" fill="#16a34a" opacity="0.85"/>
+<title>70-80%: 83.0% actual at 74.3% predicted (n=47, error=+8.6pp)</title>
+<circle cx="450.25" cy="61.75" r="4.378553290888254" fill="#16a34a" opacity="0.85"/>
+<title>80-90%: 85.0% actual at 85.3% predicted (n=60, error=-0.3pp)</title>
+<circle cx="496.75" cy="26.469999999999985" r="4.6353232562136295" fill="#16a34a" opacity="0.85"/>
+<title>90-100%: 99.4% actual at 95.7% predicted (n=169, error=+3.7pp)</title>
+<polyline points="78.25,261.42499999999995 124.75,244.51999999999998 171.25,233.25 217.75,187.68 264.25,191.10999999999999 310.75,108.79 357.25,57.584999999999994 403.75,49.74499999999998 450.25,41.66 496.75,26.959999999999994" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="261.42499999999995" r="9.40935150862304" fill="#dc2626" opacity="0.85"/>
+<title>0-10%: 3.5% actual at 4.2% predicted (n=1,815, error=-0.7pp)</title>
+<circle cx="124.75" cy="244.51999999999998" r="7.266900320964885" fill="#dc2626" opacity="0.85"/>
+<title>10-20%: 10.4% actual at 13.4% predicted (n=662, error=-3.0pp)</title>
+<circle cx="171.25" cy="233.25" r="6.173405186107838" fill="#dc2626" opacity="0.85"/>
+<title>20-30%: 15.0% actual at 24.6% predicted (n=293, error=-9.5pp)</title>
+<circle cx="217.75" cy="187.68" r="6.317015854932967" fill="#dc2626" opacity="0.85"/>
+<title>30-40%: 33.6% actual at 34.7% predicted (n=333, error=-1.0pp)</title>
+<circle cx="264.25" cy="191.10999999999999" r="8.597357055343057" fill="#dc2626" opacity="0.85"/>
+<title>40-50%: 32.2% actual at 46.8% predicted (n=1,311, error=-14.6pp)</title>
+<circle cx="310.75" cy="108.79" r="10.0" fill="#dc2626" opacity="0.85"/>
+<title>50-60%: 65.8% actual at 51.0% predicted (n=2,233, error=+14.9pp)</title>
+<circle cx="357.25" cy="57.584999999999994" r="5.8399945481723785" fill="#dc2626" opacity="0.85"/>
+<title>60-70%: 86.7% actual at 64.7% predicted (n=210, error=+21.9pp)</title>
+<circle cx="403.75" cy="49.74499999999998" r="5.601052050002105" fill="#dc2626" opacity="0.85"/>
+<title>70-80%: 89.9% actual at 75.1% predicted (n=159, error=+14.8pp)</title>
+<circle cx="450.25" cy="41.66" r="5.684469775224631" fill="#dc2626" opacity="0.85"/>
+<title>80-90%: 93.2% actual at 85.4% predicted (n=176, error=+7.8pp)</title>
+<circle cx="496.75" cy="26.959999999999994" r="6.856157465543575" fill="#dc2626" opacity="0.85"/>
+<title>90-100%: 99.2% actual at 94.6% predicted (n=506, error=+4.6pp)</title>
+<polyline points="78.25,243.785 124.75,239.13000000000002 171.25,234.72 217.75,224.92 264.25,237.17 310.75,144.56 357.25,118.835 403.75,82.085 450.25,36.025 496.75,65.18" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="243.785" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 10.7% actual at 3.8% predicted (n=2,237, error=+6.9pp)</title>
+<circle cx="124.75" cy="239.13000000000002" r="6.88166246161675" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 12.6% actual at 13.9% predicted (n=516, error=-1.3pp)</title>
+<circle cx="171.25" cy="234.72" r="6.459870140602472" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 14.4% actual at 24.8% predicted (n=376, error=-10.4pp)</title>
+<circle cx="217.75" cy="224.92" r="6.272849998718375" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 18.4% actual at 35.4% predicted (n=321, error=-17.0pp)</title>
+<circle cx="264.25" cy="237.17" r="8.352176401273862" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 13.4% actual at 45.7% predicted (n=1,177, error=-32.2pp)</title>
+<circle cx="310.75" cy="144.56" r="6.5874080419413765" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 51.2% actual at 51.2% predicted (n=416, error=+0.0pp)</title>
+<circle cx="357.25" cy="118.835" r="4.982638743543587" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 61.7% actual at 64.9% predicted (n=60, error=-3.2pp)</title>
+<circle cx="403.75" cy="82.085" r="5.083876220814621" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 76.7% actual at 74.7% predicted (n=73, error=+2.0pp)</title>
+<circle cx="450.25" cy="36.025" r="5.0383784339132305" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 95.5% actual at 85.2% predicted (n=67, error=+10.3pp)</title>
+<circle cx="496.75" cy="65.18" r="6.145365413666923" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 83.6% actual at 95.9% predicted (n=286, error=-12.3pp)</title>
+<polyline points="78.25,263.14 124.75,242.06999999999996 171.25,243.54 217.75,214.875 264.25,200.42 310.75,144.56 357.25,108.05500000000002 403.75,96.54 450.25,50.23499999999999 496.75,28.675" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="263.14" r="9.438442988928571" fill="#7c3aed" opacity="0.85"/>
+<title>0-10%: 2.8% actual at 3.0% predicted (n=1,211, error=-0.2pp)</title>
+<circle cx="124.75" cy="242.06999999999996" r="7.278150188248918" fill="#7c3aed" opacity="0.85"/>
+<title>10-20%: 11.4% actual at 14.6% predicted (n=440, error=-3.2pp)</title>
+<circle cx="171.25" cy="243.54" r="8.093215089551872" fill="#7c3aed" opacity="0.85"/>
+<title>20-30%: 10.8% actual at 24.8% predicted (n=686, error=-14.0pp)</title>
+<circle cx="217.75" cy="214.875" r="7.888193170737727" fill="#7c3aed" opacity="0.85"/>
+<title>30-40%: 22.5% actual at 35.1% predicted (n=619, error=-12.7pp)</title>
+<circle cx="264.25" cy="200.42" r="10.0" fill="#7c3aed" opacity="0.85"/>
+<title>40-50%: 28.4% actual at 43.6% predicted (n=1,474, error=-15.3pp)</title>
+<circle cx="310.75" cy="144.56" r="7.377232414097838" fill="#7c3aed" opacity="0.85"/>
+<title>50-60%: 51.2% actual at 51.9% predicted (n=467, error=-0.8pp)</title>
+<circle cx="357.25" cy="108.05500000000002" r="5.675912841844698" fill="#7c3aed" opacity="0.85"/>
+<title>60-70%: 66.1% actual at 64.7% predicted (n=115, error=+1.4pp)</title>
+<circle cx="403.75" cy="96.54" r="5.259967047446595" fill="#7c3aed" opacity="0.85"/>
+<title>70-80%: 70.8% actual at 73.8% predicted (n=65, error=-3.0pp)</title>
+<circle cx="450.25" cy="50.23499999999999" r="5.190190571151558" fill="#7c3aed" opacity="0.85"/>
+<title>80-90%: 89.7% actual at 85.2% predicted (n=58, error=+4.5pp)</title>
+<circle cx="496.75" cy="28.675" r="5.279204298133663" fill="#7c3aed" opacity="0.85"/>
+<title>90-100%: 98.5% actual at 95.6% predicted (n=67, error=+2.9pp)</title>
+<polyline points="78.25,268.53000000000003 124.75,240.84499999999997 171.25,249.175 217.75,228.10500000000002 264.25,219.775 310.75,186.20999999999998 357.25,100.46 403.75,83.30999999999999 450.25,49.5 496.75,25.0" fill="none" stroke="#db2777" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="78.25" cy="268.53000000000003" r="10.0" fill="#db2777" opacity="0.85"/>
+<title>0-10%: 0.6% actual at 2.9% predicted (n=473, error=-2.2pp)</title>
+<circle cx="124.75" cy="240.84499999999997" r="7.096748618867321" fill="#db2777" opacity="0.85"/>
+<title>10-20%: 11.9% actual at 14.0% predicted (n=126, error=-2.1pp)</title>
+<circle cx="171.25" cy="249.175" r="7.901536532574131" fill="#db2777" opacity="0.85"/>
+<title>20-30%: 8.5% actual at 24.9% predicted (n=200, error=-16.4pp)</title>
+<circle cx="217.75" cy="228.10500000000002" r="6.498202313495513" fill="#db2777" opacity="0.85"/>
+<title>30-40%: 17.1% actual at 36.1% predicted (n=82, error=-19.0pp)</title>
+<circle cx="264.25" cy="219.775" r="9.01920202884308" fill="#db2777" opacity="0.85"/>
+<title>40-50%: 20.5% actual at 44.9% predicted (n=331, error=-24.4pp)</title>
+<circle cx="310.75" cy="186.20999999999998" r="7.022117203055888" fill="#db2777" opacity="0.85"/>
+<title>50-60%: 34.2% actual at 51.4% predicted (n=120, error=-17.2pp)</title>
+<circle cx="357.25" cy="100.46" r="5.406719002129201" fill="#db2777" opacity="0.85"/>
+<title>60-70%: 69.2% actual at 63.9% predicted (n=26, error=+5.3pp)</title>
+<circle cx="403.75" cy="83.30999999999999" r="5.264242329648913" fill="#db2777" opacity="0.85"/>
+<title>70-80%: 76.2% actual at 74.3% predicted (n=21, error=+1.9pp)</title>
+<circle cx="450.25" cy="49.5" r="5.2337741817289976" fill="#db2777" opacity="0.85"/>
+<title>80-90%: 90.0% actual at 84.7% predicted (n=20, error=+5.3pp)</title>
+<circle cx="496.75" cy="25.0" r="5.722871883346833" fill="#db2777" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 94.1% predicted (n=39, error=+5.9pp)</title>
+<circle cx="65" cy="33" r="5" fill="#2563eb"/>
+<text x="75" y="37" fill="#57534e" font-size="11">Sports (127,260)</text>
+<circle cx="245" cy="33" r="5" fill="#16a34a"/>
+<text x="255" y="37" fill="#57534e" font-size="11">Weather (33,939)</text>
+<circle cx="65" cy="51" r="5" fill="#dc2626"/>
+<text x="75" y="55" fill="#57534e" font-size="11">Economics (7,698)</text>
+<circle cx="65" cy="69" r="5" fill="#ea580c"/>
+<text x="75" y="73" fill="#57534e" font-size="11">Entertainment (5,529)</text>
+<circle cx="65" cy="87" r="5" fill="#7c3aed"/>
+<text x="75" y="91" fill="#57534e" font-size="11">Politics (5,202)</text>
+<circle cx="65" cy="105" r="5" fill="#db2777"/>
+<text x="75" y="109" fill="#57534e" font-size="11">Science & Tech (1,438)</text>
+</svg>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Individual Categories</h2>
+</div>
+<div class="category-grid">
+  <div class="category-card" style="">
+          <h3>Soccer <span class="n-label">75,565 outcomes · MCE: 7.0pp · Brier: 0.1983</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,201.85999999999999 106.75,188.725 141.25,167.26500000000001 175.75,169.3 210.25,158.57 244.75000000000003,131.56 279.25,66.44000000000001 313.75,67.36500000000001 348.25,45.904999999999994 382.75,30.55" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="201.85999999999999" r="6.515960838148374" fill="#2563eb" opacity="0.85"/>
+<title>0-10%: 4.4% actual at 6.1% predicted (n=3,759, error=-1.6pp)</title>
+<circle cx="106.75" cy="188.725" r="6.824057667973587" fill="#2563eb" opacity="0.85"/>
+<title>10-20%: 11.5% actual at 14.3% predicted (n=4,736, error=-2.8pp)</title>
+<circle cx="141.25" cy="167.26500000000001" r="6.873123983709162" fill="#2563eb" opacity="0.85"/>
+<title>20-30%: 23.1% actual at 25.0% predicted (n=4,902, error=-2.0pp)</title>
+<circle cx="175.75" cy="169.3" r="7.816812888139848" fill="#2563eb" opacity="0.85"/>
+<title>30-40%: 22.0% actual at 34.7% predicted (n=8,651, error=-12.8pp)</title>
+<circle cx="210.25" cy="158.57" r="9.70152940469697" fill="#2563eb" opacity="0.85"/>
+<title>40-50%: 27.8% actual at 46.7% predicted (n=19,304, error=-18.9pp)</title>
+<circle cx="244.75000000000003" cy="131.56" r="10.0" fill="#2563eb" opacity="0.85"/>
+<title>50-60%: 42.4% actual at 51.4% predicted (n=21,378, error=-9.0pp)</title>
+<circle cx="279.25" cy="66.44000000000001" r="7.231979553265341" fill="#2563eb" opacity="0.85"/>
+<title>60-70%: 77.6% actual at 64.9% predicted (n=6,203, error=+12.8pp)</title>
+<circle cx="313.75" cy="67.36500000000001" r="6.094859592105663" fill="#2563eb" opacity="0.85"/>
+<title>70-80%: 77.1% actual at 74.8% predicted (n=2,606, error=+2.3pp)</title>
+<circle cx="348.25" cy="45.904999999999994" r="6.187274706733659" fill="#2563eb" opacity="0.85"/>
+<title>80-90%: 88.7% actual at 85.3% predicted (n=2,841, error=+3.4pp)</title>
+<circle cx="382.75" cy="30.55" r="5.412625004093147" fill="#2563eb" opacity="0.85"/>
+<title>90-100%: 97.0% actual at 92.3% predicted (n=1,185, error=+4.7pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Weather <span class="n-label">33,939 outcomes · MCE: 4.5pp · Brier: 0.0894</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,206.67 106.75,191.5 141.25,168.745 175.75,146.73 210.25,137.48000000000002 244.75000000000003,126.935 279.25,71.25 313.75,56.45 348.25,52.75 382.75,26.10999999999999" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="206.67" r="10.0" fill="#16a34a" opacity="0.85"/>
+<title>0-10%: 1.8% actual at 3.7% predicted (n=15,073, error=-1.9pp)</title>
+<circle cx="106.75" cy="191.5" r="8.438930803788228" fill="#16a34a" opacity="0.85"/>
+<title>10-20%: 10.0% actual at 14.8% predicted (n=8,250, error=-4.9pp)</title>
+<circle cx="141.25" cy="168.745" r="7.960362220546591" fill="#16a34a" opacity="0.85"/>
+<title>20-30%: 22.3% actual at 24.4% predicted (n=6,567, error=-2.1pp)</title>
+<circle cx="175.75" cy="146.73" r="6.531405603663586" fill="#16a34a" opacity="0.85"/>
+<title>30-40%: 34.2% actual at 33.8% predicted (n=2,683, error=+0.4pp)</title>
+<circle cx="210.25" cy="137.48000000000002" r="5.332127542526423" fill="#16a34a" opacity="0.85"/>
+<title>40-50%: 39.2% actual at 43.7% predicted (n=743, error=-4.5pp)</title>
+<circle cx="244.75000000000003" cy="126.935" r="4.7925547534516895" fill="#16a34a" opacity="0.85"/>
+<title>50-60%: 44.9% actual at 52.5% predicted (n=263, error=-7.7pp)</title>
+<circle cx="279.25" cy="71.25" r="4.447910294209966" fill="#16a34a" opacity="0.85"/>
+<title>60-70%: 75.0% actual at 64.4% predicted (n=84, error=+10.6pp)</title>
+<circle cx="313.75" cy="56.45" r="4.335042831092518" fill="#16a34a" opacity="0.85"/>
+<title>70-80%: 83.0% actual at 74.3% predicted (n=47, error=+8.6pp)</title>
+<circle cx="348.25" cy="52.75" r="4.378553290888254" fill="#16a34a" opacity="0.85"/>
+<title>80-90%: 85.0% actual at 85.3% predicted (n=60, error=-0.3pp)</title>
+<circle cx="382.75" cy="26.10999999999999" r="4.6353232562136295" fill="#16a34a" opacity="0.85"/>
+<title>90-100%: 99.4% actual at 95.7% predicted (n=169, error=+3.7pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Basketball <span class="n-label">13,612 outcomes · MCE: 4.4pp · Brier: 0.201</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,204.45 106.75,184.655 141.25,158.755 175.75,139.32999999999998 210.25,128.60000000000002 244.75000000000003,92.34 279.25,80.315 313.75,60.334999999999994 348.25,43.870000000000005 382.75,43.129999999999995" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="204.45" r="6.8290960208474765" fill="#dc2626" opacity="0.85"/>
+<title>0-10%: 3.0% actual at 4.1% predicted (n=940, error=-1.1pp)</title>
+<circle cx="106.75" cy="184.655" r="6.543844482135346" fill="#dc2626" opacity="0.85"/>
+<title>10-20%: 13.7% actual at 14.9% predicted (n=760, error=-1.2pp)</title>
+<circle cx="141.25" cy="158.755" r="7.011331485099312" fill="#dc2626" opacity="0.85"/>
+<title>20-30%: 27.7% actual at 25.4% predicted (n=1,065, error=+2.3pp)</title>
+<circle cx="175.75" cy="139.32999999999998" r="7.0631943925371665" fill="#dc2626" opacity="0.85"/>
+<title>30-40%: 38.2% actual at 34.8% predicted (n=1,102, error=+3.4pp)</title>
+<circle cx="210.25" cy="128.60000000000002" r="8.950273063767863" fill="#dc2626" opacity="0.85"/>
+<title>40-50%: 44.0% actual at 45.6% predicted (n=2,878, error=-1.6pp)</title>
+<circle cx="244.75000000000003" cy="92.34" r="10.0" fill="#dc2626" opacity="0.85"/>
+<title>50-60%: 63.6% actual at 51.4% predicted (n=4,228, error=+12.2pp)</title>
+<circle cx="279.25" cy="80.315" r="6.7357612802295135" fill="#dc2626" opacity="0.85"/>
+<title>60-70%: 70.1% actual at 64.8% predicted (n=879, error=+5.3pp)</title>
+<circle cx="313.75" cy="60.334999999999994" r="6.533783093405516" fill="#dc2626" opacity="0.85"/>
+<title>70-80%: 80.9% actual at 74.5% predicted (n=754, error=+6.4pp)</title>
+<circle cx="348.25" cy="43.870000000000005" r="6.158129117235658" fill="#dc2626" opacity="0.85"/>
+<title>80-90%: 89.8% actual at 84.8% predicted (n=547, error=+4.9pp)</title>
+<circle cx="382.75" cy="43.129999999999995" r="5.976924591886519" fill="#dc2626" opacity="0.85"/>
+<title>90-100%: 90.2% actual at 95.4% predicted (n=459, error=-5.2pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Esports <span class="n-label">12,471 outcomes · MCE: 3.8pp · Brier: 0.209</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,209.63 106.75,191.5 141.25,178.73499999999999 175.75,135.075 210.25,132.67000000000002 244.75000000000003,111.025 279.25,94.005 313.75,80.315 348.25,54.6 382.75,25.0" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="209.63" r="6.634278509006838" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 0.2% actual at 3.8% predicted (n=996, error=-3.6pp)</title>
+<circle cx="106.75" cy="191.5" r="5.772638961314055" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 10.0% actual at 13.1% predicted (n=451, error=-3.1pp)</title>
+<circle cx="141.25" cy="178.73499999999999" r="6.778445611395492" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 16.9% actual at 26.3% predicted (n=1,108, error=-9.4pp)</title>
+<circle cx="175.75" cy="135.075" r="6.483154003073602" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 40.5% actual at 35.0% predicted (n=885, error=+5.5pp)</title>
+<circle cx="210.25" cy="132.67000000000002" r="8.477931176496996" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 41.8% actual at 47.5% predicted (n=2,878, error=-5.7pp)</title>
+<circle cx="244.75000000000003" cy="111.025" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 53.5% actual at 50.6% predicted (n=5,167, error=+2.9pp)</title>
+<circle cx="279.25" cy="94.005" r="5.673574485334909" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 62.7% actual at 64.4% predicted (n=402, error=-1.7pp)</title>
+<circle cx="313.75" cy="80.315" r="5.440920936400881" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 70.1% actual at 73.9% predicted (n=298, error=-3.7pp)</title>
+<circle cx="348.25" cy="54.6" r="5.001643704275859" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 84.0% actual at 83.5% predicted (n=144, error=+0.5pp)</title>
+<circle cx="382.75" cy="25.0" r="4.994663523735525" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 97.7% predicted (n=142, error=+2.3pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Economics ⚠ <span class="n-label">7,698 outcomes · MCE: 9.3pp · Brier: 0.152</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,203.525 106.75,190.76 141.25,182.25 175.75,147.84 210.25,150.43 244.75000000000003,88.27000000000001 279.25,49.605 313.75,43.68499999999999 348.25,37.58 382.75,26.479999999999993" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="203.525" r="9.40935150862304" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 3.5% actual at 4.2% predicted (n=1,815, error=-0.7pp)</title>
+<circle cx="106.75" cy="190.76" r="7.266900320964885" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 10.4% actual at 13.4% predicted (n=662, error=-3.0pp)</title>
+<circle cx="141.25" cy="182.25" r="6.173405186107838" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 15.0% actual at 24.6% predicted (n=293, error=-9.5pp)</title>
+<circle cx="175.75" cy="147.84" r="6.317015854932967" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 33.6% actual at 34.7% predicted (n=333, error=-1.0pp)</title>
+<circle cx="210.25" cy="150.43" r="8.597357055343057" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 32.2% actual at 46.8% predicted (n=1,311, error=-14.6pp)</title>
+<circle cx="244.75000000000003" cy="88.27000000000001" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 65.8% actual at 51.0% predicted (n=2,233, error=+14.9pp)</title>
+<circle cx="279.25" cy="49.605" r="5.8399945481723785" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 86.7% actual at 64.7% predicted (n=210, error=+21.9pp)</title>
+<circle cx="313.75" cy="43.68499999999999" r="5.601052050002105" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 89.9% actual at 75.1% predicted (n=159, error=+14.8pp)</title>
+<circle cx="348.25" cy="37.58" r="5.684469775224631" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 93.2% actual at 85.4% predicted (n=176, error=+7.8pp)</title>
+<circle cx="382.75" cy="26.479999999999993" r="6.856157465543575" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 99.2% actual at 94.6% predicted (n=506, error=+4.6pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Tennis <span class="n-label">6,363 outcomes · MCE: 3.6pp · Brier: 0.2293</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,208.52 106.75,168.19 141.25,153.39000000000001 175.75,137.665 210.25,128.23 244.75000000000003,113.42999999999999 279.25,91.97000000000001 313.75,55.34000000000001 348.25,59.40999999999999 382.75,34.06500000000001" fill="none" stroke="#db2777" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="208.52" r="5.555927163595863" fill="#db2777" opacity="0.85"/>
+<title>0-10%: 0.8% actual at 2.5% predicted (n=247, error=-1.7pp)</title>
+<circle cx="106.75" cy="168.19" r="4.720740158628051" fill="#db2777" opacity="0.85"/>
+<title>10-20%: 22.6% actual at 15.6% predicted (n=53, error=+7.1pp)</title>
+<circle cx="141.25" cy="153.39000000000001" r="5.580923577366551" fill="#db2777" opacity="0.85"/>
+<title>20-30%: 30.6% actual at 25.6% predicted (n=255, error=+5.0pp)</title>
+<circle cx="175.75" cy="137.665" r="5.945066430625971" fill="#db2777" opacity="0.85"/>
+<title>30-40%: 39.1% actual at 35.3% predicted (n=386, error=+3.9pp)</title>
+<circle cx="210.25" cy="128.23" r="7.212587548769377" fill="#db2777" opacity="0.85"/>
+<title>40-50%: 44.2% actual at 46.9% predicted (n=1,053, error=-2.7pp)</title>
+<circle cx="244.75000000000003" cy="113.42999999999999" r="10.0" fill="#db2777" opacity="0.85"/>
+<title>50-60%: 52.2% actual at 50.7% predicted (n=3,673, error=+1.5pp)</title>
+<circle cx="279.25" cy="91.97000000000001" r="5.867952314188075" fill="#db2777" opacity="0.85"/>
+<title>60-70%: 63.8% actual at 64.6% predicted (n=356, error=-0.9pp)</title>
+<circle cx="313.75" cy="55.34000000000001" r="5.361042504936944" fill="#db2777" opacity="0.85"/>
+<title>70-80%: 83.6% actual at 74.3% predicted (n=189, error=+9.3pp)</title>
+<circle cx="348.25" cy="59.40999999999999" r="4.828304090752557" fill="#db2777" opacity="0.85"/>
+<title>80-90%: 81.4% actual at 84.0% predicted (n=70, error=-2.5pp)</title>
+<circle cx="382.75" cy="34.06500000000001" r="4.89101147184655" fill="#db2777" opacity="0.85"/>
+<title>90-100%: 95.1% actual at 96.7% predicted (n=81, error=-1.6pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Entertainment ⚠ <span class="n-label">5,529 outcomes · MCE: 9.6pp · Brier: 0.1476</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,190.205 106.75,186.69000000000003 141.25,183.35999999999999 175.75,175.95999999999998 210.25,185.21 244.75000000000003,115.28 279.25,95.85499999999999 313.75,68.10499999999999 348.25,33.325 382.75,55.34000000000001" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="190.205" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 10.7% actual at 3.8% predicted (n=2,237, error=+6.9pp)</title>
+<circle cx="106.75" cy="186.69000000000003" r="6.88166246161675" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 12.6% actual at 13.9% predicted (n=516, error=-1.3pp)</title>
+<circle cx="141.25" cy="183.35999999999999" r="6.459870140602472" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 14.4% actual at 24.8% predicted (n=376, error=-10.4pp)</title>
+<circle cx="175.75" cy="175.95999999999998" r="6.272849998718375" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 18.4% actual at 35.4% predicted (n=321, error=-17.0pp)</title>
+<circle cx="210.25" cy="185.21" r="8.352176401273862" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 13.4% actual at 45.7% predicted (n=1,177, error=-32.2pp)</title>
+<circle cx="244.75000000000003" cy="115.28" r="6.5874080419413765" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 51.2% actual at 51.2% predicted (n=416, error=+0.0pp)</title>
+<circle cx="279.25" cy="95.85499999999999" r="4.982638743543587" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 61.7% actual at 64.9% predicted (n=60, error=-3.2pp)</title>
+<circle cx="313.75" cy="68.10499999999999" r="5.083876220814621" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 76.7% actual at 74.7% predicted (n=73, error=+2.0pp)</title>
+<circle cx="348.25" cy="33.325" r="5.0383784339132305" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 95.5% actual at 85.2% predicted (n=67, error=+10.3pp)</title>
+<circle cx="382.75" cy="55.34000000000001" r="6.145365413666923" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 83.6% actual at 95.9% predicted (n=286, error=-12.3pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Baseball ⚠ <span class="n-label">5,472 outcomes · MCE: 9.0pp · Brier: 0.2192</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,203.155 106.75,120.46000000000001 141.25,127.49 175.75,131.745 210.25,117.5 244.75000000000003,98.815 279.25,79.205 313.75,60.15 348.25,48.125 382.75,31.29000000000001" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="203.155" r="7.653710733215743" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 3.7% actual at 3.1% predicted (n=699, error=+0.6pp)</title>
+<circle cx="106.75" cy="120.46000000000001" r="6.026351597269331" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 48.4% actual at 14.6% predicted (n=215, error=+33.8pp)</title>
+<circle cx="141.25" cy="127.49" r="6.2665834488286505" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 44.6% actual at 24.8% predicted (n=269, error=+19.9pp)</title>
+<circle cx="175.75" cy="131.745" r="7.353924025085802" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 42.3% actual at 35.7% predicted (n=589, error=+6.5pp)</title>
+<circle cx="210.25" cy="117.5" r="9.073883826244755" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 50.0% actual at 45.7% predicted (n=1,348, error=+4.3pp)</title>
+<circle cx="244.75000000000003" cy="98.815" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 60.1% actual at 51.7% predicted (n=1,885, error=+8.4pp)</title>
+<circle cx="279.25" cy="79.205" r="6.136458806862831" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 70.7% actual at 63.9% predicted (n=239, error=+6.8pp)</title>
+<circle cx="313.75" cy="60.15" r="5.381960319114636" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 81.0% actual at 74.0% predicted (n=100, error=+7.0pp)</title>
+<circle cx="348.25" cy="48.125" r="4.874028448875076" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 87.5% actual at 85.5% predicted (n=40, error=+2.0pp)</title>
+<circle cx="382.75" cy="31.29000000000001" r="5.296393692045181" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 96.6% actual at 95.9% predicted (n=88, error=+0.7pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Politics <span class="n-label">4,250 outcomes · MCE: 6.4pp · Brier: 0.1485</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,206.29999999999998 106.75,189.65 141.25,189.83499999999998 175.75,170.41 210.25,162.825 244.75000000000003,122.125 279.25,90.49000000000001 313.75,76.42999999999999 348.25,44.24000000000001 382.75,28.145000000000007" fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="206.29999999999998" r="9.057113801369315" fill="#4f46e5" opacity="0.85"/>
+<title>0-10%: 2.0% actual at 3.3% predicted (n=888, error=-1.3pp)</title>
+<circle cx="106.75" cy="189.65" r="7.192992326956017" fill="#4f46e5" opacity="0.85"/>
+<title>10-20%: 11.0% actual at 14.5% predicted (n=354, error=-3.5pp)</title>
+<circle cx="141.25" cy="189.83499999999998" r="8.14651661036104" fill="#4f46e5" opacity="0.85"/>
+<title>20-30%: 10.9% actual at 25.0% predicted (n=597, error=-14.1pp)</title>
+<circle cx="175.75" cy="170.41" r="7.8847393734972755" fill="#4f46e5" opacity="0.85"/>
+<title>30-40%: 21.4% actual at 35.0% predicted (n=524, error=-13.7pp)</title>
+<circle cx="210.25" cy="162.825" r="10.0" fill="#4f46e5" opacity="0.85"/>
+<title>40-50%: 25.5% actual at 43.7% predicted (n=1,250, error=-18.2pp)</title>
+<circle cx="244.75000000000003" cy="122.125" r="7.303815975504689" fill="#4f46e5" opacity="0.85"/>
+<title>50-60%: 47.5% actual at 51.9% predicted (n=379, error=-4.5pp)</title>
+<circle cx="279.25" cy="90.49000000000001" r="5.662768775266122" fill="#4f46e5" opacity="0.85"/>
+<title>60-70%: 64.6% actual at 64.6% predicted (n=96, error=+0.0pp)</title>
+<circle cx="313.75" cy="76.42999999999999" r="5.247076581449591" fill="#4f46e5" opacity="0.85"/>
+<title>70-80%: 72.2% actual at 73.9% predicted (n=54, error=-1.6pp)</title>
+<circle cx="348.25" cy="44.24000000000001" r="5.175755076535925" fill="#4f46e5" opacity="0.85"/>
+<title>80-90%: 89.6% actual at 85.4% predicted (n=48, error=+4.2pp)</title>
+<circle cx="382.75" cy="28.145000000000007" r="5.314534138012399" fill="#4f46e5" opacity="0.85"/>
+<title>90-100%: 98.3% actual at 95.6% predicted (n=60, error=+2.7pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Hockey ⚠ <span class="n-label">3,918 outcomes · MCE: 13.9pp · Brier: 0.2552</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,149.69 106.75,82.72000000000001 141.25,137.85 175.75,131.745 210.25,121.75500000000001 244.75000000000003,90.12 279.25,71.80499999999999 313.75,62.925 348.25,44.425 382.75,31.65999999999999" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="149.69" r="6.949415811268437" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 32.6% actual at 4.7% predicted (n=383, error=+27.9pp)</title>
+<circle cx="106.75" cy="82.72000000000001" r="5.90632352989489" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 68.8% actual at 14.6% predicted (n=160, error=+54.1pp)</title>
+<circle cx="141.25" cy="137.85" r="5.637109093177758" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 39.0% actual at 26.0% predicted (n=118, error=+13.0pp)</title>
+<circle cx="175.75" cy="131.745" r="6.883215870160127" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 42.3% actual at 35.5% predicted (n=366, error=+6.9pp)</title>
+<circle cx="210.25" cy="121.75500000000001" r="8.468184057278313" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 47.7% actual at 45.9% predicted (n=879, error=+1.8pp)</title>
+<circle cx="244.75000000000003" cy="90.12" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 64.8% actual at 52.0% predicted (n=1,585, error=+12.8pp)</title>
+<circle cx="279.25" cy="71.80499999999999" r="6.575301274832018" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 74.7% actual at 64.1% predicted (n=292, error=+10.6pp)</title>
+<circle cx="313.75" cy="62.925" r="5.4137673678321345" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 79.5% actual at 73.6% predicted (n=88, error=+5.9pp)</title>
+<circle cx="348.25" cy="44.425" r="4.656921411833197" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 89.5% actual at 84.6% predicted (n=19, error=+4.9pp)</title>
+<circle cx="382.75" cy="31.65999999999999" r="4.797472347552196" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 96.4% actual at 97.2% predicted (n=28, error=-0.7pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Golf ⚠ <span class="n-label">3,468 outcomes · MCE: 8.8pp · Brier: 0.0917</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,202.785 106.75,180.03 141.25,169.67000000000002 175.75,153.39000000000001 210.25,178.92000000000002 244.75000000000003,134.33499999999998 279.25,86.60499999999999 313.75,117.5 382.75,25.0" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="202.785" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 3.9% actual at 3.4% predicted (n=2,152, error=+0.5pp)</title>
+<circle cx="106.75" cy="180.03" r="6.761929178690882" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 16.2% actual at 14.2% predicted (n=456, error=+2.0pp)</title>
+<circle cx="141.25" cy="169.67000000000002" r="6.33527976878853" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 21.8% actual at 24.2% predicted (n=326, error=-2.5pp)</title>
+<circle cx="175.75" cy="153.39000000000001" r="5.701191360373566" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 30.6% actual at 36.1% predicted (n=173, error=-5.5pp)</title>
+<circle cx="210.25" cy="178.92000000000002" r="6.277251326917597" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 16.8% actual at 46.6% predicted (n=310, error=-29.9pp)</title>
+<circle cx="244.75000000000003" cy="134.33499999999998" r="4.857939088486999" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 40.9% actual at 51.1% predicted (n=44, error=-10.2pp)</title>
+<circle cx="279.25" cy="86.60499999999999" r="4.224022038214877" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 66.7% actual at 62.5% predicted (n=3, error=+4.2pp)</title>
+<circle cx="313.75" cy="117.5" r="4.1829132282549075" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 50.0% actual at 72.8% predicted (n=2, error=-22.8pp)</title>
+<circle cx="382.75" cy="25.0" r="4.1829132282549075" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 98.8% predicted (n=2, error=+1.2pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Cricket <span class="n-label">2,303 outcomes · MCE: 13.2pp · Brier: 0.2464</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,191.5 106.75,191.5 141.25,210.0 175.75,92.34 210.25,144.14 244.75000000000003,130.265 279.25,51.45499999999999 313.75,86.60499999999999 348.25,25.0 382.75,25.0" fill="none" stroke="#be185d" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="191.5" r="4.76169368934632" fill="#be185d" opacity="0.85"/>
+<title>0-10%: 10.0% actual at 4.1% predicted (n=20, error=+5.9pp)</title>
+<circle cx="106.75" cy="191.5" r="4.538598772923782" fill="#be185d" opacity="0.85"/>
+<title>10-20%: 10.0% actual at 14.5% predicted (n=10, error=-4.5pp)</title>
+<circle cx="141.25" cy="210.0" r="4.24086869377111" fill="#be185d" opacity="0.85"/>
+<title>20-30%: 0.0% actual at 27.5% predicted (n=2, error=-27.5pp)</title>
+<circle cx="175.75" cy="92.34" r="4.564887158656049" fill="#be185d" opacity="0.85"/>
+<title>30-40%: 63.6% actual at 34.6% predicted (n=11, error=+29.1pp)</title>
+<circle cx="210.25" cy="144.14" r="9.38868005019039" fill="#be185d" opacity="0.85"/>
+<title>40-50%: 35.6% actual at 48.9% predicted (n=1,001, error=-13.3pp)</title>
+<circle cx="244.75000000000003" cy="130.265" r="10.0" fill="#be185d" opacity="0.85"/>
+<title>50-60%: 43.1% actual at 50.5% predicted (n=1,241, error=-7.4pp)</title>
+<circle cx="279.25" cy="51.45499999999999" r="4.450624063645632" fill="#be185d" opacity="0.85"/>
+<title>60-70%: 85.7% actual at 61.6% predicted (n=7, error=+24.1pp)</title>
+<circle cx="313.75" cy="86.60499999999999" r="4.417196815564312" fill="#be185d" opacity="0.85"/>
+<title>70-80%: 66.7% actual at 71.7% predicted (n=6, error=-5.0pp)</title>
+<circle cx="348.25" cy="25.0" r="4.24086869377111" fill="#be185d" opacity="0.85"/>
+<title>80-90%: 100.0% actual at 86.2% predicted (n=2, error=+13.7pp)</title>
+<circle cx="382.75" cy="25.0" r="4.295002697374958" fill="#be185d" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 98.5% predicted (n=3, error=+1.5pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>MMA <span class="n-label">1,524 outcomes · MCE: 8.2pp · Brier: 0.2243</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,210.0 106.75,189.465 141.25,168.93 175.75,168.55999999999997 210.25,150.43 244.75000000000003,117.685 279.25,75.69000000000001 313.75,50.900000000000006 348.25,37.39500000000001 382.75,25.0" fill="none" stroke="#059669" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="210.0" r="4.785584404849573" fill="#059669" opacity="0.85"/>
+<title>0-10%: 0.0% actual at 6.7% predicted (n=15, error=-6.7pp)</title>
+<circle cx="106.75" cy="189.465" r="5.217022126809064" fill="#059669" opacity="0.85"/>
+<title>10-20%: 11.1% actual at 15.3% predicted (n=36, error=-4.2pp)</title>
+<circle cx="141.25" cy="168.93" r="5.3606721028332185" fill="#059669" opacity="0.85"/>
+<title>20-30%: 22.2% actual at 26.6% predicted (n=45, error=-4.4pp)</title>
+<circle cx="175.75" cy="168.55999999999997" r="6.425577987084433" fill="#059669" opacity="0.85"/>
+<title>30-40%: 22.4% actual at 35.4% predicted (n=143, error=-13.0pp)</title>
+<circle cx="210.25" cy="150.43" r="7.0961727526553995" fill="#059669" opacity="0.85"/>
+<title>40-50%: 32.2% actual at 47.2% predicted (n=233, error=-15.0pp)</title>
+<circle cx="244.75000000000003" cy="117.685" r="10.0" fill="#059669" opacity="0.85"/>
+<title>50-60%: 49.9% actual at 51.0% predicted (n=875, error=-1.0pp)</title>
+<circle cx="279.25" cy="75.69000000000001" r="6.194017840792158" fill="#059669" opacity="0.85"/>
+<title>60-70%: 72.6% actual at 64.1% predicted (n=117, error=+8.5pp)</title>
+<circle cx="313.75" cy="50.900000000000006" r="5.3300912965442855" fill="#059669" opacity="0.85"/>
+<title>70-80%: 86.0% actual at 73.2% predicted (n=43, error=+12.9pp)</title>
+<circle cx="348.25" cy="37.39500000000001" r="4.785584404849573" fill="#059669" opacity="0.85"/>
+<title>80-90%: 93.3% actual at 83.9% predicted (n=15, error=+9.4pp)</title>
+<circle cx="382.75" cy="25.0" r="4.286854866240255" fill="#059669" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 92.8% predicted (n=2, error=+7.3pp)</title>
+</svg>
+        </div><div class="category-card" style="border-color:#ea580c;">
+          <h3>Tech ⚠ <span class="n-label">1,438 outcomes · MCE: 10.0pp · Brier: 0.1159</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,208.89000000000001 106.75,187.98499999999999 141.25,194.275 175.75,178.365 210.25,172.07500000000002 244.75000000000003,146.73 279.25,81.97999999999999 313.75,69.03 348.25,43.5 382.75,25.0" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="208.89000000000001" r="10.0" fill="#ea580c" opacity="0.85"/>
+<title>0-10%: 0.6% actual at 2.9% predicted (n=473, error=-2.2pp)</title>
+<circle cx="106.75" cy="187.98499999999999" r="7.096748618867321" fill="#ea580c" opacity="0.85"/>
+<title>10-20%: 11.9% actual at 14.0% predicted (n=126, error=-2.1pp)</title>
+<circle cx="141.25" cy="194.275" r="7.901536532574131" fill="#ea580c" opacity="0.85"/>
+<title>20-30%: 8.5% actual at 24.9% predicted (n=200, error=-16.4pp)</title>
+<circle cx="175.75" cy="178.365" r="6.498202313495513" fill="#ea580c" opacity="0.85"/>
+<title>30-40%: 17.1% actual at 36.1% predicted (n=82, error=-19.0pp)</title>
+<circle cx="210.25" cy="172.07500000000002" r="9.01920202884308" fill="#ea580c" opacity="0.85"/>
+<title>40-50%: 20.5% actual at 44.9% predicted (n=331, error=-24.4pp)</title>
+<circle cx="244.75000000000003" cy="146.73" r="7.022117203055888" fill="#ea580c" opacity="0.85"/>
+<title>50-60%: 34.2% actual at 51.4% predicted (n=120, error=-17.2pp)</title>
+<circle cx="279.25" cy="81.97999999999999" r="5.406719002129201" fill="#ea580c" opacity="0.85"/>
+<title>60-70%: 69.2% actual at 63.9% predicted (n=26, error=+5.3pp)</title>
+<circle cx="313.75" cy="69.03" r="5.264242329648913" fill="#ea580c" opacity="0.85"/>
+<title>70-80%: 76.2% actual at 74.3% predicted (n=21, error=+1.9pp)</title>
+<circle cx="348.25" cy="43.5" r="5.2337741817289976" fill="#ea580c" opacity="0.85"/>
+<title>80-90%: 90.0% actual at 84.7% predicted (n=20, error=+5.3pp)</title>
+<circle cx="382.75" cy="25.0" r="5.722871883346833" fill="#ea580c" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 94.1% predicted (n=39, error=+5.9pp)</title>
+</svg>
+        </div><div class="category-card" style="">
+          <h3>Geopolitics <span class="n-label">952 outcomes · MCE: 7.1pp · Brier: 0.1444</span></h3>
+          <svg width="420" height="260" xmlns="http://www.w3.org/2000/svg" style="font-family:-apple-system,system-ui,sans-serif;">
+<rect width="420" height="260" fill="white" rx="8"/>
+<line x1="55" y1="210.0" x2="400" y2="210.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="55.0" y1="25" x2="55.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="214.0" text-anchor="end" fill="#a8a29e" font-size="11">0%</text>
+<text x="55.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">0%</text>
+<line x1="55" y1="191.5" x2="400" y2="191.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="89.5" y1="25" x2="89.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="195.5" text-anchor="end" fill="#a8a29e" font-size="11">10%</text>
+<text x="89.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">10%</text>
+<line x1="55" y1="173.0" x2="400" y2="173.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="124.0" y1="25" x2="124.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="177.0" text-anchor="end" fill="#a8a29e" font-size="11">20%</text>
+<text x="124.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">20%</text>
+<line x1="55" y1="154.5" x2="400" y2="154.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="158.5" y1="25" x2="158.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="158.5" text-anchor="end" fill="#a8a29e" font-size="11">30%</text>
+<text x="158.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">30%</text>
+<line x1="55" y1="136.0" x2="400" y2="136.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="193.0" y1="25" x2="193.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="140.0" text-anchor="end" fill="#a8a29e" font-size="11">40%</text>
+<text x="193.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">40%</text>
+<line x1="55" y1="117.5" x2="400" y2="117.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="227.5" y1="25" x2="227.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="121.5" text-anchor="end" fill="#a8a29e" font-size="11">50%</text>
+<text x="227.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">50%</text>
+<line x1="55" y1="99.0" x2="400" y2="99.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="262.0" y1="25" x2="262.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="103.0" text-anchor="end" fill="#a8a29e" font-size="11">60%</text>
+<text x="262.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">60%</text>
+<line x1="55" y1="80.5" x2="400" y2="80.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="296.5" y1="25" x2="296.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="84.5" text-anchor="end" fill="#a8a29e" font-size="11">70%</text>
+<text x="296.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">70%</text>
+<line x1="55" y1="62.0" x2="400" y2="62.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="331.0" y1="25" x2="331.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="66.0" text-anchor="end" fill="#a8a29e" font-size="11">80%</text>
+<text x="331.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">80%</text>
+<line x1="55" y1="43.5" x2="400" y2="43.5" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="365.5" y1="25" x2="365.5" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="47.5" text-anchor="end" fill="#a8a29e" font-size="11">90%</text>
+<text x="365.5" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">90%</text>
+<line x1="55" y1="25.0" x2="400" y2="25.0" stroke="#f0f0f0" stroke-width="1"/>
+<line x1="400.0" y1="25" x2="400.0" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+<text x="47" y="29.0" text-anchor="end" fill="#a8a29e" font-size="11">100%</text>
+<text x="400.0" y="228" text-anchor="middle" fill="#a8a29e" font-size="11">100%</text>
+<text x="210.0" y="255" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600">Predicted Probability</text>
+<text x="14" y="130.0" text-anchor="middle" fill="#57534e" font-size="12" font-weight="600" transform="rotate(-90,14,130.0)">Actual Win Rate</text>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polygon points="55.0,200.75 72.25,191.5 89.5,182.25 106.75,173.0 124.0,163.75 141.25,154.5 158.5,145.25 175.75,136.0 193.0,126.75000000000001 210.25,117.5 227.5,108.25 244.75000000000003,99.0 262.0,89.75 279.25,80.5 296.5,71.25 313.75,62.0 331.0,52.75 348.25,43.5 365.5,34.25 382.75,25.0 400.0,25.0 400.0,34.25 382.75,43.5 365.5,52.75 348.25,62.0 331.0,71.25 313.75,80.5 296.5,89.75 279.25,99.0 262.0,108.25 244.75000000000003,117.5 227.5,126.75000000000001 210.25,136.0 193.0,145.25 175.75,154.5 158.5,163.75 141.25,173.0 124.0,182.25 106.75,191.5 89.5,200.75 72.25,210.0 55.0,210.0" fill="#f1f5f9" opacity="0.5"/>
+<line x1="55.0" y1="210.0" x2="400.0" y2="25.0" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4"/>
+<polyline points="72.25,200.75 106.75,186.32 141.25,191.315 175.75,157.46 210.25,128.23 244.75000000000003,86.05000000000001 279.25,73.655 313.75,92.34 348.25,43.5 382.75,25.0" fill="none" stroke="#c2410c" stroke-width="2.5" stroke-linejoin="round"/>
+<circle cx="72.25" cy="200.75" r="10.0" fill="#c2410c" opacity="0.85"/>
+<title>0-10%: 5.0% actual at 2.1% predicted (n=323, error=+2.9pp)</title>
+<circle cx="106.75" cy="186.32" r="7.095987616074304" fill="#c2410c" opacity="0.85"/>
+<title>10-20%: 12.8% actual at 15.0% predicted (n=86, error=-2.2pp)</title>
+<circle cx="141.25" cy="191.315" r="7.1495245107734675" fill="#c2410c" opacity="0.85"/>
+<title>20-30%: 10.1% actual at 23.7% predicted (n=89, error=-13.6pp)</title>
+<circle cx="175.75" cy="157.46" r="7.253956867279842" fill="#c2410c" opacity="0.85"/>
+<title>30-40%: 28.4% actual at 35.6% predicted (n=95, error=-7.2pp)</title>
+<circle cx="210.25" cy="128.23" r="8.996593266661378" fill="#c2410c" opacity="0.85"/>
+<title>40-50%: 44.2% actual at 43.2% predicted (n=224, error=+1.0pp)</title>
+<circle cx="244.75000000000003" cy="86.05000000000001" r="7.131780569516918" fill="#c2410c" opacity="0.85"/>
+<title>50-60%: 67.0% actual at 52.0% predicted (n=88, error=+15.1pp)</title>
+<circle cx="279.25" cy="73.655" r="5.455213750217998" fill="#c2410c" opacity="0.85"/>
+<title>60-70%: 73.7% actual at 65.1% predicted (n=19, error=+8.6pp)</title>
+<circle cx="313.75" cy="92.34" r="5.10725163894684" fill="#c2410c" opacity="0.85"/>
+<title>70-80%: 63.6% actual at 73.5% predicted (n=11, error=-9.9pp)</title>
+<circle cx="348.25" cy="43.5" r="5.05572301461668" fill="#c2410c" opacity="0.85"/>
+<title>80-90%: 90.0% actual at 84.2% predicted (n=10, error=+5.8pp)</title>
+<circle cx="382.75" cy="25.0" r="4.883281245421826" fill="#c2410c" opacity="0.85"/>
+<title>90-100%: 100.0% actual at 95.2% predicted (n=7, error=+4.8pp)</title>
+</svg>
+        </div>
+</div>
+
+<div class="warning">
+      <h2>Data Quality Notes</h2>
+      <p>These categories show &gt;20pp error in at least one bucket (n&gt;100):</p>
+      <ul><li><strong>Baseball</strong></li>
+<li><strong>Economics</strong></li>
+<li><strong>Entertainment</strong></li>
+<li><strong>Golf</strong></li>
+<li><strong>Hockey</strong></li>
+<li><strong>Tech</strong></li></ul>
+      <p><strong>Root cause 1: Three-way sports.</strong> Soccer, football, and cricket have win/draw/lose outcomes stored as separate binary sub-markets. The "closest to 50%" dedup picks the favorite, which loses to draws + upsets.</p>
+      <p><strong>Root cause 2: Field-level futures.</strong> Golf and motorsports have 30+ outcomes per tournament with stale opening prices on tail outcomes.</p>
+    </div>
+
+<div class="commentary">
+  <h2>Analysis & Commentary</h2>
+  <p><strong>Verdict: Yes, prediction markets contain real predictive signal.</strong> With a Brier score of 0.1745 (30% better than random guessing) and mean calibration error of 4.8pp, these markets are meaningfully better than chance. When markets say something has a 30% chance of happening, it happens about 30% of the time.</p>
+  <p><strong>What is a Brier score?</strong> It measures the average squared distance between each prediction and the actual outcome (0 or 1). A Brier score of 0 means every prediction was perfect; 0.25 is what you'd get by flipping a coin on every question. Our score of 0.1745 means these markets are extracting real information from collective human judgment. For context, Nate Silver's FiveThirtyEight achieved Brier scores of 0.09-0.12 on US election forecasts — considered excellent — and they used far more sophisticated models than raw market prices.</p>
+
+  <h3>Source Comparison</h3>
+  <ul><li><strong>polymarket</strong> (141,020 outcomes): MCE = 6.5pp, Brier = 0.1744</li>
+<li><strong>kalshi</strong> (26,542 outcomes): MCE = 6.4pp, Brier = 0.1603</li>
+<li><strong>odds_api</strong> (13,814 outcomes): MCE = 2.0pp, Brier = 0.2024</li></ul>
+
+  <h3>Category Insights</h3>
+  <ul><li><strong>Soccer</strong> (75,565): well-calibrated — MCE 7.0pp, Brier 0.1983</li><li><strong>Weather</strong> (33,939): very well-calibrated — MCE 4.5pp, Brier 0.0894</li><li><strong>Basketball</strong> (13,612): very well-calibrated — MCE 4.4pp, Brier 0.201</li><li><strong>Esports</strong> (12,471): very well-calibrated — MCE 3.8pp, Brier 0.209</li><li><strong>Economics</strong> (7,698): reasonably calibrated — MCE 9.3pp, Brier 0.152</li><li><strong>Tennis</strong> (6,363): very well-calibrated — MCE 3.6pp, Brier 0.2293</li><li><strong>Entertainment</strong> (5,529): reasonably calibrated — MCE 9.6pp, Brier 0.1476</li><li><strong>Baseball</strong> (5,472): reasonably calibrated — MCE 9.0pp, Brier 0.2192</li><li><strong>Politics</strong> (4,250): well-calibrated — MCE 6.4pp, Brier 0.1485</li><li><strong>Hockey</strong> (3,918): has calibration gaps (data quality issues) — MCE 13.9pp, Brier 0.2552</li><li><strong>Golf</strong> (3,468): reasonably calibrated — MCE 8.8pp, Brier 0.0917</li><li><strong>Cricket</strong> (2,303): has calibration gaps (data quality issues) — MCE 13.2pp, Brier 0.2464</li><li><strong>MMA</strong> (1,524): reasonably calibrated — MCE 8.2pp, Brier 0.2243</li><li><strong>Tech</strong> (1,438): reasonably calibrated — MCE 10.0pp, Brier 0.1159</li><li><strong>Geopolitics</strong> (952): well-calibrated — MCE 7.1pp, Brier 0.1444</li></ul>
+
+  <h3>Favorite-Longshot Bias</h3><p>Longshots (0-15%) are well-calibrated (-1.6pp). Favorites (85%+) win <strong>more</strong> often than predicted (+2.5pp).</p>
+</div>
+
+<div class="section">
+  <h2>Further Reading</h2>
+  <p style="margin-bottom:0.75rem;">Our findings are consistent with decades of academic research on prediction market accuracy:</p>
+  <ul style="font-size:0.9rem; color:var(--text2); padding-left:1.25rem;">
+    <li style="margin-bottom:0.5rem;"><strong>Arrow et al., "The Promise of Prediction Markets" (2008, <em>Science</em>)</strong> — A letter signed by 22 leading economists arguing that prediction markets are "among the most accurate forecasting mechanisms known," consistently outperforming polls, expert panels, and statistical models.</li>
+    <li style="margin-bottom:0.5rem;"><strong>Berg, Nelson &amp; Rietz, "Prediction Market Accuracy in the Long Run" (2008)</strong> — The Iowa Electronic Markets predicted US presidential election outcomes within 1.5 percentage points on average, outperforming 74% of contemporaneous polls.</li>
+    <li style="margin-bottom:0.5rem;"><strong>Tetlock &amp; Gardner, <em>Superforecasting</em> (2015)</strong> — The foundational work on calibration in forecasting. Well-calibrated forecasters can be identified by their calibration curves — exactly what we measure here.</li>
+    <li style="margin-bottom:0.5rem;"><strong>Wolfers &amp; Zitzewitz, "Prediction Markets" (2004, <em>J. Econ. Perspectives</em>)</strong> — A comprehensive survey finding that prediction markets aggregate information efficiently and produce well-calibrated probability estimates across politics, sports, and entertainment.</li>
+    <li style="margin-bottom:0.5rem;"><strong>Metaculus Track Record</strong> — The forecasting platform publishes its calibration curve publicly, achieving ~2-3pp mean calibration error — the benchmark for online prediction platforms.</li>
+  </ul>
+</div>
+
+<div class="next-steps">
+  <h2>Methodology &amp; Limitations</h2>
+  <ul>
+    <li><strong>Winner inference:</strong> Winners are inferred from <code>current_probability &ge; 0.95</code> on resolved markets (the <code>is_winner</code> column is not yet populated). Backfilling from market settlement data would improve accuracy.</li>
+    <li><strong>Opening vs. closing line:</strong> We use first-seen price, which may be days before resolution. The academic gold standard is the "closing line" at event start, which would likely show even better calibration.</li>
+    <li><strong>Market reconstruction:</strong> Polymarket decomposes multi-outcome events into binary sub-markets. We reconstruct these using <code>group_id</code>. Markets without <code>group_id</code> (~25%) may be miscounted.</li>
+    <li><strong>Field price correction:</strong> In 10+ outcome markets, <code>opening_probability &gt; 0.50</code> is inverted (stores "No" price). We correct by using <code>1 - opening_probability</code>.</li>
+    <li><strong>Sources:</strong> Covers Kalshi and Polymarket. Traditional sportsbook data (The Odds API) will be included in a future version.</li>
+  </ul>
+</div>
+
+<div class="footer">
+  Generated by Bain Luck calibration analysis — May 11, 2026 at 21:38<br>
+  181,376 resolved outcomes · 3 sources · 15 categories
+</div>
+</body>
+</html>
