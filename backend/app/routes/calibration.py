@@ -49,18 +49,6 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
             WHERE event_id IS NOT NULL
             GROUP BY event_id, source
         ),
-        -- Tier 3: same (source, category, commence_time) — markets from the
-        -- same source about the same topic at the same time are almost certainly
-        -- part of the same multi-outcome event. Catches Polymarket sub-markets
-        -- that lack group_id (e.g., Best Picture nominees, Fed rate outcomes).
-        time_groups AS (
-            SELECT source, category, commence_time, COUNT(*) AS time_group_size
-            FROM market_info
-            WHERE commence_time IS NOT NULL
-              AND group_id IS NULL
-              AND event_id IS NULL
-            GROUP BY source, category, commence_time
-        ),
         virtual_market AS (
             SELECT
                 mi.market_id, mi.source, mi.category, mi.event_id,
@@ -68,23 +56,16 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
                      THEN 'g:' || mi.group_id
                      WHEN es.event_size >= 3
                      THEN 'e:' || mi.event_id::text
-                     WHEN tg.time_group_size >= 3
-                     THEN 't:' || mi.source || ':' || mi.category || ':' || mi.commence_time::text
                      ELSE 'm:' || mi.market_id::text
                 END AS vm_id,
                 COALESCE(gs.group_size >= 3, false)
-                  OR COALESCE(es.event_size >= 3, false)
-                  OR COALESCE(tg.time_group_size >= 3, false) AS is_grouped,
+                  OR COALESCE(es.event_size >= 3, false) AS is_grouped,
                 mi.mutually_exclusive
             FROM market_info mi
             LEFT JOIN group_sizes gs
               ON gs.group_id = mi.group_id AND gs.source = mi.source
             LEFT JOIN event_sizes es
               ON es.event_id = mi.event_id AND es.source = mi.source
-            LEFT JOIN time_groups tg
-              ON tg.source = mi.source AND tg.category = mi.category
-                 AND tg.commence_time = mi.commence_time
-                 AND mi.group_id IS NULL AND mi.event_id IS NULL
         ),
         vm_stats AS (
             SELECT
