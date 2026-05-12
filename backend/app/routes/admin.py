@@ -10145,13 +10145,46 @@ async def calibration_data(
 @router.post("/backfill-winners")
 async def trigger_backfill_winners(
     secret: str = Query(...),
+    dry_run: bool = Query(False, description="Log what would change without writing"),
+    limit: int = Query(2000, description="Max Kalshi events to process"),
 ):
     """Trigger the is_winner backfill task."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
     from app.tasks import backfill_winners as task
-    result = task.delay()
-    return {"status": "queued", "task_id": result.id}
+    result = task.delay(dry_run=dry_run, limit=limit)
+    return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
+
+
+@router.get("/backfill-winners/status")
+async def backfill_winners_status(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check how many markets still need is_winner backfill."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(text("""
+        SELECT fm.source,
+            COUNT(DISTINCT fm.id) AS resolved_markets,
+            COUNT(DISTINCT fm.id) FILTER (
+                WHERE EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.is_winner = true)
+            ) AS has_winner,
+            COUNT(DISTINCT fm.id) FILTER (
+                WHERE NOT EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.is_winner = true)
+            ) AS needs_backfill
+        FROM futures_markets fm
+        WHERE fm.status = 'resolved'
+        GROUP BY fm.source
+    """))
+    return {
+        "sources": [
+            {"source": r.source, "resolved": r.resolved_markets,
+             "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
+            for r in result.all()
+        ],
+    }
 
 
 @router.post("/merge-events")

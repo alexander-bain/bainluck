@@ -335,10 +335,10 @@ def mark_resolved_futures(self):
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_winners", soft_time_limit=600, time_limit=660)
-def backfill_winners(self):
+def backfill_winners(self, dry_run: bool = False, limit: int = 2000):
     """Backfill is_winner on FuturesOutcome from Kalshi settlement + Polymarket resolution."""
     from app.tasks.backfill_winners import _backfill_all_winners
-    return run_async(_backfill_all_winners())
+    return run_async(_backfill_all_winners(dry_run=dry_run, limit=limit))
 
 
 @celery_app.task(bind=True, name="app.tasks.fix_outcome_names")
