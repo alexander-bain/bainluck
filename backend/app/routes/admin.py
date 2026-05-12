@@ -10057,12 +10057,68 @@ async def calibration_data(
     result = await db.execute(sql)
     rows = result.all()
 
+    # --- Odds API / Events data (ground truth from scores) ---
+    # Each completed event with opening odds produces 2 data points:
+    # home team (opening_home_probability, won if home_score > away_score)
+    # away team (opening_away_probability, won if away_score > home_score)
+    # Excludes draws (home_score = away_score) since those are ambiguous.
+    events_sql = text("""
+        SELECT
+            LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+            'odds_api' AS source,
+            s.key AS category,
+            COUNT(*) AS n,
+            SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+            AVG(prob) AS avg_prob,
+            SUM(prob::float) AS sum_prob,
+            SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+        FROM (
+            SELECT opening_home_probability AS prob,
+                   (home_score > away_score) AS won,
+                   sport_id
+            FROM events
+            WHERE status = 'completed'
+              AND opening_home_probability IS NOT NULL
+              AND opening_home_probability > 0
+              AND opening_home_probability < 1
+              AND home_score IS NOT NULL
+              AND away_score IS NOT NULL
+              AND home_score != away_score
+            UNION ALL
+            SELECT opening_away_probability AS prob,
+                   (away_score > home_score) AS won,
+                   sport_id
+            FROM events
+            WHERE status = 'completed'
+              AND opening_away_probability IS NOT NULL
+              AND opening_away_probability > 0
+              AND opening_away_probability < 1
+              AND home_score IS NOT NULL
+              AND away_score IS NOT NULL
+              AND home_score != away_score
+        ) outcomes
+        JOIN sports s ON s.id = outcomes.sport_id
+        GROUP BY bucket_idx, s.key
+        ORDER BY bucket_idx, s.key
+    """)
+    events_result = await db.execute(events_sql)
+    events_rows = events_result.all()
+
+    # Merge futures + events rows
+    all_rows = list(rows) + list(events_rows)
+
     total_markets_result = await db.execute(
         select(func.count()).select_from(FuturesMarket).where(FuturesMarket.status == "resolved")
     )
     total_markets = total_markets_result.scalar()
-    total_outcomes = sum(r.n for r in rows)
-    total_winners = sum(r.winners for r in rows)
+
+    events_count_result = await db.execute(
+        text("SELECT COUNT(*) FROM events WHERE status = 'completed' AND opening_home_probability IS NOT NULL AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score")
+    )
+    total_events = events_count_result.scalar()
+
+    total_outcomes = sum(r.n for r in all_rows)
+    total_winners = sum(r.winners for r in all_rows)
 
     return {
         "buckets": [
@@ -10073,9 +10129,10 @@ async def calibration_data(
                 "sum_prob": round(float(r.sum_prob), 4),
                 "sum_sq_err": round(float(r.sum_sq_err), 4),
             }
-            for r in rows
+            for r in all_rows
         ],
         "total_markets": total_markets,
+        "total_events": total_events,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
     }
