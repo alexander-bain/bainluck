@@ -9889,6 +9889,13 @@ async def update_bug_report(
             raise HTTPException(404, f"Bug report {report_id} not found")
         await db.commit()
 
+        if status == "fixed" and resolution_summary:
+            try:
+                from app.tasks.bug_notifications import send_bug_fixed_email
+                await send_bug_fixed_email(report_id, db)
+            except Exception as e:
+                logger.warning("Bug fix email failed for report %d: %s", report_id, e)
+
     return {"status": "ok"}
 
 

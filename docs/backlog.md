@@ -171,10 +171,10 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**Email provider decision:** SendGrid free tier (100 emails/day, no credit card) is simplest. Alternative: Gmail SMTP via existing Google OAuth service account, but that's more complex and has sending limits. Recommend SendGrid.
+**Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
 **Implementation steps:**
-1. Sign up for SendGrid, get API key, add as `SENDGRID_API_KEY` Heroku config var
+1. Create a Google Cloud service account with domain-wide delegation, grant it the `https://www.googleapis.com/auth/gmail.send` scope for `bugs@bainluck.com` (or your chosen sender). Add the service account JSON key as a Heroku config var (`GOOGLE_SERVICE_ACCOUNT_JSON`).
 2. Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`
 3. In the admin PATCH endpoint (`routes/admin.py`), when `status` changes to `"fixed"` and `resolution_summary` is provided:
    - Look up the bug report's `user_email` and `description`
@@ -188,7 +188,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
      Tone: personal, grateful, specific. End with encouragement to keep reporting bugs.
      Do not use subject line — just the body. No gambling references.
      ```
-   - Sends via SendGrid: from `bugs@bainluck.com` (or `noreply@bainluck.com`), subject "Your bug report was fixed 🍀"
+   - Sends via Gmail API: from `bugs@bainluck.com`, subject "Your bug report was fixed 🍀"
    - Sets `notification_sent_at = now()` on the BugReport row
 5. Add `send_bug_fixed_email` to Celery beat or call it inline (inline is fine for <100/day volume)
 
@@ -198,7 +198,7 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 - Log all sends for audit
 
 **Files:** `backend/app/tasks/bug_notifications.py` (new), `backend/app/routes/admin.py` (trigger), `backend/app/tasks/__init__.py` (register task)
-**Dependencies:** SendGrid account + API key, OpenAI API key (already configured)
+**Dependencies:** Google Workspace (done), service account with domain-wide delegation + Gmail send scope, OpenAI API key (already configured)
 
 ### Phase 3: Automation (LATER)
 - When a commit message references "BR{N}" (e.g., "Fix BR27: normalize probabilities"), automatically mark the corresponding bug report as `fixed`
