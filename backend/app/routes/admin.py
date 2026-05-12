@@ -9945,7 +9945,6 @@ async def calibration_data(
                 fm.mutually_exclusive
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
-              AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
         ),
         -- Reconstruct virtual markets: group sub-markets by group_id or event_id
         -- when 3+ sibling markets share the same key (= multi-outcome event)

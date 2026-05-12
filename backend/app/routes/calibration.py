@@ -33,11 +33,6 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
                 fm.mutually_exclusive
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
-              -- Exclude Kalshi game-level markets (linked to events):
-              -- these have unreliable opening_probability from early bid/ask
-              -- spreads. Game-level calibration comes from Odds API events
-              -- data instead (ground truth from scores).
-              AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
         ),
         group_sizes AS (
             SELECT group_id, source, COUNT(*) AS group_size
@@ -199,29 +194,7 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     )
     total_markets = total_markets_result.scalar()
 
-    diag_sql = text("""
-        SELECT fm.llm_sport_category AS category, fm.source,
-            COUNT(*) AS total,
-            COUNT(fm.group_id) AS has_group,
-            COUNT(fm.event_id) AS has_event_id
-        FROM futures_markets fm
-        WHERE fm.status = 'resolved'
-          AND fm.llm_sport_category IN ('entertainment','economics','golf','hockey')
-          AND NOT (fm.source = 'kalshi' AND fm.event_id IS NOT NULL)
-        GROUP BY fm.llm_sport_category, fm.source
-        ORDER BY fm.llm_sport_category, fm.source
-    """)
-    diag_result = await db.execute(diag_sql)
-    diagnostics = [
-        {"market": r.market_name, "source": r.source, "category": r.category,
-         "outcome": r.outcome_name, "opening": float(r.opening_probability),
-         "current": float(r.current_probability), "siblings": r.sibling_count,
-         "group_id": r.group_id}
-        for r in diag_result.all()
-    ]
-
     response = {
-        "diagnostics": diagnostics,
         "buckets": [
             {
                 "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
