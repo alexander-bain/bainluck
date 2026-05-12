@@ -10142,6 +10142,18 @@ async def calibration_data(
     }
 
 
+@router.post("/backfill-winners")
+async def trigger_backfill_winners(
+    secret: str = Query(...),
+):
+    """Trigger the is_winner backfill task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import backfill_winners as task
+    result = task.delay()
+    return {"status": "queued", "task_id": result.id}
+
+
 @router.post("/merge-events")
 async def merge_events_admin(
     secret: str = Query(...),
