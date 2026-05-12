@@ -10006,11 +10006,15 @@ async def calibration_data(
                      THEN 1.0 - fo.opening_probability
                      ELSE fo.opening_probability
                 END AS adj_opening_probability,
-                CASE WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
+                -- Prefer is_winner (ground truth from settlement API) when set.
+                -- Fall back to current_probability inference.
+                CASE
+                    WHEN fo.is_winner = true THEN true
+                    WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
                           AND cv.eligible >= 10
                           AND fo.opening_probability > 0.50
-                     THEN (fo.current_probability <= 0.05)
-                     ELSE (fo.current_probability >= 0.95)
+                        THEN (fo.current_probability <= 0.05)
+                    ELSE (fo.current_probability >= 0.95)
                 END AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,

@@ -188,6 +188,7 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
+        "backfill-winners",
         # "sync-mm-bracket",  # Disabled — March Madness is over
         "matching-metrics-daily",
         "check-data-quality-daily",

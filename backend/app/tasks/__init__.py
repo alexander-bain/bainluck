@@ -334,6 +334,13 @@ def mark_resolved_futures(self):
     return run_async(_mark_resolved_impl())
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_winners", soft_time_limit=600, time_limit=660)
+def backfill_winners(self):
+    """Backfill is_winner on FuturesOutcome from Kalshi settlement + Polymarket resolution."""
+    from app.tasks.backfill_winners import _backfill_all_winners
+    return run_async(_backfill_all_winners())
+
+
 @celery_app.task(bind=True, name="app.tasks.fix_outcome_names")
 def fix_outcome_names(self):
     """Fix Polymarket outcome names using groupItemTitle from Gamma API."""
@@ -931,6 +938,10 @@ celery_app.conf.beat_schedule = {
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
         "schedule": crontab(minute=15, hour="2,8,14,20"),  # Every 6 hours — keeps resolved futures from cluttering feed (was daily)
+    },
+    "backfill-winners": {
+        "task": "app.tasks.backfill_winners",
+        "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
     },
     "backfill-canonical-keys-daily": {
         "task": "app.tasks.backfill_canonical_keys",
