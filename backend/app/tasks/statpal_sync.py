@@ -722,6 +722,12 @@ async def _sync_statpal_livescores() -> dict:
 
                     updated = False
 
+                    # Update period/clock from StatPal raw_status (e.g., "Q3", "1H", "HT")
+                    if fixture.raw_status and fixture.raw_status not in ("live", "Live"):
+                        if event.period != fixture.raw_status:
+                            event.period = fixture.raw_status
+                            updated = True
+
                     # Update scores
                     if fixture.home_score is not None and fixture.home_score != event.home_score:
                         event.home_score = fixture.home_score

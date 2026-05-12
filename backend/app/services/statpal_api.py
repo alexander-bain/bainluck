@@ -47,8 +47,11 @@ class StatPalFixture:
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     status: str = "scheduled"  # scheduled, live, finished, postponed, cancelled
+    raw_status: Optional[str] = None  # original status before normalization (e.g., "Q3", "1H", "HT")
     home_score: Optional[int] = None
     away_score: Optional[int] = None
+    home_q_scores: Optional[dict] = None  # {"q1": 24, "q2": 31, ...}
+    away_q_scores: Optional[dict] = None
     venue: Optional[str] = None
     league: Optional[str] = None
     season: Optional[str] = None
@@ -454,11 +457,34 @@ class StatPalAPIService(BaseAPIClient):
         # Parse end time (if available — typically only for finished games)
         end_time = _parse_datetime(item.get("end_time"))
 
-        # Parse status
-        status_raw = item.get("status", "")
-        if isinstance(status_raw, dict):
-            status_raw = status_raw.get("long", status_raw.get("short", ""))
-        status = _normalize_status(str(status_raw))
+        # Parse status — preserve raw for period/clock extraction
+        status_raw_str = item.get("status", "")
+        if isinstance(status_raw_str, dict):
+            status_raw_str = status_raw_str.get("long", status_raw_str.get("short", ""))
+        status_raw_str = str(status_raw_str)
+        status = _normalize_status(status_raw_str)
+
+        # Parse quarter/period scores (e.g., q1, q2, q3, q4, ot)
+        home_q_scores = None
+        away_q_scores = None
+        home_data = item.get("home", {})
+        away_data = item.get("away", {})
+        if isinstance(home_data, dict):
+            qs = {}
+            for qk in ("q1", "q2", "q3", "q4", "ot"):
+                val = _safe_int(home_data.get(qk))
+                if val is not None:
+                    qs[qk] = val
+            if qs:
+                home_q_scores = qs
+        if isinstance(away_data, dict):
+            qs = {}
+            for qk in ("q1", "q2", "q3", "q4", "ot"):
+                val = _safe_int(away_data.get(qk))
+                if val is not None:
+                    qs[qk] = val
+            if qs:
+                away_q_scores = qs
 
         fixture_id = str(item.get("id", item.get("fixture_id", "")))
 
@@ -476,8 +502,11 @@ class StatPalAPIService(BaseAPIClient):
             start_time=start_time,
             end_time=end_time,
             status=status,
+            raw_status=status_raw_str if status == "live" else None,
             home_score=home_score,
             away_score=away_score,
+            home_q_scores=home_q_scores,
+            away_q_scores=away_q_scores,
             venue=venue,
             league=item.get("league", {}).get("name") if isinstance(item.get("league"), dict) else item.get("league"),
             season=str(item.get("season", "")) or None,
