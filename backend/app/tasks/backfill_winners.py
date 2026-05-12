@@ -389,6 +389,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # Phase 0b: Backfill Kalshi group_id (no API, fast)
     kalshi_group_stats = await _backfill_kalshi_group_ids()
 
+    # Phase 0c: Pre-compute closing lines on events (no API, uses odds_snapshots)
+    closing_stats = await _backfill_closing_lines()
+
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
 
@@ -399,6 +402,65 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     return {
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
+        "closing_lines": closing_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }
+
+
+async def _backfill_closing_lines():
+    """Pre-compute closing line probabilities on completed events.
+
+    For each completed event that has odds_snapshots before commence_time,
+    finds the last snapshot and stores it as closing_home/away_probability.
+    Runs in batches to stay within Celery time limits.
+    """
+    stats = {"updated": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            # Only process events that don't already have closing_home_probability
+            # and have both commence_time and scores. Process in batches of 500.
+            result = await session.execute(
+                text("""
+                    WITH events_needing_closing AS (
+                        SELECT e.id, e.commence_time
+                        FROM events e
+                        WHERE e.status = 'completed'
+                          AND e.closing_home_probability IS NULL
+                          AND e.commence_time IS NOT NULL
+                          AND e.home_score IS NOT NULL
+                          AND e.away_score IS NOT NULL
+                        LIMIT 500
+                    ),
+                    closing AS (
+                        SELECT DISTINCT ON (enc.id)
+                            enc.id AS event_id,
+                            os.home_win_probability
+                        FROM events_needing_closing enc
+                        JOIN odds_snapshots os ON os.event_id = enc.id
+                        WHERE os.captured_at < enc.commence_time
+                          AND os.home_win_probability IS NOT NULL
+                          AND os.home_win_probability > 0
+                          AND os.home_win_probability < 1
+                        ORDER BY enc.id, os.captured_at DESC
+                    )
+                    UPDATE events e
+                    SET closing_home_probability = cl.home_win_probability,
+                        closing_away_probability = 1.0 - cl.home_win_probability
+                    FROM closing cl
+                    WHERE e.id = cl.event_id
+                """)
+            )
+            stats["updated"] = result.rowcount
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Closing line backfill error: %s", e)
+
+    logger.info(
+        "Closing line backfill: %d events updated, %d errors",
+        stats["updated"], len(stats["errors"]),
+    )
+    return stats

@@ -114,6 +114,10 @@ class Event(Base):
     opening_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     opening_favorite: Mapped[Optional[str]] = mapped_column(String(10))  # 'home', 'away', 'even'
 
+    # Closing line (last odds before commence_time, pre-computed by backfill)
+    closing_home_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    closing_away_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+
     # Excitement Index (EI) — standard GEI: cumulative probability travel distance
     raw_ei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
     ei_metadata: Mapped[Optional[str]] = mapped_column(Text)  # JSON: {raw_ei, lead_changes, comeback_factor}

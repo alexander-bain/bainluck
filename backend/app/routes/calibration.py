@@ -152,10 +152,8 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     rows = result.all()
 
     # Ground-truth sports calibration from events table.
-    # Uses opening probability (vig-removed consensus across 20+ sportsbooks).
-    # Closing line (LATERAL join on odds_snapshots) was attempted but times out
-    # on Heroku's 30s limit. TODO: pre-compute closing line in backfill task
-    # and store on events table for instant reads.
+    # Uses closing line (pre-computed by backfill task) when available,
+    # falling back to opening probability.
     events_sql = text("""
         SELECT
             LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
@@ -167,21 +165,23 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
             SUM(prob::float) AS sum_prob,
             SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM (
-            SELECT opening_home_probability AS prob,
+            SELECT COALESCE(closing_home_probability, opening_home_probability) AS prob,
                    (home_score > away_score) AS won, sport_id
             FROM events
             WHERE status = 'completed'
-              AND opening_home_probability IS NOT NULL
-              AND opening_home_probability > 0 AND opening_home_probability < 1
+              AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
+              AND COALESCE(closing_home_probability, opening_home_probability) > 0
+              AND COALESCE(closing_home_probability, opening_home_probability) < 1
               AND home_score IS NOT NULL AND away_score IS NOT NULL
               AND home_score != away_score
             UNION ALL
-            SELECT opening_away_probability AS prob,
+            SELECT COALESCE(closing_away_probability, opening_away_probability) AS prob,
                    (away_score > home_score) AS won, sport_id
             FROM events
             WHERE status = 'completed'
-              AND opening_away_probability IS NOT NULL
-              AND opening_away_probability > 0 AND opening_away_probability < 1
+              AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
+              AND COALESCE(closing_away_probability, opening_away_probability) > 0
+              AND COALESCE(closing_away_probability, opening_away_probability) < 1
               AND home_score IS NOT NULL AND away_score IS NOT NULL
               AND home_score != away_score
         ) outcomes
