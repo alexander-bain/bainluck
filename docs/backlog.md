@@ -63,14 +63,15 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
 - ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
 - ✅ Authenticated feed items now expose per-card `personalization_trace` diagnostics, and `/admin/discover-quality` renders multiplier, score delta, category-affinity delta, and reasons when present.
+- ✅ Polymarket email-highlight sheet can now feed the Discover audit through CSV path/URL env vars, producing `email-hit@20` / `email-hit@50` coverage without changing ranking.
 
 **Next phases:**
 1. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
 2. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
 3. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-4. Use engagement opportunity signals to tune ranking, card design, and explanation/media treatment.
+4. Use engagement opportunity signals and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
 
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
 
 ### 0n. Navigation Redesign — NEEDS DESIGN BRIEF

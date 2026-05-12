@@ -118,6 +118,7 @@ All 16 rage shake bug reports triaged, deduplicated into 14 new items. All 14 re
 - ✅ **Native Discover challenge/context parity** — iOS/macOS Discover now decodes `context_summary`, shows concise expandable snippets with native `context_expand/context_collapse` events, and opens Today's Challenge as a focused sheet with explicit Next/Finish progression plus `challenge_start` / `challenge_complete` tracking.
 - ✅ **Discover personalization trace** — Authenticated feed items now carry a compact `personalization_trace` with base score, final score, multiplier, score delta, category-affinity delta, bounds status, and reasons. `/admin/discover-quality` forwards the signed-in admin token for debug fetches and renders these traces when present so personalization effects are inspectable per card.
 - ✅ **Discover personalization admin rollups** — `/admin/discover-quality` now summarizes authenticated personalization traces with boosted/suppressed counts, average multipliers, category effects, top reasons, and filters for boosted, suppressed, neutral, or missing-trace cards.
+- ✅ **Polymarket email editorial audit signal** — `audit_feed_quality.py` can now ingest the Polymarket email-highlight sheet from a CSV path or published CSV URL, dedupe/filter recent high-interest rows, and report `email-hit@20` / `email-hit@50` plus email hits/misses as an evaluative Discover signal.
 
 ### Test Expansion + Improvements
 - ✅ **33 seeded-data contract tests** — Feed scoring (16) + event detail (17). Suite: 110→158 tests.

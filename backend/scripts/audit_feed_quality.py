@@ -23,6 +23,33 @@ from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
 )
+from app.utils.polymarket_email_ground_truth import (  # noqa: E402
+    load_polymarket_email_ground_truth_from_csv_path,
+    load_polymarket_email_ground_truth_from_csv_url,
+    summarize_polymarket_email_ground_truth,
+)
+
+
+def _load_polymarket_email_ground_truth() -> list[dict[str, str]]:
+    csv_path = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_PATH")
+    csv_url = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL")
+    min_interestingness = int(os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_MIN_INTERESTINGNESS", "8"))
+    lookback_days_raw = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_LOOKBACK_DAYS", "21")
+    lookback_days = int(lookback_days_raw) if lookback_days_raw else None
+
+    if csv_path:
+        return load_polymarket_email_ground_truth_from_csv_path(
+            csv_path,
+            min_interestingness=min_interestingness,
+            lookback_days=lookback_days,
+        )
+    if csv_url:
+        return load_polymarket_email_ground_truth_from_csv_url(
+            csv_url,
+            min_interestingness=min_interestingness,
+            lookback_days=lookback_days,
+        )
+    return []
 
 
 def main() -> int:
@@ -39,7 +66,8 @@ def main() -> int:
     payload = resp.json()
     items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
 
-    ground_truth_items = load_default_ground_truth_items()
+    email_ground_truth_items = _load_polymarket_email_ground_truth()
+    ground_truth_items = load_default_ground_truth_items() + email_ground_truth_items
     debug = build_feed_quality_debug(
         items,
         ground_truth_items=ground_truth_items,
@@ -70,6 +98,37 @@ def main() -> int:
     print(f"positive targets@20:     {summary['positive_targets']}")
     print(f"strict targets@20:       {summary['strict_targets']}")
     print()
+
+    if email_ground_truth_items:
+        email_summary = summarize_polymarket_email_ground_truth(
+            classified,
+            email_ground_truth_items,
+        )
+        print("POLYMARKET EMAIL GROUND TRUTH")
+        print("-" * 72)
+        print(
+            f"email-hit@20:            {email_summary['top20_hits']}/"
+            f"{email_summary['total']}"
+        )
+        print(
+            f"email-hit@50:            {email_summary['top50_hits']}/"
+            f"{email_summary['total']} ({email_summary['hit_rate_50']:.0%})"
+        )
+        if email_summary["hits"]:
+            print("email hits:")
+            for hit in email_summary["hits"][:10]:
+                print(
+                    f"  #{hit['rank']:02d} {hit['name'][:74]} "
+                    f"({hit.get('category') or '?'})"
+                )
+        if email_summary["missing_items"]:
+            print("email misses:")
+            for item in email_summary["missing_items"][:10]:
+                print(
+                    f"  [{item.get('category') or '?'}] "
+                    f"{(item.get('name') or '')[:78]}"
+                )
+        print()
 
     print("TOP 50")
     print("-" * 72)
