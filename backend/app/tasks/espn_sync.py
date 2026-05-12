@@ -564,31 +564,35 @@ async def _sync_espn_live_events():
                             session.add(snapshot)
                             stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
 
-                            # Also write ESPN to generic win_prob_snapshots table
-                            try:
-                                from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-                                espn_wp_snap, is_new = await _create_or_update_win_prob_snapshot(
-                                    session,
-                                    event_id=event.id,
-                                    source="espn",
-                                    home_win_probability=ee.home_win_probability,
-                                    away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
-                                    game_state={
-                                        "clock": ee.clock,
-                                        "period": _sanitize_period(ee.status_detail) or (str(ee.period) if ee.period else None),
-                                        "home_score": ee.home_score,
-                                        "away_score": ee.away_score,
-                                    },
-                                )
-                                if is_new:
-                                    session.add(espn_wp_snap)
-                            except Exception:
-                                pass  # Table may not exist yet
+                            # Write ESPN to win_prob_snapshots only for espn_id matches.
+                            # Name-based matches can be false positives (especially
+                            # college sports), contaminating the probability time-series.
+                            if match_method == "espn_id":
+                                try:
+                                    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+                                    espn_wp_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                        session,
+                                        event_id=event.id,
+                                        source="espn",
+                                        home_win_probability=ee.home_win_probability,
+                                        away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+                                        game_state={
+                                            "clock": ee.clock,
+                                            "period": _sanitize_period(ee.status_detail) or (str(ee.period) if ee.period else None),
+                                            "home_score": ee.home_score,
+                                            "away_score": ee.away_score,
+                                        },
+                                    )
+                                    if is_new:
+                                        session.add(espn_wp_snap)
+                                except Exception:
+                                    pass  # Table may not exist yet
 
-                        # Compute statistical model win probability (live games only)
-                        # Baseball doesn't have a clock — only needs period (inning)
+                        # Compute statistical model win probability (live games only).
+                        # Only for espn_id matches — name-based matches can feed
+                        # wrong game's scores, causing wild oscillation.
                         has_game_progress = ee.clock or sport_key.startswith("baseball_")
-                        if ee.status == "in" and ee.home_score is not None and ee.away_score is not None and has_game_progress:
+                        if match_method == "espn_id" and ee.status == "in" and ee.home_score is not None and ee.away_score is not None and has_game_progress:
                             try:
                                 from app.utils.win_probability import compute_statistical_win_prob
 
