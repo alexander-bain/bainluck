@@ -534,7 +534,46 @@ async def _poll_kalshi_markets():
                         outcome_name = od["outcome_name"]
                         stats["markets_processed"] += 1
 
+                        # Only set opening_probability when there's real trading
+                        # activity. A wide bid-ask spread or zero volume means the
+                        # price is a placeholder, not a real market signal.
+                        has_real_trading = (
+                            market.yes_bid is not None
+                            and market.yes_bid > 0
+                            and market.yes_ask is not None
+                            and (market.yes_ask - market.yes_bid) < 0.50
+                        ) or (
+                            market.volume is not None and market.volume > 0
+                        )
+                        opening_prob = prob if has_real_trading else None
+                        opening_american = american if has_real_trading else None
+                        opening_at = now if has_real_trading else None
+
                         # Upsert outcome
+                        update_set: dict = {
+                            "name": outcome_name,
+                            "current_probability": prob,
+                            "current_american_odds": american,
+                            "current_yes_bid": market.yes_bid,
+                            "current_yes_ask": market.yes_ask,
+                            "rank": rank,
+                            "probability_change_24h": prob - FuturesOutcome.current_probability,
+                            "rank_change_24h": FuturesOutcome.rank - rank,
+                            "last_updated": func.now(),
+                        }
+                        # Backfill opening_probability if it was NULL (market had
+                        # no trading on first capture) and now has real trading
+                        if has_real_trading:
+                            update_set["opening_probability"] = func.coalesce(
+                                FuturesOutcome.opening_probability, prob
+                            )
+                            update_set["opening_american_odds"] = func.coalesce(
+                                FuturesOutcome.opening_american_odds, american
+                            )
+                            update_set["opening_captured_at"] = func.coalesce(
+                                FuturesOutcome.opening_captured_at, now
+                            )
+
                         outcome_stmt = pg_insert(FuturesOutcome).values(
                             market_id=futures_market_id,
                             external_id=market.ticker,
@@ -543,23 +582,13 @@ async def _poll_kalshi_markets():
                             current_american_odds=american,
                             current_yes_bid=market.yes_bid,
                             current_yes_ask=market.yes_ask,
-                            opening_probability=prob,
-                            opening_american_odds=american,
-                            opening_captured_at=now,
+                            opening_probability=opening_prob,
+                            opening_american_odds=opening_american,
+                            opening_captured_at=opening_at,
                             rank=rank,
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
-                            set_={
-                                "name": outcome_name,
-                                "current_probability": prob,
-                                "current_american_odds": american,
-                                "current_yes_bid": market.yes_bid,
-                                "current_yes_ask": market.yes_ask,
-                                "rank": rank,
-                                "probability_change_24h": prob - FuturesOutcome.current_probability,
-                                "rank_change_24h": FuturesOutcome.rank - rank,
-                                "last_updated": func.now(),
-                            }
+                            set_=update_set,
                         ).returning(FuturesOutcome.id)
 
                         result = await session.execute(outcome_stmt)

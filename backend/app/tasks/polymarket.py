@@ -658,6 +658,29 @@ async def _process_event_batch(
                         over_name = "Over" if "o/u" in sub_name.lower() else "Yes"
                         over_american = probability_to_american(prob) if 0 < prob < 1 else None
 
+                        sub_has_trading = (
+                            market.best_bid is not None and market.best_bid > 0
+                        ) or (
+                            market.last_trade_price is not None and market.last_trade_price > 0
+                        )
+                        sub_opening = prob if sub_has_trading else None
+                        sub_opening_am = over_american if sub_has_trading else None
+                        sub_opening_at = now if sub_has_trading else None
+
+                        over_update: dict = {
+                            "current_probability": prob,
+                            "current_american_odds": over_american,
+                            "current_yes_bid": market.best_bid,
+                            "current_yes_ask": market.best_ask,
+                            "rank": 1,
+                            "probability_change_24h": prob - FuturesOutcome.current_probability,
+                            "last_updated": func.now(),
+                        }
+                        if sub_has_trading:
+                            over_update["opening_probability"] = func.coalesce(
+                                FuturesOutcome.opening_probability, prob
+                            )
+
                         over_stmt = pg_insert(FuturesOutcome).values(
                             market_id=sub_market_id,
                             external_id=f"{market.condition_id}_yes",
@@ -666,21 +689,13 @@ async def _process_event_batch(
                             current_american_odds=over_american,
                             current_yes_bid=market.best_bid,
                             current_yes_ask=market.best_ask,
-                            opening_probability=prob,
-                            opening_american_odds=over_american,
-                            opening_captured_at=now,
+                            opening_probability=sub_opening,
+                            opening_american_odds=sub_opening_am,
+                            opening_captured_at=sub_opening_at,
                             rank=1,
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
-                            set_={
-                                "current_probability": prob,
-                                "current_american_odds": over_american,
-                                "current_yes_bid": market.best_bid,
-                                "current_yes_ask": market.best_ask,
-                                "rank": 1,
-                                "probability_change_24h": prob - FuturesOutcome.current_probability,
-                                "last_updated": func.now(),
-                            },
+                            set_=over_update,
                         ).returning(FuturesOutcome.id)
 
                         over_result = await session.execute(over_stmt)
@@ -704,24 +719,30 @@ async def _process_event_batch(
                             under_name = "Under" if "o/u" in sub_name.lower() else "No"
                             under_american = probability_to_american(under_prob) if 0 < under_prob < 1 else None
 
+                            under_update: dict = {
+                                "current_probability": under_prob,
+                                "current_american_odds": under_american,
+                                "rank": 2,
+                                "last_updated": func.now(),
+                            }
+                            if sub_has_trading:
+                                under_update["opening_probability"] = func.coalesce(
+                                    FuturesOutcome.opening_probability, under_prob
+                                )
+
                             under_stmt = pg_insert(FuturesOutcome).values(
                                 market_id=sub_market_id,
                                 external_id=f"{market.condition_id}_no",
                                 name=under_name,
                                 current_probability=under_prob,
                                 current_american_odds=under_american,
-                                opening_probability=under_prob,
-                                opening_american_odds=under_american,
-                                opening_captured_at=now,
+                                opening_probability=sub_opening if sub_has_trading else None,
+                                opening_american_odds=under_american if sub_has_trading else None,
+                                opening_captured_at=sub_opening_at,
                                 rank=2,
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
-                                set_={
-                                    "current_probability": under_prob,
-                                    "current_american_odds": under_american,
-                                    "rank": 2,
-                                    "last_updated": func.now(),
-                                },
+                                set_=under_update,
                             )
                             await session.execute(under_stmt)
 
@@ -782,6 +803,42 @@ async def _process_event_batch(
                     american = probability_to_american(prob) if 0 < prob < 1 else None
                     stats["markets_processed"] += 1
 
+                    # Only set opening_probability when there's real trading.
+                    # A wide bid-ask spread or no bids means placeholder pricing.
+                    has_real_trading = (
+                        od["yes_bid"] is not None
+                        and od["yes_bid"] > 0
+                        and od["yes_ask"] is not None
+                        and (od["yes_ask"] - od["yes_bid"]) < 0.50
+                    ) or (
+                        od.get("last_price") is not None and od["last_price"] > 0
+                    )
+                    opening_prob = prob if has_real_trading else None
+                    opening_american = american if has_real_trading else None
+                    opening_at = now if has_real_trading else None
+
+                    update_set: dict = {
+                        "name": od["name"],
+                        "current_probability": prob,
+                        "current_american_odds": american,
+                        "current_yes_bid": od["yes_bid"],
+                        "current_yes_ask": od["yes_ask"],
+                        "rank": rank,
+                        "probability_change_24h": prob - FuturesOutcome.current_probability,
+                        "rank_change_24h": FuturesOutcome.rank - rank,
+                        "last_updated": func.now(),
+                    }
+                    if has_real_trading:
+                        update_set["opening_probability"] = func.coalesce(
+                            FuturesOutcome.opening_probability, prob
+                        )
+                        update_set["opening_american_odds"] = func.coalesce(
+                            FuturesOutcome.opening_american_odds, american
+                        )
+                        update_set["opening_captured_at"] = func.coalesce(
+                            FuturesOutcome.opening_captured_at, now
+                        )
+
                     outcome_stmt = pg_insert(FuturesOutcome).values(
                         market_id=futures_market_id,
                         external_id=od["external_id"],
@@ -790,23 +847,13 @@ async def _process_event_batch(
                         current_american_odds=american,
                         current_yes_bid=od["yes_bid"],
                         current_yes_ask=od["yes_ask"],
-                        opening_probability=prob,
-                        opening_american_odds=american,
-                        opening_captured_at=now,
+                        opening_probability=opening_prob,
+                        opening_american_odds=opening_american,
+                        opening_captured_at=opening_at,
                         rank=rank,
                     ).on_conflict_do_update(
                         index_elements=["market_id", "external_id"],
-                        set_={
-                            "name": od["name"],
-                            "current_probability": prob,
-                            "current_american_odds": american,
-                            "current_yes_bid": od["yes_bid"],
-                            "current_yes_ask": od["yes_ask"],
-                            "rank": rank,
-                            "probability_change_24h": prob - FuturesOutcome.current_probability,
-                            "rank_change_24h": FuturesOutcome.rank - rank,
-                            "last_updated": func.now(),
-                        },
+                        set_=update_set,
                     ).returning(FuturesOutcome.id)
 
                     result = await session.execute(outcome_stmt)
