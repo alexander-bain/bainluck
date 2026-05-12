@@ -9922,58 +9922,94 @@ async def calibration_data(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Calibration query with three targeted fixes:
+    # Calibration methodology (auditable, no ad-hoc exclusions):
     #
-    # 1. CLEAN RESOLUTION: Only include markets where 80%+ of outcomes have
-    #    current_probability near 0 or 1 (excludes partially-updated markets).
+    # Step 1: Reconstruct "virtual markets" from the physical market structure.
+    #   - A Kalshi championship market with 20 outcomes = 1 virtual market (20 outcomes)
+    #   - A Polymarket "Who wins?" event with 10 binary sub-markets sharing a
+    #     group_id = 1 virtual market (10 outcomes). This is structurally identical
+    #     to a championship market but stored differently.
+    #   - A Kalshi binary game market (1 outcome) = 1 virtual market (1 outcome)
+    #   - A Kalshi threshold market (10 outcomes, non-ME) = 1 virtual market
+    #     but only the most informative outcome (closest to 50%) is used
     #
-    # 2. EVENT-LEVEL DEDUP: For markets linked to the same event (e.g.,
-    #    Polymarket soccer win/draw/lose sub-markets), keep ONE outcome per
-    #    (event_id, source). Fixes 3-way sports inflation.
+    # Step 2: Clean resolution filter — only include virtual markets where 80%+
+    #   of outcomes resolved to near-0 or near-1.
     #
-    # 3. TAIL FILTERING: For multi-outcome ME markets (golf tournaments with
-    #    30+ outcomes), exclude opening_probability > 0.98 or < 0.02 — these
-    #    are stale tail outcomes that distort extreme buckets.
+    # Step 3: For large virtual markets (20+ outcomes), filter inverted Kalshi
+    #   field prices (opening_probability > 0.90 that should be 1 - opening).
     sql = text("""
         WITH market_info AS (
-            SELECT fm.id AS market_id, fm.source, fm.event_id,
+            SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                 COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-                fm.mutually_exclusive,
+                fm.mutually_exclusive
+            FROM futures_markets fm
+            WHERE fm.status = 'resolved'
+        ),
+        -- Reconstruct virtual markets: group Polymarket sub-markets by group_id
+        -- when 3+ sibling markets share the same group_id (= multi-outcome event)
+        group_sizes AS (
+            SELECT group_id, source, COUNT(*) AS group_size
+            FROM market_info
+            WHERE group_id IS NOT NULL
+            GROUP BY group_id, source
+        ),
+        virtual_market AS (
+            SELECT
+                mi.market_id, mi.source, mi.category, mi.event_id,
+                -- Virtual market ID: group_id (if 3+ siblings) or market_id
+                CASE WHEN gs.group_size >= 3
+                     THEN 'g:' || mi.group_id
+                     ELSE 'm:' || mi.market_id::text
+                END AS vm_id,
+                -- Is this part of a reconstructed multi-outcome market?
+                COALESCE(gs.group_size >= 3, false) AS is_grouped,
+                mi.mutually_exclusive
+            FROM market_info mi
+            LEFT JOIN group_sizes gs
+              ON gs.group_id = mi.group_id AND gs.source = mi.source
+        ),
+        -- Compute resolution quality per virtual market
+        vm_stats AS (
+            SELECT
+                vm.vm_id, vm.source, vm.category, vm.is_grouped,
+                vm.mutually_exclusive,
+                COUNT(DISTINCT vm.market_id) AS market_count,
                 COUNT(*) AS total_outcomes,
                 COUNT(*) FILTER (WHERE fo.current_probability >= 0.95) AS near_one,
                 COUNT(*) FILTER (WHERE fo.current_probability <= 0.05) AS near_zero,
                 COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                   AND fo.opening_probability > 0
                                   AND fo.opening_probability < 1) AS eligible
-            FROM futures_markets fm
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            WHERE fm.status = 'resolved'
-            GROUP BY fm.id, fm.source, fm.event_id, fm.mutually_exclusive,
-                     fm.llm_sport_category
+            FROM virtual_market vm
+            JOIN futures_outcomes fo ON fo.market_id = vm.market_id
+            GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
+                     vm.mutually_exclusive
         ),
-        clean_markets AS (
-            SELECT * FROM market_info
+        clean_vms AS (
+            SELECT * FROM vm_stats
             WHERE eligible >= 1
               AND (near_one + near_zero) >= total_outcomes * 0.8
               AND near_one >= 1
         ),
+        -- Determine which virtual markets are multi-outcome (keep all outcomes)
+        -- vs binary/threshold (keep one outcome)
         ranked_outcomes AS (
             SELECT
                 fo.opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
-                cm.market_id, cm.event_id, cm.source, cm.category,
-                cm.mutually_exclusive, cm.eligible,
-                -- Multi-outcome ME markets (championships, tournaments): keep all
-                (cm.mutually_exclusive = true AND cm.eligible >= 3) AS is_multi,
-                -- Event-level dedup: for markets sharing an event_id, keep one
-                -- outcome per (event, source) — fixes 3-way sports
+                cv.vm_id, cv.source, cv.category,
+                cv.eligible, cv.is_grouped,
+                -- Multi-outcome: either native (ME + 3+ outcomes) or reconstructed from group
+                (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3)) AS is_multi,
+                -- For non-multi: keep closest to 50%
                 ROW_NUMBER() OVER (
-                    PARTITION BY COALESCE(cm.event_id::text, cm.market_id::text),
-                                 cm.source
+                    PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
-                ) AS rn_event
+                ) AS rn
             FROM futures_outcomes fo
-            JOIN clean_markets cm ON cm.market_id = fo.market_id
+            JOIN virtual_market vm ON vm.market_id = fo.market_id
+            JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
@@ -9983,28 +10019,14 @@ async def calibration_data(
             SELECT * FROM ranked_outcomes
             WHERE
                 CASE
-                    -- Polymarket game sub-markets can't be used for calibration:
-                    -- they decompose each game into correlated binary sub-markets
-                    -- (Win/Draw/Lose, spreads, props) that aren't independent.
-                    -- Exclude by event_id linkage or by 3-way sport category.
-                    -- Also exclude all Polymarket soccer/football/cricket entirely:
-                    -- their market structure is incompatible with binary calibration.
-                    WHEN source = 'polymarket'
-                         AND (category IN ('soccer','football','cricket',
-                                           'rugby','pickleball')
-                              OR (event_id IS NOT NULL AND eligible <= 2))
-                        THEN false
-                    -- Large field ME markets (20+ outcomes: golf, motorsports):
-                    -- keep all but cut >0.90 (inverted Kalshi field prices)
+                    -- Large multi-outcome markets (20+): filter inverted field prices
                     WHEN is_multi AND eligible >= 20
-                        THEN opening_probability > 0.02
-                         AND opening_probability < 0.90
-                    -- Other multi-outcome ME markets (3-19 outcomes)
+                        THEN opening_probability > 0.02 AND opening_probability < 0.90
+                    -- Other multi-outcome markets: mild tail filter
                     WHEN is_multi
-                        THEN opening_probability > 0.02
-                         AND opening_probability < 0.98
-                    -- Binary/threshold: one per event (or market if no event_id)
-                    ELSE rn_event = 1
+                        THEN opening_probability > 0.02 AND opening_probability < 0.98
+                    -- Binary/threshold: one outcome per virtual market
+                    ELSE rn = 1
                 END
         ),
         bucketed AS (
@@ -10032,40 +10054,6 @@ async def calibration_data(
     total_outcomes = sum(r.n for r in rows)
     total_winners = sum(r.winners for r in rows)
 
-    # Diagnostic: check event_id coverage for problem categories
-    diag_sql = text("""
-        SELECT llm_sport_category AS cat, source,
-            COUNT(*) AS markets,
-            COUNT(event_id) AS with_event_id,
-            COUNT(group_id) AS with_group_id
-        FROM futures_markets
-        WHERE status = 'resolved'
-          AND llm_sport_category IN ('soccer','football','golf','entertainment','motorsports')
-        GROUP BY llm_sport_category, source
-        ORDER BY llm_sport_category, source
-    """)
-    diag_rows = await db.execute(diag_sql)
-
-    # Golf 90-100%: what are these outcomes?
-    golf_sql = text("""
-        SELECT fo.name AS outcome_name, fo.opening_probability, fo.current_probability,
-               fm.name AS market_name, fm.eligible_count
-        FROM futures_outcomes fo
-        JOIN (
-            SELECT fm.id, fm.name,
-                COUNT(*) FILTER (WHERE fo2.opening_probability > 0 AND fo2.opening_probability < 1) AS eligible_count
-            FROM futures_markets fm
-            JOIN futures_outcomes fo2 ON fo2.market_id = fm.id
-            WHERE fm.status = 'resolved' AND fm.llm_sport_category = 'golf' AND fm.source = 'kalshi'
-            GROUP BY fm.id, fm.name
-        ) fm ON fm.id = fo.market_id
-        WHERE fo.opening_probability > 0.90 AND fo.opening_probability < 0.98
-          AND fo.current_probability IS NOT NULL
-        ORDER BY fo.opening_probability DESC
-        LIMIT 15
-    """)
-    golf_rows = await db.execute(golf_sql)
-
     return {
         "buckets": [
             {
@@ -10080,17 +10068,6 @@ async def calibration_data(
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
-        "diag_event_ids": [
-            {"cat": r.cat, "source": r.source, "markets": r.markets,
-             "with_event_id": r.with_event_id, "with_group_id": r.with_group_id}
-            for r in diag_rows.all()
-        ],
-        "diag_golf_90": [
-            {"outcome": r.outcome_name, "opening": float(r.opening_probability),
-             "current": float(r.current_probability), "market": r.market_name,
-             "eligible": r.eligible_count}
-            for r in golf_rows.all()
-        ],
     }
 
 
