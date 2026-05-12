@@ -9946,28 +9946,37 @@ async def calibration_data(
             FROM futures_markets fm
             WHERE fm.status = 'resolved'
         ),
-        -- Reconstruct virtual markets: group Polymarket sub-markets by group_id
-        -- when 3+ sibling markets share the same group_id (= multi-outcome event)
+        -- Reconstruct virtual markets: group sub-markets by group_id or event_id
+        -- when 3+ sibling markets share the same key (= multi-outcome event)
         group_sizes AS (
             SELECT group_id, source, COUNT(*) AS group_size
             FROM market_info
             WHERE group_id IS NOT NULL
             GROUP BY group_id, source
         ),
+        event_sizes AS (
+            SELECT event_id, source, COUNT(*) AS event_size
+            FROM market_info
+            WHERE event_id IS NOT NULL
+            GROUP BY event_id, source
+        ),
         virtual_market AS (
             SELECT
                 mi.market_id, mi.source, mi.category, mi.event_id,
-                -- Virtual market ID: group_id (if 3+ siblings) or market_id
+                -- Virtual market ID: group_id (if 3+ siblings) > event_id (if 3+) > market_id
                 CASE WHEN gs.group_size >= 3
                      THEN 'g:' || mi.group_id
+                     WHEN es.event_size >= 3
+                     THEN 'e:' || mi.event_id::text
                      ELSE 'm:' || mi.market_id::text
                 END AS vm_id,
-                -- Is this part of a reconstructed multi-outcome market?
-                COALESCE(gs.group_size >= 3, false) AS is_grouped,
+                COALESCE(gs.group_size >= 3, false) OR COALESCE(es.event_size >= 3, false) AS is_grouped,
                 mi.mutually_exclusive
             FROM market_info mi
             LEFT JOIN group_sizes gs
               ON gs.group_id = mi.group_id AND gs.source = mi.source
+            LEFT JOIN event_sizes es
+              ON es.event_id = mi.event_id AND es.source = mi.source
         ),
         -- Compute resolution quality per virtual market
         vm_stats AS (
@@ -10006,12 +10015,9 @@ async def calibration_data(
                      THEN 1.0 - fo.opening_probability
                      ELSE fo.opening_probability
                 END AS adj_opening_probability,
-                CASE WHEN (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3))
-                          AND cv.eligible >= 10
-                          AND fo.opening_probability > 0.50
-                     THEN (fo.current_probability <= 0.05)
-                     ELSE (fo.current_probability >= 0.95)
-                END AS is_winner,
+                -- Winner = current_probability >= 0.95 regardless of opening inversion.
+                -- The winner is who WON, not whose opening price was inverted.
+                (fo.current_probability >= 0.95) AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3)) AS is_multi,
@@ -10027,16 +10033,30 @@ async def calibration_data(
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
         ),
+        -- For large multi-outcome markets: detect default/placeholder pricing.
+        -- If 50%+ of outcomes share the same opening_probability, it's a default
+        -- price with no real price discovery. Exclude those outcomes.
+        mode_prices AS (
+            SELECT vm_id, adj_opening_probability AS mode_price,
+                   COUNT(*) AS mode_count, eligible
+            FROM ranked_outcomes
+            WHERE is_multi AND eligible >= 20
+            GROUP BY vm_id, adj_opening_probability, eligible
+            HAVING COUNT(*) > eligible * 0.5
+        ),
         deduped AS (
-            SELECT * FROM ranked_outcomes
+            SELECT ro.* FROM ranked_outcomes ro
+            LEFT JOIN mode_prices mp
+              ON mp.vm_id = ro.vm_id AND mp.mode_price = ro.adj_opening_probability
             WHERE
                 CASE
-                    -- Multi-outcome markets: filter extreme tails
-                    WHEN is_multi
-                        THEN adj_opening_probability > 0.005
-                         AND adj_opening_probability < 0.98
+                    -- Multi-outcome markets: filter tails + default-priced outcomes
+                    WHEN ro.is_multi
+                        THEN ro.adj_opening_probability > 0.005
+                         AND ro.adj_opening_probability < 0.98
+                         AND mp.vm_id IS NULL  -- exclude default-priced outcomes
                     -- Binary/threshold: one outcome per virtual market
-                    ELSE rn = 1
+                    ELSE ro.rn = 1
                 END
         ),
         bucketed AS (
