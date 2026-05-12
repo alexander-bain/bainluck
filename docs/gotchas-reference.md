@@ -4,7 +4,7 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 ---
 
-## Items 16-39 (overflow from CLAUDE.md)
+## Items 16-57 (overflow from CLAUDE.md)
 
 16. **Deleting events requires FK cleanup** — must delete from 8+ tables before removing the event row. Use raw SQL, not ORM `db.delete()`, to avoid autoflush FK violations.
 17. **Kalshi auto-creates pm_ events** when no matching event exists. Guard added to prevent new duplicates, but historical orphans need cleanup via admin endpoints.
@@ -59,3 +59,11 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 52. **StatPal `_fixture_match_key` requires diacritics stripping** — The function uses exact lowercase string matching for team names. Unicode characters (Montréal vs Montreal) cause match failures. Fixed May 7, 2026 by stripping diacritics via `unicodedata.normalize("NFD")` before comparison.
 
 53. **Admin metric denominators must make 100% achievable** — Every rate/coverage metric (link rate, matching coverage, unclassified rate, overall health) must use a denominator where 100% is structurally possible. Common pollution patterns: including resolved/closed markets, events without PM markets, non-sport markets, or marking overall health as critical for non-essential tasks. See `feedback_denominator_100pct.md` in memory.
+
+54. **`NWPathMonitor.currentPath` is unsatisfied until started** — Creating `NWPathMonitor()` and immediately reading `.currentPath` always returns `.unsatisfied` (offline). Must call `monitor.start(queue:)` and use `pathUpdateHandler` or `withCheckedContinuation` to get the real network state. All iOS bug reports were showing `network: offline` because of this.
+
+55. **StatPal `season-schedule` puts playoffs in `tournament.week`, not `tournament.match`** — Regular season games are in `tournament.match` (the array our parser originally read). Playoff/postseason games are in `tournament.week` as `[{"stage": "Play Offs", "match": [...]}]`. Both arrays must be parsed in `_extract_match_items()`. Missing this caused ALL playoff games to be silently dropped for months. Fixed in `bacce5d` (May 11, 2026).
+
+56. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers. Fixed in `8932636` (May 11, 2026).
+
+57. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
