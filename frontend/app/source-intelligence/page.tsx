@@ -149,7 +149,7 @@ export default function SourceIntelligencePage() {
         <StatCard
           label="Most Accurate"
           value={bestSource ? (SOURCE_NAMES[bestSource.source] || bestSource.source) : "—"}
-          sub={bestSource ? `Brier ${bestSource.brier.toFixed(3)}` : ""}
+          sub={bestSource ? `Brier ${bestSource.brier.toFixed(3)} ± ${(bestSource.brier_ci || 0).toFixed(3)}` : ""}
         />
       </section>
 
@@ -248,10 +248,10 @@ export default function SourceIntelligencePage() {
                   }}
                 />
                 <span className="absolute right-2 top-0.5 text-[10px] text-text-muted font-medium">
-                  {sa.brier.toFixed(3)}
+                  {sa.brier.toFixed(3)} &plusmn; {(sa.brier_ci || 0).toFixed(3)}
                 </span>
               </div>
-              <span className="text-[10px] text-text-muted w-14">
+              <span className="text-[10px] text-text-muted w-16">
                 n={sa.observations.toLocaleString()}
               </span>
             </div>

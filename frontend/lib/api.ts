@@ -1603,6 +1603,7 @@ export interface SourceAccuracy {
   source: string;
   observations: number;
   brier: number;
+  brier_ci: number;
   mae: number;
   buckets: { idx: number; n: number; avg_prob: number; actual: number }[];
 }

@@ -71,6 +71,32 @@ _RICH_SOURCES_CTE = f"""
 """
 
 
+# SQL expression to extract betting probability from win_probability_sources.
+# The value can be a plain float ({"betting": 0.58}) or a dict
+# ({"betting": {"value": 0.58, "display_name": ...}}).
+_BETTING_PROB = """
+    CASE
+        WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'number'
+        THEN (e.win_probability_sources->>'betting')::float
+        WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'object'
+        THEN (e.win_probability_sources->'betting'->>'value')::float
+    END
+"""
+
+# Shared CTE for betting closing lines using the above expression.
+_BETTING_CTE = f"""
+    betting_closing AS (
+        SELECT re.event_id,
+            {_BETTING_PROB} AS home_win_probability
+        FROM rich_events re
+        JOIN events e ON e.id = re.event_id
+        WHERE {_BETTING_PROB} IS NOT NULL
+          AND {_BETTING_PROB} > 0
+          AND {_BETTING_PROB} < 1
+    )
+"""
+
+
 async def _set_timeout(db: AsyncSession) -> None:
     await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
@@ -84,7 +110,7 @@ async def _query_coverage(db: AsyncSession) -> dict:
             s.key AS sport,
             COUNT(DISTINCT e.id) AS total,
             COUNT(DISTINCT e.id) FILTER (
-                WHERE e.opening_home_probability IS NOT NULL
+                WHERE e.win_probability_sources->'betting' IS NOT NULL
             ) AS betting,
             COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'espn') AS espn,
             COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'stat_model') AS stat_model,
@@ -105,7 +131,7 @@ async def _query_coverage(db: AsyncSession) -> dict:
         FROM (
             SELECT re.event_id,
                 COUNT(DISTINCT rs.source)
-                + CASE WHEN e.opening_home_probability IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN e.win_probability_sources->'betting' IS NOT NULL THEN 1 ELSE 0 END
                 AS source_count
             FROM rich_events re
             JOIN events e ON e.id = re.event_id
@@ -159,15 +185,7 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
-        betting_closing AS (
-            SELECT re.event_id,
-                (e.win_probability_sources->>'betting')::float AS home_win_probability
-            FROM rich_events re
-            JOIN events e ON e.id = re.event_id
-            WHERE e.win_probability_sources->>'betting' IS NOT NULL
-              AND (e.win_probability_sources->>'betting')::float > 0
-              AND (e.win_probability_sources->>'betting')::float < 1
-        ),
+        {_BETTING_CTE},
         all_closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
             UNION ALL
@@ -182,7 +200,9 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
             AVG(ABS(c.home_win_probability::float
                 - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)) AS mae,
             AVG((c.home_win_probability::float
-                - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)^2) AS brier
+                - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)^2) AS brier,
+            VARIANCE((c.home_win_probability::float
+                - CASE WHEN e.home_score > e.away_score THEN 1.0 ELSE 0.0 END)^2) AS brier_var
         FROM all_closing c
         JOIN events e ON e.id = c.event_id
         GROUP BY c.source, idx
@@ -192,16 +212,21 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
     result = await db.execute(sql)
     rows = result.all()
 
+    import math
+
     sources: dict = {}
     for r in rows:
         src = r.source
         if src not in sources:
             sources[src] = {"source": src, "observations": 0,
                             "total_brier_num": 0.0, "total_mae_num": 0.0,
-                            "buckets": []}
+                            "sq_errs": [], "buckets": []}
         sources[src]["observations"] += r.n
         sources[src]["total_brier_num"] += float(r.brier) * r.n
         sources[src]["total_mae_num"] += float(r.mae) * r.n
+        # Collect per-bucket variance for pooled CI
+        if r.brier_var is not None and r.n > 1:
+            sources[src]["sq_errs"].append((r.n, float(r.brier), float(r.brier_var)))
         sources[src]["buckets"].append({
             "idx": r.idx, "n": r.n,
             "avg_prob": round(float(r.avg_prob), 4),
@@ -211,10 +236,20 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
     out = []
     for s in sources.values():
         obs = s["observations"]
+        brier = s["total_brier_num"] / obs if obs else 0
+        # Pooled standard error: SE = sqrt(pooled_variance / n)
+        # Pooled variance = weighted average of per-bucket variances
+        pooled_var = 0.0
+        total_n = 0
+        for n, _mean, var in s["sq_errs"]:
+            pooled_var += var * (n - 1)
+            total_n += n - 1
+        se = math.sqrt(pooled_var / total_n / obs) if total_n > 0 and obs > 0 else 0
         out.append({
             "source": s["source"],
             "observations": obs,
-            "brier": round(s["total_brier_num"] / obs, 4) if obs else 0,
+            "brier": round(brier, 4),
+            "brier_ci": round(1.96 * se, 4),
             "mae": round(s["total_mae_num"] / obs, 4) if obs else 0,
             "buckets": s["buckets"],
         })
@@ -238,15 +273,11 @@ async def _query_disagreements(db: AsyncSession) -> dict:
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
+        {_BETTING_CTE},
         closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
             UNION ALL
-            SELECT re.event_id, 'betting', e.opening_home_probability
-            FROM rich_events re
-            JOIN events e ON e.id = re.event_id
-            WHERE e.opening_home_probability IS NOT NULL
-              AND e.opening_home_probability > 0
-              AND e.opening_home_probability < 1
+            SELECT event_id, 'betting', home_win_probability FROM betting_closing
         ),
         pairs AS (
             SELECT
