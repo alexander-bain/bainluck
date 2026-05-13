@@ -346,6 +346,27 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 ## Tier 1 — High Leverage, Do Next
 
+### Bug Report Admin Improvements
+
+**Problem:** The admin bug report page at `/admin/bug-reports` is functional but lacks analytics and categorization:
+
+1. **Burndown chart** — show a visual timeline of open vs closed bugs over time. How quickly are we resolving reports?
+2. **Category tagging** — tag bugs by category (UI, data quality, performance, feature request, etc.) so we can spot patterns. Add a `category` field to `BugReport` model + admin UI dropdown.
+3. **Resolution time tracking** — measure time from submission to `fixed` status. Surface average resolution time.
+4. **Auto-categorization** — use GPT-4o-mini to auto-suggest a category from the bug description when a report is filed.
+
+**Files:** `frontend/app/admin/bug-reports/page.tsx`, `backend/app/models/models.py` (BugReport), `backend/app/routes/admin.py`
+**Parallel Safety:** Green
+
+### PRD Update Needed
+
+**Problem:** `docs/PRD.md` (1,865 lines) is stale. Still describes the product as "primarily a second screen for casual sports fans" and focuses on sports. The product has evolved to be a prediction market discovery platform covering sports, politics, economics, entertainment, weather, and more. Key additions not reflected: Discover feed, Higher/Lower games, category pages, TestFlight, calibration, daily digest, friend challenges.
+
+**Action:** Major rewrite to reflect current product vision, user flows, and feature set. Consider splitting into sections: Overview, User Journeys, Features, Architecture, Metrics.
+
+**Files:** `docs/PRD.md`
+**Parallel Safety:** Green
+
 ### Calibration Page — User-Facing `/calibration` or `/about/calibration`
 
 **Current state (May 11, end of day):** MCE **4.8pp**, Brier **0.1745** (30% better than random), **181K outcomes** across 3 sources (Kalshi, Polymarket, Odds API). 7 of 10 probability buckets within 5pp of perfect calibration. Static HTML report at `calibration_report.html`. `is_winner` backfill task running every 6h (52K of 131K markets backfilled).
