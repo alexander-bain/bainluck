@@ -381,6 +381,51 @@ async def _backfill_kalshi_group_ids():
     return stats
 
 
+async def _null_untradeable_openings():
+    """Null out opening_probability on outcomes with no snapshot data.
+
+    If an outcome has zero futures_odds_snapshots, it was created but
+    never actively tracked — its opening_probability is a placeholder,
+    not a real market signal. Setting it to NULL excludes it from
+    calibration via the existing IS NOT NULL filter.
+    """
+    stats = {"nulled": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = NULL
+                    WHERE fo.opening_probability IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                      )
+                      AND fo.id IN (
+                          SELECT fo2.id
+                          FROM futures_outcomes fo2
+                          JOIN futures_markets fm ON fm.id = fo2.market_id
+                          WHERE fm.status = 'resolved'
+                            AND fo2.opening_probability IS NOT NULL
+                          LIMIT 10000
+                      )
+                """)
+            )
+            stats["nulled"] = result.rowcount
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Null untradeable openings error: %s", e)
+
+    logger.info(
+        "Null untradeable openings: %d outcomes nulled, %d errors",
+        stats["nulled"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_polymarket_group_ids_from_api():
     """Fetch resolved Polymarket events from Gamma API to fix group_id.
 
@@ -479,13 +524,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # Phase 0b: Backfill Kalshi group_id (no API, fast)
     kalshi_group_stats = await _backfill_kalshi_group_ids()
 
-    # Phase 0c: Pre-compute closing lines on events (no API, uses odds_snapshots)
+    # Phase 0c: Null out opening_probability on outcomes with no snapshots
+    # (placeholder prices with no trading activity — not real predictions)
+    no_snap_stats = await _null_untradeable_openings()
+
+    # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
-    # Phase 0d: Fix bad Kalshi opening prices from snapshot data
+    # Phase 0e: Fix bad opening prices from snapshot data
     opening_fix_stats = await _fix_kalshi_opening_prices()
 
-    # Phase 0e: Backfill group_id from Polymarket Gamma API (resolved events)
+    # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
     # Phase 1: Set is_winner from current_probability (all sources, fast)
@@ -498,8 +547,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     return {
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
+        "null_untradeable": no_snap_stats,
         "closing_lines": closing_stats,
-        "fix_kalshi_openings": opening_fix_stats,
+        "fix_openings": opening_fix_stats,
         "polymarket_api_group_id": api_group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
