@@ -299,14 +299,9 @@ Added image thumbnails and category emoji to FuturesListView rows. Navigation no
 
 **Files:** `ios/.../Views/FuturesListView.swift`
 
-### BR22. Weather Page Needs City Search
+### ~~BR22. Weather Page Needs City Search~~ — FIXED (May 13)
 
-**Problem:** Feature request from your son. The Weather page shows city forecast cards but you can't search/filter for a specific city. If you want to find your city's forecast, you have to scroll through all of them.
-
-**Fix:** Add a search/filter text field at the top of the city forecasts section. Filter the displayed cities as the user types. Both web (`frontend/app/weather/page.tsx`) and iOS (`ios/.../Views/WeatherView.swift`) need this.
-
-**Files:** `frontend/app/weather/page.tsx`, `ios/.../Views/WeatherView.swift`
-**Parallel Safety:** Green
+City search added to both web and iOS. Users can now filter city forecast cards by typing.
 
 ### BR23. Weather Cities Need Clickable Probability Graphs
 
@@ -352,12 +347,12 @@ Added image thumbnails and category emoji to FuturesListView rows. Navigation no
 - Economics: `https://api.anthropic.com/v1/design/h/eIsTOAYPL_It9o3O4zleDw?open_file=handoff%2Feconomics%2Freference%2FEconomics.html`
 - Weather: `https://api.anthropic.com/v1/design/h/S18AFhL5cujQX0CfDqlkBA`
 
-**Completed (May 11):**
+**Completed (May 11-13):**
 - ✅ Economics data parsing error fixed (removed `rateCuts` field — backend sends nested arrays, iOS expected market objects, field unused in view)
+- ✅ Politics, Entertainment, and Weather pages polished (May 13)
 
 **Remaining:**
-- Design pass on Entertainment, Weather, Politics, Preferences: use the Claude Design handoffs above as the visual target
-- Weather page especially needs a complete visual rethink — temperature distributions should use color gradients and compact visualizations, not text tables
+- Design pass on Economics and Preferences: use the Claude Design handoffs above as the visual target
 
 **Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
 **Parallel Safety:** Green (each page is independent)
@@ -526,7 +521,7 @@ Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV su
 | ~~MAC-5~~ | ~~Menu bar extra (live scores)~~ | ✅ SHIPPED May 8 | `MenuBarView.swift` (new) | |
 | MAC-6 | Push notifications | 2-3h | Various | Green |
 | ~~MAC-8~~ | ~~Right-click context menus~~ | ✅ SHIPPED May 8 | Various SwiftUI views | |
-| MAC-9 | Share button + universal links | 2-3h | Various | Green |
+| ~~MAC-9~~ | ~~Share button + universal links~~ | ✅ DONE — ShareLink cross-platform, MyStuffView context menus improved. | Various | |
 | MAC-12 | macOS widgets (Today view) | 3-4h | New widget extension | Green |
 
 ---
@@ -562,7 +557,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-~~110~~ 158 contract tests shipped. Seeded-data tests added (May 8):
+~~110~~ ~~158~~ 210 contract tests shipped (52 added May 13). Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
@@ -591,7 +586,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 | 14 | **Freshness-Weighted Blending** | Time-decay for stale prediction market prices | More eval data | Yellow |
 | 15 | **DS/Analytics Infrastructure** | Analytical columns, `v_completed_events` view, Brier scores | Migration slot | Red |
 | 16 | **Golf Tournament Related Futures** | "Bigger Picture" section on tournament detail | Nothing | Yellow |
-| 17 | **Golf Evolution Chart Redesign** | Tournament-aware time ranges, round markers | Nothing | Green |
+| ~~17~~ | ~~**Golf Evolution Chart Redesign**~~ | ✅ DONE — Round markers R1-R4, time range picker, tournament-aware. | | |
 
 ### ~~18. Non-Sports Category Pages~~ — ALL SHIPPED (May 7)
 
@@ -658,10 +653,10 @@ Track queries server-side, surface top 5 as zero-state chips when search bar is 
 | ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
 | D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
 | ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ PARTIALLY SHIPPED May 8 — interaction-derived category boosts/penalties affect authenticated backend ranking with tight caps; local web/native tuning remains anonymous fallback. Remaining entity/story-family scoring is tracked in 0u. | `routes/feed.py`, `utils/personalization.py` | |
-| D-6 | Push notifications for moves | Alert when pinned markets/categories move >10% in 1h. Firebase Cloud Messaging | New migration, `tasks/notifications.py`, FCM setup | Green |
+| D-6 | Push notifications for moves | Foundation shipped (May 13): iOS token capture + backend endpoint. Actual push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
 | D-7 | Live game companion mode | Full-screen second-screen mode. Giant win prob, play-by-play, sparkline, alerts | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
-| D-8 | Daily digest email | Morning email: movers, top markets, resolved predictions. Celery + SendGrid | `tasks/daily_digest.py` (new), email templates | Green |
-| D-9 | Friend challenges | Shareable URL, no account required for friend, `prediction_challenges` table | New migration, `routes/challenges.py` (new), `app/challenge/[id]/page.tsx` (new) | Green |
+| ~~D-8~~ | ~~Daily digest email~~ | ✅ SHIPPED (May 13) — Celery beat scheduled at 8am ET. | `tasks/daily_digest.py`, email templates | |
+| D-9 | Friend challenges | Backend scaffold shipped (May 13): table, model, 3 API endpoints. Frontend UI not yet built. | `routes/challenges.py`, `app/challenge/[id]/page.tsx` (new) | Green |
 
 ---
 
