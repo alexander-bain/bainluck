@@ -160,13 +160,29 @@ export default function BugReportsPage() {
     loadReports();
   };
 
-  const selectReport = (id: number) => {
+  const selectReport = async (id: number) => {
     setSelectedId(id);
     setShowPrompt(false);
     const report = reports.find(r => r.id === id);
     if (report && report.status === "new") {
       setReports(prev => prev.map(r => r.id === id ? { ...r, status: "reviewed" } : r));
       updateStatusSilent(id, "reviewed");
+    }
+    if (report?.has_screenshot && !report.screenshot_base64) {
+      try {
+        const headers = await getAuthHeaders();
+        const secretParam = secret ? `?secret=${secret}` : "";
+        const resp = await fetch(`${API}/api/admin/bug-reports/${id}/screenshot${secretParam}`, { headers });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = (reader.result as string).split(",")[1];
+            setReports(prev => prev.map(r => r.id === id ? { ...r, screenshot_base64: base64 } : r));
+          };
+          reader.readAsDataURL(blob);
+        }
+      } catch { }
     }
   };
 
