@@ -833,6 +833,7 @@ async def fix_date_mismatches(
     unlinked = 0
     checked = 0
     by_sport_prefix: dict[str, int] = {}
+    ids_to_unlink: list[int] = []
 
     for r in rows:
         ticker_date = extract_game_date_from_ticker(r.external_id)
@@ -851,14 +852,16 @@ async def fix_date_mismatches(
             prefix = r.external_id.lower().split("-")[0] if "-" in r.external_id else "unknown"
             by_sport_prefix[prefix] = by_sport_prefix.get(prefix, 0) + 1
             unlinked += 1
+            ids_to_unlink.append(r.id)
 
-            if not dry_run:
-                await db.execute(text("""
-                    UPDATE futures_markets SET event_id = NULL
-                    WHERE id = :mid
-                """), {"mid": r.id})
-
-    if not dry_run:
+    if not dry_run and ids_to_unlink:
+        # Batch unlink in chunks of 1000
+        for i in range(0, len(ids_to_unlink), 1000):
+            chunk = ids_to_unlink[i:i + 1000]
+            await db.execute(text("""
+                UPDATE futures_markets SET event_id = NULL
+                WHERE id = ANY(:ids)
+            """), {"ids": chunk})
         await db.commit()
 
     return {
