@@ -785,7 +785,10 @@ async def _match_prediction_markets(limit: int = 500):
                     if ticker_date and event.commence_time:
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
-                        if abs((_td - _ec).total_seconds()) > 4 * 3600:
+                        # Use tight threshold when HHMM was parsed (non-midnight),
+                        # loose threshold for date-only tickers
+                        _max_diff = 4 * 3600 if (_td.hour or _td.minute) else 18 * 3600
+                        if abs((_td - _ec).total_seconds()) > _max_diff:
                             logger.warning(
                                 "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
                                 market.external_id, _td.date(), _ec.date(),
@@ -966,7 +969,9 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     # fall back to the wider 7-day window for Kalshi or 48h for Polymarket.
     reference_time = game_date_override or market.commence_time or now
     if game_date_override:
-        time_delta = timedelta(hours=6)
+        # Tight window when HHMM is available (non-midnight), wider for date-only
+        has_time = game_date_override.hour != 0 or game_date_override.minute != 0
+        time_delta = timedelta(hours=6) if has_time else timedelta(hours=18)
     elif market.source == "kalshi":
         time_delta = timedelta(days=7)
     else:

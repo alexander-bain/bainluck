@@ -773,7 +773,9 @@ async def date_mismatch_audit(db: AsyncSession = Depends(get_db)):
             ticker_date = ticker_date.replace(tzinfo=tz.utc)
 
         diff_hours = abs((ticker_date - event_date).total_seconds()) / 3600
-        if diff_hours > 4:
+        has_time = ticker_date.hour != 0 or ticker_date.minute != 0
+        max_hours = 4 if has_time else 18
+        if diff_hours > max_hours:
             mismatches.append({
                 "market_id": r.market_id,
                 "market_name": r.market_name,
@@ -848,7 +850,9 @@ async def fix_date_mismatches(
             ticker_date = ticker_date.replace(tzinfo=timezone.utc)
 
         diff_hours = abs((ticker_date - event_date).total_seconds()) / 3600
-        if diff_hours > 4:
+        has_time = ticker_date.hour != 0 or ticker_date.minute != 0
+        max_hours = 4 if has_time else 18
+        if diff_hours > max_hours:
             prefix = r.external_id.lower().split("-")[0] if "-" in r.external_id else "unknown"
             by_sport_prefix[prefix] = by_sport_prefix.get(prefix, 0) + 1
             unlinked += 1
