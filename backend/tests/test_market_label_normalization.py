@@ -706,3 +706,27 @@ class TestMarketTierGameLevel:
     def test_championship_name_still_tier_1(self):
         # Actual championship markets still work
         assert compute_market_tier("2026 NBA Champion", category="championship") == 1
+
+
+class TestSeriesCategoryClassification:
+    """Series markets should get display_category='series' for proper frontend rendering."""
+
+    def test_win_series(self):
+        assert classify_market_category("Who Will Win Series? - 76ers vs. Celtics") == "series"
+
+    def test_series_winner(self):
+        assert classify_market_category("NBA Playoffs: Series Winner") == "series"
+
+    def test_series_total_games(self):
+        assert classify_market_category("76ers vs. Celtics Series Total Games O/U 5.5") == "series"
+
+    def test_series_exact(self):
+        assert classify_market_category("Series Exact Score: Celtics 4-2") == "series"
+
+    def test_not_world_series_champion(self):
+        # World Series Champion is a championship market, not a series market
+        assert classify_market_category("World Series Champion") != "series"
+
+    def test_bare_matchup_not_series(self):
+        # Bare matchup should be game_prop, not series
+        assert classify_market_category("Celtics vs. 76ers") == "game_prop"

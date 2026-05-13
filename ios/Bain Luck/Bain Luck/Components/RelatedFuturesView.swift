@@ -437,9 +437,10 @@ struct RelatedFuturesView: View {
     private func content(_ rf: RelatedFuturesResponse) -> some View {
         let awayFutures = rf.awayTeamFutures ?? []
         let homeFutures = rf.homeTeamFutures ?? []
+        let seriesMarkets = rf.seriesMarkets ?? []
         let totalCount = awayFutures.count + homeFutures.count
 
-        if totalCount > 0 {
+        if totalCount > 0 || !seriesMarkets.isEmpty {
             let homeCats = categorizeFutures(homeFutures)
             let awayCats = categorizeFutures(awayFutures)
             let hColor = homeTeamColor
@@ -453,6 +454,7 @@ struct RelatedFuturesView: View {
                 || !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty
                 || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty
                 || !mergedNovelty.isEmpty
+                || !seriesMarkets.isEmpty
 
             if hasSections {
                 VStack(alignment: .leading, spacing: 12) {
@@ -467,6 +469,11 @@ struct RelatedFuturesView: View {
                         Text("\(totalCount)")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
+                    }
+
+                    // Series markets — dedicated section for playoff series context
+                    if !seriesMarkets.isEmpty {
+                        SeriesMarketsSection(markets: seriesMarkets)
                     }
 
                     // Awards — compact rows grouped by player
@@ -2056,6 +2063,94 @@ private struct PlayerHeadshotView: View {
                 Text(String(name.prefix(1)))
                     .font(.system(size: size * 0.35, weight: .semibold, design: .rounded))
                     .foregroundStyle(teamColor)
+            }
+        }
+    }
+}
+
+// MARK: - Series Markets Section
+
+private struct SeriesMarketsSection: View {
+    let markets: [SeriesMarket]
+
+    /// Resolve "Yes"/"No" outcome names for series winner markets.
+    private func resolvedName(_ outcome: SeriesMarketOutcome, marketName: String) -> String {
+        let name = outcome.name
+        let vsPattern = try! NSRegularExpression(
+            pattern: #"[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])"#,
+            options: .caseInsensitive
+        )
+        let range = NSRange(marketName.startIndex..., in: marketName)
+
+        if name == "Yes", let match = vsPattern.firstMatch(in: marketName, range: range) {
+            if let r = Range(match.range(at: 1), in: marketName) {
+                return "\(marketName[r].trimmingCharacters(in: .whitespaces)) win series"
+            }
+        } else if name == "No", let match = vsPattern.firstMatch(in: marketName, range: range) {
+            if let r = Range(match.range(at: 2), in: marketName) {
+                return "\(marketName[r].trimmingCharacters(in: .whitespaces)) win series"
+            }
+        }
+        return name
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "sportscourt")
+                    .font(.system(size: 10))
+                Text("SERIES")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+            }
+            .foregroundStyle(.secondary)
+
+            ForEach(markets) { market in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(market.marketName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    ForEach(market.outcomes) { outcome in
+                        let displayName = resolvedName(outcome, marketName: market.marketName)
+                        HStack(spacing: 6) {
+                            Text(displayName)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Spacer()
+                            if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
+                                HStack(spacing: 1) {
+                                    Image(systemName: change > 0 ? "arrow.up" : "arrow.down")
+                                        .font(.system(size: 7, weight: .bold))
+                                    Text(String(format: "%.1f%%", abs(change * 100)))
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                .foregroundStyle(change > 0 ? .green : .red)
+                            }
+                            if let prob = outcome.probability {
+                                Text("\(Int((prob * 100).rounded()))%")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .monospacedDigit()
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+
+                    HStack {
+                        Spacer()
+                        Text(market.source ?? "kalshi")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.04))
+                )
             }
         }
     }

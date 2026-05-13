@@ -86,6 +86,7 @@ const CATEGORY_TO_TIER: Record<string, number> = {
   playoff_path: 1,
   conference: 2,
   award: 3,
+  series: 3,          // series context (win series, exact score, total games)
   season_stat: 4,
   game_prop: 6,      // stat props get special display
   trade: 4,
@@ -2251,6 +2252,7 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
       }
       return false;
     }),
+    series: active.filter((f) => f.display_category === "series"),
     trades: active.filter((f) => f.display_category === "trade"),
     novelty: active.filter((f) => f.display_category === "novelty"),
     games: active.filter((f) => f.display_category === "other"),
@@ -2301,6 +2303,7 @@ export default function RelatedFutures({
     away_team: awayTeam,
     home_team_futures: [],
     away_team_futures: [],
+    series_markets: [],
     total_count: 0,
     summary: null,
     event_status: eventStatus,
@@ -2414,12 +2417,21 @@ export default function RelatedFutures({
   const gameMarketCount =
     effectiveStatProps +
     homeCats.games.length + awayCats.games.length;
+  // Series markets come as a dedicated top-level array from the API.
+  // Fall back to the old home/away filter for backward compatibility.
+  const seriesMarkets = safeData.series_markets ?? [];
+  const legacySeries = [...homeCats.series, ...awayCats.series]
+    .filter((f, i, arr) => arr.findIndex((x) => x.market_id === f.market_id && x.outcome_id === f.outcome_id) === i)
+    .sort((a, b) => (b.probability || 0) - (a.probability || 0));
+  const hasSeriesData = seriesMarkets.length > 0 || legacySeries.length > 0;
+
   const hasStandings = !!(homeStandings || awayStandings);
   const seasonCount =
     homePlayoff.length + awayPlayoff.length +
     homeCats.matchups.length + awayCats.matchups.length +
     homeCats.seasonStats.length + awayCats.seasonStats.length +
     mergedAwards.length +
+    (seriesMarkets.length || legacySeries.length) +
     homeCats.trades.length + awayCats.trades.length +
     mergedNovelty.length +
     (hasStandings && homeCats.seasonStats.length === 0 && awayCats.seasonStats.length === 0 ? 1 : 0);
@@ -2492,6 +2504,89 @@ export default function RelatedFutures({
           />
         </>
       )}
+
+      {/* === Series Context === */}
+      {seriesMarkets.length > 0 ? (
+        <div className="mb-4 bg-surface-card border border-surface-border rounded-xl shadow-sm p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-3">SERIES</div>
+          <div className="space-y-4">
+            {seriesMarkets.map((sm) => (
+              <div key={sm.market_id}>
+                <div className="text-xs text-text-secondary mb-1.5 truncate">{sm.market_name}</div>
+                <div className="space-y-1">
+                  {sm.outcomes.map((o) => {
+                    // Resolve "Yes"/"No" for series winner markets
+                    let displayName = o.name;
+                    if (displayName === "Yes" && sm.market_name) {
+                      const vsMatch = sm.market_name.match(/[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])/i);
+                      if (vsMatch) displayName = `${vsMatch[1].trim()} win series`;
+                    } else if (displayName === "No" && sm.market_name) {
+                      const vsMatch = sm.market_name.match(/[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])/i);
+                      if (vsMatch) displayName = `${vsMatch[2].trim()} win series`;
+                    }
+                    return (
+                      <div key={o.outcome_id} className="flex items-center justify-between py-1">
+                        <div className="text-sm text-text-primary truncate flex-1 min-w-0">{displayName}</div>
+                        <div className="flex items-center gap-2 shrink-0 ml-3">
+                          {o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (
+                            <span className={`text-xs font-mono tabular-nums ${o.probability_change_24h > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                              {o.probability_change_24h > 0 ? "↑" : "↓"} {(Math.abs(o.probability_change_24h) * 100).toFixed(1)}%
+                            </span>
+                          )}
+                          <span className="font-mono tabular-nums text-sm font-bold">
+                            {o.probability != null ? `${Math.round(o.probability * 100)}%` : "---"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-1 text-[10px] text-text-muted text-right">{sm.source || "kalshi"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : legacySeries.length > 0 ? (
+        <div className="mb-4 bg-surface-card border border-surface-border rounded-xl shadow-sm p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-3">SERIES</div>
+          <div className="space-y-2">
+            {legacySeries.map((f) => {
+              const label = f.clean_label || f.market_name;
+              const prob = f.probability;
+              const change = f.probability_change_24h;
+              let displayName = f.outcome_name;
+              if (displayName === "Yes" && f.market_name) {
+                const vsMatch = f.market_name.match(/[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])/i);
+                if (vsMatch) displayName = `${vsMatch[1].trim()} win series`;
+              } else if (displayName === "No" && f.market_name) {
+                const vsMatch = f.market_name.match(/[-–—]\s*(.+?)\s+vs\.?\s+(.+?)(?:\s*$|\s*[?])/i);
+                if (vsMatch) displayName = `${vsMatch[2].trim()} win series`;
+              }
+              return (
+                <div key={`${f.market_id}-${f.outcome_id}`} className="flex items-center justify-between py-1.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-text-primary truncate">{displayName}</div>
+                    <div className="text-[11px] text-text-muted truncate">{label}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 ml-3">
+                    {change != null && Math.abs(change) >= 0.005 && (
+                      <span className={`text-xs font-mono tabular-nums ${change > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                        {change > 0 ? "↑" : "↓"} {(Math.abs(change) * 100).toFixed(1)}%
+                      </span>
+                    )}
+                    <span className="font-mono tabular-nums text-sm font-bold">
+                      {prob != null ? `${Math.round(prob * 100)}%` : "---"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-[10px] text-text-muted text-right">
+            {legacySeries[0]?.source || "kalshi"}
+          </div>
+        </div>
+      ) : null}
 
       {/* === Two-Column Team Cards === */}
       {(seasonCount > 0 || hasGridProgression) && (

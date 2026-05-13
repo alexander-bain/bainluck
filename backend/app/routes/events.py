@@ -3267,6 +3267,7 @@ async def get_related_futures(
         "away_team": event.away_team_name,
         "home_team_futures": [],
         "away_team_futures": [],
+        "series_markets": [],
         "total_count": 0,
     }
 
@@ -3427,8 +3428,57 @@ async def get_related_futures(
     )
     game_prop_ids = [row.id for row in game_prop_result.all()]
 
+    # Pass 3: Series-level markets (tier 5, not linked to events)
+    # During playoffs, Kalshi has rich series-level markets (Series Winner,
+    # Series Exact Score, Series Total Games) that should appear on every
+    # game's event detail page within that playoff series.
+    # These markets are tier 5 (not loaded in season passes) and have no
+    # event_id (not loaded in game prop pass). Find them by matching BOTH
+    # team names in the market name + series-related ticker prefixes.
+    series_market_ids: list[int] = []
+    if event.home_team_name and event.away_team_name:
+        _series_home_patterns = _team_name_patterns(event.home_team_name)
+        _series_away_patterns = _team_name_patterns(event.away_team_name)
+        # Require a team pattern of at least 4 chars from each side
+        _series_home_ilike = [
+            FuturesMarket.name.ilike(f"%{p}%")
+            for p in _series_home_patterns if len(p) >= 4
+        ]
+        _series_away_ilike = [
+            FuturesMarket.name.ilike(f"%{p}%")
+            for p in _series_away_patterns if len(p) >= 4
+        ]
+        if _series_home_ilike and _series_away_ilike:
+            # Detect series markets by ticker prefix or name pattern
+            from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+            _series_ticker_conditions = [
+                FuturesMarket.external_id.ilike(f"{prefix}%")
+                for prefix, sk in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items()
+                if "series" in prefix and sk == event_sport_key
+            ]
+            _series_name_conditions = [
+                FuturesMarket.name.ilike("%series%"),
+            ]
+            _series_detection = _series_ticker_conditions + _series_name_conditions
+            if _series_detection:
+                series_result = await db.execute(
+                    select(FuturesMarket.id)
+                    .where(
+                        rf_status_filter,
+                        or_(*sport_filters),
+                        or_(*_series_detection),
+                        or_(*_series_home_ilike),
+                        or_(*_series_away_ilike),
+                    )
+                    .limit(50)
+                )
+                series_market_ids = [row.id for row in series_result.all()]
+
     sport_market_ids = season_market_ids + game_prop_ids
-    if not sport_market_ids:
+    # Series markets are returned as a separate top-level array, not mixed
+    # into the home/away classification flow. They belong to the matchup
+    # (both teams), not one side.
+    if not sport_market_ids and not series_market_ids:
         return empty
 
     # Apply gender name filter to exclude cross-gender markets
@@ -4025,12 +4075,59 @@ async def get_related_futures(
     except Exception:
         pass
 
+    # ── Load series markets as a dedicated top-level array ─────────────
+    # Series markets (Win Series, Series Exact Score, Series Total Games)
+    # belong to the matchup between BOTH teams, not one side. Loading them
+    # separately avoids the home/away classification problems (Yes/No outcomes,
+    # both-teams-match ambiguity) that caused them to be dropped or misplaced.
+    formatted_series: list[dict] = []
+    if series_market_ids:
+        series_outcomes_result = await db.execute(
+            select(FuturesOutcome)
+            .options(selectinload(FuturesOutcome.market))
+            .where(FuturesOutcome.market_id.in_(series_market_ids))
+            .order_by(FuturesOutcome.market_id, FuturesOutcome.current_probability.desc())
+        )
+        series_outcomes = series_outcomes_result.scalars().all()
+
+        # Group outcomes by market, then format each market as one entry
+        from collections import defaultdict
+        series_by_market: dict[int, list] = defaultdict(list)
+        for so in series_outcomes:
+            series_by_market[so.market_id].append(so)
+
+        for mid, outcomes_list in series_by_market.items():
+            if not outcomes_list:
+                continue
+            mkt = outcomes_list[0].market
+            if not mkt:
+                continue
+            top_outcomes = []
+            for so in outcomes_list[:10]:  # cap outcomes per market
+                top_outcomes.append({
+                    "outcome_id": so.id,
+                    "name": so.name,
+                    "probability": float(so.current_probability) if so.current_probability else None,
+                    "probability_change_24h": float(so.probability_change_24h) if so.probability_change_24h else None,
+                })
+            formatted_series.append({
+                "market_id": mkt.id,
+                "market_name": mkt.name,
+                "source": mkt.source,
+                "status": mkt.status,
+                "resolution_date": mkt.resolution_date.isoformat() if mkt.resolution_date else None,
+                "outcomes": top_outcomes,
+            })
+        # Limit to 10 series markets total
+        formatted_series = formatted_series[:10]
+
     resp = {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "home_team_futures": home_futures,
         "away_team_futures": away_futures,
+        "series_markets": formatted_series,
         "total_count": len(home_futures) + len(away_futures),
         "summary": summary,
         "event_status": event.status,
@@ -4043,6 +4140,7 @@ async def get_related_futures(
         resp["_debug"] = {
             "season_market_count": len(season_market_ids),
             "game_prop_count": len(game_prop_ids),
+            "series_market_count": len(series_market_ids),
             "sport_prefix": sport_prefix,
             "llm_category": llm_category,
             "home_patterns": home_team_patterns,

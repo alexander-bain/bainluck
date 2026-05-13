@@ -311,6 +311,10 @@ _NCAA_ROUND_RE = re.compile(
 # ── Category assignment ──────────────────────────────────────────────────
 
 _CATEGORY_RULES: list[tuple[re.Pattern, str]] = [
+    # Series markets (before game_prop — "Win Series – Team vs Team" contains "vs" pattern)
+    (re.compile(r"\bwin\s+series\b|\bseries\s+winner\b|\bseries.*total\s+games\b|\bseries\s+exact\b", re.I),
+     "series"),
+
     # Game props (highest priority — check before championship/conference patterns)
     (_GAME_STAT_PROP_RE, "game_prop"),
     (_BARE_MATCHUP_RE, "game_prop"),

@@ -123,12 +123,33 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
 
 // MARK: - Related Futures Response
 
+nonisolated struct SeriesMarketOutcome: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let name: String
+    let probability: Double?
+    let probabilityChange24h: Double?
+
+    var id: Int { outcomeId }
+}
+
+nonisolated struct SeriesMarket: Decodable, Identifiable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let source: String?
+    let status: String?
+    let resolutionDate: String?
+    let outcomes: [SeriesMarketOutcome]
+
+    var id: Int { marketId }
+}
+
 nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
     let awayTeam: String
     let homeTeamFutures: [RelatedFuture]?
     let awayTeamFutures: [RelatedFuture]?
+    let seriesMarkets: [SeriesMarket]?
     let sharedFutures: [RelatedFuture]?
     let summary: String?
     let eventStatus: String?

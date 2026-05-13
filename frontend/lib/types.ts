@@ -644,12 +644,29 @@ export interface RelatedFuture {
   team_logo?: string;
 }
 
+export interface SeriesMarketOutcome {
+  outcome_id: number;
+  name: string;
+  probability: number | null;
+  probability_change_24h: number | null;
+}
+
+export interface SeriesMarket {
+  market_id: number;
+  market_name: string;
+  source: string | null;
+  status: string | null;
+  resolution_date: string | null;
+  outcomes: SeriesMarketOutcome[];
+}
+
 export interface RelatedFuturesResponse {
   event_id: number;
   home_team: string;
   away_team: string;
   home_team_futures: RelatedFuture[];
   away_team_futures: RelatedFuture[];
+  series_markets: SeriesMarket[];
   total_count: number;
   summary: string | null;
   event_status?: string;
