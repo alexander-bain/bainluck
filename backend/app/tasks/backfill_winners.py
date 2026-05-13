@@ -507,29 +507,26 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
 
 
 async def _fix_kalshi_opening_prices():
-    """Fix bad Kalshi opening_probability from placeholder bid-ask spreads.
+    """Fix bad opening_probability from placeholder prices across ALL sources.
 
-    For Kalshi outcomes with futures_odds_snapshots, replaces
-    opening_probability with the earliest snapshot that has real trading
-    (yes_bid > 0 and spread < 50pp). Only updates outcomes where the
-    current opening_probability differs from the corrected value by >5pp.
+    For outcomes with futures_odds_snapshots, finds the earliest snapshot
+    where the price differs from opening_probability by >5pp (indicating
+    real trading happened after a placeholder opening was captured).
     """
     stats = {"fixed": 0, "checked": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            # Step 1: Find Kalshi outcomes that might have bad opening prices
-            # (resolved markets where opening_probability was set)
+            # Find outcomes with resolved markets that might have bad opening prices
             bad_candidates = await session.execute(
                 text("""
                     SELECT fo.id, fo.opening_probability
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
+                    WHERE fm.status = 'resolved'
                       AND fo.opening_probability IS NOT NULL
                       AND fo.opening_probability > 0
-                    LIMIT 2000
+                    LIMIT 5000
                 """)
             )
             candidates = bad_candidates.all()
