@@ -1010,3 +1010,37 @@ class BugReport(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class PredictionChallenge(Base):
+    """Friend challenge: shareable Higher/Lower prediction link."""
+
+    __tablename__ = "prediction_challenges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    creator_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True
+    )
+    creator_session_id: Mapped[Optional[str]] = mapped_column(String(100))
+    challenge_code: Mapped[str] = mapped_column(
+        String(20), unique=True, nullable=False, index=True
+    )
+    market_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("futures_markets.id"), nullable=False
+    )
+    market_name: Mapped[Optional[str]] = mapped_column(Text)
+    creator_guess: Mapped[str] = mapped_column(String(10), nullable=False)
+    creator_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    friend_guess: Mapped[Optional[str]] = mapped_column(String(10))
+    friend_session_id: Mapped[Optional[str]] = mapped_column(String(100))
+    actual_probability: Mapped[Optional[float]] = mapped_column(Numeric)
+    creator_correct: Mapped[Optional[bool]] = mapped_column(Boolean)
+    friend_correct: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Relationships
+    market: Mapped["FuturesMarket"] = relationship()
+    creator: Mapped[Optional["User"]] = relationship()
