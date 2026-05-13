@@ -793,6 +793,83 @@ async def date_mismatch_audit(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.post("/source-intelligence/fix-date-mismatches")
+async def fix_date_mismatches(
+    secret: str = "",
+    dry_run: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Unlink Kalshi markets whose ticker date doesn't match the event date.
+
+    These are markets from a different game (same teams, different date)
+    that got linked to the wrong event. Unlinking (event_id = NULL) lets
+    Phase 1 re-match them to the correct event on the next run.
+
+    Pass ?dry_run=false&secret=ADMIN_TOKEN to execute.
+    """
+    import os
+    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
+    if not expected or secret != expected:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    await _set_timeout(db)
+
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    sql = text("""
+        SELECT fm.id, fm.external_id, fm.event_id,
+               e.commence_time AS event_commence
+        FROM futures_markets fm
+        JOIN events e ON e.id = fm.event_id
+        WHERE fm.source = 'kalshi'
+          AND fm.external_id IS NOT NULL
+          AND fm.event_id IS NOT NULL
+          AND e.commence_time IS NOT NULL
+    """)
+    result = await db.execute(sql)
+    rows = result.all()
+
+    unlinked = 0
+    checked = 0
+    by_sport_prefix: dict[str, int] = {}
+
+    for r in rows:
+        ticker_date = extract_game_date_from_ticker(r.external_id)
+        if not ticker_date:
+            continue
+        checked += 1
+
+        event_date = r.event_commence
+        if event_date.tzinfo is None:
+            event_date = event_date.replace(tzinfo=timezone.utc)
+        if ticker_date.tzinfo is None:
+            ticker_date = ticker_date.replace(tzinfo=timezone.utc)
+
+        diff_hours = abs((ticker_date - event_date).total_seconds()) / 3600
+        if diff_hours > 36:
+            prefix = r.external_id.lower().split("-")[0] if "-" in r.external_id else "unknown"
+            by_sport_prefix[prefix] = by_sport_prefix.get(prefix, 0) + 1
+            unlinked += 1
+
+            if not dry_run:
+                await db.execute(text("""
+                    UPDATE futures_markets SET event_id = NULL
+                    WHERE id = :mid
+                """), {"mid": r.id})
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "markets_checked": checked,
+        "markets_unlinked": unlinked,
+        "by_ticker_prefix": dict(sorted(by_sport_prefix.items(),
+                                        key=lambda x: -x[1])[:30]),
+    }
+
+
 @router.get("/source-intelligence/oscillation-audit")
 async def oscillation_audit(db: AsyncSession = Depends(get_db)):
     """Find ALL events with stat_model oscillation — reverse matching eval.
