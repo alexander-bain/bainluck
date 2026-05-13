@@ -567,21 +567,24 @@ async def _compute_calibration_prices():
     Only processes outcomes where calibration_probability is NULL.
     Uses compound index (outcome_id, captured_at) for fast DISTINCT ON.
     """
-    stats = {"with_commence": 0, "without_commence": 0, "errors": []}
+    stats = {"with_commence": 0, "without_commence": 0, "fallback": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            # Part A: Markets WITH commence_time — use closing line
+            # Part A: Markets WITH commence_time
+            # Uses closing line (last snapshot before event start) when available,
+            # falls back to opening_probability to avoid poison rows blocking batches
             result_a = await session.execute(
                 text("""
                     WITH needs_cal AS (
-                        SELECT fo.id AS outcome_id, fm.commence_time
+                        SELECT fo.id AS outcome_id, fm.commence_time,
+                               fo.opening_probability
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fm.id = fo.market_id
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
                           AND fm.commence_time IS NOT NULL
-                        LIMIT 5000
+                        LIMIT 50000
                     ),
                     closing AS (
                         SELECT DISTINCT ON (nc.outcome_id)
@@ -592,28 +595,36 @@ async def _compute_calibration_prices():
                         WHERE fos.captured_at < nc.commence_time
                           AND fos.probability > 0 AND fos.probability < 1
                         ORDER BY nc.outcome_id, fos.captured_at DESC
+                    ),
+                    final_price AS (
+                        SELECT nc.outcome_id,
+                               COALESCE(cl.probability, nc.opening_probability) AS cal_prob
+                        FROM needs_cal nc
+                        LEFT JOIN closing cl ON cl.outcome_id = nc.outcome_id
                     )
                     UPDATE futures_outcomes fo
-                    SET calibration_probability = cl.probability
-                    FROM closing cl
-                    WHERE fo.id = cl.outcome_id
+                    SET calibration_probability = fp.cal_prob
+                    FROM final_price fp
+                    WHERE fo.id = fp.outcome_id
+                      AND fp.cal_prob IS NOT NULL
                 """)
             )
             stats["with_commence"] = result_a.rowcount
 
-            # Part B: Markets WITHOUT commence_time — use settled price
-            # (first snapshot ≥1h after opening, allowing initial volatility to settle)
+            # Part B: Markets WITHOUT commence_time
+            # Uses settled price (first snapshot >=1h after opening),
+            # falls back to opening_probability
             result_b = await session.execute(
                 text("""
                     WITH needs_cal AS (
-                        SELECT fo.id AS outcome_id, fo.opening_captured_at
+                        SELECT fo.id AS outcome_id, fo.opening_captured_at,
+                               fo.opening_probability
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fm.id = fo.market_id
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
                           AND fm.commence_time IS NULL
-                          AND fo.opening_captured_at IS NOT NULL
-                        LIMIT 5000
+                        LIMIT 50000
                     ),
                     settled AS (
                         SELECT DISTINCT ON (nc.outcome_id)
@@ -621,14 +632,22 @@ async def _compute_calibration_prices():
                             fos.probability
                         FROM needs_cal nc
                         JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
-                        WHERE fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
+                        WHERE nc.opening_captured_at IS NOT NULL
+                          AND fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
                           AND fos.probability > 0 AND fos.probability < 1
                         ORDER BY nc.outcome_id, fos.captured_at ASC
+                    ),
+                    final_price AS (
+                        SELECT nc.outcome_id,
+                               COALESCE(st.probability, nc.opening_probability) AS cal_prob
+                        FROM needs_cal nc
+                        LEFT JOIN settled st ON st.outcome_id = nc.outcome_id
                     )
                     UPDATE futures_outcomes fo
-                    SET calibration_probability = st.probability
-                    FROM settled st
-                    WHERE fo.id = st.outcome_id
+                    SET calibration_probability = fp.cal_prob
+                    FROM final_price fp
+                    WHERE fo.id = fp.outcome_id
+                      AND fp.cal_prob IS NOT NULL
                 """)
             )
             stats["without_commence"] = result_b.rowcount
@@ -640,8 +659,9 @@ async def _compute_calibration_prices():
         logger.error("Compute calibration prices error: %s", e)
 
     logger.info(
-        "Calibration prices: %d with commence_time, %d without, %d errors",
-        stats["with_commence"], stats["without_commence"], len(stats["errors"]),
+        "Calibration prices: %d with commence_time, %d without, %d fallback, %d errors",
+        stats["with_commence"], stats["without_commence"],
+        stats["fallback"], len(stats["errors"]),
     )
     return stats
 
