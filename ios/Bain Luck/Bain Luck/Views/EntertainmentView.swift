@@ -40,6 +40,20 @@ private let kindLabel: [String: String] = [
     "multi": "Market", "binary": "Market",
 ]
 
+private let entertainmentPink = Color(red: 0.85, green: 0.15, blue: 0.55)
+private let entertainmentMagenta = Color(red: 0.70, green: 0.10, blue: 0.85)
+
+private let kindAccent: [String: Color] = [
+    "spotify": Color(red: 0.12, green: 0.84, blue: 0.38),
+    "billboard": Color(red: 0.95, green: 0.60, blue: 0.10),
+    "boxoffice": Color(red: 0.20, green: 0.60, blue: 0.95),
+    "rt": Color(red: 0.90, green: 0.20, blue: 0.20),
+    "reality": Color(red: 0.85, green: 0.30, blue: 0.70),
+    "eurovision": Color(red: 0.65, green: 0.25, blue: 0.90),
+    "multi": entertainmentPink,
+    "binary": entertainmentPink,
+]
+
 // MARK: - View
 
 struct EntertainmentView: View {
@@ -97,7 +111,7 @@ struct EntertainmentView: View {
     // MARK: - Page header
 
     private func pageHeader(_ data: EntertainmentResponse) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Live probabilities from Kalshi and Polymarket — charts, box office, reality TV, and the moments breaking the internet.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -108,6 +122,33 @@ struct EntertainmentView: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    entertainmentPink.opacity(0.07),
+                    entertainmentMagenta.opacity(0.07)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            entertainmentPink.opacity(0.18),
+                            entertainmentMagenta.opacity(0.18)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
         .padding(.horizontal)
     }
 
@@ -127,7 +168,7 @@ struct EntertainmentView: View {
     }
 
     private func trendingCard(_ m: EntMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 tagChip(kind: m.kind ?? "binary")
                 Spacer()
@@ -152,10 +193,11 @@ struct EntertainmentView: View {
 
             sourceChip(m.src)
         }
-        .padding(14)
+        .padding(16)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.1)))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
         .padding(.horizontal)
     }
 
@@ -167,15 +209,15 @@ struct EntertainmentView: View {
 
         if (m.kind == "spotify" || m.kind == "billboard") && outcomes.count >= 2 {
             VStack(spacing: 6) {
-                outcomeRow(outcomes[0], isLeader: true)
-                outcomeRow(outcomes[1], isLeader: false)
+                outcomeRow(outcomes[0], isLeader: true, kind: m.kind)
+                outcomeRow(outcomes[1], isLeader: false, kind: m.kind)
             }
         } else if m.kind == "reality" && m.outcomeCount <= 2 && outcomes.count >= 2 {
             binaryBar(a: outcomes[0], b: outcomes[1])
         } else if outcomes.count > 2 {
-            VStack(spacing: 4) {
+            VStack(spacing: 5) {
                 ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, o in
-                    outcomeRow(o, isLeader: false)
+                    outcomeRow(o, isLeader: false, kind: m.kind)
                 }
             }
         } else {
@@ -189,7 +231,7 @@ struct EntertainmentView: View {
         }
     }
 
-    private func outcomeRow(_ o: EntOutcome, isLeader: Bool) -> some View {
+    private func outcomeRow(_ o: EntOutcome, isLeader: Bool, kind: String? = nil) -> some View {
         HStack(spacing: 8) {
             Text(o.name)
                 .font(.caption)
@@ -198,12 +240,29 @@ struct EntertainmentView: View {
                 .lineLimit(1)
             Spacer()
             if let delta = o.delta24h, abs(delta) > 0.1 {
-                Text("\(delta > 0 ? "↑" : "↓")\(abs(delta), specifier: "%.1f")%")
-                    .font(.system(size: 9, design: .monospaced)).fontWeight(.semibold)
-                    .foregroundColor(delta > 0 ? .green : .red)
+                HStack(spacing: 2) {
+                    Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
+                        .font(.system(size: 7, weight: .bold))
+                    Text("\(abs(delta), specifier: "%.1f")%")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                }
+                .foregroundColor(delta > 0 ? .green : .red)
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background((delta > 0 ? Color.green : Color.red).opacity(0.08), in: Capsule())
             }
             Text("\(Int(o.prob))%")
                 .font(.caption).fontWeight(.bold).monospacedDigit()
+        }
+        .overlay(alignment: .bottom) {
+            GeometryReader { geo in
+                let accent = kindAccent[kind ?? "binary"] ?? entertainmentPink
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(isLeader ? accent.opacity(0.25) : Color.secondary.opacity(0.10))
+                    .frame(width: geo.size.width * o.prob / 100, height: 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 2)
+            .offset(y: 3)
         }
     }
 
@@ -224,10 +283,10 @@ struct EntertainmentView: View {
             GeometryReader { geo in
                 HStack(spacing: 1.5) {
                     RoundedRectangle(cornerRadius: 99)
-                        .fill(Color.accentColor)
+                        .fill(entertainmentPink)
                         .frame(width: geo.size.width * a.prob / 100)
                     RoundedRectangle(cornerRadius: 99)
-                        .fill(Color.accentColor.opacity(0.3))
+                        .fill(entertainmentPink.opacity(0.3))
                         .frame(width: geo.size.width * b.prob / 100)
                 }
             }
@@ -246,21 +305,28 @@ struct EntertainmentView: View {
             }
 
             if let billboard = data.billboardWatch, !billboard.isEmpty {
-                entMarketList(billboard, title: "Billboard")
+                entMarketList(billboard, title: "📊 Billboard")
             }
 
             if let albums = data.albumDrops, !albums.isEmpty {
-                entMarketList(albums, title: "Album Drops")
+                entMarketList(albums, title: "💿 Album Drops")
             }
         }
     }
 
     private func spotifyRace(_ markets: [EntMarketRow]) -> some View {
         let best = markets.max(by: { $0.topOutcomes.count < $1.topOutcomes.count }) ?? markets[0]
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("🎧 Spotify Chart Race")
-                .font(.caption).fontWeight(.semibold).foregroundStyle(.green)
-                .padding(.horizontal)
+        let spotifyGreen = Color(red: 0.12, green: 0.84, blue: 0.38)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("🎧")
+                    .font(.system(size: 12))
+                Text("Spotify Chart Race")
+                    .font(.caption).fontWeight(.bold).textCase(.uppercase)
+                    .foregroundStyle(spotifyGreen)
+            }
+            .padding(.horizontal)
+
             Text(best.q)
                 .font(.caption).fontWeight(.medium)
                 .padding(.horizontal)
@@ -270,19 +336,25 @@ struct EntertainmentView: View {
                     HStack(spacing: 8) {
                         Text("\(idx + 1)")
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundStyle(idx == 0 ? .green : .secondary)
+                            .foregroundStyle(idx == 0 ? spotifyGreen : .secondary)
                             .frame(width: 20, alignment: .trailing)
 
                         Text(o.name)
-                            .font(.caption).fontWeight(.medium)
+                            .font(.caption).fontWeight(idx == 0 ? .semibold : .medium)
                             .lineLimit(1)
 
                         Spacer()
 
                         if let delta = o.delta24h, abs(delta) > 0.1 {
-                            Text("\(delta > 0 ? "↑" : "↓")\(abs(delta), specifier: "%.1f")%")
-                                .font(.system(size: 9, design: .monospaced)).fontWeight(.semibold)
-                                .foregroundColor(delta > 0 ? .green : .red)
+                            HStack(spacing: 2) {
+                                Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("\(abs(delta), specifier: "%.1f")%")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundColor(delta > 0 ? .green : .red)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background((delta > 0 ? Color.green : Color.red).opacity(0.08), in: Capsule())
                         }
 
                         Text("\(Int(o.prob))%")
@@ -290,14 +362,25 @@ struct EntertainmentView: View {
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
+                    .background(idx == 0 ? spotifyGreen.opacity(0.04) : .clear)
+                    .overlay(alignment: .bottom) {
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(spotifyGreen.opacity(idx == 0 ? 0.20 : 0.08))
+                                .frame(width: geo.size.width * o.prob / 100, height: 2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 2)
+                    }
                     if idx < min(best.topOutcomes.count, 6) - 1 {
                         Divider()
                     }
                 }
             }
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.1)))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
             .padding(.horizontal)
         }
     }
@@ -309,15 +392,15 @@ struct EntertainmentView: View {
             sectionHeader(emoji: "🎬", title: "Movies & TV", count: data.count)
 
             if let rt = data.rtMarkets, !rt.isEmpty {
-                entMarketList(rt, title: "Rotten Tomatoes")
+                entMarketList(rt, title: "🍅 Rotten Tomatoes")
             }
 
             if let box = data.boxOffice, !box.isEmpty {
-                entMarketList(box, title: "Box Office")
+                entMarketList(box, title: "🎟 Box Office")
             }
 
             if let reality = data.realityTv, !reality.isEmpty {
-                entMarketList(reality, title: "Reality TV")
+                entMarketList(reality, title: "📺 Reality TV")
             }
         }
     }
@@ -338,13 +421,17 @@ struct EntertainmentView: View {
     }
 
     private func momentCard(_ m: EntMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 tagChip(kind: m.kind ?? "binary")
                 Spacer()
                 if let resolves = m.resolutionDate {
-                    Text("Resolves \(formatDate(resolves))")
-                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                    HStack(spacing: 3) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 8))
+                        Text(formatDate(resolves))
+                    }
+                    .font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
             }
 
@@ -359,19 +446,20 @@ struct EntertainmentView: View {
             if m.outcomeCount <= 2 {
                 yesNoBar(yes: m.prob, no: 100 - m.prob)
             } else {
-                VStack(spacing: 4) {
+                VStack(spacing: 5) {
                     ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
-                        outcomeRow(o, isLeader: false)
+                        outcomeRow(o, isLeader: false, kind: m.kind)
                     }
                 }
             }
 
             sourceChip(m.src)
         }
-        .padding(12)
+        .padding(14)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.1)))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
         .padding(.horizontal)
     }
 
@@ -392,14 +480,17 @@ struct EntertainmentView: View {
     private func sectionHeader(emoji: String, title: String, count: Int? = nil) -> some View {
         HStack {
             Text("\(emoji) \(title)")
-                .font(.headline).fontWeight(.bold)
+                .font(.title3).fontWeight(.bold)
             Spacer()
             if let count {
-                Text("\(count) markets")
-                    .font(.caption2)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(Capsule())
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                +
+                Text(" markets")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal)
@@ -409,7 +500,7 @@ struct EntertainmentView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let title {
                 Text(title)
-                    .font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+                    .font(.caption).fontWeight(.bold).foregroundStyle(.secondary)
                     .padding(.horizontal)
             }
 
@@ -426,7 +517,7 @@ struct EntertainmentView: View {
     }
 
     private func entMarketCard(_ m: EntMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 tagChip(kind: m.kind ?? "binary")
                 Spacer()
@@ -438,50 +529,74 @@ struct EntertainmentView: View {
             }
 
             Text(m.q)
-                .font(.caption).fontWeight(.medium)
+                .font(.caption).fontWeight(.semibold)
                 .lineLimit(2).foregroundStyle(.primary)
 
-            ForEach(Array(m.topOutcomes.prefix(2).enumerated()), id: \.offset) { _, o in
-                HStack(spacing: 4) {
-                    Text(o.name).font(.caption2).lineLimit(1).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(o.prob))%")
-                        .font(.caption2).fontWeight(.bold).monospacedDigit()
-                        .foregroundStyle(o.prob > 50 ? .primary : .secondary)
+            VStack(spacing: 5) {
+                ForEach(Array(m.topOutcomes.prefix(2).enumerated()), id: \.offset) { _, o in
+                    HStack(spacing: 4) {
+                        Text(o.name).font(.caption2).lineLimit(1).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(o.prob))%")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(o.prob > 50 ? .primary : .secondary)
+                    }
+                    .overlay(alignment: .bottom) {
+                        GeometryReader { geo in
+                            let accent = kindAccent[m.kind ?? "binary"] ?? entertainmentPink
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(o.prob > 50
+                                      ? accent.opacity(0.18)
+                                      : Color.secondary.opacity(0.08))
+                                .frame(width: geo.size.width * o.prob / 100, height: 2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 2)
+                        .offset(y: 3)
+                    }
                 }
             }
 
             sourceChip(m.src)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.1)))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
     }
 
     private func tagChip(kind: String) -> some View {
-        HStack(spacing: 3) {
+        let accent = kindAccent[kind] ?? entertainmentPink
+        return HStack(spacing: 3) {
             Text(kindEmoji[kind] ?? "✦").font(.system(size: 10))
             Text(kindLabel[kind] ?? "Market")
         }
         .font(.system(size: 9, weight: .semibold))
-        .padding(.horizontal, 5).padding(.vertical, 2)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(accent.opacity(0.10))
+        .foregroundStyle(accent)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(accent.opacity(0.15), lineWidth: 0.5))
     }
 
     private func sourceChip(_ label: String) -> some View {
-        HStack(spacing: 4) {
+        let color: Color = label == "kalshi" ? .green : .blue
+        return HStack(spacing: 5) {
             Circle()
-                .fill(label == "kalshi" ? Color.green : Color.blue)
-                .frame(width: 5, height: 5)
+                .fill(color)
+                .frame(width: 6, height: 6)
+                .overlay(Circle().stroke(color.opacity(0.3), lineWidth: 2))
             Text(label.capitalized)
+                .foregroundStyle(.primary.opacity(0.7))
         }
-        .font(.system(size: 9, weight: .semibold))
-        .padding(.horizontal, 5).padding(.vertical, 1)
-        .background((label == "kalshi" ? Color.green : Color.blue).opacity(0.08))
+        .font(.system(size: 10, weight: .semibold))
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(color.opacity(0.08))
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.12), lineWidth: 0.5))
     }
 
     private func yesNoBar(yes: Double, no: Double) -> some View {
@@ -506,9 +621,14 @@ struct EntertainmentView: View {
     }
 
     private func footer(_ data: EntertainmentResponse) -> some View {
-        Text("Kalshi & Polymarket · \(data.totalMarkets) markets · Not financial advice")
-            .font(.caption2).foregroundStyle(.tertiary)
-            .padding(.horizontal)
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text("Kalshi & Polymarket \u{00B7} \(data.totalMarkets) markets \u{00B7} Not financial advice")
+        }
+        .font(.caption2).foregroundStyle(.tertiary)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     private func formatDate(_ iso: String) -> String {
