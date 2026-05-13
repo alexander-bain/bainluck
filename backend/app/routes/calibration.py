@@ -17,6 +17,104 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/diagnostics")
+async def calibration_diagnostics(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Diagnostic data for calibration debugging — admin only."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            COUNT(*) AS total,
+            COUNT(CASE WHEN fo.calibration_probability = fo.opening_probability THEN 1 END) AS cal_eq_open,
+            COUNT(CASE WHEN fo.calibration_probability IS NOT NULL
+                        AND fo.calibration_probability != fo.opening_probability THEN 1 END) AS cal_diff,
+            ROUND(AVG(ABS(COALESCE(fo.calibration_probability, 0)
+                        - COALESCE(fo.opening_probability, 0)))::numeric, 4) AS avg_shift,
+            COUNT(CASE WHEN fm.commence_time IS NULL THEN 1 END) AS no_commence
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+        GROUP BY cat ORDER BY total DESC
+    """))
+    by_category = [
+        {"category": r.cat, "total": r.total, "cal_eq_open": r.cal_eq_open,
+         "pct_same": round(r.cal_eq_open * 100.0 / max(r.total, 1), 1),
+         "cal_diff": r.cal_diff, "avg_shift": float(r.avg_shift),
+         "no_commence": r.no_commence}
+        for r in result
+    ]
+
+    problem_result = await db.execute(text("""
+        SELECT COALESCE(fm.llm_sport_category, 'uncategorized') AS cat, fm.source,
+            COUNT(*) AS n,
+            COUNT(CASE WHEN ABS(COALESCE(fo.calibration_probability, fo.opening_probability) - 0.5) < 0.05 THEN 1 END) AS near_50,
+            COUNT(CASE WHEN fo.calibration_probability = fo.opening_probability THEN 1 END) AS same_as_open,
+            COUNT(CASE WHEN fm.commence_time IS NULL THEN 1 END) AS no_commence,
+            AVG(ABS(COALESCE(fo.calibration_probability, fo.opening_probability)
+                    - fo.opening_probability)) AS avg_cal_shift
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND fo.current_probability IS NOT NULL
+          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+          AND COALESCE(fm.llm_sport_category, 'uncategorized') IN
+              ('economics', 'hockey', 'golf', 'tennis', 'weather', 'politics', 'basketball', 'baseball')
+        GROUP BY cat, fm.source ORDER BY cat, fm.source
+    """))
+    problem_cats = [
+        {"category": r.cat, "source": r.source, "n": r.n, "near_50": r.near_50,
+         "pct_near_50": round(r.near_50 * 100.0 / max(r.n, 1), 1),
+         "same_as_open": r.same_as_open,
+         "pct_same": round(r.same_as_open * 100.0 / max(r.n, 1), 1),
+         "no_commence": r.no_commence,
+         "avg_cal_shift": round(float(r.avg_cal_shift or 0), 4)}
+        for r in problem_result
+    ]
+
+    snapshot_result = await db.execute(text("""
+        SELECT COALESCE(fm.llm_sport_category, 'uncategorized') AS cat, fm.source,
+            ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps,
+            COUNT(*) AS n
+        FROM (
+            SELECT fo.id, fm.id AS fmid, fm.source,
+                COALESCE(fm.llm_sport_category, 'uncategorized') AS fcat,
+                (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND ABS(COALESCE(fo.calibration_probability, fo.opening_probability) - 0.5) < 0.05
+              AND fo.current_probability IS NOT NULL
+              AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+              AND COALESCE(fm.llm_sport_category, 'uncategorized') IN ('economics', 'hockey', 'golf')
+            LIMIT 2000
+        ) sub
+        JOIN futures_markets fm ON fm.id = sub.fmid
+        GROUP BY cat, fm.source ORDER BY cat, fm.source
+    """))
+    snap_info = [
+        {"category": r.cat, "source": r.source, "n": r.n,
+         "avg_snapshots": float(r.avg_snaps), "median_snapshots": float(r.median_snaps)}
+        for r in snapshot_result
+    ]
+
+    return {
+        "by_category": by_category,
+        "problem_categories_in_calibration": problem_cats,
+        "near_50_snapshot_counts": snap_info,
+    }
+
+
 @router.get("/calibration")
 async def public_calibration(
     db: AsyncSession = Depends(get_db),
