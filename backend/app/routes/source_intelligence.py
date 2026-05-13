@@ -898,21 +898,39 @@ async def cleanup_orphaned_snapshots(
 
     await _set_timeout(db)
 
-    # Count orphaned snapshots: snapshots for (event, source) pairs where
-    # no linked market of that source remains on that event.
+    # Count orphaned snapshots — two types:
+    # 1. Fully orphaned: no linked market of that source on the event
+    # 2. Mixed orphaned: some linked markets remain, but snapshots exist
+    #    from specific unlinked market IDs
     count_sql = text("""
+        WITH fully_orphaned AS (
+            SELECT wp.source, COUNT(*) AS n, COUNT(DISTINCT wp.event_id) AS e
+            FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.event_id = wp.event_id AND fm.source = wp.source
+              )
+            GROUP BY wp.source
+        ),
+        mixed_orphaned AS (
+            SELECT wp.source, COUNT(*) AS n, COUNT(DISTINCT wp.event_id) AS e
+            FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND wp.game_state->>'market_id' IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.id = (wp.game_state->>'market_id')::int
+                    AND fm.event_id IS NULL
+              )
+            GROUP BY wp.source
+        )
         SELECT
-            wp.source,
-            COUNT(*) AS snap_count,
-            COUNT(DISTINCT wp.event_id) AS event_count
-        FROM win_prob_snapshots wp
-        WHERE wp.source IN ('kalshi', 'polymarket')
-          AND NOT EXISTS (
-              SELECT 1 FROM futures_markets fm
-              WHERE fm.event_id = wp.event_id
-                AND fm.source = wp.source
-          )
-        GROUP BY wp.source
+            COALESCE(f.source, m.source) AS source,
+            COALESCE(f.n, 0) + COALESCE(m.n, 0) AS snap_count,
+            GREATEST(COALESCE(f.e, 0), COALESCE(m.e, 0)) AS event_count
+        FROM fully_orphaned f
+        FULL OUTER JOIN mixed_orphaned m ON f.source = m.source
     """)
     count_result = await db.execute(count_sql)
     counts = count_result.all()
