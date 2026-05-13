@@ -742,8 +742,23 @@ async def _match_prediction_markets(limit: int = 500):
             )
             linked_rows = linked_result.all()
 
-        phase2_processed = 0
+        # DEDUP: Kalshi creates separate binary markets per team outcome
+        # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
+        # are linked to the same event, processing both writes conflicting
+        # probabilities, causing sawtooth oscillation in win_prob_snapshots.
+        # Pick ONE market per (event_id, source) — same fix as the live
+        # polling task at lines 1601-1620.
+        best_per_event_source: dict[tuple[int, str], tuple] = {}
         for market, event in linked_rows:
+            key = (event.id, market.source)
+            if key not in best_per_event_source:
+                best_per_event_source[key] = (market, event)
+
+        stats["phase2_markets_raw"] = len(linked_rows)
+        stats["phase2_markets_deduped"] = len(best_per_event_source)
+
+        phase2_processed = 0
+        for market, event in best_per_event_source.values():
             if _time_remaining() < 60:
                 logger.info("Phase 2 time budget exhausted after %d/%d markets", phase2_processed, len(linked_rows))
                 break

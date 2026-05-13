@@ -538,6 +538,73 @@ async def _query_case_studies(db: AsyncSession) -> list:
     return case_studies
 
 
+@router.get("/source-intelligence/linked-markets")
+async def linked_markets_audit(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Show all prediction markets linked to a given event.
+
+    Returns market names, sources, tickers, tiers, and outcome data so
+    we can verify whether the right markets are linked.
+    """
+    sql = text("""
+        SELECT
+            fm.id, fm.name, fm.source, fm.external_id, fm.market_tier,
+            fm.category, fm.market_type, fm.group_id, fm.status,
+            fm.commence_time::text AS fm_commence,
+            e.home_team_name, e.away_team_name, e.commence_time::text AS ev_commence
+        FROM futures_markets fm
+        JOIN events e ON e.id = fm.event_id
+        WHERE fm.event_id = :eid
+        ORDER BY fm.source, fm.name
+    """)
+    result = await db.execute(sql, {"eid": event_id})
+    markets = []
+    for r in result.all():
+        # Get outcomes for this market
+        out_sql = text("""
+            SELECT name, current_probability, opening_probability, is_winner
+            FROM futures_outcomes
+            WHERE market_id = :mid
+            ORDER BY rank
+        """)
+        out_result = await db.execute(out_sql, {"mid": r.id})
+        outcomes = [{
+            "name": o.name,
+            "prob": round(float(o.current_probability), 4) if o.current_probability else None,
+            "opening": round(float(o.opening_probability), 4) if o.opening_probability else None,
+        } for o in out_result.all()]
+
+        markets.append({
+            "id": r.id, "name": r.name, "source": r.source,
+            "external_id": r.external_id, "tier": r.market_tier,
+            "category": r.category, "market_type": r.market_type,
+            "group_id": r.group_id, "status": r.status,
+            "market_commence": r.fm_commence,
+            "outcomes": outcomes,
+        })
+
+    # Also get the distinct market_name values from win_prob_snapshots
+    gs_sql = text("""
+        SELECT DISTINCT source, game_state->>'market_name' AS market_name,
+            game_state->>'market_id' AS market_id
+        FROM win_prob_snapshots
+        WHERE event_id = :eid
+          AND source IN ('kalshi', 'polymarket')
+          AND game_state IS NOT NULL
+    """)
+    gs_result = await db.execute(gs_sql, {"eid": event_id})
+    snapshot_sources = [{"source": r.source, "market_name": r.market_name,
+                         "market_id": r.market_id} for r in gs_result.all()]
+
+    return {
+        "event_id": event_id,
+        "linked_markets": markets,
+        "snapshot_market_sources": snapshot_sources,
+    }
+
+
 @router.get("/source-intelligence/oscillation-audit")
 async def oscillation_audit(db: AsyncSession = Depends(get_db)):
     """Find ALL events with stat_model oscillation — reverse matching eval.
