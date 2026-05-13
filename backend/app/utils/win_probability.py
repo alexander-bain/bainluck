@@ -185,12 +185,62 @@ BASEBALL_RUNS_PER_HALF_INNING = 0.5
 BASEBALL_HOME_ADVANTAGE_RUNS = 0.13
 
 
+def _probability_to_spread(prob: float, base_std: float) -> float:
+    """Convert an opening home win probability to an equivalent pregame spread.
+
+    The stat model uses spread (negative = home favored) to bias the expected
+    final margin. This function inverts the model's pregame formula:
+      P(home wins) = Φ(-spread / base_std)
+    so:
+      spread = -Φ⁻¹(prob) × base_std
+
+    For baseball, base_std is the Poisson-based std dev at game start (~2.12 runs).
+
+    Args:
+        prob: Opening home win probability (0.0-1.0)
+        base_std: Base standard deviation for the sport
+    Returns:
+        Equivalent pregame spread (negative = home favored)
+    """
+    # Clamp to avoid infinite values from the inverse CDF
+    prob = max(0.01, min(0.99, prob))
+    # Inverse of _norm_cdf: Φ⁻¹(p) using the relationship with erfc
+    # Φ⁻¹(p) = -√2 × erfc⁻¹(2p)
+    # Python's math doesn't have erfinv, so use the Newton's method approximation
+    # via the rational approximation (Abramowitz & Stegun)
+    import math
+
+    # Use symmetry: for p > 0.5, compute for 1-p and negate
+    if prob == 0.5:
+        return 0.0
+
+    # Rational approximation for probit function (inverse normal CDF)
+    # Accurate to ~4.5e-4 for 0.01 < p < 0.99
+    if prob < 0.5:
+        t = math.sqrt(-2.0 * math.log(prob))
+    else:
+        t = math.sqrt(-2.0 * math.log(1.0 - prob))
+
+    # Coefficients from Abramowitz & Stegun 26.2.23
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    z = t - (c0 + c1 * t + c2 * t * t) / (1.0 + d1 * t + d2 * t * t + d3 * t * t * t)
+
+    if prob < 0.5:
+        z = -z
+
+    # z = Φ⁻¹(prob), and P(home wins) = Φ(-spread / base_std)
+    # so -spread / base_std = z  →  spread = -z * base_std
+    return -z * base_std
+
+
 def compute_baseball_win_prob(
     home_score: int,
     away_score: int,
     period_str: str | None,
     pregame_spread: float | None = None,
     runs_per_half_inning: float = BASEBALL_RUNS_PER_HALF_INNING,
+    opening_home_probability: float | None = None,
 ) -> float | None:
     """
     Compute baseball win probability using a Poisson run-scoring model.
@@ -211,6 +261,9 @@ def compute_baseball_win_prob(
         period_str: Inning string (e.g., "Top 5th", "Bot 7th", "3")
         pregame_spread: Pregame Vegas spread (negative = home favored)
         runs_per_half_inning: Average runs scored per half-inning (default: 0.5)
+        opening_home_probability: Sportsbook consensus pregame probability
+                                  (0.0-1.0). Used as prior when pregame_spread
+                                  is not available.
 
     Returns:
         Home win probability (0.0-1.0) or None if game state can't be parsed.
@@ -231,6 +284,13 @@ def compute_baseball_win_prob(
     # Expected remaining runs for each team (Poisson λ)
     lambda_home = runs_per_half_inning * home_hi
     lambda_away = runs_per_half_inning * away_hi
+
+    # Derive spread from opening probability if no explicit spread provided
+    if pregame_spread is None and opening_home_probability is not None:
+        # Baseball pregame std dev: sqrt(λ_home_full + λ_away_full)
+        # Full game: 9 HI each, so λ = 0.5 * 9 = 4.5 per team
+        baseball_pregame_std = math.sqrt(2 * runs_per_half_inning * 9)
+        pregame_spread = _probability_to_spread(opening_home_probability, baseball_pregame_std)
 
     # Pregame spread adjustment: scale by fraction of game remaining
     spread = pregame_spread if pregame_spread is not None else 0.0
@@ -472,6 +532,7 @@ def compute_statistical_win_prob(
     sport_key: str,
     pregame_spread: float | None = None,
     commence_time: "datetime | None" = None,
+    opening_home_probability: float | None = None,
 ) -> float | None:
     """
     Compute home team win probability from current game state.
@@ -483,10 +544,15 @@ def compute_statistical_win_prob(
         period: Period string (e.g., "Q4", "2nd Half")
         sport_key: Sport key (e.g., "football_nfl")
         pregame_spread: Pregame Vegas spread (negative = home favored).
-                       If None, assumes 0 (pick'em).
+                       If None, falls back to opening_home_probability
+                       to derive an equivalent spread.
         commence_time: Game start time (UTC). Used as fallback when
                       clock/period aren't available — estimates remaining
                       time from wall-clock elapsed time.
+        opening_home_probability: Sportsbook consensus pregame probability
+                                  (0.0-1.0). Used as prior when pregame_spread
+                                  is not available, so the model doesn't start
+                                  at 50% for every game.
 
     Returns:
         Home win probability (0.0-1.0) or None if game state can't be parsed.
@@ -501,6 +567,7 @@ def compute_statistical_win_prob(
             away_score=away_score,
             period_str=period,
             pregame_spread=pregame_spread,
+            opening_home_probability=opening_home_probability,
         )
         if result is not None:
             return result
@@ -525,6 +592,12 @@ def compute_statistical_win_prob(
 
     # Current score differential (positive = home leading)
     score_diff = home_score - away_score
+
+    # Derive spread from opening probability if no explicit spread provided.
+    # This is the key fix: instead of defaulting to 0 (pick'em / 50%),
+    # we use the sportsbook consensus probability to set a proper prior.
+    if pregame_spread is None and opening_home_probability is not None:
+        pregame_spread = _probability_to_spread(opening_home_probability, base_std)
 
     # Pregame spread: negative means home is favored by that many points
     # Scale the spread by remaining fraction (as the game progresses,

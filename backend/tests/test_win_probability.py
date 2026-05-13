@@ -723,6 +723,31 @@ class TestBaseballWinProb:
         assert early is not None and late is not None
         assert late > early
 
+    def test_opening_prob_used_as_prior(self):
+        """When opening_home_probability is set, 0-0 start should reflect it."""
+        result = compute_baseball_win_prob(
+            0, 0, "Top 1st",
+            opening_home_probability=0.75,
+        )
+        assert result is not None
+        # Should be near 75%, not 50%
+        assert 0.70 < result < 0.82
+
+    def test_opening_prob_ignored_when_spread_provided(self):
+        """Explicit spread takes precedence over opening_home_probability."""
+        with_spread = compute_baseball_win_prob(
+            0, 0, "Top 1st",
+            pregame_spread=-1.5,
+            opening_home_probability=0.30,  # contradicts spread
+        )
+        without_prob = compute_baseball_win_prob(
+            0, 0, "Top 1st",
+            pregame_spread=-1.5,
+        )
+        assert with_spread is not None and without_prob is not None
+        # Spread should dominate — probability is ignored
+        assert abs(with_spread - without_prob) < 0.01
+
 
 class TestMLBStatModel:
     """Test the statistical model for MLB games via compute_statistical_win_prob."""
@@ -842,3 +867,138 @@ class TestMLBStatModel:
         assert result is not None
         # Home up 1 in top 9th — strong favorite
         assert result > 0.8
+
+
+class TestPregamePrior:
+    """Test that opening_home_probability is used as a pregame prior.
+
+    This is the key fix: the stat model should NOT start at 50% for every
+    game. When sportsbook opening odds are available, the model should
+    use them as the prior, so Gonzaga vs Pacific starts at ~95% instead
+    of 50%.
+    """
+
+    def test_nfl_kickoff_with_opening_prob(self):
+        """NFL kickoff: with 70% opening prob and no spread, should start near 70%."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.70,
+        )
+        assert result is not None
+        assert 0.65 < result < 0.75
+
+    def test_nba_tipoff_with_opening_prob(self):
+        """NBA tipoff: with 85% opening prob, should start near 85%."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="12:00", period="Q1",
+            sport_key="basketball_nba",
+            pregame_spread=None,
+            opening_home_probability=0.85,
+        )
+        assert result is not None
+        assert 0.80 < result < 0.90
+
+    def test_ncaab_gonzaga_scenario(self):
+        """NCAAB: Gonzaga vs Pacific — 95% favorite should start near 95%."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="20:00", period="1st Half",
+            sport_key="basketball_ncaab",
+            pregame_spread=None,
+            opening_home_probability=0.95,
+        )
+        assert result is not None
+        assert result > 0.90
+
+    def test_nhl_with_opening_prob(self):
+        """NHL: opening prob should be used as prior."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="20:00", period="1st Period",
+            sport_key="hockey_nhl",
+            pregame_spread=None,
+            opening_home_probability=0.65,
+        )
+        assert result is not None
+        assert 0.60 < result < 0.70
+
+    def test_opening_prob_decays_with_score(self):
+        """Prior should fade as game evidence accumulates."""
+        # Start with 80% prior
+        start = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.80,
+        )
+        # Late in game, down by 14 — prior shouldn't save you
+        late = compute_statistical_win_prob(
+            home_score=7, away_score=21,
+            clock="2:00", period="Q4",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.80,
+        )
+        assert start is not None and late is not None
+        assert start > 0.70  # Prior dominates early
+        assert late < 0.15   # Score dominates late
+
+    def test_spread_takes_precedence_over_prob(self):
+        """When both spread and opening prob are provided, spread wins."""
+        with_both = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=-7,  # Home favored by 7
+            opening_home_probability=0.30,  # Contradicts spread
+        )
+        with_spread_only = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=-7,
+        )
+        assert with_both is not None and with_spread_only is not None
+        # Spread should dominate — opening prob is ignored when spread exists
+        assert abs(with_both - with_spread_only) < 0.01
+
+    def test_no_prior_still_50_percent(self):
+        """Without spread or opening prob, model should still default to ~50%."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=None,
+        )
+        assert result is not None
+        assert abs(result - 0.5) < 0.01
+
+    def test_mlb_opening_prob_via_main_function(self):
+        """MLB opening prob should work through compute_statistical_win_prob too."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock=None, period="Top 1st",
+            sport_key="baseball_mlb",
+            pregame_spread=None,
+            opening_home_probability=0.70,
+        )
+        assert result is not None
+        assert 0.65 < result < 0.78
+
+    def test_underdog_opening_prob(self):
+        """A 30% home team should start near 30%."""
+        result = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.30,
+        )
+        assert result is not None
+        assert 0.25 < result < 0.35
