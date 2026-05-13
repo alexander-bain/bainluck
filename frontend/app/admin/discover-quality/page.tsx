@@ -82,6 +82,11 @@ interface MissingGroundTruthItem {
   source: string;
   category: string;
   probability: string | null;
+  email_subject?: string | null;
+  hook?: string | null;
+  interestingness?: string | null;
+  timeliness?: string | null;
+  shareability?: string | null;
   quality_class: string;
   archetype: string;
   reasons: string[];
@@ -1077,6 +1082,15 @@ export default function DiscoverQualityPage() {
       return true;
     });
   }, [data, missingBucket]);
+  const emailGroundTruthMisses = useMemo(() => {
+    return (data?.missing_ground_truth || []).filter((item) => item.source === "polymarket_email");
+  }, [data]);
+  const emailMissBucketCounts = useMemo(() => {
+    return emailGroundTruthMisses.reduce<Record<string, number>>((acc, item) => {
+      acc[item.triage_bucket] = (acc[item.triage_bucket] || 0) + 1;
+      return acc;
+    }, {});
+  }, [emailGroundTruthMisses]);
 
   const triggerHooks = async () => {
     if (!submittedSecret) return;
@@ -1332,6 +1346,93 @@ export default function DiscoverQualityPage() {
               </div>
             )}
           </div>
+
+          {data.email_ground_truth?.configured && (
+            <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
+              <div className="p-4 border-b border-surface-border">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h2 className="text-sm font-semibold text-text-primary">Polymarket Email Misses</h2>
+                    <p className="text-xs text-text-muted mt-1">
+                      Use this as an editorial audit: inspect candidate recall gaps first, ignore game-market noise, and only tune ranking after confirming the miss is worth showing.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-1">
+                    <StatusPill tone="muted">{`${data.email_ground_truth.top20_hits}/${data.email_ground_truth.total} @20`}</StatusPill>
+                    <StatusPill tone="muted">{`${data.email_ground_truth.top50_hits}/${data.email_ground_truth.total} @50`}</StatusPill>
+                    <StatusPill tone={data.email_ground_truth.stale ? "warn" : "ok"}>
+                      {data.email_ground_truth.latest_date || "unknown date"}
+                    </StatusPill>
+                  </div>
+                </div>
+                {emailGroundTruthMisses.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-3">
+                    {Object.entries(emailMissBucketCounts).map(([bucket, count]) => (
+                      <StatusPill key={bucket} tone={bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                        {`${formatTargetName(bucket)}: ${count}`}
+                      </StatusPill>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {emailGroundTruthMisses.length > 0 ? (
+                <div className="divide-y divide-surface-border/60">
+                  {emailGroundTruthMisses.slice(0, 16).map((item) => (
+                    <div key={`email-${item.name}`} className="p-3 hover:bg-surface-elevated/40">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm text-text-primary">{item.name}</div>
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            <StatusPill tone={item.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                              {formatTargetName(item.triage_bucket)}
+                            </StatusPill>
+                            <StatusPill tone="muted">{item.category}</StatusPill>
+                            <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
+                            {item.interestingness && <StatusPill tone="muted">{`I ${item.interestingness}`}</StatusPill>}
+                            {item.timeliness && <StatusPill tone="muted">{item.timeliness}</StatusPill>}
+                            {item.shareability && <StatusPill tone="muted">{`S ${item.shareability}`}</StatusPill>}
+                            {item.db_trace && (
+                              <StatusPill tone={item.db_trace.matches.length > 0 ? "ok" : "warn"}>
+                                {item.db_trace.trace_status ? formatTargetName(item.db_trace.trace_status) : "db trace"}
+                              </StatusPill>
+                            )}
+                          </div>
+                          {item.hook && (
+                            <div className="text-xs text-text-secondary mt-2 line-clamp-2">{item.hook}</div>
+                          )}
+                          <div className="text-xs text-text-muted mt-2">{item.recommended_action}</div>
+                        </div>
+                        {item.db_trace?.matches?.[0] && (
+                          <button
+                            type="button"
+                            onClick={() => toggleTrace(item.db_trace!.matches[0].id)}
+                            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary shrink-0"
+                          >
+                            <ChevronDown className={`w-3 h-3 transition-transform ${expandedTraceId === item.db_trace.matches[0].id ? "rotate-180" : ""}`} />
+                            #{item.db_trace.matches[0].id}
+                          </button>
+                        )}
+                      </div>
+                      {item.db_trace?.matches?.[0] && expandedTraceId === item.db_trace.matches[0].id && (
+                        <div className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+                          {traceLoadingId === item.db_trace.matches[0].id && (
+                            <div className="text-xs text-text-muted animate-pulse">Loading trace...</div>
+                          )}
+                          {traceByMarketId[item.db_trace.matches[0].id] ? (
+                            <TracePanel trace={traceByMarketId[item.db_trace.matches[0].id]} />
+                          ) : (
+                            <div className="text-xs text-text-secondary">{item.db_trace.trace_summary}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-sm text-text-muted">No Polymarket email misses in the current diagnostic set.</div>
+              )}
+            </div>
+          )}
 
           <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
             <div className="p-4 border-b border-surface-border">

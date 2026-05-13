@@ -226,7 +226,7 @@ def find_missing_ground_truth_items(
     diagnosed: list[dict[str, Any]],
     ground_truth_items: list[dict[str, Any]],
     *,
-    limit: int = 30,
+    limit: int = 80,
 ) -> list[dict[str, Any]]:
     """Find curated examples that are not present in the diagnosed feed page."""
     feed_names = [item.get("name") or "" for item in diagnosed]
@@ -273,6 +273,11 @@ def find_missing_ground_truth_items(
             "source": item.get("source") or "?",
             "category": item.get("category") or "?",
             "probability": item.get("probability"),
+            "email_subject": item.get("email_subject"),
+            "hook": item.get("hook"),
+            "interestingness": item.get("interestingness"),
+            "timeliness": item.get("timeliness"),
+            "shareability": item.get("shareability"),
             "quality_class": quality.quality_class,
             "archetype": archetype,
             "reasons": quality.reasons,
