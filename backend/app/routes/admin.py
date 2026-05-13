@@ -10189,11 +10189,39 @@ async def backfill_winners_status(
         WHERE fm.status = 'resolved'
         GROUP BY fm.source
     """))
+    # Check Kalshi opening price quality for problem categories
+    opening_diag = await db.execute(text("""
+        SELECT fm.llm_sport_category AS cat,
+            COUNT(*) AS outcomes,
+            COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL) AS has_opening,
+            COUNT(*) FILTER (WHERE
+                fo.opening_probability IS NOT NULL
+                AND fo.opening_captured_at IS NOT NULL
+                AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                     WHERE fos.outcome_id = fo.id) > 1
+            ) AS has_snapshots,
+            ROUND(AVG(CASE WHEN fo.opening_probability IS NOT NULL
+                THEN (SELECT MAX(fos.probability) - MIN(fos.probability)
+                      FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id)
+                END)::numeric, 3) AS avg_price_range
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND fm.llm_sport_category IN ('hockey', 'baseball', 'entertainment')
+        GROUP BY fm.llm_sport_category
+    """))
+
     return {
         "sources": [
             {"source": r.source, "resolved": r.resolved_markets,
              "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
             for r in result.all()
+        ],
+        "kalshi_opening_quality": [
+            {"category": r.cat, "outcomes": r.outcomes,
+             "has_opening": r.has_opening, "has_snapshots": r.has_snapshots,
+             "avg_price_range": float(r.avg_price_range) if r.avg_price_range else None}
+            for r in opening_diag.all()
         ],
     }
 
