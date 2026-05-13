@@ -42,6 +42,34 @@ MIN_SNAPS = 20
 
 # CTE fragment: for each (event, source) pair, count live-game snapshots
 # and take the closing probability. Only sources with >= MIN_SNAPS qualify.
+# For Kalshi, excludes prop snapshots (spread, total, overtime, player stats,
+# half winners) that were incorrectly written as game-winner probabilities.
+_KALSHI_PROP_FILTER = """
+    AND NOT (
+        wp.source = 'kalshi'
+        AND wp.game_state->>'market_name' IS NOT NULL
+        AND (
+            wp.game_state->>'market_name' ILIKE '%spread%'
+            OR wp.game_state->>'market_name' ILIKE '%total%'
+            OR wp.game_state->>'market_name' ILIKE '%overtime%'
+            OR wp.game_state->>'market_name' ILIKE '%half winner%'
+            OR wp.game_state->>'market_name' ILIKE '%half total%'
+            OR wp.game_state->>'market_name' ILIKE '%half spread%'
+            OR wp.game_state->>'market_name' ILIKE '% points%'
+            OR wp.game_state->>'market_name' ILIKE '% rebounds%'
+            OR wp.game_state->>'market_name' ILIKE '% assists%'
+            OR wp.game_state->>'market_name' ILIKE '% steals%'
+            OR wp.game_state->>'market_name' ILIKE '% blocks%'
+            OR wp.game_state->>'market_name' ILIKE '%three pointer%'
+            OR wp.game_state->>'market_name' ILIKE '%double double%'
+            OR wp.game_state->>'market_name' ILIKE '%triple double%'
+            OR wp.game_state->>'market_name' ILIKE '%leader%'
+            OR wp.game_state->>'market_name' ILIKE '%strikeout%'
+            OR wp.game_state->>'market_name' ILIKE '%home run%'
+        )
+    )
+"""
+
 _RICH_SOURCES_CTE = f"""
     rich_sources AS (
         SELECT
@@ -59,6 +87,7 @@ _RICH_SOURCES_CTE = f"""
               e.completed_at,
               e.commence_time + INTERVAL '4 hours'
           )
+          {_KALSHI_PROP_FILTER}
         GROUP BY wp.event_id, wp.source
         HAVING COUNT(*) >= {MIN_SNAPS}
     ),
@@ -183,6 +212,7 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
             WHERE wp.home_win_probability IS NOT NULL
               AND wp.home_win_probability > 0
               AND wp.home_win_probability < 1
+              {_KALSHI_PROP_FILTER}
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
         {_BETTING_CTE},
@@ -271,6 +301,7 @@ async def _query_disagreements(db: AsyncSession) -> dict:
             WHERE wp.home_win_probability IS NOT NULL
               AND wp.home_win_probability > 0
               AND wp.home_win_probability < 1
+              {_KALSHI_PROP_FILTER}
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
         {_BETTING_CTE},
@@ -492,13 +523,14 @@ async def _query_case_studies(db: AsyncSession) -> list:
         if not p.commence_time or not game_end:
             continue
 
-        ts_sql = text("""
+        ts_sql = text(f"""
             SELECT source, captured_at, home_win_probability
-            FROM win_prob_snapshots
+            FROM win_prob_snapshots wp
             WHERE event_id = :eid
               AND home_win_probability IS NOT NULL
               AND captured_at >= :start
               AND captured_at <= :end
+              {_KALSHI_PROP_FILTER}
             ORDER BY captured_at
         """)
         ts_result = await db.execute(ts_sql, {
