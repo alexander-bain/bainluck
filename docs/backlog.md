@@ -112,18 +112,14 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 Shipped across web and native. Discover is default landing page (`/`). Sports at `/sports`. Desktop: Discover | Sports | Browse (dropdown) | My Stuff. Mobile bottom nav: Discover | Sports | Search | My Stuff. Native: Discover | Sports | Browse | Search | My Stuff. Browse dropdown/tab has Politics, Entertainment, Economics, Weather. About behind user menu. Footer removed. Tab persistence deferred.
 
-### 0s. League Pages — Phases 3 & 4 REMAINING
+### 0s. League Pages — Phase 3 REMAINING
 
-**Phase 1 (backend):** ✅ SHIPPED (May 6) — `GET /api/leagues/{sport_key}` returns series, awards, props grouped by market type.
+**Phase 1 (backend):** ✅ SHIPPED (May 6)
+**Phase 2 (frontend):** ✅ SHIPPED (May 6)
+**Phase 3: Cross-sport generalization** — Apply same sectioned layout to NHL, MLB, NFL. Each sport gets the same sections.
+**Phase 4: iOS parity** — ✅ SHIPPED (May 13) — LeagueGridView now fetches league markets in parallel and renders Playoff Series, Awards, Props, Season Stats, and More Markets sections below the grid. Uses slug-to-sport-key mapping for all 14 leagues.
 
-**Phase 2 (frontend):** ✅ SHIPPED (May 6) — 4 new components: SeriesCard, AwardCard, PropGroupCard, LeagueMarketSection. Wired into league page below championship grid.
-
-**Phase 3: Cross-sport generalization** — Apply same sectioned layout to NHL (series, Conn Smythe, playoff props), MLB (pennant races, awards, World Series props), NFL (division winners, MVP, draft props). Each sport gets the same sections, populated by the same league-scoped endpoint.
-
-**Phase 4: iOS parity** — Port the new sections to `LeagueView.swift`. Reuse existing card components where possible.
-
-**Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueView.swift`
-**Parallel Safety:** Yellow (backend endpoint exists; frontend touches league page)
+**Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueGridView.swift`
 
 ### 0r. Golf Data Quality Issues
 
@@ -298,17 +294,9 @@ Added image thumbnails and category emoji to FuturesListView rows. Navigation no
 
 City search added to both web and iOS. Users can now filter city forecast cards by typing.
 
-### BR23. Weather Cities Need Clickable Probability Graphs
+### ~~BR23. Weather Cities Need Clickable Probability Graphs~~ — FIXED (May 13)
 
-**Problem:** Feature request from your son. City forecast cards show a current probability (e.g., "72% chance above 80°F") but no historical context. Users can't see how the probability has changed over time.
-
-**Fix:** Each city forecast card should link to a detail view showing a probability timeline chart (similar to how event detail pages show win probability over time). This requires:
-1. Historical data: check if `futures_odds_snapshots` has historical data for weather markets
-2. A city weather detail page or modal with a time-series chart
-3. Click/tap handler on the city card to navigate to the detail
-
-**Files:** `frontend/app/weather/page.tsx`, `ios/.../Views/WeatherView.swift`, possibly new `frontend/app/weather/[market_id]/page.tsx`
-**Parallel Safety:** Green
+City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Route.futuresDetail`). Backend exposes `marketId` per city. No new chart needed — reuses existing futures probability timeline.
 
 ### BR-PIN. Cross-Platform Pin Sync + My Stuff Display
 
