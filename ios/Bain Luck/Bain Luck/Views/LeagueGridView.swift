@@ -11,11 +11,30 @@ private let sourceLabels: [String: String] = [
     "datagolf": "DataGolf",
 ]
 
+// Grid slug → full sport key for league markets API
+private let slugToSportKey: [String: String] = [
+    "nba": "basketball_nba",
+    "nfl": "americanfootball_nfl",
+    "mlb": "baseball_mlb",
+    "nhl": "icehockey_nhl",
+    "wnba": "basketball_wnba",
+    "ncaa-basketball": "basketball_ncaab",
+    "ncaa-women-basketball": "basketball_ncaab",
+    "ncaa-football": "americanfootball_ncaaf",
+    "epl": "soccer_epl",
+    "mls": "soccer_usa_mls",
+    "la-liga": "soccer_spain_la_liga",
+    "champions-league": "soccer_uefa_champs_league",
+    "bundesliga": "soccer_germany_bundesliga",
+    "golf": "golf",
+]
+
 // MARK: - ViewModel
 
 final class LeagueGridViewModel: ObservableObject {
     let slug: String
     @Published var grid: ChampionshipGridResponse?
+    @Published var leagueMarkets: LeagueMarketsResponse?
     @Published var loading = true
     @Published var error: String?
     @Published var conferenceFilter: String?
@@ -60,13 +79,17 @@ final class LeagueGridViewModel: ObservableObject {
             grid = cached.grid
             // If cache is fresh enough (<60s), skip network
             if Date().timeIntervalSince(cached.date) < 60 {
+                await loadLeagueMarkets()
                 return
             }
         }
 
         loading = true
         do {
-            let freshGrid = try await APIClient.shared.fetchChampionshipGrid(slug: slug)
+            async let gridTask = APIClient.shared.fetchChampionshipGrid(slug: slug)
+            async let marketsTask = loadLeagueMarkets()
+            let freshGrid = try await gridTask
+            _ = await marketsTask
             grid = freshGrid
             Self.cache[slug] = (freshGrid, Date())
             error = nil
@@ -78,6 +101,17 @@ final class LeagueGridViewModel: ObservableObject {
             logger.error("Grid load failed for \(self.slug): \(error)")
         }
         loading = false
+    }
+
+    @MainActor
+    private func loadLeagueMarkets() async {
+        let sportKey = slugToSportKey[slug] ?? slug
+        do {
+            leagueMarkets = try await APIClient.shared.fetchLeagueMarkets(sportKey: sportKey)
+            logger.info("League markets for \(self.slug): \(self.leagueMarkets?.totalMarkets ?? 0) total")
+        } catch {
+            logger.debug("League markets not available for \(self.slug): \(error)")
+        }
     }
 }
 
@@ -240,10 +274,99 @@ struct LeagueGridView: View {
                     teamRow(team, columns: grid.columns)
                 }
             }
+
+            // League market sections (series, awards, playoff props, etc.)
+            leagueMarketSections
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+    }
+
+    // MARK: - League Market Sections
+
+    private static let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
+    private static let sectionLabels: [String: String] = [
+        "series": "Playoff Series",
+        "awards": "Awards",
+        "playoff_props": "Playoff Props",
+        "season_stats": "Season Stats",
+        "novelty": "More Markets",
+    ]
+    private static let sectionIcons: [String: String] = [
+        "series": "sportscourt.fill",
+        "awards": "trophy.fill",
+        "playoff_props": "chart.bar.fill",
+        "season_stats": "chart.line.uptrend.xyaxis",
+        "novelty": "sparkles",
+    ]
+
+    @ViewBuilder
+    private var leagueMarketSections: some View {
+        if let lm = vm.leagueMarkets {
+            ForEach(Self.sectionOrder, id: \.self) { key in
+                if let markets = lm.sections[key], !markets.isEmpty {
+                    Section {
+                        ForEach(markets.prefix(8)) { market in
+                            NavigationLink(value: Route.futuresDetail(id: market.id)) {
+                                leagueMarketRow(market)
+                            }
+                        }
+                        if markets.count > 8 {
+                            Text("+\(markets.count - 8) more")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Label(
+                            Self.sectionLabels[key] ?? key.capitalized,
+                            systemImage: Self.sectionIcons[key] ?? "list.bullet"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func leagueMarketRow(_ market: LeagueMarketItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(market.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .lineLimit(2)
+
+            if let outcomes = market.topOutcomes, !outcomes.isEmpty {
+                ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                    HStack(spacing: 4) {
+                        Text(o.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(o.prob))%")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                    }
+                }
+            }
+
+            HStack(spacing: 4) {
+                Text(sourceLabels[market.source] ?? market.source.capitalized)
+                    .font(.caption2)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(market.source == "kalshi" ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
+                    .clipShape(Capsule())
+                if let count = market.outcomeCount, count > 3 {
+                    Text("+\(count - 3) more")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Team Row
