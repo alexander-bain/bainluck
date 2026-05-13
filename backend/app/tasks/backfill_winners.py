@@ -381,6 +381,96 @@ async def _backfill_kalshi_group_ids():
     return stats
 
 
+async def _backfill_polymarket_group_ids_from_api():
+    """Fetch resolved Polymarket events from Gamma API to fix group_id.
+
+    For events with 2+ markets, sets the same group_id on all matching
+    FuturesMarket rows. This catches multi-outcome events where each
+    candidate is a separate Polymarket event that our DB-only backfill
+    can't group.
+    """
+    import asyncio
+    from app.services.polymarket_api import PolymarketAPIService
+
+    stats = {"events_fetched": 0, "events_with_markets": 0,
+             "markets_updated": 0, "errors": []}
+
+    service = PolymarketAPIService()
+    try:
+        offset = 0
+        max_events = 2000
+
+        while stats["events_fetched"] < max_events:
+            try:
+                events_data = await service.get_events(
+                    active=False, closed=True,
+                    limit=100, offset=offset,
+                )
+            except Exception as e:
+                stats["errors"].append(f"API page {offset}: {e}")
+                break
+
+            if not events_data:
+                break
+
+            stats["events_fetched"] += len(events_data)
+
+            async with get_task_session() as session:
+                for event_data in events_data:
+                    event_id = str(event_data.get("id", ""))
+                    markets = event_data.get("markets") or []
+
+                    if not event_id or len(markets) < 2:
+                        continue
+
+                    stats["events_with_markets"] += 1
+                    group_id = f"polymarket:{event_id}"
+
+                    # Collect all external_ids to match:
+                    # - event.id (parent market external_id)
+                    # - each market.condition_id (sub-market external_id)
+                    match_ids = [event_id]
+                    for m in markets:
+                        cid = m.get("conditionId") or m.get("condition_id")
+                        if cid:
+                            match_ids.append(str(cid))
+
+                    # Update matching markets
+                    result = await session.execute(
+                        text("""
+                            UPDATE futures_markets
+                            SET group_id = :group_id
+                            WHERE source = 'polymarket'
+                              AND external_id = ANY(:ids)
+                              AND (group_id IS NULL OR group_id != :group_id)
+                        """),
+                        {"group_id": group_id, "ids": match_ids},
+                    )
+                    stats["markets_updated"] += result.rowcount
+
+                await session.commit()
+
+            offset += len(events_data)
+            if len(events_data) < 100:
+                break
+
+            await asyncio.sleep(0.3)
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level: {e}")
+        logger.error("Polymarket API group_id backfill error: %s", e)
+    finally:
+        await service.close()
+
+    logger.info(
+        "Polymarket API group_id backfill: %d events fetched, %d with 2+ markets, "
+        "%d markets updated, %d errors",
+        stats["events_fetched"], stats["events_with_markets"],
+        stats["markets_updated"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     """Run all winner backfill tasks."""
     # Phase 0a: Backfill Polymarket group_id (no API, fast)
@@ -395,6 +485,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # Phase 0d: Fix bad Kalshi opening prices from snapshot data
     opening_fix_stats = await _fix_kalshi_opening_prices()
 
+    # Phase 0e: Backfill group_id from Polymarket Gamma API (resolved events)
+    api_group_stats = await _backfill_polymarket_group_ids_from_api()
+
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
 
@@ -407,6 +500,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
         "kalshi_group_id": kalshi_group_stats,
         "closing_lines": closing_stats,
         "fix_kalshi_openings": opening_fix_stats,
+        "polymarket_api_group_id": api_group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }
