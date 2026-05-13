@@ -758,12 +758,28 @@ async def _match_prediction_markets(limit: int = 500):
         stats["phase2_markets_deduped"] = len(best_per_event_source)
 
         phase2_processed = 0
+        phase2_skipped_not_ml = 0
         for market, event in best_per_event_source.values():
             if _time_remaining() < 60:
                 logger.info("Phase 2 time budget exhausted after %d/%d markets", phase2_processed, len(linked_rows))
                 break
             phase2_processed += 1
             try:
+                # Only write win_prob_snapshots for moneyline/game-winner
+                # markets. Props (spread, total, player stats, overtime,
+                # half winner) are correctly linked for display but should
+                # not contribute to the probability time-series.
+                if market.source == "kalshi" and market.external_id:
+                    ext = market.external_id.lower()
+                    # Kalshi game-winner tickers end in "game" before the
+                    # date segment (e.g., kxnbagame-26apr23nykatl).
+                    # Props have different prefixes (kxnbaspread, kxnbapts,
+                    # kxnbaovertime, etc.)
+                    prefix = ext.split("-")[0] if "-" in ext else ext
+                    if not prefix.endswith("game"):
+                        phase2_skipped_not_ml += 1
+                        continue
+
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
                 )
@@ -846,6 +862,8 @@ async def _match_prediction_markets(limit: int = 500):
                 else:
                     stats["errors"].append(f"market {market.id}: {err_str[:100]}")
                 continue
+
+    stats["phase2_skipped_not_moneyline"] = phase2_skipped_not_ml
 
     # ── Phase 3: Backfill Polymarket price history for newly linked markets ──
     # Runs outside the main DB session to avoid holding transactions open
@@ -1636,6 +1654,12 @@ async def _poll_live_prediction_market_prices():
 
         for market, event in best_per_event_source.values():
             try:
+                # Only write snapshots for moneyline/game-winner markets
+                if market.source == "kalshi" and market.external_id:
+                    prefix = market.external_id.lower().split("-")[0]
+                    if not prefix.endswith("game"):
+                        continue
+
                 # Uses ticker fallback for generic-named Kalshi markets
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
