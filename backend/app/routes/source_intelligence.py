@@ -831,6 +831,25 @@ async def source_intelligence_debug(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         results["betting_error"] = f"{e.__class__.__name__}: {e}"
 
+    # Test 5: Full coverage query timing
+    try:
+        import time as _t
+        t0 = _t.time()
+        coverage = await _query_coverage(db)
+        results["coverage_time_ms"] = int((_t.time() - t0) * 1000)
+        results["coverage_events"] = coverage["total_events"]
+    except Exception as e:
+        results["coverage_error"] = f"{e.__class__.__name__}: {e}"
+
+    # Test 6: Full accuracy query timing
+    try:
+        t0 = _t.time()
+        accuracy = await _query_source_accuracy(db)
+        results["accuracy_time_ms"] = int((_t.time() - t0) * 1000)
+        results["accuracy_sources"] = len(accuracy)
+    except Exception as e:
+        results["accuracy_error"] = f"{e.__class__.__name__}: {e}"
+
     return results
 
 
