@@ -398,7 +398,7 @@ async def _backfill_polymarket_group_ids_from_api():
     service = PolymarketAPIService()
     try:
         offset = 0
-        max_events = 2000
+        max_events = 10000
 
         while stats["events_fetched"] < max_events:
             try:
