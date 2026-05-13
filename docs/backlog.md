@@ -462,21 +462,23 @@ Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV su
 
 **Files:** `frontend/components/PlayerPropsDashboard.tsx`
 
-### 0f-3d Issue 4: Series Markets Not Surfaced
+### 0f-3d Issue 4: Series Markets Not Surfaced — INVESTIGATED (May 13)
 
 **Problem:** Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series.
 
-**Two sub-problems:**
-1. **Linking:** Series markets may not be linked to individual game events via `event_id`. The ticker team extraction had a parsing bug and series tickers (`KXMLBSERIES`, `KXNHLSERIES`, `KXNBASERIES`) need to be in `KALSHI_TICKER_TO_SPORT_KEY`.
-2. **Display:** Even if linked, series markets need a dedicated "Series" section on the event detail page — separate from player props and game-level markets.
+**Investigation findings (May 13):**
+- Series tickers (`kxnbaseries`, `kxnhlseries`, `kxmlbseries`) ARE in `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` and correctly mapped to sports
+- These markets are classified as futures (not game props) so they don't get `event_id` linking — they're standalone season-level markets
+- The matchup regex `_BARE_MATCHUP_RE` has an edge case: team names starting with digits (e.g., "76ers") don't match `[A-Z]` after "vs."
+- Series markets appear on league pages (via `fetchLeagueMarkets`) but NOT on individual game event detail pages
 
-**Fix:**
-- Debug ticker team extraction for series prefixes
-- Add series market detection to `is_game_prop()` or create `is_series_prop()`
-- Link series markets to ALL games in the series (not just one game)
-- Add "Series Context" section to event detail page
+**Two approaches:**
+1. **Link approach (complex):** Create a `series_event_ids` JSONB field on series markets, linking to all games in the series. Requires detecting which games belong to which series (team matching + playoff round detection). The matching task would need series-awareness.
+2. **Display approach (simpler):** On the event detail page, when showing related futures for playoff teams, also query for series markets matching both team names. No linking needed — just a query at display time.
 
-**Files:** `backend/app/utils/prediction_market_matching.py`, `backend/app/tasks/prediction_market_matching.py`, `frontend/app/events/[id]/page.tsx`
+**Recommended:** Option 2 — query series markets by team names at display time in the related-futures or game-markets endpoint. Add a "Series" section to the event detail page.
+
+**Files:** `backend/app/routes/events.py` (related futures query), `frontend/components/RelatedFutures.tsx`, `ios/.../Views/EventDetailView.swift`
 **Parallel Safety:** Yellow
 
 ### 0f. Event Detail Below-the-Fold Redesign — TradeWatch Rethink
