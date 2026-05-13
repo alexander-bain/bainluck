@@ -160,14 +160,13 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
         betting_closing AS (
-            SELECT DISTINCT ON (os.event_id)
-                os.event_id, os.home_win_probability
-            FROM odds_snapshots os
-            JOIN rich_events re ON re.event_id = os.event_id
-            WHERE os.home_win_probability IS NOT NULL
-              AND os.home_win_probability > 0
-              AND os.home_win_probability < 1
-            ORDER BY os.event_id, os.captured_at DESC
+            SELECT re.event_id,
+                (e.win_probability_sources->>'betting')::float AS home_win_probability
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            WHERE e.win_probability_sources->>'betting' IS NOT NULL
+              AND (e.win_probability_sources->>'betting')::float > 0
+              AND (e.win_probability_sources->>'betting')::float < 1
         ),
         all_closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
