@@ -420,47 +420,56 @@ async def _fix_kalshi_opening_prices():
     (yes_bid > 0 and spread < 50pp). Only updates outcomes where the
     current opening_probability differs from the corrected value by >5pp.
     """
-    stats = {"fixed": 0, "errors": []}
+    stats = {"fixed": 0, "checked": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
+            # Step 1: Find Kalshi outcomes that might have bad opening prices
+            # (resolved markets where opening_probability was set)
+            bad_candidates = await session.execute(
                 text("""
-                    -- Find the earliest snapshot where the price DIFFERS from
-                    -- the current opening_probability (indicating the first
-                    -- snapshot was a placeholder and this one has real trading).
-                    WITH outcomes_to_fix AS (
-                        SELECT fo.id AS outcome_id, fo.opening_probability
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.source = 'kalshi'
-                          AND fm.status = 'resolved'
-                          AND fo.opening_probability IS NOT NULL
-                        LIMIT 5000
-                    ),
-                    better_price AS (
-                        SELECT DISTINCT ON (fos.outcome_id)
-                            fos.outcome_id,
-                            fos.probability AS real_opening
-                        FROM futures_odds_snapshots fos
-                        JOIN outcomes_to_fix otf ON otf.outcome_id = fos.outcome_id
-                        WHERE fos.yes_bid IS NOT NULL
-                          AND fos.yes_bid > 0
-                          AND fos.yes_ask IS NOT NULL
-                          AND (fos.yes_ask - fos.yes_bid) < 0.50
-                          AND fos.probability > 0
-                          AND fos.probability < 1
-                          AND ABS(fos.probability - otf.opening_probability) > 0.05
-                        ORDER BY fos.outcome_id, fos.captured_at ASC
-                    )
-                    UPDATE futures_outcomes fo
-                    SET opening_probability = bp.real_opening,
-                        opening_captured_at = NOW()
-                    FROM better_price bp
-                    WHERE fo.id = bp.outcome_id
+                    SELECT fo.id, fo.opening_probability
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fo.opening_probability IS NOT NULL
+                      AND fo.opening_probability > 0
+                    LIMIT 2000
                 """)
             )
-            stats["fixed"] = result.rowcount
+            candidates = bad_candidates.all()
+            stats["checked"] = len(candidates)
+
+            # Step 2: For each candidate, find a better price from snapshots
+            for outcome_id, opening_prob in candidates:
+                better = await session.execute(
+                    text("""
+                        SELECT probability
+                        FROM futures_odds_snapshots
+                        WHERE outcome_id = :oid
+                          AND yes_bid IS NOT NULL AND yes_bid > 0
+                          AND yes_ask IS NOT NULL
+                          AND (yes_ask - yes_bid) < 0.50
+                          AND probability > 0 AND probability < 1
+                          AND ABS(probability - :opening) > 0.05
+                        ORDER BY captured_at ASC
+                        LIMIT 1
+                    """),
+                    {"oid": outcome_id, "opening": float(opening_prob)},
+                )
+                row = better.first()
+                if row:
+                    await session.execute(
+                        text("""
+                            UPDATE futures_outcomes
+                            SET opening_probability = :new_prob
+                            WHERE id = :oid
+                        """),
+                        {"new_prob": float(row[0]), "oid": outcome_id},
+                    )
+                    stats["fixed"] += 1
+
             await session.commit()
 
     except Exception as e:
