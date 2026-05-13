@@ -113,12 +113,23 @@ struct BugReportView: View {
                     }
                     .padding(.horizontal)
 
-                    Toggle(isOn: $notifyOnFix) {
-                        Text("Email me when this is fixed")
-                            .font(.subheadline)
+                    if authManager.isAuthenticated {
+                        Toggle(isOn: $notifyOnFix) {
+                            Text("Email me when this is fixed")
+                                .font(.subheadline)
+                        }
+                        .tint(.orange)
+                        .padding(.horizontal)
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "envelope")
+                                .foregroundStyle(.secondary)
+                            Text("Sign in to get notified when your bug is fixed")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
                     }
-                    .tint(.orange)
-                    .padding(.horizontal)
 
                     if submitted {
                         HStack(spacing: 8) {
