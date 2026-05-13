@@ -10021,7 +10021,7 @@ async def calibration_data(
                 (fo.current_probability >= 0.95) AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
-                (cv.is_grouped OR (cv.mutually_exclusive AND cv.eligible >= 3)) AS is_multi,
+                cv.is_grouped AS is_multi,
                 ROW_NUMBER() OVER (
                     PARTITION BY cv.vm_id
                     ORDER BY ABS(fo.opening_probability - 0.5)
