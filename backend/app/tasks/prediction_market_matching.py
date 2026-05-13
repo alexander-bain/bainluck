@@ -771,14 +771,31 @@ async def _match_prediction_markets(limit: int = 500):
                 # not contribute to the probability time-series.
                 if market.source == "kalshi" and market.external_id:
                     ext = market.external_id.lower()
-                    # Kalshi game-winner tickers end in "game" before the
-                    # date segment (e.g., kxnbagame-26apr23nykatl).
-                    # Props have different prefixes (kxnbaspread, kxnbapts,
-                    # kxnbaovertime, etc.)
                     prefix = ext.split("-")[0] if "-" in ext else ext
                     if not prefix.endswith("game"):
                         phase2_skipped_not_ml += 1
                         continue
+
+                    # Validate ticker date matches event date. Colorado plays
+                    # Cincinnati on Apr 28 AND Apr 29 — both games' markets
+                    # match by team name. If the ticker date doesn't match the
+                    # event's commence_time, this market is linked to the wrong
+                    # event. Unlink it rather than writing bad data.
+                    ticker_date = extract_game_date_from_ticker(market.external_id)
+                    if ticker_date and event.commence_time:
+                        _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
+                        _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
+                        if abs((_td - _ec).total_seconds()) > 36 * 3600:
+                            logger.warning(
+                                "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
+                                market.external_id, _td.date(), _ec.date(),
+                                abs((_td - _ec).total_seconds()) / 3600,
+                            )
+                            market.event_id = None
+                            await session.commit()
+                            stats["funnel"].setdefault("phase2_date_unlinked", 0)
+                            stats["funnel"]["phase2_date_unlinked"] += 1
+                            continue
 
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,

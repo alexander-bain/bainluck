@@ -720,6 +720,79 @@ async def prop_snapshot_audit(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/source-intelligence/date-mismatch-audit")
+async def date_mismatch_audit(db: AsyncSession = Depends(get_db)):
+    """Find markets linked to events with mismatched game dates.
+
+    For Kalshi markets, the ticker encodes the game date. If the ticker
+    date doesn't match the event's commence_time (±36h), the market is
+    linked to the wrong event — likely a different game in the same series.
+    """
+    await _set_timeout(db)
+
+    sql = text("""
+        SELECT
+            fm.id AS market_id,
+            fm.name AS market_name,
+            fm.source,
+            fm.external_id,
+            fm.event_id,
+            fm.commence_time AS market_commence,
+            e.commence_time AS event_commence,
+            e.home_team_name,
+            e.away_team_name,
+            s.key AS sport
+        FROM futures_markets fm
+        JOIN events e ON e.id = fm.event_id
+        JOIN sports s ON s.id = e.sport_id
+        WHERE fm.source = 'kalshi'
+          AND fm.external_id IS NOT NULL
+          AND fm.event_id IS NOT NULL
+          AND e.commence_time IS NOT NULL
+        ORDER BY e.commence_time DESC
+    """)
+    result = await db.execute(sql)
+    rows = result.all()
+
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    mismatches = []
+    checked = 0
+    for r in rows:
+        ticker_date = extract_game_date_from_ticker(r.external_id)
+        if not ticker_date:
+            continue
+        checked += 1
+
+        event_date = r.event_commence
+        if event_date.tzinfo is None:
+            from datetime import timezone as tz
+            event_date = event_date.replace(tzinfo=tz.utc)
+        if ticker_date.tzinfo is None:
+            from datetime import timezone as tz
+            ticker_date = ticker_date.replace(tzinfo=tz.utc)
+
+        diff_hours = abs((ticker_date - event_date).total_seconds()) / 3600
+        if diff_hours > 36:
+            mismatches.append({
+                "market_id": r.market_id,
+                "market_name": r.market_name,
+                "external_id": r.external_id,
+                "event_id": r.event_id,
+                "event_teams": f"{r.away_team_name} @ {r.home_team_name}",
+                "sport": r.sport,
+                "ticker_date": ticker_date.isoformat(),
+                "event_date": event_date.isoformat(),
+                "diff_hours": round(diff_hours, 1),
+            })
+
+    return {
+        "markets_checked": checked,
+        "date_mismatches": len(mismatches),
+        "mismatches": mismatches[:100],
+    }
+
+
 @router.get("/source-intelligence/oscillation-audit")
 async def oscillation_audit(db: AsyncSession = Depends(get_db)):
     """Find ALL events with stat_model oscillation — reverse matching eval.
