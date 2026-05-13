@@ -65,10 +65,8 @@ final class NavigationCoordinator: ObservableObject {
             }
 
         case "ei":
-            if pathComponents.count >= 2 && pathComponents[1] == "hall-of-fame" {
-                navigate(to: .eiRankings, tab: .feed)
-                return true
-            }
+            selectedTab = .feed
+            return true
 
         case "search":
             let query = queryItems?.first(where: { $0.name == "q" })?.value

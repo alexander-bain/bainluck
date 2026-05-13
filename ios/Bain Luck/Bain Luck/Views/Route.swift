@@ -5,7 +5,6 @@ import SwiftUI
 enum Route: Hashable {
     case eventDetail(id: Int)
     case futuresDetail(id: Int)
-    case eiRankings
     case preferences
     case sportCategory(key: String, name: String)
     case leagueGrid(slug: String)
@@ -29,7 +28,6 @@ struct RouteDestination: View {
         switch route {
         case .eventDetail(let id): EventDetailView(eventId: id)
         case .futuresDetail(let id): FuturesDetailView(marketId: id)
-        case .eiRankings: EmptyView()
         case .preferences: PreferencesView()
         case .sportCategory(let key, let name): SportCategoryView(categoryKey: key, categoryName: name)
         case .leagueGrid(let slug): LeagueGridView(slug: slug)
