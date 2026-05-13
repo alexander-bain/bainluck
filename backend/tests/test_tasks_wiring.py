@@ -202,6 +202,7 @@ class TestBeatScheduleCompleteness:
         "merge-duplicate-events",
         "check-aggregation-quality",
         "check-tier1-coverage",
+        "daily-digest",
     }
 
     def test_no_missing_entries(self):
