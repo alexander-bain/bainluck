@@ -55,7 +55,11 @@ from app.utils.feed_reasons import (
     generate_futures_headline,
     generate_futures_reason,
 )
-from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_items
+from app.utils.feed_quality_debug import (
+    build_feed_quality_debug,
+    find_missing_ground_truth_items,
+    load_default_ground_truth_items,
+)
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
@@ -562,6 +566,12 @@ async def get_feed(
             top_n=min(20, len(paginated)),
         )
         await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
+        email_missing_ground_truth = find_missing_ground_truth_items(
+            debug_payload["items"],
+            email_ground_truth_items,
+            limit=80,
+        )
+        await _attach_missing_ground_truth_traces(db, email_missing_ground_truth, now)
         email_metadata = email_ground_truth_report["metadata"]
         email_summary = summarize_polymarket_email_ground_truth(
             debug_payload["items"],
@@ -577,6 +587,7 @@ async def get_feed(
             "hits": email_summary["hits"][:20],
             "missing_items": email_summary["missing_items"][:50],
         }
+        debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
     # Remove internal sort/debug keys
@@ -616,6 +627,7 @@ async def get_feed(
         payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
         payload["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
         payload["email_ground_truth"] = debug_payload["email_ground_truth"]
+        payload["email_ground_truth_misses"] = debug_payload["email_ground_truth_misses"]
         payload["debug_timing"] = {
             "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
             "stages": _timings,

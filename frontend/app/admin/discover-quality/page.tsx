@@ -147,6 +147,7 @@ interface FeedDebugResponse {
   missing_ground_truth: MissingGroundTruthItem[];
   missing_ground_truth_summary: MissingGroundTruthSummary;
   email_ground_truth?: EmailGroundTruthDiagnostics;
+  email_ground_truth_misses?: MissingGroundTruthItem[];
   debug_timing?: {
     total_ms: number;
     stages: Array<{
@@ -1083,7 +1084,10 @@ export default function DiscoverQualityPage() {
     });
   }, [data, missingBucket]);
   const emailGroundTruthMisses = useMemo(() => {
-    return (data?.missing_ground_truth || []).filter((item) => item.source === "polymarket_email");
+    return (
+      data?.email_ground_truth_misses
+      || (data?.missing_ground_truth || []).filter((item) => item.source === "polymarket_email")
+    );
   }, [data]);
   const emailMissBucketCounts = useMemo(() => {
     return emailGroundTruthMisses.reduce<Record<string, number>>((acc, item) => {

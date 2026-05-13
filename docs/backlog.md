@@ -65,7 +65,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 - ✅ Authenticated feed items now expose per-card `personalization_trace` diagnostics, and `/admin/discover-quality` renders multiplier, score delta, category-affinity delta, and reasons when present.
 - ✅ Polymarket email-highlight sheet can now feed the Discover audit through CSV path/URL env vars, producing `email-hit@20` / `email-hit@50` coverage without changing ranking.
 - ✅ Email ground-truth parsing now accepts stable `Audit Export` headers, records row count/latest-date/stale metadata, supports private Google Sheets via service-account auth, and surfaces export errors in audit/admin diagnostics instead of crashing.
-- ✅ `/admin/discover-quality` now separates Polymarket email-highlight misses into an editorial audit panel with bucket counts, sheet scores, hooks, DB trace entry points, and recommended actions.
+- ✅ `/admin/discover-quality` now separates Polymarket email-highlight misses into a dedicated editorial audit panel with bucket counts, sheet scores, hooks, DB trace entry points, and recommended actions.
 
 **Next phases:**
 1. Automate the Polymarket email-highlight ground truth pipeline:
