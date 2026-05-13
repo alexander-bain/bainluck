@@ -10189,27 +10189,25 @@ async def backfill_winners_status(
         WHERE fm.status = 'resolved'
         GROUP BY fm.source
     """))
-    # Check Kalshi opening price quality for problem categories
-    opening_diag = await db.execute(text("""
-        SELECT fm.llm_sport_category AS cat,
-            COUNT(*) AS outcomes,
-            COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL) AS has_opening,
-            COUNT(*) FILTER (WHERE
-                fo.opening_probability IS NOT NULL
-                AND fo.opening_captured_at IS NOT NULL
-                AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                     WHERE fos.outcome_id = fo.id) > 1
-            ) AS has_snapshots,
-            ROUND(AVG(CASE WHEN fo.opening_probability IS NOT NULL
-                THEN (SELECT MAX(fos.probability) - MIN(fos.probability)
-                      FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id)
-                END)::numeric, 3) AS avg_price_range
+    # Sample specific hockey outcomes to understand snapshot data
+    sample_diag = await db.execute(text("""
+        SELECT fo.id, fo.opening_probability, fo.name,
+            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
+            (SELECT yes_bid FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id ORDER BY captured_at ASC LIMIT 1) AS first_bid,
+            (SELECT yes_ask FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id ORDER BY captured_at ASC LIMIT 1) AS first_ask,
+            (SELECT probability FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
+             AND yes_bid > 0 AND (yes_ask - yes_bid) < 0.50
+             AND ABS(probability - fo.opening_probability) > 0.05
+             ORDER BY captured_at ASC LIMIT 1) AS better_price
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
         WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
-          AND fm.llm_sport_category IN ('hockey', 'baseball', 'entertainment')
-        GROUP BY fm.llm_sport_category
+          AND fm.llm_sport_category = 'hockey'
+          AND fo.opening_probability < 0.15
+          AND fo.current_probability >= 0.95
+        LIMIT 10
     """))
+    opening_diag = await db.execute(text("SELECT 'hockey' AS cat, 0 AS outcomes, 0 AS has_opening, 0 AS has_snapshots, 0.0 AS avg_price_range"))
 
     return {
         "sources": [
@@ -10217,11 +10215,13 @@ async def backfill_winners_status(
              "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
             for r in result.all()
         ],
-        "kalshi_opening_quality": [
-            {"category": r.cat, "outcomes": r.outcomes,
-             "has_opening": r.has_opening, "has_snapshots": r.has_snapshots,
-             "avg_price_range": float(r.avg_price_range) if r.avg_price_range else None}
-            for r in opening_diag.all()
+        "hockey_samples": [
+            {"id": r.id, "opening": float(r.opening_probability),
+             "name": r.name, "snaps": r.snap_count,
+             "first_bid": float(r.first_bid) if r.first_bid else None,
+             "first_ask": float(r.first_ask) if r.first_ask else None,
+             "better_price": float(r.better_price) if r.better_price else None}
+            for r in sample_diag.all()
         ],
     }
 
