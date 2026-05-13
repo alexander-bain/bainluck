@@ -583,4 +583,18 @@ actor APIClient {
     func submitBugReport(_ body: BugReportSubmission) async throws -> BugReportResponse {
         return try await postEncodable("/api/feedback/bug-report", body: body)
     }
+
+    // MARK: - Notifications
+
+    func registerDeviceToken(deviceToken: String, platform: String, userId: Int?) async throws -> NotificationRegisterResponse {
+        var body: [String: String?] = [
+            "device_token": deviceToken,
+            "platform": platform,
+            "session_id": sessionId,
+        ]
+        if let userId {
+            body["user_id"] = String(userId)
+        }
+        return try await post("/api/notifications/register", body: body)
+    }
 }

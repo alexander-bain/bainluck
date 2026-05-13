@@ -16,6 +16,9 @@ import AppKit
 
 @main
 struct Bain_LuckApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(BainLuckAppDelegate.self) var appDelegate
+    #endif
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
     @StateObject private var pinManager = PinManager()
@@ -69,6 +72,7 @@ struct Bain_LuckApp: App {
                 #endif
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
                     pinManager.isAuthenticated = isAuth
+                    NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
                     Task {
                         if isAuth {
                             await pinManager.syncLocalToServer()
@@ -79,6 +83,11 @@ struct Bain_LuckApp: App {
                 .task {
                     pinManager.isAuthenticated = authManager.isAuthenticated
                     await pinManager.loadPins()
+                    // Request notification permission after a delay (not on first frame)
+                    NotificationManager.shared.requestPermissionAfterDelay()
+                    if let userId = authManager.user?.id {
+                        NotificationManager.shared.setUser(id: userId)
+                    }
                 }
                 #if os(iOS)
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in

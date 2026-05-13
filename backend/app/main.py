@@ -14,7 +14,7 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence
+from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -157,6 +157,7 @@ app.include_router(calibration.router, prefix="/api", tags=["Calibration"])
 app.include_router(source_intelligence.router, prefix="/api", tags=["Source Intelligence"])
 app.include_router(predictions.router)
 app.include_router(feedback.router)
+app.include_router(notifications.router)
 app.include_router(og_image.router)
 
 
