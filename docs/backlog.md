@@ -248,17 +248,11 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 **Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 **Parallel Safety:** Yellow
 
-### BR21. iPad Futures Browser Needs Photos/Emojis
+### ~~BR21. iPad Futures Browser Needs Photos/Emojis~~ — FIXED (May 13)
 
-**Problem:** The FuturesListView on iPad shows a wall of plain text market names — boring and stale-looking. Markets that have `image_url` (Pexels photos) or `hook_description` (LLM blurbs) on the Discover feed should show enriched cards in the Futures browser too.
-
-**Fix needed:**
-1. Add image thumbnails to futures list rows when `image_url` is available
-2. Add a staleness filter — hide markets that are effectively resolved (leader ≥97%) or have no updates for 7+ days
-3. Consider category emoji prefixes (🏛 Politics, 📈 Economics, 🌤 Weather, 🎬 Entertainment) to break up the wall of text
+Added image thumbnails and category emoji to FuturesListView rows. Navigation now uses shared `RouteDestination` instead of duplicated route code, matching the TestFlight route consistency fix.
 
 **Files:** `ios/.../Views/FuturesListView.swift`
-**Parallel Safety:** Green
 
 ### BR22. Weather Page Needs City Search
 
