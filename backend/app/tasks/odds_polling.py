@@ -968,13 +968,16 @@ async def _poll_all_odds():
                                 )
                             scores_updated += 1
 
-                            # Compute stat model for live events with score data.
-                            # Prefers ESPN clock/period but falls back to wall-clock
-                            # estimation from commence_time when ESPN sync misses
-                            # (common for college teams with name mismatches).
+                            # Compute stat model for live events WITHOUT an ESPN link.
+                            # Events with espn_id get stat_model from ESPN sync
+                            # (which has authoritative clock/period data). Running
+                            # both paths causes oscillation: ESPN sync writes from
+                            # ESPN scores, odds_polling writes from Odds API scores
+                            # with stale ESPN clock data, and they fight.
                             if (
                                 event_obj
                                 and event_status == "live"
+                                and not event_obj.espn_id
                                 and home_score is not None
                                 and away_score is not None
                                 and (event_obj.game_clock or event_obj.period or event_obj.commence_time)

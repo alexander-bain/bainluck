@@ -403,6 +403,16 @@ async def _sync_espn_live_events():
                     # the same (team_id, source) pair multiple times per poll cycle
                     identity_cache: set[tuple[int, str]] = set()
 
+                    # Track ESPN IDs claimed this cycle to prevent collision.
+                    # Multiple of our events can name-match to the same ESPN
+                    # game (common in college sports with many simultaneous
+                    # games). Only the first match gets the ID.
+                    claimed_espn_ids: set[str] = set()
+                    # Pre-claim IDs already assigned to events we're processing
+                    for ev in our_events:
+                        if ev.espn_id:
+                            claimed_espn_ids.add(ev.espn_id)
+
                     for event in our_events:
                         # Multi-signal matching: ESPN ID first, then name, then time
                         matched_espn = None
@@ -418,6 +428,9 @@ async def _sync_espn_live_events():
                             home_names, away_names = get_event_name_variations(event)
                             for ee in espn_events:
                                 if not ee.home_team or not ee.away_team:
+                                    continue
+                                # Skip ESPN games already claimed by another event
+                                if ee.espn_id and ee.espn_id in claimed_espn_ids:
                                     continue
                                 if espn_names_match(home_names, ee.home_team) and espn_names_match(away_names, ee.away_team):
                                     matched_espn = ee
@@ -542,8 +555,9 @@ async def _sync_espn_live_events():
                                 "win_probability_sources": _wps,
                                 "espn_win_prob_home": ee.home_win_probability,
                             }
-                            if ee.espn_id:
+                            if ee.espn_id and ee.espn_id not in claimed_espn_ids:
                                 _update_vals["espn_id"] = ee.espn_id
+                                claimed_espn_ids.add(ee.espn_id)
                             await session.execute(
                                 _sql_update(Event)
                                 .where(Event.id == event.id)
