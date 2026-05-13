@@ -605,6 +605,83 @@ async def linked_markets_audit(
     }
 
 
+@router.get("/source-intelligence/prop-snapshot-audit")
+async def prop_snapshot_audit(db: AsyncSession = Depends(get_db)):
+    """Find win_prob_snapshots written from non-moneyline Kalshi markets.
+
+    These snapshots have prop/spread/total/overtime probabilities stored
+    as if they were game-winner probabilities. Returns the scope of the
+    problem and which events are affected.
+    """
+    await _set_timeout(db)
+
+    # Find distinct market_name values from Kalshi snapshots
+    market_names_sql = text("""
+        SELECT
+            game_state->>'market_name' AS market_name,
+            COUNT(*) AS snap_count,
+            COUNT(DISTINCT event_id) AS event_count
+        FROM win_prob_snapshots
+        WHERE source = 'kalshi'
+          AND game_state->>'market_name' IS NOT NULL
+        GROUP BY game_state->>'market_name'
+        ORDER BY COUNT(*) DESC
+    """)
+    result = await db.execute(market_names_sql)
+    rows = result.all()
+
+    # Classify each market name as moneyline or prop
+    moneyline_keywords = {"moneyline", "win", "game"}
+    prop_indicators = {
+        "spread", "total", "overtime", "points", "rebounds", "assists",
+        "steals", "blocks", "three pointer", "double double", "triple double",
+        "first half", "second half", "1h", "2h", "leader", "strikeout",
+        "home run", "o/u", "over", "under",
+    }
+
+    moneyline_snaps = 0
+    moneyline_events = 0
+    prop_snaps = 0
+    prop_events = 0
+    prop_markets = []
+
+    for r in rows:
+        name = (r.market_name or "").lower()
+        is_prop = any(kw in name for kw in prop_indicators)
+
+        if is_prop:
+            prop_snaps += r.snap_count
+            prop_events += r.event_count
+            prop_markets.append({
+                "market_name": r.market_name,
+                "snapshots": r.snap_count,
+                "events": r.event_count,
+            })
+        else:
+            moneyline_snaps += r.snap_count
+            moneyline_events += r.event_count
+
+    # Also check snapshots with no game_state (older writes)
+    no_gs_sql = text("""
+        SELECT COUNT(*) AS snap_count, COUNT(DISTINCT event_id) AS event_count
+        FROM win_prob_snapshots
+        WHERE source = 'kalshi'
+          AND (game_state IS NULL OR game_state->>'market_name' IS NULL)
+    """)
+    no_gs_result = await db.execute(no_gs_sql)
+    no_gs = no_gs_result.one()
+
+    return {
+        "moneyline_snapshots": moneyline_snaps,
+        "moneyline_events": moneyline_events,
+        "prop_snapshots": prop_snaps,
+        "prop_events": prop_events,
+        "no_game_state_snapshots": no_gs.snap_count,
+        "no_game_state_events": no_gs.event_count,
+        "prop_market_types": prop_markets[:20],
+    }
+
+
 @router.get("/source-intelligence/oscillation-audit")
 async def oscillation_audit(db: AsyncSession = Depends(get_db)):
     """Find ALL events with stat_model oscillation — reverse matching eval.

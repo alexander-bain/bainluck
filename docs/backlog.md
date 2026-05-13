@@ -24,6 +24,31 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/scripts/audit_event_matching.py`, `Manus/prompts/event_matching_ground_truth.md`
 
+### Game-Markets Query Missing Kalshi Props (HIGH PRI)
+
+**Problem:** The event detail page's game-markets section returns empty for many events that actually have 15-20 linked Kalshi markets (spreads, totals, overtime, half winners, player props, points leaders). These are correctly linked via `event_id` in `futures_markets` but don't appear in the API response.
+
+**Example:** Event 14594073 (Knicks @ Hawks, Apr 23) has 18 linked Kalshi markets and 1 Polymarket market (verified via `GET /api/source-intelligence/linked-markets?event_id=14594073`), but `GET /api/events/14594073` returns `game_markets: {}` (empty).
+
+**Interesting market types being hidden:**
+- **Overtime** (`KXNBAOVERTIME-*`): "Will the game go to overtime?" — great for close games
+- **Half winners** (`KXNBA1HWINNER-*`, `KXNBA2HWINNER-*`): "Who wins the 1st/2nd half?" with 3-way (home/away/tie)
+- **Half spreads/totals** (`KXNBA1HSPREAD-*`, `KXNBA2HTOTAL-*`): Half-level market structure
+- **Points leader** (`KXNBAPTSLEADER-*`): "Who scores the most?" — multi-outcome
+- **Player props** (`KXNBAPTS-*`, `KXNBAREB-*`, `KXNBAAST-*`, `KXNBA3PT-*`, `KXNBABLK-*`, `KXNBASTL-*`): Already have these from Polymarket decomposition, but Kalshi versions may have different structure
+
+**Where to investigate:**
+- The game-markets query lives in `backend/app/routes/events.py` — search for the section that builds the `game_markets` response (around the `game-markets` or `odds-history` endpoint).
+- The query likely filters by `status` (dropping resolved markets), or by `market_tier`, or by `category`, or has a time-window filter on `commence_time` that uses Kalshi's `commence_time` (which is the resolution date, not the game date — gotcha #9/19).
+- These markets all have `category="game_prop"` and `market_tier=5` and `status="resolved"` — the status filter is the most likely culprit since the game is completed.
+- For LIVE games, these markets should appear. Check if there's a `status.in_(["open", "active"])` filter that excludes resolved props on completed games.
+- The Polymarket "Hawks vs. Knicks" market (id=12460776) has `tier=1, category="championship"` which is misclassified — it's a game market, not a championship. This is a separate classification bug in `compute_market_tier()`.
+
+**Fix approach:** The game-markets endpoint should return ALL linked markets for an event regardless of market status (resolved markets on completed games are still valuable for viewing). Consider grouping by type (overtime, half, player props) for display.
+
+**Files:** `backend/app/routes/events.py` (game-markets query), `backend/app/utils/prediction_market_matching.py` (market tier classification)
+**Parallel Safety:** Yellow (different route from source-intelligence work)
+
 ---
 
 ## Tier 0.25 — Cross-Source Market Matching for Non-Sport Categories
