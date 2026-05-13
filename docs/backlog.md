@@ -441,17 +441,9 @@ In-memory response cache for game-markets endpoint. Completed games cached indef
 
 Both `AwardCard` and `AwardCompactRow` in `RelatedFutures.tsx` already use the `PlayerHeadshot` component (lines 474, 2002). Verified May 13.
 
-### BR1-2. Source Attribution Looks Duplicated — NEEDS DESIGN (Rage Shake Bug #1 confirms)
+### ~~BR1-2. Source Attribution Looks Duplicated~~ — RESOLVED
 
-**Problem:** The source list (sportsbooks contributing to the aggregate) appears to show twice — once as a static list and once inside a collapsible dropdown.
-
-**Design question:** How should source attribution work? Options:
-- Show just the count ("Aggregated from 12 sportsbooks") with dropdown for details
-- Show the dropdown only, collapsed by default
-- Inline chips for the top 3 sources + "+9 more" expander
-
-**Files:** `ios/.../Views/EventDetailView.swift` (~line 824), `frontend/app/events/[id]/page.tsx`
-**Parallel Safety:** Yellow (design brief needed)
+The v2 rewrite (`sourcesToggle`) shows a single collapsible "Individual Sportsbooks" dropdown, collapsed by default. No duplication. Verified May 13.
 
 ### ~~0f-3. Live Box Score Integration for Player Props~~ — PARTIALLY FIXED (May 8)
 
