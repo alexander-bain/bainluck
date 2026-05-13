@@ -21,7 +21,7 @@ CACHE_TTL = 3600
 async def public_calibration(
     db: AsyncSession = Depends(get_db),
     bust: int = Query(0, include_in_schema=False),
-    use_opening: int = Query(0, include_in_schema=False),
+    use_closing: int = Query(0, include_in_schema=False),
 ):
     """Public calibration data for the /calibration page. Cached for 1 hour."""
 
@@ -95,8 +95,8 @@ async def public_calibration(
         ),
         ranked_outcomes AS (
             SELECT
-                CASE WHEN :use_opening = 1 THEN fo.opening_probability
-                     ELSE COALESCE(fo.calibration_probability, fo.opening_probability)
+                CASE WHEN :use_closing = 1 THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+                     ELSE fo.opening_probability
                 END AS adj_opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
                 cv.vm_id, cv.source, cv.category,
@@ -154,7 +154,7 @@ async def public_calibration(
         ORDER BY bucket_idx, source, category
     """)
 
-    result = await db.execute(sql, {"use_opening": use_opening})
+    result = await db.execute(sql, {"use_closing": use_closing})
     rows = result.all()
 
     # Ground-truth sports calibration from events table.
