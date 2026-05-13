@@ -392,6 +392,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # Phase 0c: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
+    # Phase 0d: Fix bad Kalshi opening prices from snapshot data
+    opening_fix_stats = await _fix_kalshi_opening_prices()
+
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
 
@@ -403,9 +406,64 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
         "closing_lines": closing_stats,
+        "fix_kalshi_openings": opening_fix_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }
+
+
+async def _fix_kalshi_opening_prices():
+    """Fix bad Kalshi opening_probability from placeholder bid-ask spreads.
+
+    For Kalshi outcomes with futures_odds_snapshots, replaces
+    opening_probability with the earliest snapshot that has real trading
+    (yes_bid > 0 and spread < 50pp). Only updates outcomes where the
+    current opening_probability differs from the corrected value by >5pp.
+    """
+    stats = {"fixed": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    WITH first_real_price AS (
+                        SELECT DISTINCT ON (fos.outcome_id)
+                            fos.outcome_id,
+                            fos.probability AS real_opening
+                        FROM futures_odds_snapshots fos
+                        JOIN futures_outcomes fo ON fo.id = fos.outcome_id
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND fos.yes_bid IS NOT NULL
+                          AND fos.yes_bid > 0
+                          AND fos.yes_ask IS NOT NULL
+                          AND (fos.yes_ask - fos.yes_bid) < 0.50
+                          AND fos.probability > 0
+                          AND fos.probability < 1
+                        ORDER BY fos.outcome_id, fos.captured_at ASC
+                    )
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = frp.real_opening,
+                        opening_captured_at = NOW()
+                    FROM first_real_price frp
+                    WHERE fo.id = frp.outcome_id
+                      AND fo.opening_probability IS NOT NULL
+                      AND ABS(fo.opening_probability - frp.real_opening) > 0.05
+                """)
+            )
+            stats["fixed"] = result.rowcount
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Fix Kalshi opening prices error: %s", e)
+
+    logger.info(
+        "Fix Kalshi opening prices: %d outcomes corrected, %d errors",
+        stats["fixed"], len(stats["errors"]),
+    )
+    return stats
 
 
 async def _backfill_closing_lines():
