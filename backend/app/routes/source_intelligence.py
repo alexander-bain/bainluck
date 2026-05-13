@@ -776,6 +776,15 @@ async def cleanup_oscillation(
     return results
 
 
+@router.get("/source-intelligence/debug")
+async def source_intelligence_debug(db: AsyncSession = Depends(get_db)):
+    """Debug — run coverage query without try/except to expose errors."""
+    await _set_timeout(db)
+    coverage = await _query_coverage(db)
+    accuracy = await _query_source_accuracy(db)
+    return {"coverage": coverage, "accuracy_sources": len(accuracy)}
+
+
 @router.get("/source-intelligence")
 async def source_intelligence(
     refresh: bool = False,
