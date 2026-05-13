@@ -584,7 +584,7 @@ async def _compute_calibration_prices():
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
                           AND fm.commence_time IS NOT NULL
-                        LIMIT 50000
+                        LIMIT 200000
                     ),
                     closing AS (
                         SELECT DISTINCT ON (nc.outcome_id)
@@ -624,7 +624,7 @@ async def _compute_calibration_prices():
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
                           AND fm.commence_time IS NULL
-                        LIMIT 50000
+                        LIMIT 200000
                     ),
                     settled AS (
                         SELECT DISTINCT ON (nc.outcome_id)
