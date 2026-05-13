@@ -121,10 +121,10 @@ export default function SourceIntelligencePage() {
           When Sources Disagree, Who&apos;s Right?
         </h1>
         <p className="mt-3 text-text-secondary text-sm md:text-base leading-relaxed max-w-2xl mx-auto">
-          We track {coverage.total_events.toLocaleString()} sporting events across{" "}
-          {source_accuracy.length} independent probability sources — sportsbooks, prediction
-          markets, and statistical models. When they diverge, we measure which source was
-          closer to the actual outcome.
+          We identified {coverage.total_events.toLocaleString()} sporting events with dense,
+          overlapping coverage from multiple probability sources — sportsbooks, prediction
+          markets, and statistical models. For each event, we compare closing probabilities
+          to the actual outcome and measure which source was closest to the truth.
         </p>
         <p className="mt-2 text-text-muted text-xs">
           Updated {new Date(data.generated_at).toLocaleDateString("en-US", {
@@ -423,15 +423,15 @@ export default function SourceIntelligencePage() {
       <Card title="Methodology">
         <div className="text-xs text-text-secondary leading-relaxed space-y-3">
           <p>
-            <strong>Matched timestamps.</strong> We bucket probability readings from all sources
-            into 5-minute windows. When two or more sources report within the same window for the
-            same event, we compare their values. A &ldquo;disagreement&rdquo; is any pair diverging by
-            more than 5 percentage points.
+            <strong>Well-covered events only.</strong> We only analyze events where at least two
+            sources each have 20+ probability snapshots during live play. Events with thin or
+            sporadic coverage are excluded entirely — if a major game lacks dense multi-source
+            data, we treat that as a pipeline issue to fix, not sparse data to analyze.
           </p>
           <p>
             <strong>Ground truth.</strong> For each completed game, the actual outcome is binary:
-            home team won or lost. Draws are excluded. Each source&apos;s probability is compared to
-            this 0/1 outcome to determine absolute error.
+            home team won or lost. Draws are excluded. Each source&apos;s closing probability is
+            compared to this 0/1 outcome to determine absolute error.
           </p>
           <p>
             <strong>Closing probability.</strong> The accuracy section uses each source&apos;s
@@ -442,8 +442,9 @@ export default function SourceIntelligencePage() {
             , which uses opening prices — both views are informative.
           </p>
           <p>
-            <strong>Minimum sample size.</strong> Source pairs with fewer than 50 disagreement
-            observations are excluded from the pairwise table to avoid misleading percentages.
+            <strong>Case studies.</strong> Disagreement charts use the median probability per
+            source to rank events (robust to transient spikes), then show the full time-series
+            scoped to live game time only. Only sources with 20+ readings appear in the chart.
           </p>
           <p>
             <strong>Sources.</strong> Sportsbook consensus (median across 5-15 books via The Odds API),

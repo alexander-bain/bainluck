@@ -2,6 +2,11 @@
 
 Analyzes cross-source probability disagreements for completed sports events
 and determines which source was closest to the actual outcome.
+
+Only considers "well-covered" events: those with 20+ snapshots from at
+least 2 sources during live play. Events with thin coverage are excluded
+entirely — if a Tier 1 event lacks dense multi-source data, that's a
+pipeline bug to fix, not sparse data to analyze.
 """
 
 import logging
@@ -21,7 +26,6 @@ router = APIRouter()
 _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 21600  # 6 hours
 
-# Only analyze recent events to keep queries fast on Heroku (30s timeout)
 _RECENCY = "e.commence_time > NOW() - INTERVAL '3 months'"
 
 _BASE_FILTER = f"""
@@ -31,49 +35,82 @@ _BASE_FILTER = f"""
     AND {_RECENCY}
 """
 
+# Minimum snapshots per source per event to consider the source "present".
+# Below this threshold, the data is too thin to draw conclusions from.
+MIN_SNAPS = 20
+
+# CTE fragment: for each (event, source) pair, count live-game snapshots
+# and take the closing probability. Only sources with >= MIN_SNAPS qualify.
+_RICH_SOURCES_CTE = f"""
+    rich_sources AS (
+        SELECT
+            wp.event_id,
+            wp.source,
+            COUNT(*) AS snap_count
+        FROM win_prob_snapshots wp
+        JOIN events e ON e.id = wp.event_id
+        WHERE {_BASE_FILTER}
+          AND wp.home_win_probability IS NOT NULL
+          AND wp.home_win_probability > 0
+          AND wp.home_win_probability < 1
+          AND wp.captured_at >= e.commence_time
+          AND wp.captured_at <= COALESCE(
+              e.completed_at,
+              e.commence_time + INTERVAL '4 hours'
+          )
+        GROUP BY wp.event_id, wp.source
+        HAVING COUNT(*) >= {MIN_SNAPS}
+    ),
+    rich_events AS (
+        SELECT event_id
+        FROM rich_sources
+        GROUP BY event_id
+        HAVING COUNT(DISTINCT source) >= 2
+    )
+"""
+
 
 async def _set_timeout(db: AsyncSession) -> None:
     await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
 
 async def _query_coverage(db: AsyncSession) -> dict:
-    """Query 1: Source coverage — events per source, overlap distribution."""
+    """Query 1: Source coverage — events with rich multi-source data."""
 
     by_source_sql = text(f"""
+        WITH {_RICH_SOURCES_CTE}
         SELECT
             s.key AS sport,
             COUNT(DISTINCT e.id) AS total,
             COUNT(DISTINCT e.id) FILTER (
                 WHERE e.opening_home_probability IS NOT NULL
             ) AS betting,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'espn') AS espn,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'stat_model') AS stat_model,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'kalshi') AS kalshi,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'polymarket') AS polymarket,
-            COUNT(DISTINCT e.id) FILTER (WHERE src = 'mlb') AS mlb
-        FROM events e
+            COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'espn') AS espn,
+            COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'stat_model') AS stat_model,
+            COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'kalshi') AS kalshi,
+            COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'polymarket') AS polymarket,
+            COUNT(DISTINCT e.id) FILTER (WHERE rs.source = 'mlb') AS mlb
+        FROM rich_events re
+        JOIN events e ON e.id = re.event_id
         JOIN sports s ON s.id = e.sport_id
-        LEFT JOIN LATERAL (
-            SELECT DISTINCT source AS src
-            FROM win_prob_snapshots wp
-            WHERE wp.event_id = e.id
-        ) wp ON true
-        WHERE {_BASE_FILTER}
+        LEFT JOIN rich_sources rs ON rs.event_id = e.id
         GROUP BY s.key
         ORDER BY COUNT(DISTINCT e.id) DESC
     """)
 
     overlap_sql = text(f"""
+        WITH {_RICH_SOURCES_CTE}
         SELECT source_count AS sources, COUNT(*) AS events
         FROM (
-            SELECT e.id,
-                (SELECT COUNT(DISTINCT source) FROM win_prob_snapshots wp WHERE wp.event_id = e.id)
+            SELECT re.event_id,
+                COUNT(DISTINCT rs.source)
                 + CASE WHEN e.opening_home_probability IS NOT NULL THEN 1 ELSE 0 END
                 AS source_count
-            FROM events e
-            WHERE {_BASE_FILTER}
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            LEFT JOIN rich_sources rs ON rs.event_id = re.event_id
+            GROUP BY re.event_id, e.opening_home_probability
         ) sub
-        WHERE source_count > 0
         GROUP BY source_count
         ORDER BY source_count
     """)
@@ -105,18 +142,18 @@ async def _query_coverage(db: AsyncSession) -> dict:
 
 
 async def _query_source_accuracy(db: AsyncSession) -> list:
-    """Query 2: Per-source closing accuracy vs actual outcome."""
+    """Query 2: Per-source closing accuracy — only well-covered events."""
 
-    # win_prob_snapshots sources (espn, stat_model, kalshi, polymarket, mlb)
-    # UNION with sportsbook data from events.opening_home_probability
     sql = text(f"""
-        WITH wp_closing AS (
+        WITH {_RICH_SOURCES_CTE},
+        wp_closing AS (
             SELECT DISTINCT ON (wp.event_id, wp.source)
                 wp.event_id, wp.source, wp.home_win_probability
             FROM win_prob_snapshots wp
-            JOIN events e ON e.id = wp.event_id
-            WHERE {_BASE_FILTER}
-              AND wp.home_win_probability IS NOT NULL
+            JOIN rich_sources rs
+                ON rs.event_id = wp.event_id AND rs.source = wp.source
+            JOIN rich_events re ON re.event_id = wp.event_id
+            WHERE wp.home_win_probability IS NOT NULL
               AND wp.home_win_probability > 0
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
@@ -124,10 +161,10 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
         all_closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
             UNION ALL
-            SELECT e.id, 'betting', e.opening_home_probability
-            FROM events e
-            WHERE {_BASE_FILTER}
-              AND e.opening_home_probability IS NOT NULL
+            SELECT re.event_id, 'betting', e.opening_home_probability
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            WHERE e.opening_home_probability IS NOT NULL
               AND e.opening_home_probability > 0
               AND e.opening_home_probability < 1
         )
@@ -180,24 +217,18 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
 
 
 async def _query_disagreements(db: AsyncSession) -> dict:
-    """Queries 3+4: Pairwise disagreement analysis and frequency.
+    """Queries 3+4: Pairwise disagreement — only well-covered events."""
 
-    Uses per-event last-snapshot approach instead of full time-bucketed
-    self-join to stay within Heroku's 30s timeout.
-    """
-
-    # Simpler approach: compare each source's LAST reading per event.
-    # This avoids the expensive time-bucket self-join while still capturing
-    # the core question: when sources' closing probabilities diverge,
-    # which was closer to the truth?
     sql = text(f"""
-        WITH wp_closing AS (
+        WITH {_RICH_SOURCES_CTE},
+        wp_closing AS (
             SELECT DISTINCT ON (wp.event_id, wp.source)
                 wp.event_id, wp.source, wp.home_win_probability
             FROM win_prob_snapshots wp
-            JOIN events e ON e.id = wp.event_id
-            WHERE {_BASE_FILTER}
-              AND wp.home_win_probability IS NOT NULL
+            JOIN rich_sources rs
+                ON rs.event_id = wp.event_id AND rs.source = wp.source
+            JOIN rich_events re ON re.event_id = wp.event_id
+            WHERE wp.home_win_probability IS NOT NULL
               AND wp.home_win_probability > 0
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
@@ -205,10 +236,10 @@ async def _query_disagreements(db: AsyncSession) -> dict:
         closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
             UNION ALL
-            SELECT e.id, 'betting', e.opening_home_probability
-            FROM events e
-            WHERE {_BASE_FILTER}
-              AND e.opening_home_probability IS NOT NULL
+            SELECT re.event_id, 'betting', e.opening_home_probability
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            WHERE e.opening_home_probability IS NOT NULL
               AND e.opening_home_probability > 0
               AND e.opening_home_probability < 1
         ),
@@ -345,27 +376,23 @@ async def _query_disagreements(db: AsyncSession) -> dict:
 
 
 async def _query_case_studies(db: AsyncSession) -> list:
-    """Query 5: Top sustained disagreements with full time-series.
+    """Query 5: Top sustained disagreements from well-covered events.
 
-    Finds events where sources held genuinely different views for sustained
-    periods during live play. Filters out:
-    - Transient spikes (single snapshots at 0% or 100%)
-    - Pregame divergence (flat lines hours before game)
-    - Stale prices (extreme values at game end)
+    Uses median probability per source (robust to transient spikes).
+    Only considers live-game snapshots with 20+ readings per source.
     """
 
-    # Use the median probability per source per event (robust to spikes)
-    # and find events where two sources' medians diverge significantly.
-    # Only consider live-game snapshots (after commence_time, before
-    # completed_at or 4h after commence) with moderate probabilities (5-95%).
     peak_sql = text(f"""
-        WITH live_snaps AS (
+        WITH {_RICH_SOURCES_CTE},
+        live_snaps AS (
             SELECT
                 wp.event_id, wp.source, wp.home_win_probability
             FROM win_prob_snapshots wp
+            JOIN rich_sources rs
+                ON rs.event_id = wp.event_id AND rs.source = wp.source
+            JOIN rich_events re ON re.event_id = wp.event_id
             JOIN events e ON e.id = wp.event_id
-            WHERE {_BASE_FILTER}
-              AND wp.home_win_probability IS NOT NULL
+            WHERE wp.home_win_probability IS NOT NULL
               AND wp.home_win_probability > 0.05
               AND wp.home_win_probability < 0.95
               AND wp.captured_at >= e.commence_time
@@ -383,36 +410,24 @@ async def _query_case_studies(db: AsyncSession) -> list:
                 COUNT(*) AS snap_count
             FROM live_snaps
             GROUP BY event_id, source
-            HAVING COUNT(*) >= 3
         ),
         event_divergence AS (
             SELECT
                 s1.event_id,
-                s1.source AS source_a,
-                s2.source AS source_b,
-                ABS(s1.median_prob - s2.median_prob) AS median_div,
-                GREATEST(s1.snap_count, s2.snap_count) AS max_snaps
+                MAX(ABS(s1.median_prob - s2.median_prob)) AS max_div,
+                COUNT(DISTINCT s1.source) + COUNT(DISTINCT s2.source) AS pair_sources,
+                MAX(LEAST(s1.snap_count, s2.snap_count)) AS min_pair_snaps
             FROM source_medians s1
             JOIN source_medians s2
                 ON s1.event_id = s2.event_id
                 AND s1.source < s2.source
-        ),
-        ranked AS (
-            SELECT
-                event_id,
-                MAX(median_div) AS max_div,
-                MAX(max_snaps) AS richness
-            FROM event_divergence
-            WHERE median_div > 0.08
-            GROUP BY event_id
-            HAVING COUNT(DISTINCT source_a) + COUNT(DISTINCT source_b) >= 3
-            ORDER BY MAX(median_div) DESC
-            LIMIT 20
+            GROUP BY s1.event_id
+            HAVING MAX(ABS(s1.median_prob - s2.median_prob)) > 0.05
         )
         SELECT
-            r.event_id,
-            r.max_div,
-            r.richness,
+            ed.event_id,
+            ed.max_div,
+            ed.min_pair_snaps,
             e.home_team_name,
             e.away_team_name,
             s.key AS sport,
@@ -420,18 +435,27 @@ async def _query_case_studies(db: AsyncSession) -> list:
             e.away_score,
             e.commence_time,
             e.completed_at
-        FROM ranked r
-        JOIN events e ON e.id = r.event_id
+        FROM event_divergence ed
+        JOIN events e ON e.id = ed.event_id
         JOIN sports s ON s.id = e.sport_id
-        ORDER BY r.max_div DESC
+        ORDER BY ed.max_div DESC
+        LIMIT 10
     """)
 
     peak_result = await db.execute(peak_sql)
     peaks = peak_result.all()
 
     case_studies = []
-    for p in peaks[:5]:
-        # Only fetch live-game snapshots for the chart
+    for p in peaks:
+        if len(case_studies) >= 5:
+            break
+
+        game_end = p.completed_at or (
+            p.commence_time + timedelta(hours=4)
+        ) if p.commence_time else None
+        if not p.commence_time or not game_end:
+            continue
+
         ts_sql = text("""
             SELECT source, captured_at, home_win_probability
             FROM win_prob_snapshots
@@ -441,12 +465,6 @@ async def _query_case_studies(db: AsyncSession) -> list:
               AND captured_at <= :end
             ORDER BY captured_at
         """)
-        game_end = p.completed_at or (
-            p.commence_time + timedelta(hours=4)
-        ) if p.commence_time else None
-        if not p.commence_time or not game_end:
-            continue
-
         ts_result = await db.execute(ts_sql, {
             "eid": p.event_id,
             "start": p.commence_time,
@@ -464,7 +482,8 @@ async def _query_case_studies(db: AsyncSession) -> list:
                 "p": round(float(tr.home_win_probability), 4),
             })
 
-        # Skip if fewer than 2 sources have data
+        # Only keep sources with rich data
+        series = {s: pts for s, pts in series.items() if len(pts) >= MIN_SNAPS}
         if len(series) < 2:
             continue
 
