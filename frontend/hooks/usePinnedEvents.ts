@@ -1,13 +1,17 @@
 /**
  * usePinnedEvents - Hook for managing pinned events
  *
- * Stores pinned event IDs in localStorage for persistence.
- * Syncs across browser tabs using storage events.
- *
- * When Firebase Auth is added, this can be upgraded to sync with the backend.
+ * Uses localStorage for anonymous users, server-backed storage for
+ * authenticated users. On sign-in, merges localStorage pins to the server
+ * and fetches the merged set. Pin/unpin operations sync to the server
+ * immediately when authenticated, enabling cross-platform sync (web + iOS).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuthContext } from '@/components/AuthProvider';
+import { fetchUserPins, addPin, removePin } from '@/lib/api';
 
 const STORAGE_KEY = 'bainluck_pinnedEvents';
 const MAX_PINNED_EVENTS = 6;
@@ -65,13 +69,55 @@ function savePinnedIds(ids: number[]): void {
 
 export function usePinnedEvents(): UsePinnedEventsResult {
   const [pinnedIds, setPinnedIds] = useState<number[]>([]);
+  const { isAuthenticated, isLoading: authLoading } = useAuthContext();
+  const hasLoadedFromServer = useRef(false);
 
-  // Load from localStorage on mount (client-side only)
+  // Load from localStorage on mount (immediate, before server fetch completes)
   useEffect(() => {
     setPinnedIds(loadPinnedIds());
   }, []);
 
-  // Sync across browser tabs
+  // When authenticated, fetch server pins and merge with localStorage
+  useEffect(() => {
+    if (authLoading || !isAuthenticated || hasLoadedFromServer.current) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const serverPins = await fetchUserPins();
+        if (cancelled) return;
+
+        // Merge: server is the source of truth, but include any localStorage
+        // pins not yet on the server (handles the case where user pinned
+        // while offline or before this code deployed).
+        const localPins = loadPinnedIds();
+        const merged = Array.from(new Set([...serverPins.events, ...localPins]));
+
+        setPinnedIds(merged);
+        savePinnedIds(merged);
+        hasLoadedFromServer.current = true;
+
+        // If localStorage had pins the server didn't, push them up
+        const serverSet = new Set(serverPins.events);
+        const localOnly = localPins.filter(id => !serverSet.has(id));
+        for (const id of localOnly) {
+          try {
+            await addPin('event', id);
+          } catch {
+            // Best-effort — don't block the UI
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch pins from server, using localStorage:', err);
+        // Fall back to localStorage (already loaded)
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isAuthenticated, authLoading]);
+
+  // Sync across browser tabs (localStorage events)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY) {
@@ -83,7 +129,7 @@ export function usePinnedEvents(): UsePinnedEventsResult {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Save to localStorage whenever pinnedIds changes
+  // Save to localStorage whenever pinnedIds changes (cache for next load)
   useEffect(() => {
     savePinnedIds(pinnedIds);
   }, [pinnedIds]);
@@ -97,12 +143,27 @@ export function usePinnedEvents(): UsePinnedEventsResult {
     if (pinnedIds.length >= MAX_PINNED_EVENTS) return false;
 
     setPinnedIds(prev => [...prev, eventId]);
+
+    // Sync to server
+    if (isAuthenticated) {
+      addPin('event', eventId).catch(err =>
+        console.warn('Failed to sync pin to server:', err)
+      );
+    }
+
     return true;
-  }, [pinnedIds]);
+  }, [pinnedIds, isAuthenticated]);
 
   const unpin = useCallback((eventId: number): void => {
     setPinnedIds(prev => prev.filter(id => id !== eventId));
-  }, []);
+
+    // Sync to server
+    if (isAuthenticated) {
+      removePin('event', eventId).catch(err =>
+        console.warn('Failed to sync unpin to server:', err)
+      );
+    }
+  }, [isAuthenticated]);
 
   const togglePin = useCallback((eventId: number): void => {
     if (pinnedIds.includes(eventId)) {
@@ -113,8 +174,16 @@ export function usePinnedEvents(): UsePinnedEventsResult {
   }, [pinnedIds, pin, unpin]);
 
   const clearAll = useCallback((): void => {
+    // Remove each from server
+    if (isAuthenticated) {
+      for (const id of pinnedIds) {
+        removePin('event', id).catch(err =>
+          console.warn('Failed to remove pin from server:', err)
+        );
+      }
+    }
     setPinnedIds([]);
-  }, []);
+  }, [isAuthenticated, pinnedIds]);
 
   return {
     pinnedIds,
