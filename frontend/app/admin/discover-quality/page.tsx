@@ -118,11 +118,30 @@ interface MissingGroundTruthSummary {
   bucket_counts: Record<string, number>;
 }
 
+interface EmailGroundTruthDiagnostics {
+  configured: boolean;
+  source: string | null;
+  raw_row_count: number;
+  loaded_count: number;
+  latest_date: string | null;
+  stale: boolean | null;
+  stale_after_days: number;
+  min_interestingness: number;
+  lookback_days: number | null;
+  total: number;
+  top20_hits: number;
+  top50_hits: number;
+  missing: number;
+  hit_rate_50: number;
+  error?: string | null;
+}
+
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
   missing_ground_truth: MissingGroundTruthItem[];
   missing_ground_truth_summary: MissingGroundTruthSummary;
+  email_ground_truth?: EmailGroundTruthDiagnostics;
   debug_timing?: {
     total_ms: number;
     stages: Array<{
@@ -1179,6 +1198,22 @@ export default function DiscoverQualityPage() {
             />
             <StatCard label="Duplicate Families" value={`${summary.duplicate_family_count}/20`} ok={summary.duplicate_family_count === 0} />
             <StatCard label="Ground Truth @50" value={`${summary.ground_truth_hit_count_50}/50`} />
+            {data.email_ground_truth?.configured && (
+              <>
+                <StatCard
+                  label="Email @20"
+                  value={`${data.email_ground_truth.top20_hits}/${data.email_ground_truth.total}`}
+                  ok={data.email_ground_truth.total > 0 ? data.email_ground_truth.top20_hits > 0 : undefined}
+                  sub={`${data.email_ground_truth.loaded_count}/${data.email_ground_truth.raw_row_count} rows loaded`}
+                />
+                <StatCard
+                  label="Email Freshness"
+                  value={data.email_ground_truth.latest_date || "unknown"}
+                  ok={data.email_ground_truth.stale === null ? undefined : !data.email_ground_truth.stale}
+                  sub={data.email_ground_truth.stale ? `Stale >${data.email_ground_truth.stale_after_days}d` : "Current export"}
+                />
+              </>
+            )}
             <StatCard
               label="Hook Coverage"
               value={hookCoverage ? `${hookCoverage.hook_pct}%` : "..."}
@@ -1199,6 +1234,18 @@ export default function DiscoverQualityPage() {
                 {failedPositive.map(([name]) => (
                   <StatusPill key={name} tone="warn">{formatTargetName(name)}</StatusPill>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {data.email_ground_truth?.error && (
+            <div className="bg-surface-card border border-accent-danger/30 rounded-lg p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                <AlertTriangle className="w-4 h-4 text-accent-danger" />
+                Email Ground Truth Export
+              </div>
+              <div className="text-sm text-text-secondary break-words">
+                {data.email_ground_truth.error}
               </div>
             </div>
           )}

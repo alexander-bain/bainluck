@@ -57,6 +57,10 @@ from app.utils.feed_reasons import (
 )
 from app.utils.feed_quality_debug import build_feed_quality_debug, load_default_ground_truth_items
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
+from app.utils.polymarket_email_ground_truth import (
+    load_polymarket_email_ground_truth_report_from_env,
+    summarize_polymarket_email_ground_truth,
+)
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -546,13 +550,33 @@ async def get_feed(
 
     debug_payload = None
     if debug:
-        ground_truth_items = load_default_ground_truth_items()
+        email_ground_truth_report = await asyncio.to_thread(
+            load_polymarket_email_ground_truth_report_from_env,
+            now=now,
+        )
+        email_ground_truth_items = email_ground_truth_report["items"]
+        ground_truth_items = load_default_ground_truth_items() + email_ground_truth_items
         debug_payload = build_feed_quality_debug(
             paginated,
             ground_truth_items=ground_truth_items,
             top_n=min(20, len(paginated)),
         )
         await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
+        email_metadata = email_ground_truth_report["metadata"]
+        email_summary = summarize_polymarket_email_ground_truth(
+            debug_payload["items"],
+            email_ground_truth_items,
+        )
+        debug_payload["email_ground_truth"] = {
+            **email_metadata,
+            "total": email_summary["total"],
+            "top20_hits": email_summary["top20_hits"],
+            "top50_hits": email_summary["top50_hits"],
+            "missing": email_summary["missing"],
+            "hit_rate_50": email_summary["hit_rate_50"],
+            "hits": email_summary["hits"][:20],
+            "missing_items": email_summary["missing_items"][:50],
+        }
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
     # Remove internal sort/debug keys
@@ -591,6 +615,7 @@ async def get_feed(
         payload["debug_items"] = debug_payload["items"]
         payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
         payload["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
+        payload["email_ground_truth"] = debug_payload["email_ground_truth"]
         payload["debug_timing"] = {
             "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
             "stages": _timings,

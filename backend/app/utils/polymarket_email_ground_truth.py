@@ -4,15 +4,78 @@ from __future__ import annotations
 
 import csv
 from datetime import date, datetime, timedelta, timezone
+import os
 from io import StringIO
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import httpx
 
 
 DEFAULT_MIN_INTERESTINGNESS = 8
 DEFAULT_LOOKBACK_DAYS = 21
+DEFAULT_STALE_AFTER_DAYS = 2
+
+
+def load_polymarket_email_ground_truth_report_from_env(
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Load optional email ground truth from the configured CSV path or URL."""
+    csv_path = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_PATH")
+    csv_url = (
+        os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL")
+        or os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_URL")
+    )
+    min_interestingness = int(
+        os.getenv(
+            "POLYMARKET_EMAIL_GROUND_TRUTH_MIN_INTERESTINGNESS",
+            str(DEFAULT_MIN_INTERESTINGNESS),
+        )
+    )
+    lookback_days_raw = os.getenv(
+        "POLYMARKET_EMAIL_GROUND_TRUTH_LOOKBACK_DAYS",
+        str(DEFAULT_LOOKBACK_DAYS),
+    )
+    lookback_days = int(lookback_days_raw) if lookback_days_raw else None
+
+    if csv_path:
+        try:
+            return load_polymarket_email_ground_truth_report_from_csv_path(
+                csv_path,
+                min_interestingness=min_interestingness,
+                lookback_days=lookback_days,
+                now=now,
+            )
+        except Exception as exc:
+            return _error_report("csv_path", str(exc), source_path=csv_path)
+    if csv_url:
+        try:
+            return load_polymarket_email_ground_truth_report_from_csv_url(
+                csv_url,
+                min_interestingness=min_interestingness,
+                lookback_days=lookback_days,
+                now=now,
+            )
+        except Exception as exc:
+            return _error_report("csv_url", str(exc), source_url=csv_url)
+    return {
+        "items": [],
+        "metadata": {
+            "configured": False,
+            "source": None,
+            "source_url": None,
+            "source_path": None,
+            "raw_row_count": 0,
+            "loaded_count": 0,
+            "latest_date": None,
+            "stale": None,
+            "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
+            "min_interestingness": DEFAULT_MIN_INTERESTINGNESS,
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "error": None,
+        },
+    }
 
 
 def load_polymarket_email_ground_truth_from_csv_text(
@@ -22,31 +85,54 @@ def load_polymarket_email_ground_truth_from_csv_text(
     lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
     now: datetime | None = None,
 ) -> list[dict[str, str]]:
+    return load_polymarket_email_ground_truth_report_from_csv_text(
+        csv_text,
+        min_interestingness=min_interestingness,
+        lookback_days=lookback_days,
+        now=now,
+    )["items"]
+
+
+def load_polymarket_email_ground_truth_report_from_csv_text(
+    csv_text: str,
+    *,
+    min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
+    lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Parse sheet-exported CSV rows into feed ground-truth item dicts.
 
-    Expected headers come from the "Ranker Ground Truth (archival)" tab:
-    Date, Source, Market Name, Category, ..., Email Subject, LLM Category,
-    Hook, Interestingness, Timeliness, Shareability.
+    Accepts either the archival sheet headers ("Market Name") or the stable
+    audit export headers ("market_name").
     """
     reader = csv.DictReader(StringIO(csv_text))
     if not reader.fieldnames:
-        return []
+        return {
+            "items": [],
+            "metadata": _build_metadata([], [], now=now, error="missing_headers"),
+        }
 
     cutoff = _cutoff_date(lookback_days=lookback_days, now=now)
     seen: set[str] = set()
     items: list[dict[str, str]] = []
+    source_rows: list[dict[str, str]] = []
+    loaded_dates: list[date] = []
 
     for row in reader:
-        name = (row.get("Market Name") or "").strip()
-        source = (row.get("Source") or "").strip().lower()
+        row = _normalize_row_keys(row)
+        name = _field(row, "market_name", "Market Name").strip()
+        source = _field(row, "source", "Source").strip().lower()
         if not name or source != "polymarket":
             continue
 
-        row_date = _parse_date(row.get("Date"))
+        source_rows.append(row)
+        row_date = _parse_date(_field(row, "date", "Date"))
+        if row_date:
+            loaded_dates.append(row_date)
         if cutoff and row_date and row_date < cutoff:
             continue
 
-        interestingness = _parse_int(row.get("Interestingness"))
+        interestingness = _parse_int(_field(row, "interestingness", "Interestingness"))
         if interestingness < min_interestingness:
             continue
 
@@ -56,8 +142,8 @@ def load_polymarket_email_ground_truth_from_csv_text(
         seen.add(key)
 
         category = (
-            (row.get("LLM Category") or "").strip()
-            or (row.get("Category") or "").strip()
+            _field(row, "llm_category", "LLM Category").strip()
+            or _field(row, "category", "Category").strip()
             or "?"
         )
         items.append(
@@ -65,17 +151,31 @@ def load_polymarket_email_ground_truth_from_csv_text(
                 "source": "polymarket_email",
                 "category": category,
                 "name": name,
-                "probability": (row.get("Leader Probability") or "").strip(),
-                "email_subject": (row.get("Email Subject") or "").strip(),
-                "hook": (row.get("Hook") or "").strip(),
+                "probability": _field(
+                    row,
+                    "leader_probability",
+                    "Leader Probability",
+                ).strip(),
+                "email_subject": _field(row, "email_subject", "Email Subject").strip(),
+                "hook": _field(row, "hook", "Hook").strip(),
                 "date": row_date.isoformat() if row_date else "",
                 "interestingness": str(interestingness),
-                "timeliness": (row.get("Timeliness") or "").strip(),
-                "shareability": (row.get("Shareability") or "").strip(),
+                "timeliness": _field(row, "timeliness", "Timeliness").strip(),
+                "shareability": _field(row, "shareability", "Shareability").strip(),
             }
         )
 
-    return items
+    return {
+        "items": items,
+        "metadata": _build_metadata(
+            source_rows,
+            loaded_dates,
+            loaded_count=len(items),
+            min_interestingness=min_interestingness,
+            lookback_days=lookback_days,
+            now=now,
+        ),
+    }
 
 
 def load_polymarket_email_ground_truth_from_csv_path(
@@ -85,13 +185,37 @@ def load_polymarket_email_ground_truth_from_csv_path(
     lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
     now: datetime | None = None,
 ) -> list[dict[str, str]]:
+    return load_polymarket_email_ground_truth_report_from_csv_path(
+        path,
+        min_interestingness=min_interestingness,
+        lookback_days=lookback_days,
+        now=now,
+    )["items"]
+
+
+def load_polymarket_email_ground_truth_report_from_csv_path(
+    path: str | Path,
+    *,
+    min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
+    lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     csv_text = Path(path).expanduser().read_text()
-    return load_polymarket_email_ground_truth_from_csv_text(
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
         csv_text,
         min_interestingness=min_interestingness,
         lookback_days=lookback_days,
         now=now,
     )
+    report["metadata"].update(
+        {
+            "configured": True,
+            "source": "csv_path",
+            "source_path": str(path),
+            "source_url": None,
+        }
+    )
+    return report
 
 
 def load_polymarket_email_ground_truth_from_csv_url(
@@ -102,6 +226,23 @@ def load_polymarket_email_ground_truth_from_csv_url(
     now: datetime | None = None,
     timeout: float = 20.0,
 ) -> list[dict[str, str]]:
+    return load_polymarket_email_ground_truth_report_from_csv_url(
+        url,
+        min_interestingness=min_interestingness,
+        lookback_days=lookback_days,
+        now=now,
+        timeout=timeout,
+    )["items"]
+
+
+def load_polymarket_email_ground_truth_report_from_csv_url(
+    url: str,
+    *,
+    min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
+    lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
+    now: datetime | None = None,
+    timeout: float = 20.0,
+) -> dict[str, Any]:
     response = httpx.get(url, follow_redirects=True, timeout=timeout)
     response.raise_for_status()
     content_type = response.headers.get("content-type", "")
@@ -110,12 +251,21 @@ def load_polymarket_email_ground_truth_from_csv_url(
             "Polymarket email ground-truth URL returned HTML. "
             "Publish/export the sheet tab as CSV or use CSV_PATH."
         )
-    return load_polymarket_email_ground_truth_from_csv_text(
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
         response.text,
         min_interestingness=min_interestingness,
         lookback_days=lookback_days,
         now=now,
     )
+    report["metadata"].update(
+        {
+            "configured": True,
+            "source": "csv_url",
+            "source_url": url,
+            "source_path": None,
+        }
+    )
+    return report
 
 
 def summarize_polymarket_email_ground_truth(
@@ -193,3 +343,81 @@ def _parse_int(value: str | None) -> int:
 
 def _dedupe_key(name: str) -> str:
     return " ".join(name.lower().split())
+
+
+def _normalize_row_keys(row: dict[str, str]) -> dict[str, str]:
+    normalized = dict(row)
+    for key, value in row.items():
+        normalized[_normalize_header(key)] = value
+    return normalized
+
+
+def _field(row: dict[str, str], *names: str) -> str:
+    for name in names:
+        value = row.get(name)
+        if value is not None:
+            return str(value)
+        value = row.get(_normalize_header(name))
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _normalize_header(header: str | None) -> str:
+    return "".join(ch for ch in str(header or "").lower() if ch.isalnum())
+
+
+def _build_metadata(
+    source_rows: list[dict[str, str]],
+    row_dates: list[date],
+    *,
+    loaded_count: int = 0,
+    min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
+    lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
+    now: datetime | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    base = now or datetime.now(timezone.utc)
+    latest_date = max(row_dates) if row_dates else None
+    stale_after = base.date() - timedelta(days=DEFAULT_STALE_AFTER_DAYS)
+    stale = latest_date < stale_after if latest_date else None
+    return {
+        "configured": True,
+        "source": None,
+        "source_url": None,
+        "source_path": None,
+        "raw_row_count": len(source_rows),
+        "loaded_count": loaded_count,
+        "latest_date": latest_date.isoformat() if latest_date else None,
+        "stale": stale,
+        "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
+        "min_interestingness": min_interestingness,
+        "lookback_days": lookback_days,
+        "error": error,
+    }
+
+
+def _error_report(
+    source: str,
+    error: str,
+    *,
+    source_url: str | None = None,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "items": [],
+        "metadata": {
+            "configured": True,
+            "source": source,
+            "source_url": source_url,
+            "source_path": source_path,
+            "raw_row_count": 0,
+            "loaded_count": 0,
+            "latest_date": None,
+            "stale": None,
+            "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
+            "min_interestingness": DEFAULT_MIN_INTERESTINGNESS,
+            "lookback_days": DEFAULT_LOOKBACK_DAYS,
+            "error": error,
+        },
+    }

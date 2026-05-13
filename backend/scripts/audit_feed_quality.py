@@ -24,32 +24,13 @@ from app.utils.feed_quality_debug import (  # noqa: E402
     load_default_ground_truth_items,
 )
 from app.utils.polymarket_email_ground_truth import (  # noqa: E402
-    load_polymarket_email_ground_truth_from_csv_path,
-    load_polymarket_email_ground_truth_from_csv_url,
+    load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
 )
 
 
-def _load_polymarket_email_ground_truth() -> list[dict[str, str]]:
-    csv_path = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_PATH")
-    csv_url = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL")
-    min_interestingness = int(os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_MIN_INTERESTINGNESS", "8"))
-    lookback_days_raw = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_LOOKBACK_DAYS", "21")
-    lookback_days = int(lookback_days_raw) if lookback_days_raw else None
-
-    if csv_path:
-        return load_polymarket_email_ground_truth_from_csv_path(
-            csv_path,
-            min_interestingness=min_interestingness,
-            lookback_days=lookback_days,
-        )
-    if csv_url:
-        return load_polymarket_email_ground_truth_from_csv_url(
-            csv_url,
-            min_interestingness=min_interestingness,
-            lookback_days=lookback_days,
-        )
-    return []
+def _load_polymarket_email_ground_truth() -> dict:
+    return load_polymarket_email_ground_truth_report_from_env()
 
 
 def main() -> int:
@@ -66,7 +47,8 @@ def main() -> int:
     payload = resp.json()
     items = [i for i in payload.get("items", []) if i.get("type") == "futures"]
 
-    email_ground_truth_items = _load_polymarket_email_ground_truth()
+    email_ground_truth_report = _load_polymarket_email_ground_truth()
+    email_ground_truth_items = email_ground_truth_report["items"]
     ground_truth_items = load_default_ground_truth_items() + email_ground_truth_items
     debug = build_feed_quality_debug(
         items,
@@ -75,7 +57,11 @@ def main() -> int:
     )
     classified = debug["items"]
     summary = debug["summary"]
-    boring20 = [c for c in classified[:20] if c["quality_class"] in ("low_quality", "suppress")]
+    boring20 = [
+        c
+        for c in classified[:20]
+        if c["quality_class"] in ("low_quality", "suppress")
+    ]
     duplicate_families = summary["duplicate_families"]
 
     print("DISCOVER FEED QUALITY AUDIT")
@@ -88,11 +74,23 @@ def main() -> int:
     print(f"duplicate-family-rate@20:{summary['duplicate_family_count']}/20")
     print(f"explanation-coverage@20: {summary['explanation_ok_count']}/20")
     print(f"ground-truth-hit@50:     {summary['ground_truth_hit_count_50']}/50")
-    print(f"positive-archetypes@20:  {summary['positive_archetype_hits']}/{summary['positive_targets_total']}")
-    print(f"strict-variety@20:       {summary['strict_variety_hits']}/{summary['strict_targets_total']}")
+    print(
+        f"positive-archetypes@20:  {summary['positive_archetype_hits']}/"
+        f"{summary['positive_targets_total']}"
+    )
+    print(
+        f"strict-variety@20:       {summary['strict_variety_hits']}/"
+        f"{summary['strict_targets_total']}"
+    )
     print(f"fun-market-presence@10:  {summary['fun_market_presence_10']}")
-    print(f"snippet-issues@20:      {summary['snippet_issue_count']}/20 {summary['snippet_issue_distribution']}")
-    print(f"category-spread@20:      {summary['category_spread']} categories, max={summary['max_category_count']}")
+    print(
+        f"snippet-issues@20:      {summary['snippet_issue_count']}/20 "
+        f"{summary['snippet_issue_distribution']}"
+    )
+    print(
+        f"category-spread@20:      {summary['category_spread']} categories, "
+        f"max={summary['max_category_count']}"
+    )
     print(f"category distribution@20:{summary['category_distribution']}")
     print(f"archetype distribution@20:{summary['archetype_distribution']}")
     print(f"positive targets@20:     {summary['positive_targets']}")
@@ -104,8 +102,17 @@ def main() -> int:
             classified,
             email_ground_truth_items,
         )
+        metadata = email_ground_truth_report["metadata"]
         print("POLYMARKET EMAIL GROUND TRUTH")
         print("-" * 72)
+        print(
+            f"rows loaded/raw:         {metadata['loaded_count']}/"
+            f"{metadata['raw_row_count']}"
+        )
+        print(
+            f"latest email date:       {metadata['latest_date'] or 'unknown'} "
+            f"(stale={metadata['stale']})"
+        )
         print(
             f"email-hit@20:            {email_summary['top20_hits']}/"
             f"{email_summary['total']}"
@@ -128,6 +135,15 @@ def main() -> int:
                     f"  [{item.get('category') or '?'}] "
                     f"{(item.get('name') or '')[:78]}"
                 )
+        print()
+    elif email_ground_truth_report["metadata"].get("configured"):
+        metadata = email_ground_truth_report["metadata"]
+        print("POLYMARKET EMAIL GROUND TRUTH")
+        print("-" * 72)
+        print(f"rows loaded/raw:         0/{metadata['raw_row_count']}")
+        print(f"latest email date:       {metadata['latest_date'] or 'unknown'}")
+        if metadata.get("error"):
+            print(f"error:                   {metadata['error']}")
         print()
 
     print("TOP 50")
