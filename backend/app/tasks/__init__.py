@@ -519,6 +519,27 @@ def sync_statpal_team_stats(self, sport_key: str = None):
     return _tracked_run("statpal_team_stats", _sync_statpal_team_stats(sport_key))
 
 
+# --- Daily Digest ---
+
+@celery_app.task(bind=True, name="app.tasks.send_daily_digest")
+def send_daily_digest_task(self):
+    """Send daily digest email to subscribers."""
+    import os
+    async def _send():
+        from app.tasks.base import get_task_session
+        from app.tasks.daily_digest import send_daily_digest
+        recipients = os.environ.get("DAILY_DIGEST_RECIPIENTS", "").split(",")
+        recipients = [r.strip() for r in recipients if r.strip()]
+        if not recipients:
+            return {"status": "no_recipients"}
+        async with get_task_session() as db:
+            results = {}
+            for email in recipients:
+                results[email] = await send_daily_digest(db, email)
+            return results
+    return run_async(_send())
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -976,6 +997,11 @@ celery_app.conf.beat_schedule = {
     # works and reduces scheduling complexity. DataGolf hourly poll is
     # Redis-gated to 1h on discover_events; live poll is gated to 5min on
     # poll_all_odds. Admin endpoints run tasks inline (not via .delay()).
+    "daily-digest": {
+        "task": "app.tasks.send_daily_digest",
+        "schedule": crontab(hour=13, minute=0),  # 8am ET (UTC-5) / 6am PT
+        "options": {"queue": "background"},
+    },
 }
 
 
