@@ -108,13 +108,12 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
               -- Only include outcomes with real trading activity.
-              -- A market with zero snapshots or no bids is a placeholder,
-              -- not a prediction market.
+              -- A market with zero snapshots is a placeholder, not a prediction.
               AND EXISTS (
                   SELECT 1 FROM futures_odds_snapshots fos
                   WHERE fos.outcome_id = fo.id
-                    AND fos.yes_bid IS NOT NULL
-                    AND fos.yes_bid > 0
+                    AND ((fos.yes_bid IS NOT NULL AND fos.yes_bid > 0)
+                         OR (fos.last_price IS NOT NULL AND fos.last_price > 0))
               )
         ),
         -- Detect default/placeholder pricing: if 50%+ of outcomes in a
