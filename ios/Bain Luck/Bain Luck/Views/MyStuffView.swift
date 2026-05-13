@@ -97,6 +97,9 @@ struct MyStuffView: View {
     @State private var showOnboarding = false
     @State private var landscapeColumns = false
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -536,6 +539,20 @@ struct MyStuffView: View {
             }
         }
         if let event = item.event {
+            if let prob = event.currentOdds?.homeProbability {
+                Button {
+                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
+            Divider()
             Button {
                 let url = "https://bainluck.com/events/\(event.id)"
                 #if os(macOS)
@@ -550,7 +567,28 @@ struct MyStuffView: View {
             ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
+            #if os(macOS)
+            Button {
+                openWindow(value: event.id)
+            } label: {
+                Label("Open in New Window", systemImage: "macwindow.badge.plus")
+            }
+            #endif
         } else if let futures = item.futures {
+            if let leader = futures.topOutcomes?.first, let prob = leader.probability {
+                Button {
+                    let text = "\(leader.name): \(Int(prob * 100))%"
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    #else
+                    UIPasteboard.general.string = text
+                    #endif
+                } label: {
+                    Label("Copy Probability", systemImage: "doc.on.doc")
+                }
+            }
+            Divider()
             Button {
                 let url = "https://bainluck.com/futures/\(futures.id)"
                 #if os(macOS)
