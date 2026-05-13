@@ -898,7 +898,8 @@ async def cleanup_orphaned_snapshots(
 
     await _set_timeout(db)
 
-    # Count orphaned snapshots
+    # Count orphaned snapshots: snapshots for (event, source) pairs where
+    # no linked market of that source remains on that event.
     count_sql = text("""
         SELECT
             wp.source,
@@ -906,11 +907,10 @@ async def cleanup_orphaned_snapshots(
             COUNT(DISTINCT wp.event_id) AS event_count
         FROM win_prob_snapshots wp
         WHERE wp.source IN ('kalshi', 'polymarket')
-          AND wp.game_state->>'market_id' IS NOT NULL
-          AND EXISTS (
+          AND NOT EXISTS (
               SELECT 1 FROM futures_markets fm
-              WHERE fm.id = (wp.game_state->>'market_id')::int
-                AND fm.event_id IS NULL
+              WHERE fm.event_id = wp.event_id
+                AND fm.source = wp.source
           )
         GROUP BY wp.source
     """)
@@ -926,36 +926,36 @@ async def cleanup_orphaned_snapshots(
     }
 
     if not dry_run and result["total_snapshots"] > 0:
-        # Collect unlinked market IDs, then delete snapshots per market.
-        # Each market has ~200 snapshots on average (3M / 15K events),
-        # so per-market deletion is fast with the event_id index.
-        mid_sql = text("""
-            SELECT fm.id, fm.source
-            FROM futures_markets fm
-            WHERE fm.source IN ('kalshi', 'polymarket')
-              AND fm.event_id IS NULL
-            ORDER BY fm.id
-            LIMIT 5000
+        # Find events with kalshi/polymarket snapshots that have NO
+        # remaining linked market of that source. Uses indexed columns
+        # (event_id, source) — no JSONB scan needed.
+        orphan_events_sql = text("""
+            SELECT DISTINCT wp.event_id, wp.source
+            FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.event_id = wp.event_id
+                    AND fm.source = wp.source
+              )
         """)
-        mid_result = await db.execute(mid_sql)
-        markets = mid_result.all()
+        orphan_result = await db.execute(orphan_events_sql)
+        orphan_pairs = orphan_result.all()
 
+        # Delete in batches by event_id (uses ix_winprob_event_source)
         deleted_total = 0
-        for m in markets:
-            del_result = await db.execute(text("""
-                DELETE FROM win_prob_snapshots
-                WHERE source = :src
-                  AND game_state->>'market_id' = :mid_str
-            """), {"src": m.source, "mid_str": str(m.id)})
-            deleted_total += del_result.rowcount
-
-            # Commit every 100 markets to avoid transaction bloat
-            if deleted_total % 10000 < 200:
-                await db.commit()
-
-        await db.commit()
+        chunk_size = 500
+        for i in range(0, len(orphan_pairs), chunk_size):
+            chunk = orphan_pairs[i:i + chunk_size]
+            for event_id, source in chunk:
+                del_result = await db.execute(text("""
+                    DELETE FROM win_prob_snapshots
+                    WHERE event_id = :eid AND source = :src
+                """), {"eid": event_id, "src": source})
+                deleted_total += del_result.rowcount
+            await db.commit()
         result["actually_deleted"] = deleted_total
-        result["markets_processed"] = len(markets)
+        result["orphan_event_source_pairs"] = len(orphan_pairs)
 
     return result
 
