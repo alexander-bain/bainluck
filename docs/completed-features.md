@@ -1,5 +1,49 @@
 # Completed Features (Shipped)
 
+## May 13, 2026 — Category Page Polish + Infrastructure + Cleanup
+
+### Native Category Page Polish (NATIVE-DESIGN complete)
+- ✅ **Economics page iOS polish** — Visual card design matching Politics/Entertainment style. All 4 native category pages now done (Politics, Entertainment, Weather, Economics).
+- ✅ **Entertainment page iOS polish** — Visual card design with richer hierarchy and styled market cards.
+- ✅ **Weather page iOS polish** — Temperature colors, probability bars, bracket collapse for cleaner city forecast display.
+- ✅ **Politics page iOS polish** — Cards, bars, map, badges refined for native visual quality.
+
+### Bug Fixes & Verifications
+- ✅ **BR-PIN: Web pin sync fixed** — Pin sync was localStorage-only on web. Now syncs events + futures pins to server for cross-device persistence.
+- ✅ **BR23: Weather city cards clickable** — City forecast cards now link to probability timeline charts (`FuturesDetailView` on iOS, `/futures/{marketId}` on web). Backend exposes `marketId` per city.
+- ✅ **BR21: Futures browser images + emoji** — Added image thumbnails and category emoji to FuturesListView rows. Navigation uses shared `RouteDestination`.
+- ✅ **BR22: Weather city search** — City search/filter added to both web and iOS weather pages.
+- ✅ **BR1-2: Source attribution verified clean** — The v2 rewrite (`sourcesToggle`) shows a single collapsible "Individual Sportsbooks" dropdown. No duplication.
+- ✅ **0f-13h: Award headshots verified** — Both `AwardCard` and `AwardCompactRow` in `RelatedFutures.tsx` already use `PlayerHeadshot`.
+- ✅ **MS-14: EPL/UFC/Tennis verified resolved** — EPL grid loads correctly. UFC and Tennis removed from nav (no league configs). No dead-end paths remain.
+- ✅ **P5b: Trending searches verified shipped** — Redis `ZINCRBY` tracking, `GET /api/search/trending`, web chips, iOS chips with fallback all working.
+
+### iOS League Markets (0s Phase 4)
+- ✅ **League market sections on iOS** — `LeagueGridView` now fetches league markets in parallel and renders Playoff Series, Awards, Props, Season Stats, and More Markets sections below the championship grid. Uses slug-to-sport-key mapping for all 14 leagues.
+
+### Email & Notification Infrastructure
+- ✅ **D-8: Daily digest email** — Celery beat scheduled at 8am ET. Top movers + resolving-soon markets. Gmail API integration.
+- ✅ **D-6: Push notification foundation** — iOS token capture + backend endpoint for device token registration. Actual push sending not yet implemented.
+- ✅ **Bug notification system** — Gmail API sends "your bug was fixed" emails with opt-in checkbox on rage shake form. Includes dad jokes.
+- ✅ **Email compliance backlog item** — Added CAN-SPAM prerequisites: opt-in model, unsubscribe links, preference management, provider migration path.
+
+### Social Features
+- ✅ **D-9: Friend challenges backend scaffold** — New table, model, and 3 API endpoints for challenge creation/acceptance/resolution.
+
+### Golf & Charts
+- ✅ **Item 17: Golf chart redesign (iOS)** — Round markers R1-R4, time range picker, tournament-aware chart domains.
+
+### macOS
+- ✅ **MAC-9: Share verified cross-platform** — ShareLink works across iOS/macOS. MyStuffView context menus improved (share, copy prob, new window).
+
+### Testing & CI
+- ✅ **52 contract tests for category page APIs** — Weather, politics, entertainment, economics API shape validation. Integration suite: 158 → 210 tests.
+- ✅ **CI fix: daily-digest in beat schedule test** — Added `daily-digest` to expected Celery beat schedule entries in `test_tasks_wiring.py`.
+
+### Cleanup
+- ✅ **Dead eiRankings route removed** — Was navigating to `EmptyView`. Cleaned up.
+- ✅ **About page stats updated** — "90K+" → "130K+" markets tracked (iOS).
+
 ## May 12, 2026 — Bug Fixes + Web Nav Redesign
 
 ### Bug Reports #25-30 (all fixed)

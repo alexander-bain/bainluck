@@ -52,11 +52,11 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,450+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 3,500+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS/macOS App | SwiftUI (shared codebase, 75+ Swift files) | TestFlight / direct |
+| iOS/macOS App | SwiftUI (shared codebase, 89 Swift files) | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -77,9 +77,9 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,450+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,500+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
-- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (158 contract tests)
+- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (218 contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
@@ -109,12 +109,12 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,450+ pytest items
+│   └── tests/                   # 3,500+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
 │   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 75+ Swift files)
+├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 89 Swift files)
 └── docs/                        # Documentation
 ```
 
@@ -287,6 +287,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `.github/workflows/ci.yml` (frontend-build) | ESLint + TypeScript errors blocking Vercel | May 7 |
 | `tests/integration/test_route_feed_scoring.py` | Feed scoring, ordering, event/futures data shape with seeded data | May 8 |
 | `tests/integration/test_route_events_seeded.py` | Event detail response shape, game-markets sections, related futures | May 8 |
+| `tests/integration/test_route_category_pages.py` | Weather, politics, entertainment, economics API response shapes | May 13 |
 
 ---
 

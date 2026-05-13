@@ -298,15 +298,16 @@ City search added to both web and iOS. Users can now filter city forecast cards 
 
 City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Route.futuresDetail`). Backend exposes `marketId` per city. No new chart needed — reuses existing futures probability timeline.
 
-### BR-PIN. Cross-Platform Pin Sync + My Stuff Display
+### BR-PIN. Cross-Platform Pin Sync + My Stuff Display — PARTIALLY DONE (May 13)
 
-**Problem:** When a signed-in user pins a market or event, the pin should be persistent and visible across all platforms (web, iOS, macOS). Currently pins may be stored locally or only synced one way. Pinned items should show prominently on the My Stuff tab.
+**Completed (May 13):**
+- ✅ Web pin sync fixed — was localStorage-only, now syncs events + futures pins to server for signed-in users
+- ✅ Cross-device persistence verified working (pin on web, appears on iOS after refresh)
 
-**Requirements:**
-1. **Server-side persistence:** Pins stored in the `user_pins` table (already exists) must be the source of truth for signed-in users
-2. **Cross-platform sync:** Pinning on web should show on iOS/macOS and vice versa. `PinManager` already has `syncLocalToServer()` — verify it runs on sign-in and that the reverse (server → local) also works
-3. **My Stuff display:** Pinned events and markets should appear as a dedicated section on My Stuff (web + iOS), showing current probabilities and status
-4. **Real-time feel:** After pinning, the item should appear in My Stuff immediately (optimistic update), not after a refresh
+**Remaining:**
+1. **My Stuff display:** Pinned events and markets should appear as a dedicated section on My Stuff (web + iOS), showing current probabilities and status
+2. **Real-time feel:** After pinning, the item should appear in My Stuff immediately (optimistic update), not after a refresh
+3. **iOS → server sync:** Verify `PinManager.syncLocalToServer()` runs on sign-in and that reverse (server → local) also works
 
 **Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py` (pin endpoints)
 **Parallel Safety:** Yellow
@@ -332,10 +333,11 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 **Completed (May 11-13):**
 - ✅ Economics data parsing error fixed (removed `rateCuts` field — backend sends nested arrays, iOS expected market objects, field unused in view)
+- ✅ Economics page polished to match Politics/Entertainment design (May 13)
 - ✅ Politics, Entertainment, and Weather pages polished (May 13)
 
 **Remaining:**
-- Design pass on Economics and Preferences: use the Claude Design handoffs above as the visual target
+- Design pass on Preferences: use the Claude Design handoffs above as the visual target
 
 **Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
 **Parallel Safety:** Green (each page is independent)
@@ -487,7 +489,7 @@ Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV su
 
 **Files:** `backend/app/utils/sport_keys.py`, `backend/app/utils/prediction_market_matching.py`, `backend/app/routes/admin.py`
 
-### macOS Polish (4 remaining of 7)
+### macOS Polish (2 remaining of 7)
 
 | # | Item | Effort | Files | Safety |
 |---|------|--------|-------|--------|
@@ -532,7 +534,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-~~110~~ ~~158~~ 210 contract tests shipped (52 added May 13). Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ 218 contract tests shipped (52 category page tests added May 13). Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
@@ -685,11 +687,11 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: 
 | Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
 | Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |
 | Low | Line Movement Explainer | `LineMovementExplainer.tsx` | Small |
-| Low | Weather page | 16 components | Large |
-| Low | Economics page | `/economics` | Medium |
+| ~~Low~~ | ~~Weather page~~ | ~~16 components~~ | ✅ SHIPPED May 6 + polished May 13 |
+| ~~Low~~ | ~~Economics page~~ | ~~`/economics`~~ | ✅ SHIPPED May 6 + polished May 13 |
 | Low | Explore / faceted browser | `/explore` | Medium |
 
-**Web gap (iOS has, web doesn't):** EI Rankings standalone page (iOS has `EIRankingsView.swift` with sport filters)
+**Web gap (iOS has, web doesn't):** ~~EI Rankings standalone page~~ — dead `eiRankings` route removed May 13. No gap.
 
 ---
 
