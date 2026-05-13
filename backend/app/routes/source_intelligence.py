@@ -9,6 +9,7 @@ entirely — if a Tier 1 event lacks dense multi-source data, that's a
 pipeline bug to fix, not sparse data to analyze.
 """
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -614,6 +615,130 @@ async def oscillation_audit(db: AsyncSession = Depends(get_db)):
         "by_sport": sports,
         "events": events,
     }
+
+
+@router.post("/source-intelligence/cleanup-oscillation")
+async def cleanup_oscillation(
+    secret: str = "",
+    dry_run: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete contaminated stat_model/espn snapshots and fix ESPN ID collisions.
+
+    Pass ?dry_run=false&secret=ADMIN_TOKEN to execute.
+    Default is dry_run=true (report only).
+    """
+    import os
+    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
+    if not expected or secret != expected:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    await _set_timeout(db)
+
+    results: dict = {
+        "dry_run": dry_run,
+        "oscillating_events": 0,
+        "snapshots_deleted": 0,
+        "espn_ids_cleared": 0,
+        "espn_id_collisions_fixed": 0,
+        "wps_cleaned": 0,
+        "details": [],
+    }
+
+    # Step 1: Find all oscillating events (stat_model stddev > 0.25, 10+ snaps)
+    osc_sql = text("""
+        SELECT wp.event_id, STDDEV(wp.home_win_probability::float) AS sd
+        FROM win_prob_snapshots wp
+        JOIN events e ON e.id = wp.event_id
+        WHERE wp.source = 'stat_model'
+          AND e.status IN ('completed', 'closed')
+          AND wp.captured_at >= e.commence_time
+          AND wp.home_win_probability IS NOT NULL
+        GROUP BY wp.event_id
+        HAVING STDDEV(wp.home_win_probability::float) > 0.25
+           AND COUNT(*) >= 10
+    """)
+    osc_result = await db.execute(osc_sql)
+    osc_event_ids = [r.event_id for r in osc_result.all()]
+    results["oscillating_events"] = len(osc_event_ids)
+
+    if osc_event_ids:
+        # Step 2: Delete stat_model and espn snapshots for these events
+        count_sql = text("""
+            SELECT COUNT(*) FROM win_prob_snapshots
+            WHERE event_id = ANY(:ids)
+              AND source IN ('stat_model', 'espn')
+        """)
+        count_result = await db.execute(count_sql, {"ids": osc_event_ids})
+        snap_count = count_result.scalar()
+        results["snapshots_deleted"] = snap_count
+
+        if not dry_run:
+            await db.execute(text("""
+                DELETE FROM win_prob_snapshots
+                WHERE event_id = ANY(:ids)
+                  AND source IN ('stat_model', 'espn')
+            """), {"ids": osc_event_ids})
+
+        # Step 3: Clean stat_model/espn from win_probability_sources JSONB
+        wps_sql = text("""
+            SELECT id, win_probability_sources FROM events
+            WHERE id = ANY(:ids)
+              AND win_probability_sources IS NOT NULL
+        """)
+        wps_result = await db.execute(wps_sql, {"ids": osc_event_ids})
+        wps_cleaned = 0
+        for row in wps_result.all():
+            wps = dict(row.win_probability_sources or {})
+            changed = False
+            for key in ("stat_model", "espn"):
+                if key in wps:
+                    del wps[key]
+                    changed = True
+            if changed:
+                wps_cleaned += 1
+                if not dry_run:
+                    await db.execute(text("""
+                        UPDATE events SET win_probability_sources = :wps
+                        WHERE id = :eid
+                    """), {"wps": json.dumps(wps), "eid": row.id})
+        results["wps_cleaned"] = wps_cleaned
+
+    # Step 4: Fix ESPN ID collisions — find espn_ids assigned to 2+ events
+    collision_sql = text("""
+        SELECT espn_id, COUNT(*) AS cnt,
+               ARRAY_AGG(id ORDER BY id) AS event_ids
+        FROM events
+        WHERE espn_id IS NOT NULL
+          AND status IN ('completed', 'closed', 'live', 'scheduled')
+        GROUP BY espn_id
+        HAVING COUNT(*) > 1
+    """)
+    collision_result = await db.execute(collision_sql)
+    collisions = collision_result.all()
+
+    for row in collisions:
+        espn_id, cnt, event_ids_list = row.espn_id, row.cnt, row.event_ids
+        results["espn_id_collisions_fixed"] += 1
+        results["espn_ids_cleared"] += cnt
+
+        results["details"].append({
+            "espn_id": espn_id,
+            "event_ids": event_ids_list,
+            "action": "cleared espn_id on all — will re-match correctly",
+        })
+
+        if not dry_run:
+            await db.execute(text("""
+                UPDATE events SET espn_id = NULL
+                WHERE espn_id = :eid
+            """), {"eid": espn_id})
+
+    if not dry_run:
+        await db.commit()
+
+    return results
 
 
 @router.get("/source-intelligence")
