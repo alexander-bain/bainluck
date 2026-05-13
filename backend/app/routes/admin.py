@@ -10036,8 +10036,6 @@ async def calibration_data(
               AND EXISTS (
                   SELECT 1 FROM futures_odds_snapshots fos
                   WHERE fos.outcome_id = fo.id
-                    AND ((fos.yes_bid IS NOT NULL AND fos.yes_bid > 0)
-                         OR (fos.last_price IS NOT NULL AND fos.last_price > 0))
               )
         ),
         mode_prices AS (
