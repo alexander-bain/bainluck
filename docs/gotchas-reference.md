@@ -67,3 +67,13 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 56. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers. Fixed in `8932636` (May 11, 2026).
 
 57. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
+
+58. **Feed probability normalization for independent binary markets** — Kalshi creates separate "Will X win?" binary markets for each candidate in a multi-outcome race. Each has its own 0-100% probability that includes vig/overround. When displaying top outcomes on Discover cards, the probabilities can sum well over 100%. Must normalize: `if sum > 1.05: divide each by sum`. Applied in `feed.py` after building `top_outcomes_data`. Same pattern as the Spotify race fix in `entertainment.py`.
+
+59. **Feed staleness threshold: 95% not 97%** — The "effectively resolved" filter in `_score_futures()` originally used leader ≥ 97%. This missed sports futures where a team is eliminated but the market leader is at 90-94%. Lowered to 95% (May 12). Markets with leader ≥ 95% and opening ≥ 85% (no interesting journey) are excluded from the feed.
+
+60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS and vice versa. Fixed May 13: hooks now call server API on every pin/unpin when authenticated, and fetch server pins on mount.
+
+61. **Celery beat schedule test has an allowlist** — `tests/test_tasks_wiring.py` has `EXPECTED_ENTRIES` set that must include every entry in `celery_app.conf.beat_schedule`. Adding a new scheduled task without updating this set causes CI failure. The test message tells you exactly what to add.
+
+62. **Gmail API OAuth refresh tokens via Google Workspace** — Using OAuth2 refresh token (not service account) to send email as `bugs@bainluck.com` (alias of `alex.bain@bainluck.com`). The OAuth Playground redirect URI must NOT have a trailing slash. Config vars: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL`. Token authorized via developers.google.com/oauthplayground with "Use your own OAuth credentials" checked.
