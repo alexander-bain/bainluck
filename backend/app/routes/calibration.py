@@ -201,7 +201,26 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
     )
     total_markets = total_markets_result.scalar()
 
+    # Closing line coverage
+    closing_sql = text("""
+        SELECT
+            COUNT(*) FILTER (WHERE closing_home_probability IS NOT NULL) AS has_closing,
+            COUNT(*) FILTER (WHERE closing_home_probability IS NULL
+                             AND commence_time IS NOT NULL) AS needs_closing,
+            COUNT(*) AS total_completed
+        FROM events
+        WHERE status = 'completed'
+          AND home_score IS NOT NULL AND away_score IS NOT NULL
+    """)
+    closing_result = await db.execute(closing_sql)
+    closing_row = closing_result.one()
+
     response = {
+        "closing_line_coverage": {
+            "has_closing": closing_row.has_closing,
+            "needs_closing": closing_row.needs_closing,
+            "total": closing_row.total_completed,
+        },
         "buckets": [
             {
                 "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
