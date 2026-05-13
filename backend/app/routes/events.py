@@ -2738,31 +2738,26 @@ async def get_game_markets(
         expected_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix)
 
     # 2. Find game-level markets linked to this event
-    # For completed events, include resolved/closed markets so we can show
-    # the final prediction market state (Kalshi/Polymarket settle post-game).
+    # Trust linked markets completely — if the matching task set event_id,
+    # don't second-guess it with status or category filters.  The matching
+    # task already validated sport/event membership.  Filtering by status
+    # drops resolved markets on completed games (showing empty sections),
+    # and filtering by llm_sport_category drops markets with stale/wrong
+    # categories (gotcha #10).  Status/category filters only belong on the
+    # FALLBACK query below (unlinked markets matched by team name).
     event_is_finished = event.status in ("completed", "closed")
+    linked_query = select(FuturesMarket).where(
+        FuturesMarket.event_id == event_id,
+    )
+    market_result = await db.execute(linked_query)
+    markets = list(market_result.scalars().all())
+
+    # Status filter — only used for the FALLBACK (unlinked) query below.
     status_filter = (
         FuturesMarket.status.in_(("open", "resolved", "closed"))
         if event_is_finished
         else or_(FuturesMarket.status == "open", FuturesMarket.status.is_(None))
     )
-    linked_query = select(FuturesMarket).where(
-        FuturesMarket.event_id == event_id,
-        status_filter,
-    )
-    if expected_category:
-        linked_query = linked_query.where(
-            or_(
-                FuturesMarket.llm_sport_category == expected_category,
-                FuturesMarket.llm_sport_category.is_(None),
-            )
-        )
-    # Trust linked markets — if the matching task set event_id, don't second-guess it.
-    # The time window filter is only on the FALLBACK query below (unlinked markets).
-    # Kalshi's commence_time is the resolution date (gotcha #9), not the game date,
-    # so a time window here incorrectly filters out game totals/spreads.
-    market_result = await db.execute(linked_query)
-    markets = list(market_result.scalars().all())
 
     # 3. Also find unlinked game-prop markets matching team names + time window
     # Require BOTH teams to appear in the market name to prevent cross-event
