@@ -426,16 +426,22 @@ async def _fix_kalshi_opening_prices():
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
-                    WITH first_real_price AS (
+                    WITH outcomes_to_fix AS (
+                        SELECT fo.id AS outcome_id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND fo.opening_probability IS NOT NULL
+                        LIMIT 5000
+                    ),
+                    first_real_price AS (
                         SELECT DISTINCT ON (fos.outcome_id)
                             fos.outcome_id,
                             fos.probability AS real_opening
                         FROM futures_odds_snapshots fos
-                        JOIN futures_outcomes fo ON fo.id = fos.outcome_id
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.source = 'kalshi'
-                          AND fm.status = 'resolved'
-                          AND fos.yes_bid IS NOT NULL
+                        JOIN outcomes_to_fix otf ON otf.outcome_id = fos.outcome_id
+                        WHERE fos.yes_bid IS NOT NULL
                           AND fos.yes_bid > 0
                           AND fos.yes_ask IS NOT NULL
                           AND (fos.yes_ask - fos.yes_bid) < 0.50
