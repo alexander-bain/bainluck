@@ -742,11 +742,14 @@ async def cleanup_oscillation(
 
 
 @router.get("/source-intelligence")
-async def source_intelligence(db: AsyncSession = Depends(get_db)):
+async def source_intelligence(
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
     """Cross-source disagreement analysis for the /source-intelligence page."""
 
     now = time.time()
-    if _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
+    if not refresh and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
         return _cache["data"]
 
     await _set_timeout(db)
