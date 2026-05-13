@@ -785,7 +785,7 @@ async def _match_prediction_markets(limit: int = 500):
                     if ticker_date and event.commence_time:
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
-                        if abs((_td - _ec).total_seconds()) > 36 * 3600:
+                        if abs((_td - _ec).total_seconds()) > 18 * 3600:
                             logger.warning(
                                 "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
                                 market.external_id, _td.date(), _ec.date(),
