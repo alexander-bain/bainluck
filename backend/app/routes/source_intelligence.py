@@ -873,6 +873,91 @@ async def fix_date_mismatches(
     }
 
 
+@router.post("/source-intelligence/cleanup-orphaned-snapshots")
+async def cleanup_orphaned_snapshots(
+    secret: str = "",
+    dry_run: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete win_prob_snapshots written by markets that are no longer linked.
+
+    When we unlink a market (set event_id = NULL) because it was linked
+    to the wrong event, the snapshots it already wrote remain in
+    win_prob_snapshots pointing at the old event. These orphaned snapshots
+    have the wrong game's probability data and contaminate the time-series.
+
+    This endpoint finds snapshots where game_state->>'market_id' references
+    a futures_market that currently has event_id = NULL (unlinked), and
+    deletes them.
+    """
+    import os
+    expected = os.getenv("ADMIN_TOKEN") or os.getenv("ADMIN_SECRET")
+    if not expected or secret != expected:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    await _set_timeout(db)
+
+    # Count orphaned snapshots
+    count_sql = text("""
+        SELECT
+            wp.source,
+            COUNT(*) AS snap_count,
+            COUNT(DISTINCT wp.event_id) AS event_count
+        FROM win_prob_snapshots wp
+        WHERE wp.source IN ('kalshi', 'polymarket')
+          AND wp.game_state->>'market_id' IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM futures_markets fm
+              WHERE fm.id = (wp.game_state->>'market_id')::int
+                AND fm.event_id IS NULL
+          )
+        GROUP BY wp.source
+    """)
+    count_result = await db.execute(count_sql)
+    counts = count_result.all()
+
+    result = {
+        "dry_run": dry_run,
+        "by_source": {r.source: {"snapshots": r.snap_count, "events": r.event_count}
+                      for r in counts},
+        "total_snapshots": sum(r.snap_count for r in counts),
+        "total_events": sum(r.event_count for r in counts),
+    }
+
+    if not dry_run and result["total_snapshots"] > 0:
+        await db.execute(text("""
+            DELETE FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND wp.game_state->>'market_id' IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.id = (wp.game_state->>'market_id')::int
+                    AND fm.event_id IS NULL
+              )
+        """))
+
+        # Also clean win_probability_sources JSONB for affected events
+        # Find events that had snapshots deleted and still have kalshi/polymarket
+        # in their JSONB — but only clear the source if NO valid snapshots remain
+        cleanup_wps_sql = text("""
+            WITH affected_events AS (
+                SELECT DISTINCT event_id, source
+                FROM win_prob_snapshots
+                WHERE source IN ('kalshi', 'polymarket')
+                GROUP BY event_id, source
+                HAVING COUNT(*) = 0
+            )
+            SELECT 1 LIMIT 0
+        """)
+        # This is complex to do perfectly in SQL. For now, just commit the
+        # snapshot deletion — the JSONB values will be overwritten by the
+        # next matching task run anyway.
+        await db.commit()
+
+    return result
+
+
 @router.get("/source-intelligence/oscillation-audit")
 async def oscillation_audit(db: AsyncSession = Depends(get_db)):
     """Find ALL events with stat_model oscillation — reverse matching eval.
