@@ -71,28 +71,28 @@ _RICH_SOURCES_CTE = f"""
 """
 
 
-# SQL expression to extract betting probability from win_probability_sources.
-# The value can be a plain float ({"betting": 0.58}) or a dict
-# ({"betting": {"value": 0.58, "display_name": ...}}).
-_BETTING_PROB = """
-    CASE
-        WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'number'
-        THEN (e.win_probability_sources->>'betting')::float
-        WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'object'
-        THEN (e.win_probability_sources->'betting'->>'value')::float
-    END
-"""
-
-# Shared CTE for betting closing lines using the above expression.
-_BETTING_CTE = f"""
+# Shared CTE for betting closing lines.
+# win_probability_sources->'betting' can be a plain float or a dict
+# with a "value" key. Compute the probability once in a subquery,
+# then filter in the outer query.
+_BETTING_CTE = """
     betting_closing AS (
-        SELECT re.event_id,
-            {_BETTING_PROB} AS home_win_probability
-        FROM rich_events re
-        JOIN events e ON e.id = re.event_id
-        WHERE {_BETTING_PROB} IS NOT NULL
-          AND {_BETTING_PROB} > 0
-          AND {_BETTING_PROB} < 1
+        SELECT event_id, home_win_probability
+        FROM (
+            SELECT re.event_id,
+                CASE
+                    WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'number'
+                    THEN (e.win_probability_sources->>'betting')::float
+                    WHEN jsonb_typeof(e.win_probability_sources->'betting') = 'object'
+                    THEN (e.win_probability_sources->'betting'->>'value')::float
+                END AS home_win_probability
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            WHERE e.win_probability_sources->'betting' IS NOT NULL
+        ) sub
+        WHERE home_win_probability IS NOT NULL
+          AND home_win_probability > 0
+          AND home_win_probability < 1
     )
 """
 
