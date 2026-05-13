@@ -550,8 +550,14 @@ async def _query_case_studies(db: AsyncSession) -> list:
                 "p": round(float(tr.home_win_probability), 4),
             })
 
-        # Only keep sources with rich data
-        series = {s: pts for s, pts in series.items() if len(pts) >= MIN_SNAPS}
+        # Only keep sources with rich, non-oscillating data
+        def _is_clean(pts: list) -> bool:
+            if len(pts) < MIN_SNAPS:
+                return False
+            jumps = sum(1 for i in range(1, len(pts))
+                        if abs(pts[i]["p"] - pts[i - 1]["p"]) > 0.15)
+            return jumps <= len(pts) * 0.3
+        series = {s: pts for s, pts in series.items() if _is_clean(pts)}
         if len(series) < 2:
             continue
 
