@@ -431,7 +431,7 @@ async def _backfill_closing_lines():
                           AND e.commence_time IS NOT NULL
                           AND e.home_score IS NOT NULL
                           AND e.away_score IS NOT NULL
-                        LIMIT 500
+                        LIMIT 5000
                     ),
                     closing AS (
                         SELECT DISTINCT ON (enc.id)
