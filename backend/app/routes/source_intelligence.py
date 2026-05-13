@@ -159,15 +159,30 @@ async def _query_source_accuracy(db: AsyncSession) -> list:
               AND wp.home_win_probability < 1
             ORDER BY wp.event_id, wp.source, wp.captured_at DESC
         ),
+        betting_closing AS (
+            SELECT re.event_id,
+                COALESCE(cl.home_win_probability, e.opening_home_probability)
+                    AS home_win_probability
+            FROM rich_events re
+            JOIN events e ON e.id = re.event_id
+            LEFT JOIN LATERAL (
+                SELECT home_win_probability
+                FROM odds_snapshots os
+                WHERE os.event_id = e.id
+                  AND os.home_win_probability IS NOT NULL
+                  AND os.home_win_probability > 0
+                  AND os.home_win_probability < 1
+                ORDER BY os.captured_at DESC
+                LIMIT 1
+            ) cl ON true
+            WHERE COALESCE(cl.home_win_probability, e.opening_home_probability) IS NOT NULL
+              AND COALESCE(cl.home_win_probability, e.opening_home_probability) > 0
+              AND COALESCE(cl.home_win_probability, e.opening_home_probability) < 1
+        ),
         all_closing AS (
             SELECT event_id, source, home_win_probability FROM wp_closing
             UNION ALL
-            SELECT re.event_id, 'betting', e.opening_home_probability
-            FROM rich_events re
-            JOIN events e ON e.id = re.event_id
-            WHERE e.opening_home_probability IS NOT NULL
-              AND e.opening_home_probability > 0
-              AND e.opening_home_probability < 1
+            SELECT event_id, 'betting', home_win_probability FROM betting_closing
         )
         SELECT
             c.source,
