@@ -10189,25 +10189,24 @@ async def backfill_winners_status(
         WHERE fm.status = 'resolved'
         GROUP BY fm.source
     """))
-    # Sample specific hockey outcomes to understand snapshot data
+    # Sample Polymarket soccer outcomes in the 40-50% bucket that LOST
     sample_diag = await db.execute(text("""
-        SELECT fo.id, fo.opening_probability, fo.name,
+        SELECT fo.id, fo.opening_probability, fo.name AS outcome_name,
+            fm.name AS market_name, fo.current_probability,
+            fo.opening_captured_at,
             (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
-            (SELECT yes_bid FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id ORDER BY captured_at ASC LIMIT 1) AS first_bid,
-            (SELECT yes_ask FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id ORDER BY captured_at ASC LIMIT 1) AS first_ask,
             (SELECT probability FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
-             AND yes_bid > 0 AND (yes_ask - yes_bid) < 0.50
-             AND ABS(probability - fo.opening_probability) > 0.05
-             ORDER BY captured_at ASC LIMIT 1) AS better_price
+             ORDER BY captured_at DESC LIMIT 1) AS last_snap_prob
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fo.market_id = fm.id
-        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
-          AND fm.llm_sport_category = 'hockey'
-          AND fo.opening_probability < 0.15
-          AND fo.current_probability >= 0.95
-        LIMIT 10
+        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+          AND fm.llm_sport_category = 'soccer'
+          AND fo.opening_probability > 0.35 AND fo.opening_probability < 0.55
+          AND fo.current_probability <= 0.05
+        ORDER BY RANDOM()
+        LIMIT 15
     """))
-    opening_diag = await db.execute(text("SELECT 'hockey' AS cat, 0 AS outcomes, 0 AS has_opening, 0 AS has_snapshots, 0.0 AS avg_price_range"))
+    opening_diag = await db.execute(text("SELECT 1 AS cat"))
 
     return {
         "sources": [
@@ -10215,12 +10214,13 @@ async def backfill_winners_status(
              "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
             for r in result.all()
         ],
-        "hockey_samples": [
+        "soccer_samples": [
             {"id": r.id, "opening": float(r.opening_probability),
-             "name": r.name, "snaps": r.snap_count,
-             "first_bid": float(r.first_bid) if r.first_bid else None,
-             "first_ask": float(r.first_ask) if r.first_ask else None,
-             "better_price": float(r.better_price) if r.better_price else None}
+             "outcome": r.outcome_name, "market": r.market_name,
+             "current": float(r.current_probability),
+             "captured_at": str(r.opening_captured_at) if r.opening_captured_at else None,
+             "snaps": r.snap_count,
+             "last_snap": float(r.last_snap_prob) if r.last_snap_prob else None}
             for r in sample_diag.all()
         ],
     }
