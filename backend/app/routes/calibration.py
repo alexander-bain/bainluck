@@ -91,7 +91,7 @@ async def public_calibration(db: AsyncSession = Depends(get_db)):
         ),
         ranked_outcomes AS (
             SELECT
-                fo.opening_probability AS adj_opening_probability,
+                COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,

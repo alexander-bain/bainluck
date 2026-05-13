@@ -531,8 +531,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
-    # Phase 0e: Fix bad opening prices from snapshot data
-    opening_fix_stats = await _fix_kalshi_opening_prices()
+    # Phase 0e: Pre-compute calibration_probability (closing line or settled price)
+    cal_price_stats = await _compute_calibration_prices()
 
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
@@ -549,77 +549,99 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
         "kalshi_group_id": kalshi_group_stats,
         "null_untradeable": no_snap_stats,
         "closing_lines": closing_stats,
-        "fix_openings": opening_fix_stats,
+        "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
     }
 
 
-async def _fix_kalshi_opening_prices():
-    """Fix bad opening_probability from placeholder prices across ALL sources.
+async def _compute_calibration_prices():
+    """Pre-compute calibration_probability on resolved outcomes.
 
-    For outcomes with futures_odds_snapshots, finds the earliest snapshot
-    where the price differs from opening_probability by >5pp (indicating
-    real trading happened after a placeholder opening was captured).
+    Uses the RIGHT price for calibration based on market type:
+    - Markets WITH commence_time: last snapshot before event starts (closing line)
+    - Markets WITHOUT commence_time: first snapshot ≥1h after opening (settled price)
+    - Fallback: opening_probability
+
+    Only processes outcomes where calibration_probability is NULL.
+    Uses compound index (outcome_id, captured_at) for fast DISTINCT ON.
     """
-    stats = {"fixed": 0, "checked": 0, "errors": []}
+    stats = {"with_commence": 0, "without_commence": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            # Find outcomes with resolved markets that might have bad opening prices
-            bad_candidates = await session.execute(
+            # Part A: Markets WITH commence_time — use closing line
+            result_a = await session.execute(
                 text("""
-                    SELECT fo.id, fo.opening_probability
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fm.id = fo.market_id
-                    WHERE fm.status = 'resolved'
-                      AND fo.opening_probability IS NOT NULL
-                      AND fo.opening_probability > 0
-                    LIMIT 5000
+                    WITH needs_cal AS (
+                        SELECT fo.id AS outcome_id, fm.commence_time
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo.calibration_probability IS NULL
+                          AND fm.commence_time IS NOT NULL
+                        LIMIT 5000
+                    ),
+                    closing AS (
+                        SELECT DISTINCT ON (nc.outcome_id)
+                            nc.outcome_id,
+                            fos.probability
+                        FROM needs_cal nc
+                        JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
+                        WHERE fos.captured_at < nc.commence_time
+                          AND fos.probability > 0 AND fos.probability < 1
+                        ORDER BY nc.outcome_id, fos.captured_at DESC
+                    )
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = cl.probability
+                    FROM closing cl
+                    WHERE fo.id = cl.outcome_id
                 """)
             )
-            candidates = bad_candidates.all()
-            stats["checked"] = len(candidates)
+            stats["with_commence"] = result_a.rowcount
 
-            # Step 2: For each candidate, find a better price from snapshots
-            for outcome_id, opening_prob in candidates:
-                better = await session.execute(
-                    text("""
-                        SELECT probability
-                        FROM futures_odds_snapshots
-                        WHERE outcome_id = :oid
-                          AND yes_bid IS NOT NULL AND yes_bid > 0
-                          AND yes_ask IS NOT NULL
-                          AND (yes_ask - yes_bid) < 0.50
-                          AND probability > 0 AND probability < 1
-                          AND ABS(probability - :opening) > 0.05
-                        ORDER BY captured_at ASC
-                        LIMIT 1
-                    """),
-                    {"oid": outcome_id, "opening": float(opening_prob)},
-                )
-                row = better.first()
-                if row:
-                    await session.execute(
-                        text("""
-                            UPDATE futures_outcomes
-                            SET opening_probability = :new_prob
-                            WHERE id = :oid
-                        """),
-                        {"new_prob": float(row[0]), "oid": outcome_id},
+            # Part B: Markets WITHOUT commence_time — use settled price
+            # (first snapshot ≥1h after opening, allowing initial volatility to settle)
+            result_b = await session.execute(
+                text("""
+                    WITH needs_cal AS (
+                        SELECT fo.id AS outcome_id, fo.opening_captured_at
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo.calibration_probability IS NULL
+                          AND fm.commence_time IS NULL
+                          AND fo.opening_captured_at IS NOT NULL
+                        LIMIT 5000
+                    ),
+                    settled AS (
+                        SELECT DISTINCT ON (nc.outcome_id)
+                            nc.outcome_id,
+                            fos.probability
+                        FROM needs_cal nc
+                        JOIN futures_odds_snapshots fos ON fos.outcome_id = nc.outcome_id
+                        WHERE fos.captured_at >= nc.opening_captured_at + INTERVAL '1 hour'
+                          AND fos.probability > 0 AND fos.probability < 1
+                        ORDER BY nc.outcome_id, fos.captured_at ASC
                     )
-                    stats["fixed"] += 1
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = st.probability
+                    FROM settled st
+                    WHERE fo.id = st.outcome_id
+                """)
+            )
+            stats["without_commence"] = result_b.rowcount
 
             await session.commit()
 
     except Exception as e:
         stats["errors"].append(str(e))
-        logger.error("Fix Kalshi opening prices error: %s", e)
+        logger.error("Compute calibration prices error: %s", e)
 
     logger.info(
-        "Fix Kalshi opening prices: %d outcomes corrected, %d errors",
-        stats["fixed"], len(stats["errors"]),
+        "Calibration prices: %d with commence_time, %d without, %d errors",
+        stats["with_commence"], stats["without_commence"], len(stats["errors"]),
     )
     return stats
 

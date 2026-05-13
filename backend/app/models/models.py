@@ -663,6 +663,9 @@ class FuturesOutcome(Base):
     opening_american_odds: Mapped[Optional[int]] = mapped_column(Integer)
     opening_captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # Pre-computed calibration price (closing line or settled price)
+    calibration_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
+
     # Movement tracking
     probability_change_24h: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
     rank: Mapped[Optional[int]] = mapped_column(Integer)
