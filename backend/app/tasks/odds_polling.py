@@ -998,6 +998,10 @@ async def _poll_all_odds():
                                         pregame_spread=pregame_spread,
                                         commence_time=event_obj.commence_time,
                                     )
+                                    if (stat_wp is not None and pregame_spread is None
+                                            and home_score == 0 and away_score == 0
+                                            and event_obj.opening_home_probability is not None):
+                                        stat_wp = float(event_obj.opening_home_probability)
                                     if stat_wp is not None:
                                         # Update event's win_probability_sources
                                         # Need to re-fetch to get current JSONB

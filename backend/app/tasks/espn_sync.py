@@ -628,6 +628,13 @@ async def _sync_espn_live_events():
                                     sport_key=sport_key,
                                     pregame_spread=pregame_spread,
                                 )
+                                # When no spread is available and the game is
+                                # scoreless, the model returns 50% (pick'em).
+                                # Use sportsbook opening probability instead.
+                                if (stat_wp is not None and pregame_spread is None
+                                        and ee.home_score == 0 and ee.away_score == 0
+                                        and event.opening_home_probability is not None):
+                                    stat_wp = float(event.opening_home_probability)
                                 if stat_wp is not None:
                                     _wps2 = dict(event.win_probability_sources or {})
                                     _wps2["stat_model"] = round(stat_wp, 4)

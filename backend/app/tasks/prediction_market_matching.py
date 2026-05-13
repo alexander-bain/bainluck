@@ -785,7 +785,7 @@ async def _match_prediction_markets(limit: int = 500):
                     if ticker_date and event.commence_time:
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
-                        if abs((_td - _ec).total_seconds()) > 18 * 3600:
+                        if abs((_td - _ec).total_seconds()) > 4 * 3600:
                             logger.warning(
                                 "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
                                 market.external_id, _td.date(), _ec.date(),
@@ -960,12 +960,13 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     # ── Pass 1: Time-windowed search ──────────────────────────────────
     # Kalshi commence_time is the market RESOLUTION date (often weeks after
     # the game), so we use the ticker-extracted game date when available.
-    # When the ticker date IS available, use a tight ±36h window (just
-    # timezone/time-of-day slack). Without a ticker date, fall back to
-    # the wider 7-day window for Kalshi or 48h for Polymarket.
+    # When the ticker date IS available (now includes HHMM for precision),
+    # use a tight ±6h window. This correctly distinguishes double-header
+    # games (same teams, same day, ~5h apart). Without a ticker date,
+    # fall back to the wider 7-day window for Kalshi or 48h for Polymarket.
     reference_time = game_date_override or market.commence_time or now
     if game_date_override:
-        time_delta = timedelta(hours=36)
+        time_delta = timedelta(hours=6)
     elif market.source == "kalshi":
         time_delta = timedelta(days=7)
     else:

@@ -892,15 +892,17 @@ _MONTH_MAP = {
 
 def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
     """
-    Extract the game date from a Kalshi game ticker.
+    Extract the game datetime from a Kalshi game ticker.
 
-    Example: "KXNBAGAME-26FEB21DETCHI" → datetime(2026, 2, 21, tzinfo=UTC)
+    Examples:
+        "KXNBAGAME-26FEB21DETCHI"       → datetime(2026, 2, 21, 0, 0, tzinfo=UTC)
+        "KXMLBGAME-26APR291840COLCIN"   → datetime(2026, 4, 29, 18, 40, tzinfo=UTC)
 
-    This is critical because Kalshi's commence_time on game markets is the
-    market RESOLUTION date (often weeks after the game), not the actual game
-    date. The ticker embeds the real game date as YYMMMDD.
+    The ticker embeds the real game date as YYMMMDD, optionally followed by
+    HHMM (UTC start time). The HHMM is critical for double-headers where
+    the same teams play twice on the same day.
 
-    Returns a timezone-aware datetime at midnight UTC, or None if parsing fails.
+    Returns a timezone-aware datetime, or None if parsing fails.
     """
     if not external_id:
         return None
@@ -909,9 +911,9 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
     if not m:
         return None
 
-    date_str = m.group(1)  # e.g., "26FEB21"
+    date_str = m.group(1)  # e.g., "26FEB21" or "26APR29"
+    rest = m.group(2)      # e.g., "DETCHI" or "1840COLCIN"
 
-    # Parse: 2-digit year + 3-letter month + 1-2 digit day
     try:
         year = 2000 + int(date_str[:2])
         month_str = date_str[2:5].lower()
@@ -919,7 +921,15 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
         month = _MONTH_MAP.get(month_str)
         if not month:
             return None
-        return datetime(year, month, day, tzinfo=timezone.utc)
+
+        # Parse optional HHMM from the start of the remaining string
+        hour, minute = 0, 0
+        if rest and len(rest) >= 4 and rest[:4].isdigit():
+            h, mn = int(rest[:2]), int(rest[2:4])
+            if 0 <= h <= 23 and 0 <= mn <= 59:
+                hour, minute = h, mn
+
+        return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
     except (ValueError, IndexError):
         return None
 
