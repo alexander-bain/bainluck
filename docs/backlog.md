@@ -605,12 +605,9 @@ Team names weight A, market names weight B, outcome names weight C. Use PostgreS
 **Files:** `backend/app/routes/events.py`, new migration for ts_vector columns
 **Parallel Safety:** Yellow
 
-### P5b. Trending/Popular Searches
+### ~~P5b. Trending/Popular Searches~~ — ALREADY SHIPPED
 
-Track queries server-side, surface top 5 as zero-state chips when search bar is focused.
-
-**Files:** `backend/app/routes/events.py`, new migration for `search_queries` table, `frontend/components/SearchBar.tsx`
-**Parallel Safety:** Green
+Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api/search/trending` endpoint (top 5), web trending chips in SearchBar, iOS trending chips in SearchView with fallback. Verified May 13.
 
 ### Phase 6: Semantic Search (2-3 weeks, aspirational)
 
