@@ -34,6 +34,7 @@ final class WeatherViewModel: ObservableObject {
 
 struct WeatherView: View {
     @StateObject private var vm = WeatherViewModel()
+    @State private var citySearch = ""
 
     var body: some View {
         Group {
@@ -139,6 +140,13 @@ struct WeatherView: View {
 
     // MARK: - Cities
 
+    private var filteredCities: [WeatherCity] {
+        if citySearch.trimmingCharacters(in: .whitespaces).isEmpty {
+            return vm.cities
+        }
+        return vm.cities.filter { $0.name.localizedCaseInsensitiveContains(citySearch) }
+    }
+
     private var citiesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -146,7 +154,7 @@ struct WeatherView: View {
                 Text("City Forecasts")
                     .font(.headline)
                     .fontWeight(.bold)
-                Text("\(vm.cities.count)")
+                Text("\(filteredCities.count)")
                     .font(.caption2)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -155,9 +163,30 @@ struct WeatherView: View {
             }
             .padding(.horizontal)
 
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search cities...", text: $citySearch)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                if !citySearch.isEmpty {
+                    Button {
+                        citySearch = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal)
+
             let columns = [GridItem(.adaptive(minimum: 300), spacing: 12)]
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(vm.cities) { city in
+                ForEach(filteredCities) { city in
                     cityCard(city)
                 }
             }
