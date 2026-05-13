@@ -10238,3 +10238,22 @@ async def merge_events_admin(
     from app.tasks.sports import _merge_duplicate_events_impl
     result = await _merge_duplicate_events_impl(dry_run=False)
     return result
+
+
+@router.post("/daily-digest/test")
+async def test_daily_digest(
+    request: Request,
+    secret: str = Query(None),
+    email: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a test daily digest email."""
+    if not await _check_admin_auth(secret, request, db):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    if not email:
+        raise HTTPException(400, "email query parameter required")
+
+    from app.tasks.daily_digest import send_daily_digest
+    success = await send_daily_digest(db, to_email=email)
+    return {"status": "sent" if success else "no_content", "to": email}
