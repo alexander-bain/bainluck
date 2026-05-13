@@ -1071,6 +1071,16 @@ struct OddsChartView: View {
             return digits
         }
 
+        // Golf round labels: "R1", "R2", "R3", "R4", "PO" (playoff)
+        if s.range(of: #"^R\d$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return s.uppercased()
+        }
+        if let rMatch = s.range(of: #"^[Rr]ound\s+(\d+)$"#, options: .regularExpression) {
+            let digits = s[rMatch].filter(\.isNumber)
+            return "R\(digits)"
+        }
+        if lower == "playoff" { return "PO" }
+
         // Already short: "Q1", "P2", "1H", "OT", "OT1", etc.
         if s.range(of: #"^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
             return s.uppercased()

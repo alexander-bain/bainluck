@@ -21,6 +21,16 @@ nonisolated struct TournamentCompactRow: View {
                             .background(Color.yellow.opacity(0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
+
+                    if let tour = tournament.tourLabel, !tour.isEmpty {
+                        Text(tour)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
                 }
 
                 HStack(spacing: 6) {
@@ -31,7 +41,7 @@ nonisolated struct TournamentCompactRow: View {
                     }
 
                     if let dateRange = formattedDateRange {
-                        Text("·")
+                        Text("\u{00B7}")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                         Text(dateRange)
@@ -51,6 +61,7 @@ nonisolated struct TournamentCompactRow: View {
                     Text(String(format: "%.1f%%", leader.probability * 100))
                         .font(.caption)
                         .fontWeight(.semibold)
+                        .monospacedDigit()
                         .foregroundStyle(.blue)
                 }
             }
@@ -64,6 +75,6 @@ nonisolated struct TournamentCompactRow: View {
 
     private var formattedDateRange: String? {
         guard let start = tournament.startDate, let end = tournament.endDate else { return nil }
-        return "\(start) – \(end)"
+        return "\(start) \u{2013} \(end)"
     }
 }

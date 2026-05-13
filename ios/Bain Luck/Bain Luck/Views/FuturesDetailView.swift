@@ -73,7 +73,9 @@ struct FuturesDetailView: View {
                         if market.outcomes.count >= 2 {
                             TournamentChartView(
                                 marketId: marketId,
-                                hours: 168
+                                hours: 168,
+                                tournamentStart: golfTournamentStart(market),
+                                tournamentEnd: golfTournamentEnd(market)
                             )
                         }
 
@@ -528,6 +530,24 @@ struct FuturesDetailView: View {
             }
             .foregroundStyle(change > 0 ? .green : .red)
         }
+    }
+
+    // MARK: - Golf Tournament Dates
+
+    /// Return commence_time as tournament start for golf markets (used for round markers).
+    private func golfTournamentStart(_ market: FuturesMarketDetail) -> String? {
+        guard market.llmSportCategory?.lowercased() == "golf" else { return nil }
+        return market.commenceTime
+    }
+
+    /// Derive tournament end from commence_time + 4 days for golf.
+    /// Returns nil for non-golf markets.
+    private func golfTournamentEnd(_ market: FuturesMarketDetail) -> String? {
+        guard market.llmSportCategory?.lowercased() == "golf",
+              let startStr = market.commenceTime,
+              let startDate = startStr.asDate else { return nil }
+        let endDate = Calendar.current.date(byAdding: .day, value: 4, to: startDate)
+        return endDate?.ISO8601Format()
     }
 
     // MARK: - Bookmaker Formatting

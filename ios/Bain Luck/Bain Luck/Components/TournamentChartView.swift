@@ -1,19 +1,45 @@
 import SwiftUI
 import Charts
 
+// MARK: - Round Boundary Marker
+
+private struct RoundBoundary: Identifiable {
+    let id = UUID()
+    let date: Date
+    let label: String
+}
+
+// MARK: - Time Range
+
+enum TournamentTimeRange: String, CaseIterable, Identifiable {
+    case week = "7d"
+    case tournament = "Event"
+    case day = "24h"
+
+    var id: String { rawValue }
+}
+
 /// Multi-participant probability evolution chart with leaderboard grid.
 /// Inspired by DataGolf — shows probability trends over time for tournaments,
 /// championships, and multi-outcome futures markets.
+///
+/// When `tournamentStart` / `tournamentEnd` are provided, derives round
+/// boundary markers (R1, R2, R3, R4) and offers a tournament-scoped time range.
 struct TournamentChartView: View {
     let marketId: Int
     var hours: Int = 168
     var height: CGFloat = 280
+    /// Tournament start date (ISO 8601). Enables round markers + "Event" time range.
+    var tournamentStart: String?
+    /// Tournament end date (ISO 8601). Defaults to start + 4 days if nil.
+    var tournamentEnd: String?
 
     @State private var data: ProbabilityTimelineResponse?
     @State private var loading = true
     @State private var error: String?
     @State private var topFilter: Int = 10
     @State private var selectedNames: Set<String> = []
+    @State private var selectedRange: TournamentTimeRange = .week
 
     // MARK: - Colors
 
@@ -29,6 +55,50 @@ struct TournamentChartView: View {
             return Color(hex: hex)
         }
         return Self.positionColors[index % Self.positionColors.count]
+    }
+
+    // MARK: - Tournament Dates
+
+    private var parsedTournamentStart: Date? {
+        tournamentStart?.asDate
+    }
+
+    private var parsedTournamentEnd: Date? {
+        if let end = tournamentEnd?.asDate { return end }
+        // Default: 4 days after start (standard golf tournament)
+        guard let start = parsedTournamentStart else { return nil }
+        return Calendar.current.date(byAdding: .day, value: 4, to: start)
+    }
+
+    private var hasTournamentDates: Bool {
+        parsedTournamentStart != nil
+    }
+
+    private var isGolf: Bool {
+        data?.sportCategory?.lowercased() == "golf"
+    }
+
+    /// Derive round boundary markers from tournament dates.
+    /// Each round starts at UTC midnight of the corresponding day.
+    private var roundBoundaries: [RoundBoundary] {
+        guard let start = parsedTournamentStart else { return [] }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+
+        // Align to start of day in UTC
+        let startOfDay = cal.startOfDay(for: start)
+        let endBound = parsedTournamentEnd.map { min($0.addingTimeInterval(86400), Date()) } ?? Date()
+
+        var boundaries: [RoundBoundary] = []
+        var dayOffset = 0
+        while dayOffset < 5 { // Max 5 rounds (4 regular + playoff)
+            guard let roundDate = cal.date(byAdding: .day, value: dayOffset, to: startOfDay) else { break }
+            if roundDate > endBound { break }
+            let label = dayOffset < 4 ? "R\(dayOffset + 1)" : "PO"
+            boundaries.append(RoundBoundary(date: roundDate, label: label))
+            dayOffset += 1
+        }
+        return boundaries
     }
 
     // MARK: - Body
@@ -54,6 +124,10 @@ struct TournamentChartView: View {
             }
         }
         .task {
+            // Default to tournament range when dates are available and event has started
+            if hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
+                selectedRange = .tournament
+            }
             await loadData()
         }
     }
@@ -63,8 +137,19 @@ struct TournamentChartView: View {
     private func loadData() async {
         loading = data == nil
         do {
+            let fetchHours: Int
+            switch selectedRange {
+            case .week: fetchHours = hours
+            case .tournament:
+                if let start = parsedTournamentStart {
+                    fetchHours = max(Int(Date().timeIntervalSince(start) / 3600) + 12, 48)
+                } else {
+                    fetchHours = hours
+                }
+            case .day: fetchHours = 24
+            }
             let result = try await APIClient.shared.fetchProbabilityTimeline(
-                marketId: marketId, top: 50, hours: hours
+                marketId: marketId, top: 50, hours: fetchHours
             )
             data = result
             // Default: select top 3
@@ -105,6 +190,11 @@ struct TournamentChartView: View {
         var points: [ChartPoint] = []
         for entry in data.timeline {
             guard let date = entry.timestamp.asDate else { continue }
+            // Filter by time range
+            if selectedRange == .tournament, let start = parsedTournamentStart {
+                let rangeStart = start.addingTimeInterval(-3600 * 6) // 6 hours before tournament
+                if date < rangeStart { continue }
+            }
             for (name, prob) in entry.outcomes where names.contains(name) {
                 points.append(ChartPoint(
                     date: date,
@@ -123,11 +213,35 @@ struct TournamentChartView: View {
     // MARK: - Control Bar
 
     private var controlBar: some View {
-        HStack {
-            Text("Show")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            // Time range picker (only when tournament dates exist)
+            if hasTournamentDates {
+                HStack(spacing: 0) {
+                    ForEach(TournamentTimeRange.allCases) { range in
+                        Button {
+                            selectedRange = range
+                            Task { await loadData() }
+                        } label: {
+                            Text(range.rawValue)
+                                .font(.caption2)
+                                .fontWeight(selectedRange == range ? .semibold : .regular)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
+                                .foregroundStyle(selectedRange == range ? .blue : .secondary)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+                )
+            }
 
+            Spacer()
+
+            // Top N filter
             HStack(spacing: 0) {
                 ForEach([5, 10, 20], id: \.self) { n in
                     Button {
@@ -148,8 +262,6 @@ struct TournamentChartView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color.barTrack, lineWidth: 0.5)
             )
-
-            Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -159,22 +271,58 @@ struct TournamentChartView: View {
     // MARK: - Chart
 
     private var chartSection: some View {
-        Chart(chartEntries) { point in
-            LineMark(
-                x: .value("Time", point.date),
-                y: .value("Probability", point.probability)
-            )
-            .foregroundStyle(by: .value("Participant", point.name))
-            .lineStyle(StrokeStyle(
-                lineWidth: effectiveSelected.contains(point.name) ? 2.5 : 1,
-                lineCap: .round
-            ))
-            .opacity(effectiveSelected.isEmpty || effectiveSelected.contains(point.name) ? 1 : 0.1)
+        let entries = chartEntries
+        let visibleBoundaries: [RoundBoundary]
+        if let minDate = entries.map(\.date).min(),
+           let maxDate = entries.map(\.date).max() {
+            visibleBoundaries = roundBoundaries.filter { $0.date >= minDate && $0.date <= maxDate }
+        } else {
+            visibleBoundaries = roundBoundaries
+        }
+
+        return Chart {
+            // Round boundary vertical lines
+            ForEach(visibleBoundaries) { boundary in
+                RuleMark(x: .value("Round", boundary.date))
+                    .lineStyle(StrokeStyle(lineWidth: 0.7, dash: [4, 3]))
+                    .foregroundStyle(.secondary.opacity(0.3))
+            }
+
+            // Data lines
+            ForEach(entries) { point in
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Probability", point.probability)
+                )
+                .foregroundStyle(by: .value("Participant", point.name))
+                .lineStyle(StrokeStyle(
+                    lineWidth: effectiveSelected.contains(point.name) ? 2.5 : 1,
+                    lineCap: .round
+                ))
+                .opacity(effectiveSelected.isEmpty || effectiveSelected.contains(point.name) ? 1 : 0.1)
+            }
         }
         .chartForegroundStyleScale(mapping: { (name: String) -> Color in
             let idx = displayedNames.firstIndex(of: name) ?? 0
             return colorForOutcome(name: name, index: idx)
         })
+        // Round boundary labels floating inside chart
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                ForEach(visibleBoundaries) { boundary in
+                    if let xPos = proxy.position(forX: boundary.date) {
+                        Text(boundary.label)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .position(x: xPos, y: 12)
+                    }
+                }
+            }
+        }
         .chartYAxis {
             AxisMarks(position: .leading) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
@@ -188,8 +336,9 @@ struct TournamentChartView: View {
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 5)) { value in
-                AxisGridLine()
-                AxisValueLabel(format: hours <= 48 ? .dateTime.hour() : .dateTime.month(.abbreviated).day())
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
+                    .foregroundStyle(.secondary.opacity(0.3))
+                AxisValueLabel(format: selectedRange == .day ? .dateTime.hour() : .dateTime.month(.abbreviated).day())
             }
         }
         .chartLegend(.hidden)
