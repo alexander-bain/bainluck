@@ -160,14 +160,9 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 UFC/MMA, Tennis, F1, Esports have upstream markets but no dedicated pages. Feature gap, not bug.
 
-### MS-14. EPL/UFC/Tennis Pages Non-Functional (INFO) — League Page Audit
+### ~~MS-14. EPL/UFC/Tennis Pages Non-Functional~~ — RESOLVED (May 13)
 
-**Problem:** EPL page fails to load entirely. UFC shows "Coming Soon" placeholder. Tennis page is empty. These are dead-end navigation paths.
-
-**Action:** Either fix the data pipeline for these sports or remove them from navigation until ready.
-
-**Files:** `backend/app/routes/leagues.py`, nav components
-**Parallel Safety:** Green
+EPL grid loads correctly now (`/api/playoffs/epl` returns data). UFC and Tennis don't have league configs and aren't in the Browse tab navigation (removed when pills were changed to specific leagues). No dead-end paths remain.
 
 ---
 
