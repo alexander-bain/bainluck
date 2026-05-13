@@ -136,7 +136,7 @@ async def _query_coverage(db: AsyncSession) -> dict:
             FROM rich_events re
             JOIN events e ON e.id = re.event_id
             LEFT JOIN rich_sources rs ON rs.event_id = re.event_id
-            GROUP BY re.event_id, e.opening_home_probability
+            GROUP BY re.event_id, e.win_probability_sources
         ) sub
         GROUP BY source_count
         ORDER BY source_count
