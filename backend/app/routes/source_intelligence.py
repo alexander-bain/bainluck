@@ -926,25 +926,43 @@ async def cleanup_orphaned_snapshots(
     }
 
     if not dry_run and result["total_snapshots"] > 0:
-        # First collect the unlinked market IDs (small set)
-        mid_result = await db.execute(text("""
-            SELECT id FROM futures_markets
-            WHERE source IN ('kalshi', 'polymarket')
-              AND event_id IS NULL
-        """))
-        unlinked_market_ids = [r.id for r in mid_result.all()]
+        # Build a set of (event_id, market_id) pairs from snapshots that
+        # reference unlinked markets. Group by event_id for batch deletion.
+        pairs_sql = text("""
+            SELECT DISTINCT wp.event_id, (wp.game_state->>'market_id')::int AS mid
+            FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND wp.game_state->>'market_id' IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.id = (wp.game_state->>'market_id')::int
+                    AND fm.event_id IS NULL
+              )
+        """)
+        pairs_result = await db.execute(pairs_sql)
+        pairs = pairs_result.all()
 
-        # Delete in chunks of market IDs to keep each DELETE manageable
+        # Group market_ids by event_id
+        by_event: dict[int, list[int]] = {}
+        for row in pairs:
+            by_event.setdefault(row.event_id, []).append(row.mid)
+
+        # Delete per event — uses the (event_id, source) index
         deleted_total = 0
-        chunk_size = 500
-        for i in range(0, len(unlinked_market_ids), chunk_size):
-            chunk = unlinked_market_ids[i:i + chunk_size]
+        event_ids = list(by_event.keys())
+        chunk_size = 200
+        for i in range(0, len(event_ids), chunk_size):
+            chunk_eids = event_ids[i:i + chunk_size]
+            chunk_mids: list[int] = []
+            for eid in chunk_eids:
+                chunk_mids.extend(by_event[eid])
             del_result = await db.execute(text("""
                 DELETE FROM win_prob_snapshots
-                WHERE source IN ('kalshi', 'polymarket')
+                WHERE event_id = ANY(:eids)
+                  AND source IN ('kalshi', 'polymarket')
                   AND game_state->>'market_id' IS NOT NULL
                   AND (game_state->>'market_id')::int = ANY(:mids)
-            """), {"mids": chunk})
+            """), {"eids": chunk_eids, "mids": chunk_mids})
             deleted_total += del_result.rowcount
             await db.commit()
         result["actually_deleted"] = deleted_total
