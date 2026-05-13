@@ -20,6 +20,7 @@ class BugReportSubmission(BaseModel):
     description: Optional[str] = None
     screenshot_base64: Optional[str] = None
     app_state: Optional[dict] = None
+    notify_on_fix: bool = False
 
     @pydantic_field_validator("description")
     @classmethod
@@ -55,7 +56,7 @@ async def submit_bug_report(
     user_id = getattr(request.state, "user_id", None)
 
     user_email = None
-    if user_id:
+    if user_id and body.notify_on_fix:
         user_row = await db.execute(select(User.email).where(User.id == user_id))
         user_email = user_row.scalar_one_or_none()
 

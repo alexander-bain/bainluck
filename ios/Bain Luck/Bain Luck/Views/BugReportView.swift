@@ -13,6 +13,7 @@ struct BugReportView: View {
 
     let screenshot: PlatformImage?
     @State private var description = ""
+    @State private var notifyOnFix = false
     @State private var submitting = false
     @State private var submitted = false
     @State private var submitError: String? = nil
@@ -112,6 +113,13 @@ struct BugReportView: View {
                     }
                     .padding(.horizontal)
 
+                    Toggle(isOn: $notifyOnFix) {
+                        Text("Email me when this is fixed")
+                            .font(.subheadline)
+                    }
+                    .tint(.orange)
+                    .padding(.horizontal)
+
                     if submitted {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
@@ -209,7 +217,8 @@ struct BugReportView: View {
                 let submission = BugReportSubmission(
                     description: description,
                     screenshotBase64: base64,
-                    appState: appState
+                    appState: appState,
+                    notifyOnFix: notifyOnFix
                 )
                 _ = try await APIClient.shared.submitBugReport(submission)
                 submitError = nil

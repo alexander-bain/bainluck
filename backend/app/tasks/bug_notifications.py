@@ -49,7 +49,7 @@ def _generate_email_body(
                     "role": "system",
                     "content": (
                         "You write short, warm emails for Bain Luck, a prediction market discovery app. "
-                        "Never reference gambling or betting. Keep it to 3-4 sentences."
+                        "Never reference gambling or betting. Keep it to 4-5 sentences."
                     ),
                 },
                 {
@@ -58,7 +58,8 @@ def _generate_email_body(
                         f"Write a short email to {first_name} thanking them for reporting a bug in Bain Luck.\n\n"
                         f"Bug they reported: \"{description}\"\n\n"
                         f"What we fixed: \"{resolution_summary}\"\n\n"
-                        "Tone: personal, grateful, specific. End with encouragement to keep reporting bugs. "
+                        "Tone: personal, grateful, specific. Include a dad joke or witty quip related to the bug or prediction markets. "
+                        "End with encouragement to keep reporting bugs (shake the phone!). "
                         "Just the body text — no subject line, no greeting (we add 'Hi {name}' separately), no sign-off."
                     ),
                 },
