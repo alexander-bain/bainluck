@@ -426,8 +426,11 @@ async def _fix_kalshi_opening_prices():
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
+                    -- Find the earliest snapshot where the price DIFFERS from
+                    -- the current opening_probability (indicating the first
+                    -- snapshot was a placeholder and this one has real trading).
                     WITH outcomes_to_fix AS (
-                        SELECT fo.id AS outcome_id
+                        SELECT fo.id AS outcome_id, fo.opening_probability
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fm.id = fo.market_id
                         WHERE fm.source = 'kalshi'
@@ -435,7 +438,7 @@ async def _fix_kalshi_opening_prices():
                           AND fo.opening_probability IS NOT NULL
                         LIMIT 5000
                     ),
-                    first_real_price AS (
+                    better_price AS (
                         SELECT DISTINCT ON (fos.outcome_id)
                             fos.outcome_id,
                             fos.probability AS real_opening
@@ -447,15 +450,14 @@ async def _fix_kalshi_opening_prices():
                           AND (fos.yes_ask - fos.yes_bid) < 0.50
                           AND fos.probability > 0
                           AND fos.probability < 1
+                          AND ABS(fos.probability - otf.opening_probability) > 0.05
                         ORDER BY fos.outcome_id, fos.captured_at ASC
                     )
                     UPDATE futures_outcomes fo
-                    SET opening_probability = frp.real_opening,
+                    SET opening_probability = bp.real_opening,
                         opening_captured_at = NOW()
-                    FROM first_real_price frp
-                    WHERE fo.id = frp.outcome_id
-                      AND fo.opening_probability IS NOT NULL
-                      AND ABS(fo.opening_probability - frp.real_opening) > 0.05
+                    FROM better_price bp
+                    WHERE fo.id = bp.outcome_id
                 """)
             )
             stats["fixed"] = result.rowcount
