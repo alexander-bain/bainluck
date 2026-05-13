@@ -778,11 +778,60 @@ async def cleanup_oscillation(
 
 @router.get("/source-intelligence/debug")
 async def source_intelligence_debug(db: AsyncSession = Depends(get_db)):
-    """Debug — run coverage query without try/except to expose errors."""
-    await _set_timeout(db)
-    coverage = await _query_coverage(db)
-    accuracy = await _query_source_accuracy(db)
-    return {"coverage": coverage, "accuracy_sources": len(accuracy)}
+    """Debug — run raw queries to expose errors."""
+    import traceback
+    results = {}
+
+    # Test 1: Can we query events at all?
+    try:
+        r = await db.execute(text("""
+            SELECT COUNT(*) FROM events
+            WHERE status IN ('completed', 'closed')
+              AND commence_time > NOW() - INTERVAL '3 months'
+        """))
+        results["total_recent_events"] = r.scalar()
+    except Exception as e:
+        results["events_error"] = f"{e.__class__.__name__}: {e}"
+
+    # Test 2: Can we query win_prob_snapshots?
+    try:
+        r = await db.execute(text("""
+            SELECT COUNT(DISTINCT event_id) FROM win_prob_snapshots
+        """))
+        results["distinct_snapshot_events"] = r.scalar()
+    except Exception as e:
+        results["snapshots_error"] = f"{e.__class__.__name__}: {e}"
+
+    # Test 3: Rich sources CTE
+    try:
+        r = await db.execute(text(f"""
+            WITH {_RICH_SOURCES_CTE}
+            SELECT COUNT(*) FROM rich_events
+        """))
+        results["rich_events"] = r.scalar()
+    except Exception as e:
+        results["rich_events_error"] = f"{e.__class__.__name__}: {e}"
+        results["rich_events_traceback"] = traceback.format_exc()[-500:]
+
+    # Test 4: Betting JSONB
+    try:
+        r = await db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE win_probability_sources->'betting' IS NOT NULL) AS has_betting,
+                COUNT(*) FILTER (WHERE jsonb_typeof(win_probability_sources->'betting') = 'number') AS is_number,
+                COUNT(*) FILTER (WHERE jsonb_typeof(win_probability_sources->'betting') = 'object') AS is_object
+            FROM events
+            WHERE status IN ('completed', 'closed')
+              AND commence_time > NOW() - INTERVAL '3 months'
+        """))
+        row = r.one()
+        results["betting_has"] = row.has_betting
+        results["betting_number"] = row.is_number
+        results["betting_object"] = row.is_object
+    except Exception as e:
+        results["betting_error"] = f"{e.__class__.__name__}: {e}"
+
+    return results
 
 
 @router.get("/source-intelligence")
