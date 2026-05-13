@@ -447,14 +447,9 @@ In-memory response cache for game-markets endpoint. Completed games cached indef
 **Files:** `backend/app/services/kalshi_api.py`, `backend/app/routes/events.py`, `frontend/components/MarketMapSection.tsx`, `ios/.../Components/MarketMapSection`
 **Parallel Safety:** Yellow
 
-### 0f-13h. Player Award Headshots Missing on WEB
+### ~~0f-13h. Player Award Headshots Missing on WEB~~ — ALREADY FIXED
 
-**Problem:** Native shows player headshots (from roster data) next to award names. Web shows only colored initials circles.
-
-**Fix:** The web "Bigger Picture" section needs to use the `PlayerHeadshot` component (already exists for player props). Check if award data from the `team-progression` endpoint includes player image URLs. If not, backend needs to enrich award outcomes with headshot URLs from roster data.
-
-**Files:** `frontend/app/events/[id]/page.tsx`, `backend/app/routes/events.py`
-**Parallel Safety:** Yellow
+Both `AwardCard` and `AwardCompactRow` in `RelatedFutures.tsx` already use the `PlayerHeadshot` component (lines 474, 2002). Verified May 13.
 
 ### BR1-2. Source Attribution Looks Duplicated — NEEDS DESIGN (Rage Shake Bug #1 confirms)
 
