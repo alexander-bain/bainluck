@@ -110,6 +110,7 @@ nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
     let marketTags: [String]?
     let topOutcomes: [FacetedFuturesOutcome]?
     let outcomeCount: Int?
+    let imageUrl: String?
 }
 
 nonisolated struct FacetedFuturesOutcome: Decodable, Identifiable, Sendable {

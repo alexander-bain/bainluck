@@ -102,44 +102,7 @@ struct FuturesListView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .futuresDetail(let id):
-                    FuturesDetailView(marketId: id)
-                case .eventDetail(let id):
-                    EventDetailView(eventId: id)
-                case .eiRankings:
-                    EmptyView()
-                case .preferences:
-                    PreferencesView()
-                case .sportCategory(let key, let name):
-                    SportCategoryView(categoryKey: key, categoryName: name)
-                case .leagueGrid(let slug):
-                    LeagueGridView(slug: slug)
-                case .golfCategory:
-                    GolfCategoryView()
-                case .golfLeaderboard:
-                    GolfCategoryView()
-                case .golfTournament(_, let name):
-                    SportCategoryView(categoryKey: "golf", categoryName: name)
-                case .futuresList:
-                    FuturesListView()
-                case .teamDetail(_):
-                    Text("Team")
-                case .predictionStats:
-                    PredictionStatsView()
-                case .weather:
-                    WeatherView()
-                case .economics:
-                    EconomicsView()
-                case .politics:
-                    PoliticsView()
-                case .entertainment:
-                    EntertainmentView()
-                case .about:
-                    Text("About")
-                }
-            }
+            .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
         .task {
             await vm.load()
@@ -244,28 +207,73 @@ struct FuturesListView: View {
 
     // MARK: - Market Row
 
-    private func futuresMarketRow(_ market: FacetedFuturesMarket) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(market.name)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .lineLimit(2)
+    private func categoryEmoji(for key: String?) -> String {
+        switch key?.lowercased() {
+        case "basketball": return "🏀"
+        case "football": return "🏈"
+        case "baseball": return "⚾"
+        case "hockey": return "🏒"
+        case "soccer": return "⚽"
+        case "golf": return "⛳"
+        case "tennis": return "🎾"
+        case "mma", "boxing": return "🥊"
+        case "politics": return "🏛"
+        case "economics": return "📈"
+        case "weather": return "🌤"
+        case "entertainment": return "🎬"
+        case "culture": return "🎭"
+        case "tech": return "💻"
+        case "geopolitics": return "🌍"
+        case "cricket": return "🏏"
+        default: return "📊"
+        }
+    }
 
-            HStack(spacing: 6) {
-                if let category = market.llmSportCategory {
-                    Text(category.capitalized)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+    private func futuresMarketRow(_ market: FacetedFuturesMarket) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if let imageUrl = market.imageUrl, let url = URL(string: imageUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill()
+                    default:
+                        Text(categoryEmoji(for: market.llmSportCategory))
+                            .font(.title2)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.secondary.opacity(0.08))
+                    }
                 }
-                if let source = market.source {
-                    sourceBadge(source)
-                }
-                if let count = market.outcomeCount {
-                    Text("\(count) outcomes")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                Text(categoryEmoji(for: market.llmSportCategory))
+                    .font(.title2)
+                    .frame(width: 48, height: 48)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(market.name)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+
+                HStack(spacing: 6) {
+                    if let category = market.llmSportCategory {
+                        Text(category.capitalized)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let source = market.source {
+                        sourceBadge(source)
+                    }
+                    if let count = market.outcomeCount {
+                        Text("\(count) outcomes")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
 
             // Top outcomes preview
             if let outcomes = market.topOutcomes, !outcomes.isEmpty {
@@ -286,6 +294,7 @@ struct FuturesListView: View {
                     }
                 }
             }
+        }
         }
         .padding(.vertical, 4)
     }

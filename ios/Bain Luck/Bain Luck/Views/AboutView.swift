@@ -158,7 +158,7 @@ struct AboutView: View {
 
     private let stats: [(value: String, label: String)] = [
         ("8", "Sources"),
-        ("90K+", "Markets"),
+        ("130K+", "Markets"),
         ("20+", "Books"),
         ("~32s", "Live"),
     ]
