@@ -3,7 +3,7 @@
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func
@@ -18,11 +18,14 @@ CACHE_TTL = 3600
 
 
 @router.get("/calibration")
-async def public_calibration(db: AsyncSession = Depends(get_db)):
+async def public_calibration(
+    db: AsyncSession = Depends(get_db),
+    bust: int = Query(0, include_in_schema=False),
+):
     """Public calibration data for the /calibration page. Cached for 1 hour."""
 
     now = time.time()
-    if _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
+    if not bust and _cache["data"] and (now - _cache["timestamp"]) < CACHE_TTL:
         return _cache["data"]
 
     # Same query as admin calibration-data endpoint
