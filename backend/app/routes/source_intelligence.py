@@ -926,9 +926,7 @@ async def cleanup_orphaned_snapshots(
     }
 
     if not dry_run and result["total_snapshots"] > 0:
-        # Find events with kalshi/polymarket snapshots that have NO
-        # remaining linked market of that source. Uses indexed columns
-        # (event_id, source) — no JSONB scan needed.
+        # Phase 1: Fully orphaned — events with no remaining linked market
         orphan_events_sql = text("""
             SELECT DISTINCT wp.event_id, wp.source
             FROM win_prob_snapshots wp
@@ -942,20 +940,55 @@ async def cleanup_orphaned_snapshots(
         orphan_result = await db.execute(orphan_events_sql)
         orphan_pairs = orphan_result.all()
 
-        # Delete in batches by event_id (uses ix_winprob_event_source)
         deleted_total = 0
-        chunk_size = 500
-        for i in range(0, len(orphan_pairs), chunk_size):
-            chunk = orphan_pairs[i:i + chunk_size]
-            for event_id, source in chunk:
-                del_result = await db.execute(text("""
-                    DELETE FROM win_prob_snapshots
-                    WHERE event_id = :eid AND source = :src
-                """), {"eid": event_id, "src": source})
-                deleted_total += del_result.rowcount
-            await db.commit()
+        for event_id, source in orphan_pairs:
+            del_result = await db.execute(text("""
+                DELETE FROM win_prob_snapshots
+                WHERE event_id = :eid AND source = :src
+            """), {"eid": event_id, "src": source})
+            deleted_total += del_result.rowcount
+        await db.commit()
+
+        # Phase 2: Partially orphaned — events that still have a linked
+        # market but ALSO have snapshots from unlinked markets. For each
+        # such event, delete snapshots whose market_id is no longer linked.
+        # This is slower (JSONB scan per event) but the set is small.
+        mixed_sql = text("""
+            SELECT DISTINCT wp.event_id, wp.source
+            FROM win_prob_snapshots wp
+            WHERE wp.source IN ('kalshi', 'polymarket')
+              AND wp.game_state->>'market_id' IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM futures_markets fm
+                  WHERE fm.event_id = wp.event_id AND fm.source = wp.source
+              )
+              AND EXISTS (
+                  SELECT 1 FROM futures_markets fm2
+                  WHERE fm2.id = (wp.game_state->>'market_id')::int
+                    AND fm2.event_id IS NULL
+              )
+            LIMIT 500
+        """)
+        mixed_result = await db.execute(mixed_sql)
+        mixed_pairs = mixed_result.all()
+
+        for event_id, source in mixed_pairs:
+            del_result = await db.execute(text("""
+                DELETE FROM win_prob_snapshots
+                WHERE event_id = :eid AND source = :src
+                  AND game_state->>'market_id' IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM futures_markets fm
+                      WHERE fm.id = (game_state->>'market_id')::int
+                        AND fm.event_id = :eid
+                  )
+            """), {"eid": event_id, "src": source})
+            deleted_total += del_result.rowcount
+        await db.commit()
+
         result["actually_deleted"] = deleted_total
-        result["orphan_event_source_pairs"] = len(orphan_pairs)
+        result["fully_orphaned_pairs"] = len(orphan_pairs)
+        result["mixed_orphan_pairs"] = len(mixed_pairs)
 
     return result
 

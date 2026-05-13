@@ -24,6 +24,35 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/scripts/audit_event_matching.py`, `Manus/prompts/event_matching_ground_truth.md`
 
+### Kalshi Outcome Alternation — Sawtooth Oscillation (HIGH PRI, ACTIVE)
+
+**Problem:** Kalshi game-winner probability oscillates between two stable values (e.g., 40%↔60%) across every poll cycle. Visible in Rockies @ Reds (284 snapshots, 66 big jumps), Nationals @ Phillies (115 snaps, 33 jumps), Nationals @ Pirates (116 snaps, 21 jumps). Pattern is a clean sawtooth, NOT random noise — two different probabilities are being written alternately.
+
+**Hypothesis:** Phase 2 (every 15 min) and the live poller (every 2 min) both write snapshots for the same Kalshi game market, but `find_moneyline_outcome` selects a different outcome in each path. A Kalshi game market has two outcomes ("Colorado" and "Cincinnati"). If one path picks "Colorado" (`yes_is_home=True`, writes `home_prob = colorado_prob`) and the other picks "Cincinnati" (`yes_is_home=False`, writes `home_prob = 1 - cincinnati_prob`), they'd write complementary values that don't quite match (different bid/ask, rounding).
+
+**Investigation needed:**
+1. Compare what `find_moneyline_outcome` returns for the same market in Phase 2 vs live poller — do they use the same outcome selection logic? Both call the same function, but the outcome data may differ (Phase 2 reads from `FuturesOutcome.current_probability` written by the regular poller; live poller fetches fresh from Kalshi API).
+2. Check if the Kalshi game market's two outcomes ("Colorado" and "Cincinnati") have probabilities that sum to exactly 1.0. If not, the inversion (`1 - yes_prob`) produces a different value than the complementary outcome's price.
+3. Add logging to snapshot writes: log the outcome_name and yes_is_home for every Kalshi snapshot so we can trace which outcome is being selected.
+
+**Files:** `backend/app/tasks/prediction_market_matching.py` (Phase 2 ~line 800, live poller ~line 1670), `backend/app/utils/prediction_market_matching.py` (`find_moneyline_outcome` ~line 645)
+
+### Double-Header Date Matching (HIGH PRI)
+
+**Problem:** `extract_game_date_from_ticker` strips the time component and returns midnight UTC. For double-headers (two games between the same teams on the same day), both games' Kalshi markets parse to the same date, so the 18h threshold can't distinguish them. The HHMM portion of the ticker (e.g., `1340` vs `1910` for a 1:40 PM and 7:10 PM double-header) is available but not used.
+
+**Fix approach:** Parse the full datetime from the ticker (including HHMM) and compare to the event's `commence_time` with a tighter window (±3h instead of ±18h). Fall back to date-only when HHMM isn't parseable.
+
+**Files:** `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker` ~line 893), `backend/app/tasks/prediction_market_matching.py` (Phase 2 date validation)
+
+### Stat Model Lacks Pregame Prior (MEDIUM PRI)
+
+**Problem:** The stat model starts at ~50% for all games regardless of team quality, then only reacts to score/clock. ESPN's model bakes in team quality from the start (e.g., Gonzaga vs Pacific starts at 95% for Gonzaga). This causes a large initial divergence that's not a matching issue — it's a model quality gap.
+
+**Fix approach:** Initialize the stat model's pregame probability from `opening_home_probability` (sportsbook consensus) instead of 50%. This gives it a team-quality-aware starting point. The model already accepts a `pregame_spread` parameter — just need to use it more effectively.
+
+**Files:** `backend/app/utils/win_probability.py` (`compute_statistical_win_prob`), `backend/app/tasks/espn_sync.py` (where stat_model is computed)
+
 ### Game-Markets Query Missing Kalshi Props (HIGH PRI)
 
 **Problem:** The event detail page's game-markets section returns empty for many events that actually have 15-20 linked Kalshi markets (spreads, totals, overtime, half winners, player props, points leaders). These are correctly linked via `event_id` in `futures_markets` but don't appear in the API response.
