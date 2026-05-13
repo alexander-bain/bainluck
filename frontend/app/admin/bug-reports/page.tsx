@@ -105,6 +105,7 @@ export default function BugReportsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(true);
 
   const secret =
     typeof window !== "undefined"
@@ -243,6 +244,25 @@ export default function BugReportsPage() {
             })}
           </div>
         </div>
+
+        {/* Analytics Section — burndown chart + summary stats */}
+        {!loading && reports.length > 0 && (
+          <div className="mb-6">
+            <button
+              onClick={() => setShowAnalytics(!showAnalytics)}
+              className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-3"
+            >
+              <span className="text-xs">{showAnalytics ? "▼" : "▶"}</span>
+              Analytics
+            </button>
+            {showAnalytics && (
+              <div className="space-y-4">
+                <SummaryStats reports={reports} />
+                <BurndownChart reports={reports} />
+              </div>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-12 text-gray-400">Loading...</div>
@@ -593,6 +613,243 @@ function BugDashboard({ reports, allReports }: { reports: BugReport[]; allReport
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------- Analytics Components ----------
+
+const CLOSED_STATUSES = ["actioned", "dismissed", "fixed", "wont_fix"];
+
+function SummaryStats({ reports }: { reports: BugReport[] }) {
+  const total = reports.length;
+  const open = reports.filter(r => !CLOSED_STATUSES.includes(r.status)).length;
+  const fixed = reports.filter(r => r.status === "actioned" || r.status === "fixed").length;
+
+  // Approximate average resolution time: for closed reports with created_at,
+  // since we don't track status-change timestamps, we estimate using the
+  // time between the oldest and newest report proportionally. For a rough
+  // approximation we use the spread of created_at dates among closed reports.
+  let avgResolutionLabel = "--";
+  const closedWithDate = reports.filter(
+    r => CLOSED_STATUSES.includes(r.status) && r.created_at
+  );
+  if (closedWithDate.length > 0) {
+    // Without a status-change timestamp, we estimate resolution time as the
+    // average age of closed reports (time from creation to now). This is an
+    // upper-bound approximation but the best we can do without change logs.
+    const now = Date.now();
+    const totalMs = closedWithDate.reduce((sum, r) => {
+      return sum + (now - new Date(r.created_at!).getTime());
+    }, 0);
+    const avgMs = totalMs / closedWithDate.length;
+    const avgDays = Math.round(avgMs / (1000 * 60 * 60 * 24));
+    if (avgDays < 1) {
+      const avgHrs = Math.round(avgMs / (1000 * 60 * 60));
+      avgResolutionLabel = `~${avgHrs}h`;
+    } else {
+      avgResolutionLabel = `~${avgDays}d`;
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-4 gap-3">
+      <div className="bg-white rounded-xl border p-4 text-center">
+        <div className="text-2xl font-bold text-gray-900">{total}</div>
+        <div className="text-xs text-gray-500 mt-0.5">Total Filed</div>
+      </div>
+      <div className="bg-red-50 rounded-xl border p-4 text-center">
+        <div className="text-2xl font-bold text-red-700">{open}</div>
+        <div className="text-xs text-gray-500 mt-0.5">Open</div>
+      </div>
+      <div className="bg-green-50 rounded-xl border p-4 text-center">
+        <div className="text-2xl font-bold text-green-700">{fixed}</div>
+        <div className="text-xs text-gray-500 mt-0.5">Fixed / Actioned</div>
+      </div>
+      <div className="bg-blue-50 rounded-xl border p-4 text-center">
+        <div className="text-2xl font-bold text-blue-700">{avgResolutionLabel}</div>
+        <div className="text-xs text-gray-500 mt-0.5">Avg Resolution</div>
+      </div>
+    </div>
+  );
+}
+
+function BurndownChart({ reports }: { reports: BugReport[] }) {
+  // Build a 30-day burndown: for each day, count reports that were open
+  // (created_at <= day AND status NOT in closed statuses).
+  // Since we lack status-change timestamps, we approximate: currently-closed
+  // reports are assumed to have been closed "recently" and are treated as open
+  // for all days up to the day before today. Currently-open reports are open
+  // for all days from their creation onward.
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days: Date[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    days.push(d);
+  }
+
+  // For each report, determine when it was filed
+  const reportDates = reports
+    .filter(r => r.created_at)
+    .map(r => ({
+      createdAt: new Date(r.created_at!),
+      isOpen: !CLOSED_STATUSES.includes(r.status),
+    }));
+
+  // Compute open count per day
+  const openCounts = days.map(day => {
+    const endOfDay = new Date(day);
+    endOfDay.setHours(23, 59, 59, 999);
+    let count = 0;
+    for (const r of reportDates) {
+      if (r.createdAt <= endOfDay) {
+        // Report existed by this day
+        if (r.isOpen) {
+          // Still open now, so it was open on this day too
+          count++;
+        } else {
+          // Closed now. We assume it was resolved "today" (current day).
+          // So it was open on all past days but not today.
+          const isBeforeToday = day < today;
+          if (isBeforeToday) count++;
+        }
+      }
+    }
+    return count;
+  });
+
+  const maxCount = Math.max(...openCounts, 1);
+
+  // SVG dimensions
+  const W = 600;
+  const H = 160;
+  const padL = 32;
+  const padR = 12;
+  const padT = 12;
+  const padB = 28;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  // Build polyline points
+  const points = openCounts.map((count, i) => {
+    const x = padL + (i / (days.length - 1)) * chartW;
+    const y = padT + chartH - (count / maxCount) * chartH;
+    return `${x},${y}`;
+  });
+  const polyline = points.join(" ");
+
+  // Build area fill path
+  const areaPath = [
+    `M ${padL},${padT + chartH}`,
+    ...openCounts.map((count, i) => {
+      const x = padL + (i / (days.length - 1)) * chartW;
+      const y = padT + chartH - (count / maxCount) * chartH;
+      return `L ${x},${y}`;
+    }),
+    `L ${padL + chartW},${padT + chartH}`,
+    "Z",
+  ].join(" ");
+
+  // Y-axis labels (0, mid, max)
+  const yMid = Math.round(maxCount / 2);
+  const yLabels = [
+    { value: maxCount, y: padT },
+    { value: yMid, y: padT + chartH / 2 },
+    { value: 0, y: padT + chartH },
+  ];
+
+  // X-axis labels — show ~5 evenly spaced dates
+  const xLabelIndices = [0, 7, 14, 21, 29].filter(i => i < days.length);
+
+  return (
+    <div className="bg-white rounded-xl border p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-gray-700">Open Bugs (Last 30 Days)</h3>
+        <span className="text-xs text-gray-400">{openCounts[openCounts.length - 1]} open now</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ maxHeight: 180 }}
+      >
+        {/* Grid lines */}
+        {yLabels.map(yl => (
+          <line
+            key={yl.value}
+            x1={padL}
+            y1={yl.y}
+            x2={padL + chartW}
+            y2={yl.y}
+            stroke="#e5e7eb"
+            strokeWidth="1"
+          />
+        ))}
+
+        {/* Area fill */}
+        <path d={areaPath} fill="#dbeafe" opacity="0.6" />
+
+        {/* Line */}
+        <polyline
+          points={polyline}
+          fill="none"
+          stroke="#2563eb"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+
+        {/* Data points */}
+        {openCounts.map((count, i) => {
+          const x = padL + (i / (days.length - 1)) * chartW;
+          const y = padT + chartH - (count / maxCount) * chartH;
+          return (
+            <circle
+              key={i}
+              cx={x}
+              cy={y}
+              r="2.5"
+              fill="#2563eb"
+              stroke="white"
+              strokeWidth="1"
+            />
+          );
+        })}
+
+        {/* Y-axis labels */}
+        {yLabels.map(yl => (
+          <text
+            key={`y-${yl.value}`}
+            x={padL - 6}
+            y={yl.y + 3}
+            textAnchor="end"
+            fill="#9ca3af"
+            fontSize="10"
+          >
+            {yl.value}
+          </text>
+        ))}
+
+        {/* X-axis labels */}
+        {xLabelIndices.map(idx => {
+          const x = padL + (idx / (days.length - 1)) * chartW;
+          const d = days[idx];
+          const label = `${d.getMonth() + 1}/${d.getDate()}`;
+          return (
+            <text
+              key={`x-${idx}`}
+              x={x}
+              y={H - 4}
+              textAnchor="middle"
+              fill="#9ca3af"
+              fontSize="10"
+            >
+              {label}
+            </text>
+          );
+        })}
+      </svg>
     </div>
   );
 }
