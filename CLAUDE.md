@@ -39,7 +39,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 |-----|---------|---------------|
 | `docs/backlog.md` | All outstanding work items (SINGLE SOURCE OF TRUTH) | When items ship, are added, or reprioritized |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
-| `docs/gotchas-reference.md` | Extended gotchas (items 16-39+) | When new gotchas discovered |
+| `docs/gotchas-reference.md` | Extended gotchas (items 16-62) | When new gotchas discovered |
 | `docs/quality-audit.md` | Audit script usage, check catalog | When checks added/removed |
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
@@ -79,7 +79,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
 - **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,500+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
-- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (218 contract tests)
+- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (335+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
@@ -143,7 +143,7 @@ bainluck/
 - LLM hook enrichment is intentionally bounded. `enrich_market_hooks` only targets feed-shaped candidates and Celery runs small batches (`limit=100` every 6h). Never run hooks for the full open-market backlog (~56K markets).
 - Current production audit target: `boring-rate@20=0`, `ladder/bucket-rate@20=0`, `duplicate-family-rate@20=0`, `explanation-coverage@20=20/20`. Use `python3 scripts/audit_feed_quality.py` to measure.
 
-**Themed Dashboard Pages** (politics, entertainment, weather, economics):
+**Themed Dashboard Pages** (politics, entertainment, weather, economics) — all 5 native category pages polished (Politics, Entertainment, Weather, Economics, Preferences):
 Each category page follows the same pattern:
 - Backend route (`routes/politics.py`, `routes/entertainment.py`) queries `FuturesMarket` by `llm_sport_category` + Kalshi ticker prefixes, classifies into sub-themes, builds structured response with enriched market rows
 - `_classify_kind()` assigns rendering hints (`spotify`, `rt`, `boxoffice`, `reality`, `binary`, `multi`, etc.) based on ticker prefix → name regex → outcome count fallback
@@ -274,6 +274,11 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 36. **StatPal `season-schedule` puts playoffs in `tournament.week`, not `tournament.match`** — Regular season games are in `tournament.match` (the array our parser originally read). Playoff/postseason games are in `tournament.week` as `[{"stage": "Play Offs", "match": [...]}]`. Both arrays must be parsed in `_extract_match_items()`. Missing this caused ALL playoff games to be silently dropped for months.
 37. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers.
 38. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
+58. **Feed probability normalization for independent binary markets** — Kalshi creates separate "Will X win?" binary markets for each candidate. Probabilities can sum well over 100%. Must normalize: `if sum > 1.05: divide each by sum`. Applied in `feed.py` after building `top_outcomes_data`.
+59. **Feed staleness threshold: 95% not 97%** — The "effectively resolved" filter originally used leader >= 97%. Lowered to 95% to catch sports futures where a team is eliminated but the market leader is at 90-94%.
+60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS. Fixed: hooks now call server API on every pin/unpin when authenticated.
+61. **Celery beat schedule test has an allowlist** — `tests/test_tasks_wiring.py` has `EXPECTED_ENTRIES` set that must include every entry in `celery_app.conf.beat_schedule`. Adding a new scheduled task without updating this set causes CI failure.
+62. **Gmail API OAuth refresh tokens via Google Workspace** — Using OAuth2 refresh token (not service account) to send email as `bugs@bainluck.com`. The OAuth Playground redirect URI must NOT have a trailing slash. Config vars: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL`.
 
 ---
 

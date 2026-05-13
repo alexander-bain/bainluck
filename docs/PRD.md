@@ -2,70 +2,85 @@
 
 ## Executive Summary
 
-Bain Luck is a visual-first sports odds experience that translates betting markets into intuitive, real-time representations of how a game is expected to unfold—before and during play.
+Bain Luck is a **prediction market discovery platform** that translates betting and prediction markets into intuitive probabilities. Users see "60% vs 40%" instead of "-150 / +130". Started with sports odds, the product now covers **sports, politics, economics, entertainment, weather, technology, geopolitics, and culture** via the Discover feed.
 
-The product is designed primarily as a **second screen for casual sports fans**: people watching a game who want immediate, understandable context for what just happened and why it mattered, without having to interpret betting lines or think like gamblers.
+The product aggregates probabilities from sportsbooks (The Odds API), prediction markets (Kalshi, Polymarket), proprietary models (ESPN, Bain Luck stat model, MLB Stats API, DataGolf), and more -- serving as the **easiest place to see the probability of anything happening, computed any way possible**.
 
-Bain Luck is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the cleanest, fastest way to visualize expectation shifts in live sports.
+Bain Luck is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the most engaging way to explore what the world thinks will happen.
 
-**Expanding vision:** Bain Luck aggregates probabilities from sportsbooks (The Odds API), prediction markets (Kalshi, Polymarket), proprietary models (ESPN, Bain Luck stat model), and more — aspiring to be the **easiest place to see the probability of anything happening, computed any way possible**. Non-sports prediction markets (politics, entertainment, crypto) extend this into a broader "probability of everything" experience.
+**Current product surface (May 2026):**
+- **Discover feed** (`/`) — Social prediction market feed with Higher/Lower guessing games, daily challenges, prediction streaks, images, LLM hooks, category filtering, and personalization
+- **Sports feed** (`/sports`) — Live, upcoming, and recently completed games with multi-source probability charts
+- **Category pages** — Dedicated dashboards for Politics, Entertainment, Economics, and Weather with themed visualizations
+- **Event detail pages** — Multi-source probability charts, market maps, player props, series markets, related futures
+- **Championship grids** — League-level probability tables for 14+ leagues
+- **Calibration report** (`/calibration`) — Public accuracy analysis across 181K resolved outcomes
+- **iOS + macOS app** — Native SwiftUI app distributed via TestFlight with full feature parity
+- **Daily digest emails** — Morning email with top movers and resolving-soon markets
+- **Friend challenges** — Backend scaffold for head-to-head prediction challenges
 
 ---
 
 ## Vision & North Star
 
 ### Vision
-Make betting odds understandable to non-bettors by turning them into clean, live, visual signals about game expectations.
+**The most engaging way to explore what the world thinks will happen.**
+
+Make prediction markets and betting odds understandable to everyone by turning them into clean, visual, interactive probability experiences -- across sports, politics, economics, entertainment, weather, and more.
 
 ### North Star Statement
-**Bain Luck is the cleanest odds visualization tool on the internet.**
+**Bain Luck is the most engaging way to explore what the world thinks will happen.**
 
-### North Star Metric
-**Time-to-understanding**: How quickly a user can understand what changed in a game and how much it mattered.
+### North Star Metrics
+1. **Discover feed engagement** — Daily active users interacting with the Discover feed (Higher/Lower guesses, card opens, shares)
+2. **Prediction streaks** — Users maintaining active prediction streaks (indicates habit formation)
+3. **Return visits** — Weekly return rate for Discover feed users
+4. **Time-to-understanding** — How quickly a user can understand a probability and why it matters
 
-Proxy metrics: time on event view, repeat usage during live games, chart interactions.
+Proxy metrics: Higher/Lower guess rate, daily challenge completion rate, context expansion rate, share rate, pin rate.
 
 ### The 10-Second Success Moment
 A new user should immediately think:
 
-> "Oh—this shows me how much that play actually changed the game."
+> "Oh, I had no idea — that's only 23% likely?"
 
-This applies equally to a touchdown, a red card, a key injury announcement, or a momentum swing late in a close game. The mental model is **expectation shift**, not gambling.
+This applies equally to a championship game, a presidential election, a Federal Reserve rate decision, or a movie's Rotten Tomatoes score. The mental model is **probability discovery**, not gambling.
 
 ### Product Priorities (ranked)
 
-1. **Best aggregated event probabilities** — Best way to see event probabilities aggregated across sportsbooks
-2. **Odds vs algorithms** — Best way to compare event probabilities to algorithm probabilities (win probability models)
-3. **Cross-source comparison** — Best way to compare across ALL probability sources (DataGolf, ESPN, MLB Stats API, etc.)
-4. **Related futures** — Best way to see related futures, both out of curiosity and to understand 2nd-order impact
-5. **Team/league-level odds** — Best way to compare odds for entire teams or leagues
-6. **Discovery & engagement** — Best way to discover and interact with events with interesting odds (possibly beyond sports; possibly as a game)
+1. **Discover feed** — Social prediction market feed with Higher/Lower games, images, LLM hooks, category filtering, daily challenges, and prediction streaks
+2. **Best aggregated event probabilities** — Probability-first event detail pages with multi-source charts, market maps, player props, and championship path
+3. **Cross-source comparison** — Compare across ALL probability sources (sportsbooks, Kalshi, Polymarket, ESPN, stat models)
+4. **Related futures** — Season futures, awards, playoff path, series probability, and championship grids on every event page
+5. **Team/league-level odds** — Championship grids + league market sections (series, awards, props)
+6. **Multi-platform** — Full parity between web, iOS, and macOS (shared SwiftUI codebase)
 
 ---
 
 ## Target Users
 
-### Primary User (v1 Focus)
-**Casual sports fans who don't bet much (or at all).**
+### Primary User
+**Curious people who want probability-first context -- not betting advice.**
 
 They:
-- Watch games live
-- Hear commentators reference odds or "win probability"
-- Want context, not picks
-- Are curious but not mathematically inclined
-- Are often watching on TV with a phone in hand
+- Are curious about what the world thinks will happen (elections, sports, economics, culture)
+- Want to see "73% chance" instead of "-290" or "0.73 CLOB price"
+- Enjoy prediction games (Higher/Lower) as lightweight entertainment
+- Follow sports, politics, or current events casually
+- Are often on their phone, scrolling a feed
 
 ### Secondary Users
 - Fantasy sports players tracking matchup likelihoods
 - Casual bettors seeking quick probability insights
-- Users interested in prediction markets (politics, entertainment, events)
+- Data-curious users who appreciate calibration and accuracy transparency
+- Sports fans watching live games who want a second-screen probability experience
 
-### Explicitly Deprioritized (for now)
+### Explicitly Deprioritized
 - Professional bettors
 - Arbitrage / line-shopping users
 - Heavy fantasy analytics users
 
-These users may still find value, but the product will not optimize for them in early versions.
+These users may still find value, but the product will not optimize for them.
 
 ---
 
@@ -73,9 +88,10 @@ These users may still find value, but the product will not optimize for them in 
 
 1. **Visual > Numerical** — Percentages and charts beat odds formats every time.
 2. **Explain Movement, Not Advice** — We show what changed, not what to bet.
-3. **Second-Screen Native** — The product assumes the user is watching the game elsewhere.
+3. **Discovery-First** — The feed surfaces what is interesting and surprising. Users should find things they did not know to look for.
 4. **Respect Attention** — No spammy notifications. Silence is sometimes the correct UX.
-5. **Responsible by Design** — Betting is contextual information, not the call to action.
+5. **Responsible by Design** — Betting is contextual information, not the call to action. Never show volume or trade data to users.
+6. **Multi-Platform Native** — Web, iOS, and macOS should each feel native, not like ports.
 
 ---
 
@@ -84,9 +100,10 @@ These users may still find value, but the product will not optimize for them in 
 Bain Luck will **not** become:
 - A sportsbook or betting interface
 - A pick-selling or tout product
-- A social network
+- A social network (friend challenges are lightweight, not a social graph)
 - A news or commentary site
 - A heavy statistical modeling platform
+- A trading platform for prediction markets
 
 These exclusions are intentional and protect product clarity.
 
@@ -94,9 +111,13 @@ These exclusions are intentional and protect product clarity.
 
 ## Core User Experience
 
-### The Second-Screen Experience
+### The Discovery Experience
 
-Bain Luck is designed to be open during live play, but only active when meaningful.
+Bain Luck opens to the Discover feed -- a curated stream of the most interesting predictions happening right now across sports, politics, economics, entertainment, and weather. Users scroll, guess Higher or Lower on probabilities, build prediction streaks, and tap into detail pages when something catches their eye.
+
+### The Second-Screen Experience (Sports)
+
+For live sports, Bain Luck is designed to be open during live play, but only active when meaningful.
 
 #### Live Update Philosophy
 - Odds update when markets move meaningfully
@@ -195,31 +216,33 @@ Different game statuses show different probability data to users:
 
 | Component | Technology | Hosting | Rationale |
 |-----------|------------|---------|-----------|
-| Backend API | FastAPI (Python 3.11+) | Heroku | Modern, fast, great typing support |
+| Backend API | FastAPI (Python 3.11+), 3,500+ tests | Heroku | Modern, fast, great typing support |
 | Database | PostgreSQL | Heroku Postgres | Managed, auto-backups |
-| Task Queue | Celery + Redis | Heroku Redis | Scheduled odds polling, background tasks |
+| Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis | Scheduled odds polling, background tasks |
 | Web Frontend | Next.js 14 (React) | Vercel | SSR for shareable links, great DX |
-| iOS App | SwiftUI | Active (TestFlight) | Modern Apple development |
+| iOS/macOS App | SwiftUI (shared codebase, 89 Swift files) | TestFlight / direct | Modern Apple development, multi-platform |
 | Auth | Firebase Auth | Google Cloud | Google + Apple sign-in (shipped) |
-| Analytics | Google Analytics 4 | Google | Cross-platform tracking, User-ID support |
-| LLM Integration | OpenAI GPT-4o-mini | OpenAI | Classification, categorization (~$5/mo) |
+| Analytics | Google Analytics 4 + Firebase Analytics | Google | Cross-platform tracking, User-ID support |
+| LLM Integration | OpenAI GPT-4o-mini | OpenAI | Classification, hook descriptions, categorization (~$10/mo) |
+| Email | Gmail API via Google Workspace | Google | Daily digest, bug fix notifications |
 
 ### External Services
 
 | Service | Purpose | Cost |
 |---------|---------|------|
 | **The Odds API** | Sports odds data (moneylines, spreads, totals, futures) | ~$119/mo |
-| **Kalshi** | Prediction market data (futures with timing info) | Free |
+| **Kalshi** | Prediction market data (sports, politics, economics, entertainment, weather) | Free (API key required) |
 | **Polymarket** | Prediction market data (sports + politics/entertainment/crypto) | Free (no API key) |
 | **ESPN** | Team colors, logos, live game data, win probability, rosters | Free (undocumented) |
 | **MLB Stats API** | Live baseball win probability, schedules | Free (no API key) |
 | **StatPal** | Schedules, rosters, injuries, play-by-play | ~$99/mo |
 | **DataGolf** | Golf predictions, live in-play probabilities, leaderboards | ~$30/mo |
-| **TMDB** | Movie posters, headshots, trailers for Oscars page | Free tier |
-| **OpenAI** | GPT-4o-mini for LLM classification | ~$5/mo |
-| **Firebase Auth** | Google Sign-In, user accounts | Free tier |
+| **TMDB** | Movie/TV metadata, posters, cast info | Free tier (client-side) |
+| **Pexels** | Free stock photos for Discover feed cards | Free (200 req/hr) |
+| **OpenAI** | GPT-4o-mini for LLM classification + market hook descriptions | ~$10/mo |
+| **Firebase Auth** | Google + Apple Sign-In, user accounts | Free tier |
 | **Sentry** | Error tracking + performance monitoring | Free tier |
-| **Google Analytics 4** | User analytics | Free |
+| **Google Analytics 4** | User analytics (web + native via Firebase Analytics) | Free |
 
 ---
 
@@ -1117,7 +1140,7 @@ CREATE INDEX ix_events_commence_status ON events (commence_time, status);
 - [x] Stale data detection and auto-closing of stuck events
 - [x] Per-sport polling intervals based on game proximity
 - [x] **Sentry error tracking** — FastAPI backend + Celery worker. Controlled by `SENTRY_DSN` env var.
-- [x] **Test coverage for core algorithms** — 3,315+ backend pytest items covering all core modules. See `docs/completed-features.md` for per-module breakdown.
+- [x] **Test coverage for core algorithms** — 3,500+ backend pytest items, 335+ integration contract tests covering all core modules. See `docs/completed-features.md` for per-module breakdown.
 - [x] **Data retention Phase 1** — Lossless snapshot collapsing across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots`. Write-time dedup prevents identical consecutive rows. Retroactive collapse runs daily via Celery beat schedule. Phase 2: Rewritten to pure SQL using PostgreSQL window functions (LAG, SUM, CTEs) for constant memory — zero rows loaded into Python. Fixes Heroku worker OOM (R14).
 - [x] **Super Bowl one-off cleanup** — Removed ~7,000+ lines of dead code across ~15 files (contest.py, superbowl.py, youtube_api.py, CommercialLeaderboard.tsx, TV mode, etc.)
 - [x] **Tasks package refactor** — Monolithic `tasks.py` (2,970 lines) refactored into `tasks/` package with 15 modules. All task names pinned for backward compatibility. Celery heartbeat + health endpoint added.
@@ -1593,30 +1616,23 @@ During onboarding, users select favorite teams. The system runs structured queri
 4. iOS integration with native insights feed
 5. Daily digest emails
 
-### Phase 20: iOS App ✅ SHIPPED (Feb-Mar 2026)
-**Native second-screen experience — shipped across 7 phases, 29 commits.**
+### Phase 20: iOS + macOS App ✅ SHIPPED (Feb-May 2026)
+**Native multi-platform experience — SwiftUI shared codebase, 89 Swift files, distributed via TestFlight.**
 
-- [x] SwiftUI app with near-feature-parity to web
-- [x] Section-based feed (Live Now, Just Happened, Upcoming, Top Markets)
+- [x] SwiftUI app with full feature parity to web (Discover feed, Sports feed, category pages, event detail, search)
+- [x] Discover feed with Higher/Lower guessing games, daily challenges, prediction streaks
 - [x] Multi-source odds chart with period markers, All/Since Start toggle, team colors
-- [x] Event detail: probability bar, chart, related futures ("Bigger Picture"), line movement, scoring plays
-- [x] Search with suggestions + EI Rankings (Hall of Fame)
-- [x] Filter chips (sport categories, Starting Soon, Primetime/National TV)
+- [x] Event detail: probability bar, chart, related futures, series markets, line movement, player props
+- [x] 5 polished native category pages: Politics, Entertainment, Economics, Weather, Preferences
 - [x] Apple Sign-In + Google Sign-In with Keychain token storage
-- [x] Native 5-step onboarding flow
-- [x] Preferences page with app icon selection
+- [x] Native 4-card welcome onboarding + sign-in value proposition
 - [x] iPad-native layout (sidebar navigation + max-width detail views)
-- [x] Category detail pages navigable from filter chips
-- [x] Swipe-to-pin on cards, compact pin buttons
-- [x] Haptic feedback, live tab badge, skeleton loading states
-- [x] Firebase Analytics (screen views, event interactions)
-- [x] Deep linking support
-- [ ] Share extension for quick sharing
-- [ ] Background refresh
-- [ ] Widgets (Lock Screen, Home Screen)
-  - Current game win probability
-  - Upcoming games for favorite teams
-  - "Most Exciting Game Right Now"
+- [x] macOS support (shared codebase, menu bar scores, Cmd+K search, context menus)
+- [x] Haptic feedback, swipe-to-dismiss cards, Firebase Analytics parity
+- [x] Rage shake bug reporting with auto-diagnosis
+- [x] League market sections below championship grids
+- [ ] Widgets (Lock Screen, Home Screen, macOS Today view)
+- [ ] Push notifications (token capture shipped, sending not yet implemented)
 - [ ] App Store submission
 
 ---
@@ -1807,19 +1823,25 @@ Bain Luck displays information, not transactions.
 ## Success Metrics
 
 ### Product Metrics
-- % of sessions during live games
-- Repeat opens during a single game
-- Time spent on event view
-- Highlights section engagement
-- Futures page views
+- **Discover feed engagement** — Daily active users interacting with the Discover feed
+- **Higher/Lower guess rate** — Guesses per session (target: 3+)
+- **Daily challenge completion rate** — % of users who finish the 5-question daily challenge
+- **Prediction streak retention** — Users maintaining active streaks across sessions
+- **Return visits** — Weekly return rate for Discover feed users
+- **Category page engagement** — Time spent on Politics, Entertainment, Economics, Weather pages
+- **Share rate** — Cards shared per session
+- **Pin rate** — Events/futures pinned per user
 
 ### Technical Metrics
 - **Reliability**: 99.9% uptime for API
 - **Freshness**: Odds updated within 2 minutes of source
 - **Performance**: API response time < 200ms p95
 - **Coverage**: % of sports with active event discovery
+- **Calibration accuracy**: MCE < 5pp across all sources (currently 4.8pp)
+- **Link rate**: >90% of Tier 1 game markets linked to events
 
 ### Trust Metrics
+- **Calibration transparency**: Public calibration report at `/calibration`
 - Low notification opt-out rates
 - Low bounce rate during paused states
 - Consent acceptance rate
@@ -1830,27 +1852,41 @@ Bain Luck displays information, not transactions.
 
 ### Backlog
 
-All outstanding work items are tracked in **`docs/backlog.md`** (single source of truth). This includes architecture initiatives, high-priority follow-ups, golf work, data quality, sport/league pages, DS/analytics infrastructure, feature ideas, and housekeeping.
+All outstanding work items are tracked in **`docs/backlog.md`** (single source of truth). This includes semantic matching accuracy, feed quality, calibration, category page improvements, iOS polish, search enhancements, and infrastructure work.
 
 ### Shipped Features
 
-See **`docs/completed-features.md`** for the full log of everything that has shipped.
+See **`docs/completed-features.md`** for the full log of everything that has shipped. Major recent milestones:
+- **Discover feed** with Higher/Lower games, daily challenges, streaks, personalization (Apr-May 2026)
+- **Category pages**: Politics, Entertainment, Economics, Weather -- web + iOS (May 2026)
+- **Navigation redesign**: Discover as default landing page (May 2026)
+- **Calibration pipeline**: 4.8pp MCE across 181K outcomes, public `/calibration` page (May 2026)
+- **TestFlight distribution**: iOS + macOS app with full feature parity (May 2026)
+- **Daily digest emails** + bug fix notification pipeline (May 2026)
+- **335+ integration contract tests** for API shape validation (May 2026)
 
 ### Ideas Under Exploration
 
 These need design questions answered before planning:
 
-- **Bespoke category landing pages** — Basketball, football, soccer, politics, entertainment (golf shipped Mar 2026)
+- **Live game companion mode** — Simplified second-screen view with aggressive auto-refresh, screen-stays-awake, and minimal below-the-fold content
 - **Golf live scores integration** — StatPal live scores overlaid on odds data during tournaments
-- **"What Are the Odds?" game** — Probability guessing game as retention/viral driver. Many game mechanics to work out (scoring formula, difficulty modes, multiplayer, social sharing).
-- **Insight Arena** — Admin LLM training via A/B preference selection on generated insights. Choices train the LLM on what makes a good insight. Eventually graduates to user-facing surfaces.
+- **Push notifications for market moves** — Foundation shipped (iOS token capture + backend endpoint), actual push sending not yet implemented
+- **Friend challenge UI** — Backend scaffold shipped (table, model, 3 API endpoints), frontend UI not yet built
+- **Semantic search** — Embedding-based search so users can ask "Will the Celtics repeat?" and find championship markets
+
+### Shipped (from previous exploration list)
+
+- ~~**Bespoke category landing pages**~~ — All shipped: Politics, Entertainment, Economics, Weather (web + iOS)
+- ~~**"What Are the Odds?" game**~~ — Shipped as Higher/Lower in Discover feed with daily challenges and prediction streaks
 
 ### Open Questions
 
 1. **iOS widget strategy**: Which widgets provide most value? Lock screen vs home screen?
-2. **LLM cost management**: How to balance explanation quality with API costs? (Current: ~$5/mo with caching)
-3. **Live event polling frequency**: Should futures poll more aggressively during playoffs/key events? (See live tournament polling in backlog)
+2. **LLM cost management**: How to balance explanation quality with API costs? (Current: ~$10/mo with caching)
+3. **Live event polling frequency**: Should futures poll more aggressively during playoffs/key events?
 4. **Auth conversion**: What's the right moment to prompt for sign-in without being annoying? (Currently: only on explicit "Sign In" tap)
+5. **Email provider migration**: Gmail API with OAuth is fragile for scale. When to migrate to SendGrid/Postmark/SES?
 
 ---
 
@@ -1862,4 +1898,4 @@ If Bain Luck succeeds, users won't say:
 > "This helped me bet."
 
 They'll say:
-> "I finally understood what was happening."
+> "I had no idea that was only 23% likely. Let me guess the next one."

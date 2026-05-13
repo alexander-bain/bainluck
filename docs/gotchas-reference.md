@@ -4,7 +4,7 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 ---
 
-## Items 16-57 (overflow from CLAUDE.md)
+## Items 16-62 (overflow from CLAUDE.md)
 
 16. **Deleting events requires FK cleanup** — must delete from 8+ tables before removing the event row. Use raw SQL, not ORM `db.delete()`, to avoid autoflush FK violations.
 17. **Kalshi auto-creates pm_ events** when no matching event exists. Guard added to prevent new duplicates, but historical orphans need cleanup via admin endpoints.

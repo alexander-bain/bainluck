@@ -53,30 +53,11 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/app/utils/win_probability.py` (`compute_statistical_win_prob`), `backend/app/tasks/espn_sync.py` (where stat_model is computed)
 
-### Game-Markets Query Missing Kalshi Props (HIGH PRI)
+### ~~Game-Markets Query Missing Kalshi Props~~ — FIXED (May 13)
 
-**Problem:** The event detail page's game-markets section returns empty for many events that actually have 15-20 linked Kalshi markets (spreads, totals, overtime, half winners, player props, points leaders). These are correctly linked via `event_id` in `futures_markets` but don't appear in the API response.
+Root cause: status and `llm_sport_category` filters were excluding linked markets from the game-markets query. Removed both filters from the linked query path. Overtime, half winners, player props, points leaders now show on event detail pages for all linked events.
 
-**Example:** Event 14594073 (Knicks @ Hawks, Apr 23) has 18 linked Kalshi markets and 1 Polymarket market (verified via `GET /api/source-intelligence/linked-markets?event_id=14594073`), but `GET /api/events/14594073` returns `game_markets: {}` (empty).
-
-**Interesting market types being hidden:**
-- **Overtime** (`KXNBAOVERTIME-*`): "Will the game go to overtime?" — great for close games
-- **Half winners** (`KXNBA1HWINNER-*`, `KXNBA2HWINNER-*`): "Who wins the 1st/2nd half?" with 3-way (home/away/tie)
-- **Half spreads/totals** (`KXNBA1HSPREAD-*`, `KXNBA2HTOTAL-*`): Half-level market structure
-- **Points leader** (`KXNBAPTSLEADER-*`): "Who scores the most?" — multi-outcome
-- **Player props** (`KXNBAPTS-*`, `KXNBAREB-*`, `KXNBAAST-*`, `KXNBA3PT-*`, `KXNBABLK-*`, `KXNBASTL-*`): Already have these from Polymarket decomposition, but Kalshi versions may have different structure
-
-**Where to investigate:**
-- The game-markets query lives in `backend/app/routes/events.py` — search for the section that builds the `game_markets` response (around the `game-markets` or `odds-history` endpoint).
-- The query likely filters by `status` (dropping resolved markets), or by `market_tier`, or by `category`, or has a time-window filter on `commence_time` that uses Kalshi's `commence_time` (which is the resolution date, not the game date — gotcha #9/19).
-- These markets all have `category="game_prop"` and `market_tier=5` and `status="resolved"` — the status filter is the most likely culprit since the game is completed.
-- For LIVE games, these markets should appear. Check if there's a `status.in_(["open", "active"])` filter that excludes resolved props on completed games.
-- The Polymarket "Hawks vs. Knicks" market (id=12460776) has `tier=1, category="championship"` which is misclassified — it's a game market, not a championship. This is a separate classification bug in `compute_market_tier()`.
-
-**Fix approach:** The game-markets endpoint should return ALL linked markets for an event regardless of market status (resolved markets on completed games are still valuable for viewing). Consider grouping by type (overtime, half, player props) for display.
-
-**Files:** `backend/app/routes/events.py` (game-markets query), `backend/app/utils/prediction_market_matching.py` (market tier classification)
-**Parallel Safety:** Yellow (different route from source-intelligence work)
+**Files:** `backend/app/routes/events.py` (game-markets query)
 
 ---
 
@@ -364,24 +345,19 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 - ✅ Economics data parsing error fixed (removed `rateCuts` field — backend sends nested arrays, iOS expected market objects, field unused in view)
 - ✅ Economics page polished to match Politics/Entertainment design (May 13)
 - ✅ Politics, Entertainment, and Weather pages polished (May 13)
-
-**Remaining:**
-- Design pass on Preferences: use the Claude Design handoffs above as the visual target
+- ✅ Preferences page polished (May 13) — ALL 5 NATIVE-DESIGN PAGES COMPLETE
 
 **Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
-**Parallel Safety:** Green (each page is independent)
 
 ---
 
 ## Tier 1 — High Leverage, Do Next
 
-### Bug Report Admin Improvements
+### Bug Report Admin Improvements — PARTIALLY DONE (May 13)
 
-**Problem:** The admin bug report page at `/admin/bug-reports` is functional but lacks analytics and categorization:
-
-1. **Burndown chart** — show a visual timeline of open vs closed bugs over time. How quickly are we resolving reports?
+1. ~~**Burndown chart**~~ — ✅ SHIPPED (May 13). SVG burndown chart + summary stats (open/closed/avg resolution time) on admin bug reports page.
 2. **Category tagging** — tag bugs by category (UI, data quality, performance, feature request, etc.) so we can spot patterns. Add a `category` field to `BugReport` model + admin UI dropdown.
-3. **Resolution time tracking** — measure time from submission to `fixed` status. Surface average resolution time.
+3. ~~**Resolution time tracking**~~ — ✅ SHIPPED (May 13). Included in burndown summary stats.
 4. **Auto-categorization** — use GPT-4o-mini to auto-suggest a category from the bug description when a report is filed.
 
 **Files:** `frontend/app/admin/bug-reports/page.tsx`, `backend/app/models/models.py` (BugReport), `backend/app/routes/admin.py`
@@ -491,24 +467,11 @@ Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV su
 
 **Files:** `frontend/components/PlayerPropsDashboard.tsx`
 
-### 0f-3d Issue 4: Series Markets Not Surfaced — INVESTIGATED (May 13)
+### ~~0f-3d Issue 4: Series Markets~~ — SHIPPED (May 13)
 
-**Problem:** Kalshi has rich series-level markets (Series Winner, Series Exact Score, Series Game Spread, Series Total Games) that should show on every game's event detail page during a playoff series.
+Series markets now loaded as a dedicated `series_markets` array via display-time team name query (Option 2 — no linking needed). New `display_category="series"` classification. Backend, web, and iOS rendering all shipped.
 
-**Investigation findings (May 13):**
-- Series tickers (`kxnbaseries`, `kxnhlseries`, `kxmlbseries`) ARE in `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` and correctly mapped to sports
-- These markets are classified as futures (not game props) so they don't get `event_id` linking — they're standalone season-level markets
-- The matchup regex `_BARE_MATCHUP_RE` has an edge case: team names starting with digits (e.g., "76ers") don't match `[A-Z]` after "vs."
-- Series markets appear on league pages (via `fetchLeagueMarkets`) but NOT on individual game event detail pages
-
-**Two approaches:**
-1. **Link approach (complex):** Create a `series_event_ids` JSONB field on series markets, linking to all games in the series. Requires detecting which games belong to which series (team matching + playoff round detection). The matching task would need series-awareness.
-2. **Display approach (simpler):** On the event detail page, when showing related futures for playoff teams, also query for series markets matching both team names. No linking needed — just a query at display time.
-
-**Recommended:** Option 2 — query series markets by team names at display time in the related-futures or game-markets endpoint. Add a "Series" section to the event detail page.
-
-**Files:** `backend/app/routes/events.py` (related futures query), `frontend/components/RelatedFutures.tsx`, `ios/.../Views/EventDetailView.swift`
-**Parallel Safety:** Yellow
+**Files:** `backend/app/routes/events.py`, `frontend/components/RelatedFutures.tsx`, `ios/.../Views/EventDetailView.swift`
 
 ### 0f. Event Detail Below-the-Fold Redesign — TradeWatch Rethink
 
@@ -586,7 +549,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-~~110~~ ~~158~~ ~~210~~ 218 contract tests shipped (52 category page tests added May 13). Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ ~~218~~ 335+ contract tests shipped (124 new tests added May 13: playoffs, league futures, related futures, team progression). Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity

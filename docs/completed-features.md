@@ -2,11 +2,23 @@
 
 ## May 13, 2026 — Category Page Polish + Infrastructure + Cleanup
 
-### Native Category Page Polish (NATIVE-DESIGN complete)
-- ✅ **Economics page iOS polish** — Visual card design matching Politics/Entertainment style. All 4 native category pages now done (Politics, Entertainment, Weather, Economics).
+### Native Category Page Polish (NATIVE-DESIGN complete — ALL 5 pages)
+- ✅ **Economics page iOS polish** — Visual card design matching Politics/Entertainment style.
 - ✅ **Entertainment page iOS polish** — Visual card design with richer hierarchy and styled market cards.
 - ✅ **Weather page iOS polish** — Temperature colors, probability bars, bracket collapse for cleaner city forecast display.
 - ✅ **Politics page iOS polish** — Cards, bars, map, badges refined for native visual quality.
+- ✅ **Preferences page iOS polish** — All 5 NATIVE-DESIGN pages now complete (Politics, Entertainment, Weather, Economics, Preferences).
+
+### Game-Markets & Series Markets
+- ✅ **Game-markets fix: removed status/category filters** — Linked Kalshi markets were hidden by `status` and `llm_sport_category` filters on the game-markets query. Removed both filters from the linked query path. Overtime, half winners, player props, points leaders now show on event detail pages.
+- ✅ **Series markets: dedicated array on event detail** — Series markets (Series Winner, Series Exact Score, Series Spread, Series Total Games) now loaded as a dedicated `series_markets` array via display-time team name query. New `display_category="series"` classification. Backend + web + iOS rendering shipped.
+
+### Bug Admin Analytics
+- ✅ **Burndown chart + summary stats** — SVG burndown chart on admin bug reports page showing open vs closed bugs over time, plus summary stats (total, open, closed, avg resolution time).
+
+### Testing & Quality
+- ✅ **124 new contract tests** — Playoffs, league futures, related futures, team progression test coverage. Integration test suite total now ~335 tests.
+- ✅ **Gotchas #58-62 added** — Feed normalization, staleness threshold, web pin sync, beat schedule test allowlist, Gmail OAuth refresh tokens.
 
 ### Bug Fixes & Verifications
 - ✅ **BR-PIN: Web pin sync fixed** — Pin sync was localStorage-only on web. Now syncs events + futures pins to server for cross-device persistence.
@@ -38,6 +50,7 @@
 
 ### Testing & CI
 - ✅ **52 contract tests for category page APIs** — Weather, politics, entertainment, economics API shape validation. Integration suite: 158 → 210 tests.
+- ✅ **124 additional contract tests** — Playoffs, league futures, related futures, team progression. Integration suite: 210 → ~335 tests.
 - ✅ **CI fix: daily-digest in beat schedule test** — Added `daily-digest` to expected Celery beat schedule entries in `test_tasks_wiring.py`.
 
 ### Cleanup
