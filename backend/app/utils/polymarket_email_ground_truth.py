@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import csv
+import json
+import re
 from datetime import date, datetime, timedelta, timezone
 import os
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote
 
 import httpx
 
@@ -15,6 +18,8 @@ import httpx
 DEFAULT_MIN_INTERESTINGNESS = 8
 DEFAULT_LOOKBACK_DAYS = 21
 DEFAULT_STALE_AFTER_DAYS = 2
+DEFAULT_SHEET_NAME = "Audit Export"
+SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 
 
 def load_polymarket_email_ground_truth_report_from_env(
@@ -27,6 +32,8 @@ def load_polymarket_email_ground_truth_report_from_env(
         os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL")
         or os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_URL")
     )
+    spreadsheet_id = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_SPREADSHEET_ID")
+    sheet_name = os.getenv("POLYMARKET_EMAIL_GROUND_TRUTH_SHEET_NAME", DEFAULT_SHEET_NAME)
     min_interestingness = int(
         os.getenv(
             "POLYMARKET_EMAIL_GROUND_TRUTH_MIN_INTERESTINGNESS",
@@ -49,6 +56,22 @@ def load_polymarket_email_ground_truth_report_from_env(
             )
         except Exception as exc:
             return _error_report("csv_path", str(exc), source_path=csv_path)
+    if spreadsheet_id:
+        try:
+            return load_polymarket_email_ground_truth_report_from_google_sheet(
+                spreadsheet_id,
+                sheet_name=sheet_name,
+                min_interestingness=min_interestingness,
+                lookback_days=lookback_days,
+                now=now,
+            )
+        except Exception as exc:
+            return _error_report(
+                "google_sheet",
+                str(exc),
+                spreadsheet_id=spreadsheet_id,
+                sheet_name=sheet_name,
+            )
     if csv_url:
         try:
             return load_polymarket_email_ground_truth_report_from_csv_url(
@@ -58,6 +81,27 @@ def load_polymarket_email_ground_truth_report_from_env(
                 now=now,
             )
         except Exception as exc:
+            parsed_spreadsheet_id = _extract_spreadsheet_id(csv_url)
+            if parsed_spreadsheet_id and _google_service_account_json():
+                try:
+                    report = load_polymarket_email_ground_truth_report_from_google_sheet(
+                        parsed_spreadsheet_id,
+                        sheet_name=sheet_name,
+                        min_interestingness=min_interestingness,
+                        lookback_days=lookback_days,
+                        now=now,
+                    )
+                    report["metadata"]["source_url"] = csv_url
+                    report["metadata"]["fallback_from_csv_url_error"] = str(exc)
+                    return report
+                except Exception as sheet_exc:
+                    return _error_report(
+                        "csv_url",
+                        f"{exc}; Google Sheets API fallback failed: {sheet_exc}",
+                        source_url=csv_url,
+                        spreadsheet_id=parsed_spreadsheet_id,
+                        sheet_name=sheet_name,
+                    )
             return _error_report("csv_url", str(exc), source_url=csv_url)
     return {
         "items": [],
@@ -268,6 +312,36 @@ def load_polymarket_email_ground_truth_report_from_csv_url(
     return report
 
 
+def load_polymarket_email_ground_truth_report_from_google_sheet(
+    spreadsheet_id: str,
+    *,
+    sheet_name: str = DEFAULT_SHEET_NAME,
+    min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
+    lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Load ground truth from a private Google Sheet via service-account auth."""
+    values = _read_google_sheet_values(spreadsheet_id, sheet_name)
+    csv_text = _sheet_values_to_csv(values)
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
+        csv_text,
+        min_interestingness=min_interestingness,
+        lookback_days=lookback_days,
+        now=now,
+    )
+    report["metadata"].update(
+        {
+            "configured": True,
+            "source": "google_sheet",
+            "source_path": None,
+            "source_url": None,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
+        }
+    )
+    return report
+
+
 def summarize_polymarket_email_ground_truth(
     diagnosed: Iterable[dict],
     email_items: Iterable[dict[str, str]],
@@ -326,10 +400,13 @@ def _cutoff_date(
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
-    try:
-        return datetime.strptime(value.strip()[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
+    text = value.strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _parse_int(value: str | None) -> int:
@@ -343,6 +420,56 @@ def _parse_int(value: str | None) -> int:
 
 def _dedupe_key(name: str) -> str:
     return " ".join(name.lower().split())
+
+
+def _read_google_sheet_values(spreadsheet_id: str, sheet_name: str) -> list[list[Any]]:
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    service_account_json = _google_service_account_json()
+    if not service_account_json:
+        raise RuntimeError(
+            "Google Sheet ground truth requires FIREBASE_SERVICE_ACCOUNT_JSON "
+            "or GOOGLE_APPLICATION_CREDENTIALS_JSON."
+        )
+
+    credentials = service_account.Credentials.from_service_account_info(
+        json.loads(service_account_json),
+        scopes=[SHEETS_READONLY_SCOPE],
+    )
+    credentials.refresh(Request())
+    range_name = quote(_quote_sheet_name(sheet_name), safe="")
+    response = httpx.get(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_name}",
+        headers={"Authorization": f"Bearer {credentials.token}"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload.get("values", [])
+
+
+def _sheet_values_to_csv(values: list[list[Any]]) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerows(values)
+    return output.getvalue()
+
+
+def _google_service_account_json() -> str | None:
+    return os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") or os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+    )
+
+
+def _quote_sheet_name(sheet_name: str) -> str:
+    escaped = sheet_name.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _extract_spreadsheet_id(url: str) -> str | None:
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+    return match.group(1) if match else None
 
 
 def _normalize_row_keys(row: dict[str, str]) -> dict[str, str]:
@@ -403,6 +530,8 @@ def _error_report(
     *,
     source_url: str | None = None,
     source_path: str | None = None,
+    spreadsheet_id: str | None = None,
+    sheet_name: str | None = None,
 ) -> dict[str, Any]:
     return {
         "items": [],
@@ -411,6 +540,8 @@ def _error_report(
             "source": source,
             "source_url": source_url,
             "source_path": source_path,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
             "raw_row_count": 0,
             "loaded_count": 0,
             "latest_date": None,

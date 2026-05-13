@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 
 from app.utils.polymarket_email_ground_truth import (
+    _extract_spreadsheet_id,
+    _sheet_values_to_csv,
     load_polymarket_email_ground_truth_from_csv_text,
     load_polymarket_email_ground_truth_report_from_csv_text,
     summarize_polymarket_email_ground_truth,
@@ -18,7 +20,7 @@ CSV_TEXT = """Date,Source,Market Name,Category,Leader,Leader Probability,Resolut
 """
 
 STABLE_EXPORT_CSV_TEXT = """date,source,market_name,category,leader,leader_probability,resolution_date,email_subject,llm_category,hook,interestingness,timeliness,shareability
-2026-05-11,polymarket,Will Taylor Swift be pregnant in 2026?,entertainment,Yes,22%,2026-12-31,Email,entertainment,Hook,9,this_month,9
+5/11/2026,polymarket,Will Taylor Swift be pregnant in 2026?,entertainment,Yes,22%,2026-12-31,Email,entertainment,Hook,9,this_month,9
 """
 
 
@@ -52,6 +54,61 @@ def test_load_polymarket_email_ground_truth_accepts_stable_export_headers():
     assert report["items"][0]["name"] == "Will Taylor Swift be pregnant in 2026?"
     assert report["items"][0]["probability"] == "22%"
     assert report["items"][0]["email_subject"] == "Email"
+
+
+def test_sheet_values_to_csv_reuses_stable_parser():
+    csv_text = _sheet_values_to_csv(
+        [
+            [
+                "date",
+                "source",
+                "market_name",
+                "category",
+                "leader",
+                "leader_probability",
+                "resolution_date",
+                "email_subject",
+                "llm_category",
+                "hook",
+                "interestingness",
+                "timeliness",
+                "shareability",
+            ],
+            [
+                "2026-05-11",
+                "polymarket",
+                "Will Taylor Swift be pregnant in 2026?",
+                "entertainment",
+                "Yes",
+                "22%",
+                "2026-12-31",
+                "Email",
+                "entertainment",
+                "Hook, with comma",
+                "9",
+                "this_month",
+                "9",
+            ],
+        ]
+    )
+
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
+        csv_text,
+        min_interestingness=8,
+        lookback_days=21,
+        now=datetime(2026, 5, 12, tzinfo=timezone.utc),
+    )
+
+    assert report["items"][0]["hook"] == "Hook, with comma"
+
+
+def test_extract_spreadsheet_id_from_export_url():
+    assert (
+        _extract_spreadsheet_id(
+            "https://docs.google.com/spreadsheets/d/abc_DEF-123/export?format=csv&gid=10"
+        )
+        == "abc_DEF-123"
+    )
 
 
 def test_summarize_polymarket_email_ground_truth_matches_feed_names():

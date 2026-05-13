@@ -33,6 +33,12 @@ POLYMARKET_EMAIL_GROUND_TRUTH_CSV_PATH=/path/to/polymarket_email_ground_truth.cs
 # from backend/audit jobs if the sheet is private.
 POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0" \
   python3 scripts/audit_feed_quality.py
+
+# Or from a private Google Sheet shared with the Firebase service account:
+POLYMARKET_EMAIL_GROUND_TRUTH_SPREADSHEET_ID="..." \
+POLYMARKET_EMAIL_GROUND_TRUTH_SHEET_NAME="Audit Export" \
+FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}' \
+  python3 scripts/audit_feed_quality.py
 ```
 
 ## Health Score
@@ -85,6 +91,7 @@ Targets:
 - `snippet-issues@20` should trend down; current checks flag overlong snippets, title repetition, generic resolution copy, and context without concrete signals.
 - Discover cards should use top-level `context_summary` for visible copy and reserve full `hook_description` text for expansion.
 - Optional Polymarket email ground truth reports `email-hit@20` / `email-hit@50` when `POLYMARKET_EMAIL_GROUND_TRUTH_CSV_PATH`, `POLYMARKET_EMAIL_GROUND_TRUTH_CSV_URL`, or `POLYMARKET_EMAIL_GROUND_TRUTH_URL` is set. Stable export headers are preferred: `date`, `source`, `market_name`, `category`, `leader`, `leader_probability`, `resolution_date`, `email_subject`, `llm_category`, `hook`, `interestingness`, `timeliness`, `shareability`.
+- Private Google Sheets are supported through `POLYMARKET_EMAIL_GROUND_TRUTH_SPREADSHEET_ID` + `POLYMARKET_EMAIL_GROUND_TRUTH_SHEET_NAME` when `FIREBASE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS_JSON` is configured. If a CSV export URL returns 401 and service-account credentials are present, the loader falls back to the Sheets API using the spreadsheet id parsed from the URL.
 - The email ground-truth loader records raw row count, loaded row count, latest email date, and stale status (`>2d` old). `/admin/discover-quality` surfaces those diagnostics when the feed debug endpoint is configured. If the export is private, the audit/admin UI reports the HTTP error instead of failing the whole feed debug request.
 - Keep email ground truth evaluative until the hit/miss profile is understood; email-highlighted markets must not bypass quality filters.
 
