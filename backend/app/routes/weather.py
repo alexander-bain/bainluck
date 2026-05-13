@@ -406,6 +406,7 @@ async def get_cities(db: AsyncSession = Depends(get_db)):
             "x": info["x"],
             "y": info["y"],
             "srcs": sorted(sources),
+            "marketId": chosen.id,
             "high": {
                 "unit": unit,
                 "mode": mode_val,

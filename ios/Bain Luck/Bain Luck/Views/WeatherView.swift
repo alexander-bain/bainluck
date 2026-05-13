@@ -209,7 +209,14 @@ struct WeatherView: View {
             let columns = [GridItem(.adaptive(minimum: 300), spacing: 14)]
             LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(filteredCities) { city in
-                    CityForecastCard(city: city)
+                    if let marketId = city.marketId {
+                        NavigationLink(value: Route.futuresDetail(id: marketId)) {
+                            CityForecastCard(city: city)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        CityForecastCard(city: city)
+                    }
                 }
             }
             .padding(.horizontal)

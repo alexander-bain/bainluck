@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type CityData, tempColorC, toC, SOURCES } from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
 
@@ -100,8 +101,23 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         className="font-mono"
         style={{ fontSize: 11, color: "#9CA3AF", marginTop: isCrossSource ? 6 : 16, textAlign: "center" }}
       >
-        Click any pin on the map &middot; {dist.length} outcome buckets
-        {city.srcs.length > 1 ? " (Polymarket)" : ` (${SOURCES[city.srcs[0]].label})`}
+        {city.marketId ? (
+          <Link
+            href={`/futures/${city.marketId}`}
+            className="inline-flex items-center gap-1 text-accent-brand hover:underline"
+            style={{ fontSize: 11 }}
+          >
+            View probability timeline
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="inline">
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </Link>
+        ) : (
+          <>
+            Click any pin on the map &middot; {dist.length} outcome buckets
+            {city.srcs.length > 1 ? " (Polymarket)" : ` (${SOURCES[city.srcs[0]].label})`}
+          </>
+        )}
       </div>
     </div>
   );

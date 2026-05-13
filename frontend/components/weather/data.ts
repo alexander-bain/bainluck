@@ -17,6 +17,7 @@ export type CityData = {
   y: number;
   region: "Americas" | "Europe" | "Asia" | "Africa" | "Oceania";
   srcs: Source[];
+  marketId?: number;
   high: {
     unit: "C" | "F";
     mode: number;

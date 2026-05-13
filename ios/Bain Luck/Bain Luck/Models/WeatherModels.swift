@@ -19,12 +19,13 @@ nonisolated struct WeatherCity: Decodable, Identifiable, Sendable {
     let name: String
     let region: String
     let srcs: [String]
+    let marketId: Int?
     let high: WeatherDistribution?
     let low: WeatherDistribution?
 
     enum CodingKeys: String, CodingKey {
         case cityId = "id"
-        case name, region, srcs, high, low
+        case name, region, srcs, marketId, high, low
     }
 }
 
