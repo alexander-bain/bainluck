@@ -10033,6 +10033,11 @@ async def calibration_data(
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
               AND fo.current_probability IS NOT NULL
               AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+              AND EXISTS (
+                  SELECT 1 FROM futures_odds_snapshots fos
+                  WHERE fos.outcome_id = fo.id
+                    AND fos.yes_bid IS NOT NULL AND fos.yes_bid > 0
+              )
         ),
         mode_prices AS (
             SELECT vm_id, adj_opening_probability AS mode_price
