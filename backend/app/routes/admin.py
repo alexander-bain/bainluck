@@ -9977,12 +9977,12 @@ async def calibration_data(
                 mi.market_id, mi.source, mi.category, mi.event_id,
                 CASE WHEN gs.group_size >= 3
                      THEN 'g:' || mi.group_id
-                     WHEN es.event_size >= 2
+                     WHEN es.event_size >= 3
                      THEN 'e:' || mi.event_id::text
                      ELSE 'm:' || mi.market_id::text
                 END AS vm_id,
                 COALESCE(gs.group_size >= 3, false)
-                  OR COALESCE(es.event_size >= 2, false) AS is_grouped,
+                  OR COALESCE(es.event_size >= 3, false) AS is_grouped,
                 mi.mutually_exclusive
             FROM market_info mi
             LEFT JOIN group_sizes gs
