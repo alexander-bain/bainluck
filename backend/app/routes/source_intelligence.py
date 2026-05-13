@@ -926,34 +926,28 @@ async def cleanup_orphaned_snapshots(
     }
 
     if not dry_run and result["total_snapshots"] > 0:
-        await db.execute(text("""
-            DELETE FROM win_prob_snapshots wp
-            WHERE wp.source IN ('kalshi', 'polymarket')
-              AND wp.game_state->>'market_id' IS NOT NULL
-              AND EXISTS (
-                  SELECT 1 FROM futures_markets fm
-                  WHERE fm.id = (wp.game_state->>'market_id')::int
-                    AND fm.event_id IS NULL
-              )
+        # First collect the unlinked market IDs (small set)
+        mid_result = await db.execute(text("""
+            SELECT id FROM futures_markets
+            WHERE source IN ('kalshi', 'polymarket')
+              AND event_id IS NULL
         """))
+        unlinked_market_ids = [r.id for r in mid_result.all()]
 
-        # Also clean win_probability_sources JSONB for affected events
-        # Find events that had snapshots deleted and still have kalshi/polymarket
-        # in their JSONB — but only clear the source if NO valid snapshots remain
-        cleanup_wps_sql = text("""
-            WITH affected_events AS (
-                SELECT DISTINCT event_id, source
-                FROM win_prob_snapshots
+        # Delete in chunks of market IDs to keep each DELETE manageable
+        deleted_total = 0
+        chunk_size = 500
+        for i in range(0, len(unlinked_market_ids), chunk_size):
+            chunk = unlinked_market_ids[i:i + chunk_size]
+            del_result = await db.execute(text("""
+                DELETE FROM win_prob_snapshots
                 WHERE source IN ('kalshi', 'polymarket')
-                GROUP BY event_id, source
-                HAVING COUNT(*) = 0
-            )
-            SELECT 1 LIMIT 0
-        """)
-        # This is complex to do perfectly in SQL. For now, just commit the
-        # snapshot deletion — the JSONB values will be overwritten by the
-        # next matching task run anyway.
-        await db.commit()
+                  AND game_state->>'market_id' IS NOT NULL
+                  AND (game_state->>'market_id')::int = ANY(:mids)
+            """), {"mids": chunk})
+            deleted_total += del_result.rowcount
+            await db.commit()
+        result["actually_deleted"] = deleted_total
 
     return result
 
