@@ -31,7 +31,7 @@ final class PoliticsViewModel: ObservableObject {
 private let partyColor: [String: Color] = [
     "R": Color(red: 0.863, green: 0.149, blue: 0.149),
     "D": Color(red: 0.145, green: 0.388, blue: 0.922),
-    "I": Color.gray,
+    "I": Color(red: 0.55, green: 0.35, blue: 0.78),
 ]
 
 private let themeEmoji: [String: String] = [
@@ -100,7 +100,7 @@ struct PoliticsView: View {
     // MARK: - Page header
 
     private func pageHeader(_ data: PoliticsResponse) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Probabilities for races, policy, and power across U.S. and global politics.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -111,6 +111,33 @@ struct PoliticsView: View {
             .font(.caption2)
             .foregroundStyle(.tertiary)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    partyColor["D"]!.opacity(0.06),
+                    partyColor["R"]!.opacity(0.06)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            partyColor["D"]!.opacity(0.15),
+                            partyColor["R"]!.opacity(0.15)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
         .padding(.horizontal)
     }
 
@@ -141,10 +168,11 @@ struct PoliticsView: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
             }
-            .padding(14)
+            .padding(16)
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.1)))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
             .padding(.horizontal)
 
             if let side = pres.sideMarkets, !side.isEmpty {
@@ -156,34 +184,72 @@ struct PoliticsView: View {
     }
 
     private func candidateRow(_ c: PoliticsCandidate, rank: Int) -> some View {
-        HStack(spacing: 8) {
-            Text("\(rank)")
-                .font(.caption2).monospacedDigit().fontWeight(.semibold)
-                .foregroundStyle(.secondary)
-                .frame(width: 16, alignment: .trailing)
+        let pColor = partyColor[c.party] ?? .gray
+        return VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("\(rank)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(pColor.opacity(0.6))
+                    .frame(width: 18, alignment: .trailing)
 
-            Text(c.party)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 18, height: 18)
-                .background(partyColor[c.party] ?? .gray)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                Text(c.party)
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundColor(.white)
+                    .frame(width: 22, height: 22)
+                    .background(pColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .shadow(color: pColor.opacity(0.3), radius: 2, x: 0, y: 1)
 
-            Text(c.name)
-                .font(.caption).fontWeight(.medium)
-                .lineLimit(1)
+                Text(c.name)
+                    .font(.subheadline).fontWeight(.medium)
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            if let change = c.change7d, abs(change) > 0.1 {
-                Text("\(change > 0 ? "↑" : "↓")\(abs(change), specifier: "%.1f")%")
-                    .font(.system(size: 9, design: .monospaced)).fontWeight(.semibold)
+                if let change = c.change7d, abs(change) > 0.1 {
+                    HStack(spacing: 2) {
+                        Image(systemName: change > 0 ? "arrow.up.right" : "arrow.down.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Text("\(abs(change), specifier: "%.1f")%")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
                     .foregroundColor(change > 0 ? .green : .red)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background((change > 0 ? Color.green : Color.red).opacity(0.08), in: Capsule())
+                }
+
+                Text("\(c.merged, specifier: "%.1f")%")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(rank <= 3 ? .primary : .secondary)
             }
 
-            Text("\(c.merged, specifier: "%.1f")%")
-                .font(.caption).fontWeight(.bold).monospacedDigit()
+            // Probability bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.barTrack.opacity(0.15))
+                        .frame(height: 4)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: [pColor.opacity(0.5), pColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(geo.size.width * c.merged / 100, 4), height: 4)
+                }
+            }
+            .frame(height: 4)
+            .padding(.leading, 50)
+            .padding(.top, 4)
         }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(rank <= 3 ? pColor.opacity(0.03) : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Congressional
@@ -245,14 +311,15 @@ struct PoliticsView: View {
             }
             .frame(height: 6)
         }
-        .padding(12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.1))
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5)
         )
+        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
     }
 
     // MARK: - Senate map
@@ -270,9 +337,10 @@ struct PoliticsView: View {
     ]
 
     private func senateMapGrid(_ map: [String: Double]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Senate races by state")
-                .font(.caption).fontWeight(.semibold)
+                .font(.caption).fontWeight(.bold).textCase(.uppercase)
+                .foregroundStyle(.secondary)
                 .padding(.horizontal)
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 11), spacing: 2) {
@@ -283,42 +351,44 @@ struct PoliticsView: View {
                         } else {
                             let prob = map[st]
                             Text(st)
-                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 24)
+                                .frame(height: 26)
                                 .background(stateColor(prob))
-                                .foregroundColor(prob != nil ? .primary : .secondary.opacity(0.5))
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .foregroundColor(prob != nil ? .white : .secondary.opacity(0.4))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .shadow(color: prob != nil ? stateColor(prob).opacity(0.3) : .clear, radius: 1, x: 0, y: 1)
                         }
                     }
                 }
             }
             .padding(.horizontal)
 
-            HStack(spacing: 12) {
-                legendDot(color: Color(red: 0.863, green: 0.149, blue: 0.149).opacity(0.7), label: "R likely")
-                legendDot(color: Color.gray.opacity(0.3), label: "Toss-up")
-                legendDot(color: Color(red: 0.145, green: 0.388, blue: 0.922).opacity(0.7), label: "D likely")
+            HStack(spacing: 16) {
+                legendDot(color: Color(red: 0.863, green: 0.149, blue: 0.149).opacity(0.8), label: "R likely")
+                legendDot(color: Color.gray.opacity(0.35), label: "Toss-up")
+                legendDot(color: Color(red: 0.145, green: 0.388, blue: 0.922).opacity(0.8), label: "D likely")
             }
             .font(.caption2).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal)
         }
     }
 
     private func stateColor(_ prob: Double?) -> Color {
-        guard let p = prob else { return Color.secondary.opacity(0.08) }
+        guard let p = prob else { return Color.secondary.opacity(0.06) }
         if p >= 50 {
             let t = (p - 50) / 50
-            return Color(red: 0.145, green: 0.388, blue: 0.922).opacity(0.2 + t * 0.6)
+            return Color(red: 0.145, green: 0.388, blue: 0.922).opacity(0.25 + t * 0.65)
         }
         let t = (50 - p) / 50
-        return Color(red: 0.863, green: 0.149, blue: 0.149).opacity(0.2 + t * 0.6)
+        return Color(red: 0.863, green: 0.149, blue: 0.149).opacity(0.25 + t * 0.65)
     }
 
     private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 10, height: 10)
-            Text(label)
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 12, height: 12)
+            Text(label).fontWeight(.medium)
         }
     }
 
@@ -335,11 +405,11 @@ struct PoliticsView: View {
     }
 
     private func crossSourceCard(_ m: CrossSourceMatch) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(m.q).font(.caption).fontWeight(.medium).lineLimit(2)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(m.q).font(.subheadline).fontWeight(.semibold).lineLimit(2)
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     sourceChip("Kalshi", color: .green)
                     Text("\(m.kalshi, specifier: "%.1f")%")
                         .font(.title3).fontWeight(.bold).monospacedDigit()
@@ -347,7 +417,7 @@ struct PoliticsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     sourceChip("Polymarket", color: .blue)
                     Text("\(m.poly, specifier: "%.1f")%")
                         .font(.title3).fontWeight(.bold).monospacedDigit()
@@ -357,19 +427,25 @@ struct PoliticsView: View {
             }
 
             if m.delta > 2 {
-                HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.left.and.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.orange)
                     Text("Disagree by")
                     Text("\(m.delta, specifier: "%.1f")pp")
-                        .fontWeight(.semibold)
+                        .fontWeight(.bold)
                         .foregroundColor(.orange)
                 }
                 .font(.caption2).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color.orange.opacity(0.06), in: Capsule())
             }
         }
-        .padding(12)
+        .padding(14)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.1)))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
         .padding(.horizontal)
     }
 
@@ -391,14 +467,17 @@ struct PoliticsView: View {
     private func sectionHeader(emoji: String, title: String, count: Int?) -> some View {
         HStack {
             Text("\(emoji) \(title)")
-                .font(.headline).fontWeight(.bold)
+                .font(.title3).fontWeight(.bold)
             Spacer()
             if let count {
-                Text("\(count) markets")
-                    .font(.caption2)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(Capsule())
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                +
+                Text(" markets")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal)
@@ -417,18 +496,33 @@ struct PoliticsView: View {
     }
 
     private func marketCard(_ m: CategoryMarketRow) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(m.q)
-                .font(.caption).fontWeight(.medium)
+                .font(.caption).fontWeight(.semibold)
                 .lineLimit(2).foregroundStyle(.primary)
 
-            ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
-                HStack(spacing: 4) {
-                    Text(o.name).font(.caption2).lineLimit(1).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(o.prob))%")
-                        .font(.caption2).fontWeight(.bold).monospacedDigit()
-                        .foregroundStyle(o.prob > 50 ? .primary : .secondary)
+            VStack(spacing: 5) {
+                ForEach(Array(m.topOutcomes.prefix(3).enumerated()), id: \.offset) { _, o in
+                    HStack(spacing: 6) {
+                        Text(o.name).font(.caption2).lineLimit(1).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(o.prob))%")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(o.prob > 50 ? .primary : .secondary)
+                    }
+                    .overlay(alignment: .bottom) {
+                        GeometryReader { geo in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(o.prob > 50
+                                      ? Color.primary.opacity(0.08)
+                                      : Color.secondary.opacity(0.06))
+                                .frame(width: geo.size.width * o.prob / 100, height: 2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 2)
+                        .offset(y: 3)
+                    }
                 }
             }
 
@@ -439,27 +533,38 @@ struct PoliticsView: View {
 
             sourceChip(m.src, color: m.src == "kalshi" ? .green : .blue)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.1)))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
     }
 
     private func sourceChip(_ label: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 5, height: 5)
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+                .overlay(Circle().stroke(color.opacity(0.3), lineWidth: 2))
             Text(label.capitalized)
+                .foregroundStyle(.primary.opacity(0.7))
         }
-        .font(.system(size: 9, weight: .semibold))
-        .padding(.horizontal, 5).padding(.vertical, 1)
+        .font(.system(size: 10, weight: .semibold))
+        .padding(.horizontal, 8).padding(.vertical, 3)
         .background(color.opacity(0.08))
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.12), lineWidth: 0.5))
     }
 
     private func footer(_ data: PoliticsResponse) -> some View {
-        Text("Data from Kalshi & Polymarket · Not political advice")
-            .font(.caption2).foregroundStyle(.tertiary)
-            .padding(.horizontal)
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text("Data from Kalshi & Polymarket · Not political advice")
+        }
+        .font(.caption2).foregroundStyle(.tertiary)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 }
