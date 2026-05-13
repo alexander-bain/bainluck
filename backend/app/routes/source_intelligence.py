@@ -502,6 +502,120 @@ async def _query_case_studies(db: AsyncSession) -> list:
     return case_studies
 
 
+@router.get("/source-intelligence/oscillation-audit")
+async def oscillation_audit(db: AsyncSession = Depends(get_db)):
+    """Find ALL events with stat_model oscillation — reverse matching eval.
+
+    Returns every event where stat_model stddev > 0.25, with game_state
+    data showing what scores were fed, so we can trace bad ESPN matches.
+    """
+    await _set_timeout(db)
+
+    # Find all oscillating events (no time limit — full history)
+    osc_sql = text("""
+        SELECT
+            wp.event_id,
+            e.home_team_name,
+            e.away_team_name,
+            s.key AS sport,
+            e.espn_id,
+            e.home_score,
+            e.away_score,
+            e.commence_time::text,
+            COUNT(*) AS snap_count,
+            ROUND(STDDEV(wp.home_win_probability::float)::numeric, 4) AS std_dev,
+            ROUND(MIN(wp.home_win_probability::float)::numeric, 4) AS min_prob,
+            ROUND(MAX(wp.home_win_probability::float)::numeric, 4) AS max_prob
+        FROM win_prob_snapshots wp
+        JOIN events e ON e.id = wp.event_id
+        JOIN sports s ON s.id = e.sport_id
+        WHERE wp.source = 'stat_model'
+          AND e.status IN ('completed', 'closed')
+          AND wp.captured_at >= e.commence_time
+          AND wp.home_win_probability IS NOT NULL
+        GROUP BY wp.event_id, e.home_team_name, e.away_team_name, s.key,
+                 e.espn_id, e.home_score, e.away_score, e.commence_time
+        HAVING STDDEV(wp.home_win_probability::float) > 0.25
+           AND COUNT(*) >= 10
+        ORDER BY STDDEV(wp.home_win_probability::float) DESC
+    """)
+    result = await db.execute(osc_sql)
+    rows = result.all()
+
+    events = []
+    for r in rows:
+        # For each event, get a sample of game_state to show score progression
+        gs_sql = text("""
+            SELECT
+                home_win_probability::float,
+                game_state->>'home_score' AS gs_home,
+                game_state->>'away_score' AS gs_away,
+                game_state->>'clock' AS gs_clock,
+                game_state->>'period' AS gs_period,
+                game_state->>'time_source' AS gs_time_src
+            FROM win_prob_snapshots
+            WHERE event_id = :eid AND source = 'stat_model'
+              AND game_state IS NOT NULL
+            ORDER BY captured_at
+        """)
+        gs_result = await db.execute(gs_sql, {"eid": r.event_id})
+        gs_rows = gs_result.all()
+
+        # Detect score-backwards jumps
+        prev_h, prev_a = None, None
+        backwards = 0
+        distinct_score_pairs = set()
+        for gr in gs_rows:
+            h, a = gr.gs_home, gr.gs_away
+            if h is not None and a is not None:
+                distinct_score_pairs.add((h, a))
+                if prev_h is not None:
+                    if int(h) < int(prev_h) or int(a) < int(prev_a):
+                        backwards += 1
+                prev_h, prev_a = h, a
+
+        events.append({
+            "event_id": r.event_id,
+            "home_team": r.home_team_name,
+            "away_team": r.away_team_name,
+            "sport": r.sport,
+            "espn_id": r.espn_id,
+            "final_score": f"{r.home_score}-{r.away_score}",
+            "date": r.commence_time[:10] if r.commence_time else None,
+            "snap_count": r.snap_count,
+            "std_dev": float(r.std_dev),
+            "range": [float(r.min_prob), float(r.max_prob)],
+            "score_backwards_jumps": backwards,
+            "distinct_score_pairs": len(distinct_score_pairs),
+            "sample_states": [
+                {
+                    "prob": round(gr[0], 3),
+                    "score": f"{gr.gs_home}-{gr.gs_away}",
+                    "clock": gr.gs_clock,
+                    "period": gr.gs_period,
+                    "time_src": gr.gs_time_src,
+                }
+                for gr in gs_rows[:8]
+            ],
+        })
+
+    # Summary stats
+    null_espn = sum(1 for e in events if e["espn_id"] is None)
+    has_backwards = sum(1 for e in events if e["score_backwards_jumps"] > 0)
+    sports = {}
+    for e in events:
+        sports[e["sport"]] = sports.get(e["sport"], 0) + 1
+
+    return {
+        "total_oscillating": len(events),
+        "espn_id_null": null_espn,
+        "espn_id_set": len(events) - null_espn,
+        "with_score_backwards": has_backwards,
+        "by_sport": sports,
+        "events": events,
+    }
+
+
 @router.get("/source-intelligence")
 async def source_intelligence(db: AsyncSession = Depends(get_db)):
     """Cross-source disagreement analysis for the /source-intelligence page."""
