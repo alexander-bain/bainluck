@@ -5,7 +5,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import text, func, delete, and_
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
-from app.models.models import BugReport, DiscoverInteraction
+from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision
 from app.services import get_db
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
@@ -6536,6 +6537,156 @@ async def discover_quality_market_trace(
     return trace
 
 
+_DISCOVER_CONFIG_KEY = "bainluck:discover_runtime_config"
+
+
+class DiscoverReviewDecisionIn(BaseModel):
+    item_type: str = Field(..., max_length=20)
+    item_id: str = Field(..., max_length=100)
+    item_name: Optional[str] = Field(None, max_length=300)
+    category: Optional[str] = Field(None, max_length=80)
+    surface: Optional[str] = Field(None, max_length=20)
+    auth_segment: Optional[str] = Field(None, max_length=20)
+    family_key: Optional[str] = Field(None, max_length=300)
+    archetype: Optional[str] = Field(None, max_length=80)
+    decision: str = Field(..., max_length=40)
+    admin_notes: Optional[str] = Field(None, max_length=5000)
+
+
+def _discover_config_defaults() -> dict:
+    return {
+        "interaction_suppression_enabled": os.getenv("DISCOVER_INTERACTION_SUPPRESSION", "true").lower() != "false",
+        "seen_suppression_hours": float(os.getenv("DISCOVER_SEEN_SUPPRESSION_HOURS", "48")),
+        "dismiss_suppression_days": float(os.getenv("DISCOVER_DISMISS_SUPPRESSION_DAYS", "14")),
+        "stale_no_movement_days": float(os.getenv("DISCOVER_STALE_NO_MOVEMENT_DAYS", "2")),
+        "no_resolution_stale_days": float(os.getenv("DISCOVER_NO_RESOLUTION_STALE_DAYS", "5")),
+    }
+
+
+async def _load_discover_runtime_config() -> dict:
+    config = _discover_config_defaults()
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        redis = get_async_redis_client()
+        raw = await redis.hgetall(_DISCOVER_CONFIG_KEY)
+        if raw:
+            decoded = {
+                (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+                for k, v in raw.items()
+            }
+            if "interaction_suppression_enabled" in decoded:
+                config["interaction_suppression_enabled"] = decoded["interaction_suppression_enabled"].lower() == "true"
+            for key in (
+                "seen_suppression_hours",
+                "dismiss_suppression_days",
+                "stale_no_movement_days",
+                "no_resolution_stale_days",
+            ):
+                if key in decoded:
+                    config[key] = float(decoded[key])
+    except Exception:
+        pass
+    return config
+
+
+@router.get("/discover-config")
+async def get_discover_runtime_config(
+    secret: str = Query(...),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    return await _load_discover_runtime_config()
+
+
+@router.post("/discover-config")
+async def update_discover_runtime_config(
+    secret: str = Query(...),
+    body: dict = Body(...),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    allowed = _discover_config_defaults()
+    values = {}
+    for key, default in allowed.items():
+        if key not in body:
+            continue
+        value = body[key]
+        if isinstance(default, bool):
+            values[key] = "true" if bool(value) else "false"
+        else:
+            number = float(value)
+            if number < 0:
+                raise HTTPException(status_code=400, detail=f"{key} must be non-negative")
+            values[key] = str(number)
+    if not values:
+        raise HTTPException(status_code=400, detail="No valid Discover config fields provided")
+
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        redis = get_async_redis_client()
+        await redis.hset(_DISCOVER_CONFIG_KEY, mapping=values)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {exc}") from exc
+    return await _load_discover_runtime_config()
+
+
+@router.post("/discover-review-decisions")
+async def create_discover_review_decision(
+    payload: DiscoverReviewDecisionIn,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    valid = {"accepted_promote", "accepted_downrank", "ignored", "needs_design_fix", "needs_data_fix"}
+    if payload.decision not in valid:
+        raise HTTPException(status_code=400, detail=f"decision must be one of: {sorted(valid)}")
+
+    row = DiscoverReviewDecision(**payload.model_dump())
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return {"status": "ok", "id": row.id}
+
+
+@router.get("/discover-review-decisions")
+async def list_discover_review_decisions(
+    secret: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    result = await db.execute(
+        select(DiscoverReviewDecision)
+        .order_by(DiscoverReviewDecision.created_at.desc())
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    return {
+        "decisions": [
+            {
+                "id": row.id,
+                "item_type": row.item_type,
+                "item_id": row.item_id,
+                "item_name": row.item_name,
+                "category": row.category,
+                "surface": row.surface,
+                "auth_segment": row.auth_segment,
+                "family_key": row.family_key,
+                "archetype": row.archetype,
+                "decision": row.decision,
+                "admin_notes": row.admin_notes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.get("/discover-engagement")
 async def discover_engagement_summary(
     secret: str = Query(..., description="Admin secret for authorization"),
@@ -6864,6 +7015,155 @@ async def discover_engagement_summary(
             }
         )
 
+    runtime_config = await _load_discover_runtime_config()
+
+    repeat_result = await db.execute(
+        select(
+            DiscoverInteraction.session_id,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.max(DiscoverInteraction.item_name).label("item_name"),
+            func.max(DiscoverInteraction.category).label("category"),
+            func.max(DiscoverInteraction.surface).label("surface"),
+            func.count(DiscoverInteraction.id).label("impressions"),
+        )
+        .where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action == "impression",
+            DiscoverInteraction.session_id.isnot(None),
+        )
+        .group_by(
+            DiscoverInteraction.session_id,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+        )
+        .having(func.count(DiscoverInteraction.id) > 1)
+    )
+    repeat_rows = repeat_result.all()
+    repeat_extra = sum(max(0, int(row.impressions or 0) - 1) for row in repeat_rows)
+    repeat_sessions = {row.session_id for row in repeat_rows if row.session_id}
+    repeat_top = sorted(
+        [
+            {
+                "session_id": row.session_id,
+                "item_type": row.item_type,
+                "item_id": row.item_id,
+                "item_name": row.item_name,
+                "category": row.category,
+                "surface": row.surface,
+                "impressions": int(row.impressions or 0),
+                "extra_impressions": max(0, int(row.impressions or 0) - 1),
+            }
+            for row in repeat_rows
+        ],
+        key=lambda row: row["extra_impressions"],
+        reverse=True,
+    )[:20]
+
+    impression_items_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.max(DiscoverInteraction.item_name).label("item_name"),
+            func.max(DiscoverInteraction.category).label("category"),
+            func.max(DiscoverInteraction.surface).label("surface"),
+            func.count(DiscoverInteraction.id).label("impressions"),
+        )
+        .where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action == "impression",
+            DiscoverInteraction.item_type.in_(("event", "futures")),
+        )
+        .group_by(DiscoverInteraction.item_type, DiscoverInteraction.item_id)
+    )
+    impression_items = impression_items_result.all()
+    futures_ids = []
+    event_ids = []
+    for row in impression_items:
+        try:
+            item_id_int = int(row.item_id)
+        except (TypeError, ValueError):
+            continue
+        if row.item_type == "futures":
+            futures_ids.append(item_id_int)
+        elif row.item_type == "event":
+            event_ids.append(item_id_int)
+
+    futures_by_id = {}
+    if futures_ids:
+        futures_result = await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.status,
+                FuturesMarket.updated_at,
+                FuturesMarket.resolution_date,
+            ).where(FuturesMarket.id.in_(futures_ids))
+        )
+        futures_by_id = {row.id: row for row in futures_result.all()}
+
+    events_by_id = {}
+    if event_ids:
+        events_result = await db.execute(
+            select(Event.id, Event.status, Event.commence_time).where(Event.id.in_(event_ids))
+        )
+        events_by_id = {row.id: row for row in events_result.all()}
+
+    now = datetime.now(timezone.utc)
+    stale_impressions = 0
+    stale_items = []
+    for row in impression_items:
+        try:
+            item_id_int = int(row.item_id)
+        except (TypeError, ValueError):
+            continue
+        impressions = int(row.impressions or 0)
+        stale_reason = None
+        if row.item_type == "futures":
+            market = futures_by_id.get(item_id_int)
+            if market:
+                updated_at = market.updated_at
+                if updated_at and updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                resolution_date = market.resolution_date
+                if resolution_date and resolution_date.tzinfo is None:
+                    resolution_date = resolution_date.replace(tzinfo=timezone.utc)
+                if market.status in ("closed", "resolved"):
+                    stale_reason = "closed"
+                elif resolution_date and resolution_date < now:
+                    stale_reason = "past_resolution"
+                elif updated_at and (now - updated_at).total_seconds() / 86400 > runtime_config["stale_no_movement_days"]:
+                    stale_reason = "stale_updated_at"
+        elif row.item_type == "event":
+            event = events_by_id.get(item_id_int)
+            if event and event.status in ("completed", "closed"):
+                commence_time = event.commence_time
+                if commence_time and commence_time.tzinfo is None:
+                    commence_time = commence_time.replace(tzinfo=timezone.utc)
+                if commence_time and (now - commence_time).total_seconds() > 8 * 3600:
+                    stale_reason = "completed_old"
+        if stale_reason:
+            stale_impressions += impressions
+            stale_items.append(
+                {
+                    "item_type": row.item_type,
+                    "item_id": row.item_id,
+                    "item_name": row.item_name,
+                    "category": row.category,
+                    "surface": row.surface,
+                    "impressions": impressions,
+                    "reason": stale_reason,
+                }
+            )
+    stale_items.sort(key=lambda row: row["impressions"], reverse=True)
+
+    recent_decisions_result = await db.execute(
+        select(DiscoverReviewDecision)
+        .where(DiscoverReviewDecision.created_at >= cutoff)
+        .order_by(DiscoverReviewDecision.created_at.desc())
+        .limit(20)
+    )
+    recent_decisions = recent_decisions_result.scalars().all()
+
     top_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -6899,6 +7199,33 @@ async def discover_engagement_summary(
         "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
         "opportunities": sorted(opportunities, key=lambda r: r["priority"], reverse=True)[:20],
         "review_queue": sorted(review_queue, key=lambda r: r["priority"], reverse=True)[:50],
+        "runtime_config": runtime_config,
+        "launch_health": {
+            "repeat_extra_impressions": repeat_extra,
+            "repeat_rate": round(repeat_extra / totals["impressions"], 4) if totals["impressions"] else 0,
+            "repeat_sessions": len(repeat_sessions),
+            "stale_impressions": stale_impressions,
+            "stale_rate": round(stale_impressions / totals["impressions"], 4) if totals["impressions"] else 0,
+            "top_repeat_items": repeat_top,
+            "top_stale_items": stale_items[:20],
+        },
+        "recent_review_decisions": [
+            {
+                "id": row.id,
+                "item_type": row.item_type,
+                "item_id": row.item_id,
+                "item_name": row.item_name,
+                "category": row.category,
+                "surface": row.surface,
+                "auth_segment": row.auth_segment,
+                "family_key": row.family_key,
+                "archetype": row.archetype,
+                "decision": row.decision,
+                "admin_notes": row.admin_notes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in recent_decisions
+        ],
         "top_items": [
             {
                 "item_type": item_type,
@@ -10375,6 +10702,26 @@ async def backfill_winners_status(
     """))
     cal_row = cal_result.one()
 
+    group_result = await db.execute(text("""
+        WITH poly_groups AS (
+            SELECT fm.group_id, COUNT(*) AS group_size
+            FROM futures_markets fm
+            WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+              AND fm.group_id IS NOT NULL
+            GROUP BY fm.group_id
+        )
+        SELECT
+            COUNT(*) FILTER (WHERE fm.group_id IS NULL) AS null_group_id,
+            COUNT(*) FILTER (WHERE pg.group_size = 1) AS orphan_group_id,
+            COUNT(*) FILTER (WHERE pg.group_size = 2) AS pair_group_id,
+            COUNT(*) FILTER (WHERE pg.group_size >= 3) AS proper_group_id,
+            COUNT(*) AS total_resolved_poly
+        FROM futures_markets fm
+        LEFT JOIN poly_groups pg ON pg.group_id = fm.group_id
+        WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+    """))
+    group_row = group_result.one()
+
     return {
         "sources": [
             {"source": r.source, "resolved": r.resolved_markets,
@@ -10388,6 +10735,13 @@ async def backfill_winners_status(
             "needs_cal_without_commence": cal_row.needs_cal_without_commence,
             "pct_covered": round(100 * cal_row.has_cal_prob / max(cal_row.total_resolved, 1), 1),
             "avg_price_shift": round(float(cal_row.avg_price_shift or 0), 4),
+        },
+        "polymarket_group_id_health": {
+            "total_resolved": group_row.total_resolved_poly,
+            "null_group_id": group_row.null_group_id,
+            "orphan_size_1": group_row.orphan_group_id,
+            "pair_size_2": group_row.pair_group_id,
+            "proper_size_3_plus": group_row.proper_group_id,
         },
         "soccer_samples": [
             {"id": r.id, "opening": float(r.opening_probability),
