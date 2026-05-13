@@ -6719,6 +6719,151 @@ async def discover_engagement_summary(
                 }
             )
 
+    from app.utils.feed_market_quality import classify_market_quality, editorial_archetype
+
+    signed_in_expr = DiscoverInteraction.user_id.isnot(None).label("signed_in")
+    review_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.max(DiscoverInteraction.item_name).label("item_name"),
+            func.max(DiscoverInteraction.category).label("category"),
+            DiscoverInteraction.surface,
+            signed_in_expr,
+            DiscoverInteraction.action,
+            func.count(DiscoverInteraction.id).label("count"),
+            func.avg(DiscoverInteraction.rank).label("avg_rank"),
+            func.avg(DiscoverInteraction.score).label("avg_score"),
+        )
+        .where(DiscoverInteraction.created_at >= cutoff)
+        .group_by(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            DiscoverInteraction.surface,
+            signed_in_expr,
+            DiscoverInteraction.action,
+        )
+    )
+
+    review_buckets: dict[tuple[str, str, str, str], dict] = {}
+    for (
+        item_type,
+        item_id,
+        item_name,
+        category,
+        surface,
+        signed_in,
+        action,
+        count,
+        avg_rank,
+        avg_score,
+    ) in review_result.all():
+        key = (
+            item_type or "unknown",
+            str(item_id),
+            surface or "unknown",
+            "signed_in" if signed_in else "anonymous",
+        )
+        bucket = review_buckets.setdefault(
+            key,
+            {
+                "item_type": key[0],
+                "item_id": key[1],
+                "item_name": item_name,
+                "category": category or "other",
+                "surface": key[2],
+                "auth_segment": key[3],
+                "impressions": 0,
+                "opens": 0,
+                "dismisses": 0,
+                "shares": 0,
+                "likes": 0,
+                "group_expands": 0,
+                "context_expands": 0,
+                "avg_rank": None,
+                "avg_score": None,
+            },
+        )
+        if item_name:
+            bucket["item_name"] = item_name
+        if category:
+            bucket["category"] = category
+        n = int(count or 0)
+        if action == "impression":
+            bucket["impressions"] += n
+            if avg_rank is not None:
+                bucket["avg_rank"] = round(float(avg_rank), 1)
+            if avg_score is not None:
+                bucket["avg_score"] = round(float(avg_score), 1)
+        elif action in ("detail_click", "open"):
+            bucket["opens"] += n
+        elif action == "dismiss":
+            bucket["dismisses"] += n
+        elif action == "share":
+            bucket["shares"] += n
+        elif action in ("like", "unlike"):
+            bucket["likes"] += n
+        elif action == "group_expand":
+            bucket["group_expands"] += n
+        elif action == "context_expand":
+            bucket["context_expands"] += n
+
+    review_queue = []
+    for bucket in review_buckets.values():
+        impressions = bucket["impressions"]
+        if impressions < 5:
+            continue
+        open_rate = bucket["opens"] / impressions if impressions else 0
+        dismiss_rate = bucket["dismisses"] / impressions if impressions else 0
+        share_rate = bucket["shares"] / impressions if impressions else 0
+        context_expand_rate = bucket["context_expands"] / impressions if impressions else 0
+        avg_rank = bucket["avg_rank"] if bucket["avg_rank"] is not None else 999
+        item_name = bucket["item_name"] or ""
+        category = bucket["category"] or "other"
+        if bucket["item_type"] == "futures":
+            quality = classify_market_quality(item_name, category)
+            archetype = editorial_archetype(item_name, category)
+            family_key = quality.story_key or quality.family_key
+        elif bucket["item_type"] == "event":
+            archetype = "sports_story"
+            family_key = f"event:{category}"
+        else:
+            archetype = "other"
+            family_key = f"{bucket['item_type']}:{category}"
+
+        kind = None
+        recommendation = None
+        priority = 0.0
+        if dismiss_rate >= 0.18 and avg_rank <= 30 and open_rate <= 0.08 and share_rate <= 0.01:
+            kind = "downrank"
+            priority = (dismiss_rate * 100) + max(0, 30 - avg_rank)
+            recommendation = "High dismiss rate for a high-ranked card. Review for score cap, family cap, stale odds, or weak explanation."
+        elif open_rate >= 0.20 or share_rate >= 0.03 or context_expand_rate >= 0.10:
+            kind = "promote"
+            priority = (open_rate * 80) + (share_rate * 250) + (context_expand_rate * 80) + max(0, 30 - avg_rank) / 4
+            recommendation = "Users are opening, sharing, or expanding this card. Review for a bounded lift or stronger family representation."
+        elif dismiss_rate >= 0.12 and context_expand_rate >= 0.08:
+            kind = "investigate"
+            priority = (dismiss_rate * 80) + (context_expand_rate * 60)
+            recommendation = "Mixed signal: people want more context but also dismiss it. Review wording and snippet length."
+        if not kind:
+            continue
+
+        review_queue.append(
+            {
+                **bucket,
+                "kind": kind,
+                "priority": round(priority, 2),
+                "family_key": family_key,
+                "archetype": archetype,
+                "open_rate": round(open_rate, 4),
+                "dismiss_rate": round(dismiss_rate, 4),
+                "share_rate": round(share_rate, 4),
+                "context_expand_rate": round(context_expand_rate, 4),
+                "recommendation": recommendation,
+            }
+        )
+
     top_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -6753,6 +6898,7 @@ async def discover_engagement_summary(
         },
         "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
         "opportunities": sorted(opportunities, key=lambda r: r["priority"], reverse=True)[:20],
+        "review_queue": sorted(review_queue, key=lambda r: r["priority"], reverse=True)[:50],
         "top_items": [
             {
                 "item_type": item_type,
@@ -10211,12 +10357,38 @@ async def backfill_winners_status(
     """))
     opening_diag = await db.execute(text("SELECT 1 AS cat"))
 
+    cal_result = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total_resolved,
+            COUNT(fo.calibration_probability) AS has_cal_prob,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL
+                             AND fm.commence_time IS NOT NULL) AS needs_cal_with_commence,
+            COUNT(*) FILTER (WHERE fo.calibration_probability IS NULL
+                             AND fm.commence_time IS NULL) AS needs_cal_without_commence,
+            AVG(ABS(fo.calibration_probability - fo.opening_probability))
+                FILTER (WHERE fo.calibration_probability IS NOT NULL) AS avg_price_shift
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+    """))
+    cal_row = cal_result.one()
+
     return {
         "sources": [
             {"source": r.source, "resolved": r.resolved_markets,
              "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
             for r in result.all()
         ],
+        "calibration_probability_coverage": {
+            "total_resolved_outcomes": cal_row.total_resolved,
+            "has_calibration_probability": cal_row.has_cal_prob,
+            "needs_cal_with_commence": cal_row.needs_cal_with_commence,
+            "needs_cal_without_commence": cal_row.needs_cal_without_commence,
+            "pct_covered": round(100 * cal_row.has_cal_prob / max(cal_row.total_resolved, 1), 1),
+            "avg_price_shift": round(float(cal_row.avg_price_shift or 0), 4),
+        },
         "soccer_samples": [
             {"id": r.id, "opening": float(r.opening_probability),
              "outcome": r.outcome_name, "market": r.market_name,
