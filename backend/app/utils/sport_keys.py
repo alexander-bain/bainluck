@@ -422,6 +422,10 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxsoccerspread": "soccer",                  # Soccer spread
     "kxsoccertotal": "soccer",                   # Soccer goal total
     "kxsoccerbtts": "soccer",                    # Both teams to score
+    # Soccer short-prefix game tickers (Kalshi uses both kxsoccer* and kxsoc*)
+    "kxsocgame": "soccer_epl",                   # EPL game (short prefix)
+    "kxsoctotal": "soccer_epl",                  # EPL goal total (short prefix)
+    "kxsocbtts": "soccer_epl",                   # EPL both teams to score (short prefix)
     # Tennis
     "kxatpmatch": "tennis_atp",
     "kxatpchallengermatch": "tennis_atp",
@@ -946,9 +950,6 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxmls": "soccer_usa_mls",
     "kxfifawcm": "soccer_fifa_world_cup",
     "kxfifawcw": "soccer_fifa_world_cup_women",
-    "kxsocgame": "soccer_epl",
-    "kxsoctotal": "soccer_epl",
-    "kxsocbtts": "soccer_epl",
     # Tennis
     "kxatp": "tennis",
     "kxwta": "tennis",
@@ -1140,6 +1141,9 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxsoccerspread": "Soccer",
     "kxsoccertotal": "Soccer",
     "kxsoccerbtts": "Soccer",
+    "kxsocgame": "EPL",
+    "kxsoctotal": "EPL",
+    "kxsocbtts": "EPL",
     # Minor leagues
     "kxahlgame": "AHL",
     "kxkhlgame": "KHL",
