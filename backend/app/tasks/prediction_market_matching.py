@@ -744,34 +744,26 @@ async def _match_prediction_markets(limit: int = 500):
 
         # DEDUP: Kalshi creates separate binary markets per team outcome
         # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
-        # are linked to the same event, processing both writes conflicting
-        # probabilities, causing sawtooth oscillation in win_prob_snapshots.
-        # Pick ONE market per (event_id, source).
-        #
-        # CRITICAL: The tiebreaker must be DETERMINISTIC across runs to avoid
-        # sawtooth. Both Phase 2 (every 15 min) and the live poller (every
-        # 2 min) must pick the SAME market. We use: prefer more outcomes
-        # (primary matchup market), then lowest market.id (stable tiebreaker).
-        best_per_event_source: dict[tuple[int, str], tuple] = {}
+        # are linked to the same event, we want to AVERAGE their implied
+        # home probabilities to cancel out vig. Pick a primary market for
+        # processing (matchup extraction, ticker validation), and store all
+        # sibling markets for probability averaging.
+        all_per_event_source: dict[tuple[int, str], list[tuple]] = {}
         for market, event in linked_rows:
             key = (event.id, market.source)
-            if key not in best_per_event_source:
-                best_per_event_source[key] = (market, event)
-            else:
-                existing_market = best_per_event_source[key][0]
-                # Load outcome counts for tiebreaking
-                existing_outcomes = await session.execute(
-                    select(func.count()).where(FuturesOutcome.market_id == existing_market.id)
-                )
-                new_outcomes = await session.execute(
-                    select(func.count()).where(FuturesOutcome.market_id == market.id)
-                )
-                existing_count = existing_outcomes.scalar() or 0
-                new_count = new_outcomes.scalar() or 0
-                # Prefer more outcomes, then lowest market.id for stability
-                if (new_count > existing_count
-                        or (new_count == existing_count and market.id < existing_market.id)):
-                    best_per_event_source[key] = (market, event)
+            if key not in all_per_event_source:
+                all_per_event_source[key] = []
+            all_per_event_source[key].append((market, event))
+
+        # Pick the primary market per group: prefer more outcomes, then lowest id
+        best_per_event_source: dict[tuple[int, str], tuple] = {}
+        for key, group in all_per_event_source.items():
+            primary = group[0]
+            for market, event in group[1:]:
+                pm = primary[0]
+                if market.id < pm.id:
+                    primary = (market, event)
+            best_per_event_source[key] = primary
 
         stats["phase2_markets_raw"] = len(linked_rows)
         stats["phase2_markets_deduped"] = len(best_per_event_source)
@@ -849,6 +841,34 @@ async def _match_prediction_markets(limit: int = 500):
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
+
+                # Devig: if dual markets exist (e.g., "Celtics win?" +
+                # "76ers win?"), average both sides to cancel vig.
+                es_key = (event.id, market.source)
+                siblings = all_per_event_source.get(es_key, [])
+                if len(siblings) == 2:
+                    home_probs = [home_prob]
+                    for sib_market, sib_event in siblings:
+                        if sib_market.id == market.id:
+                            continue
+                        sib_outcomes_result = await session.execute(
+                            select(FuturesOutcome)
+                            .where(FuturesOutcome.market_id == sib_market.id)
+                            .order_by(FuturesOutcome.rank)
+                        )
+                        sib_outcomes = sib_outcomes_result.scalars().all()
+                        if sib_outcomes:
+                            sib_ml = find_moneyline_outcome(
+                                sib_outcomes, matchup,
+                                event.home_team_name, event.away_team_name,
+                            )
+                            if sib_ml:
+                                sib_outcome, sib_yes_is_home = sib_ml
+                                sib_prob = float(sib_outcome.current_probability)
+                                sib_home = sib_prob if sib_yes_is_home else 1.0 - sib_prob
+                                home_probs.append(sib_home)
+                    if len(home_probs) == 2:
+                        home_prob = sum(home_probs) / 2.0
 
                 home_prob = await _check_and_fix_inversion(
                     session, market.event_id, home_prob, market.source,
@@ -1678,30 +1698,24 @@ async def _poll_live_prediction_market_prices():
         # Re-query to pick up freshly-updated probabilities.
         #
         # DEDUP: Kalshi creates separate binary markets per team outcome
-        # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
-        # are linked to the same event, processing both would write conflicting
-        # probabilities to win_probability_sources["kalshi"], causing oscillation
-        # (80% → 20% → 80%) on the chart.  Fix: pick ONE market per (event, source).
-        #
-        # CRITICAL: The tiebreaker must be DETERMINISTIC and IDENTICAL to the
-        # Phase 2 dedup strategy. Both paths must pick the same market for
-        # the same (event, source) pair, otherwise they write different
-        # probabilities and create sawtooth oscillation.
-        # Strategy: prefer more outcomes, then lowest market.id.
-        best_per_event_source: dict[tuple[int, str], tuple] = {}
+        # (e.g., "Celtics win?" and "76ers win?" for the same game). Both
+        # are linked to the same event. We pick a primary market for
+        # processing but AVERAGE both sides to cancel vig when computing
+        # the home probability.
+        all_per_event_source_live: dict[tuple[int, str], list[tuple]] = {}
         for market, event in rows:
             key = (event.id, market.source)
-            if key not in best_per_event_source:
-                best_per_event_source[key] = (market, event)
-            else:
-                # Prefer market with more outcomes (primary matchup market),
-                # then lowest market.id as stable tiebreaker
-                existing_market = best_per_event_source[key][0]
-                existing_count = len(outcomes_by_market.get(existing_market.id, []))
-                new_count = len(outcomes_by_market.get(market.id, []))
-                if (new_count > existing_count
-                        or (new_count == existing_count and market.id < existing_market.id)):
-                    best_per_event_source[key] = (market, event)
+            if key not in all_per_event_source_live:
+                all_per_event_source_live[key] = []
+            all_per_event_source_live[key].append((market, event))
+
+        best_per_event_source: dict[tuple[int, str], tuple] = {}
+        for key, group in all_per_event_source_live.items():
+            primary = group[0]
+            for market, event in group[1:]:
+                if market.id < primary[0].id:
+                    primary = (market, event)
+            best_per_event_source[key] = primary
 
         for market, event in best_per_event_source.values():
             try:
@@ -1741,6 +1755,31 @@ async def _poll_live_prediction_market_prices():
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
+
+                # Devig: average both dual markets to cancel vig
+                es_key = (event.id, market.source)
+                siblings = all_per_event_source_live.get(es_key, [])
+                if len(siblings) == 2:
+                    home_probs = [home_prob]
+                    for sib_market, sib_event in siblings:
+                        if sib_market.id == market.id:
+                            continue
+                        sib_outcomes = sorted(
+                            outcomes_by_market.get(sib_market.id, []),
+                            key=lambda o: o.rank or 999,
+                        )
+                        if sib_outcomes:
+                            sib_ml = find_moneyline_outcome(
+                                sib_outcomes, matchup,
+                                event.home_team_name, event.away_team_name,
+                            )
+                            if sib_ml:
+                                sib_outcome, sib_yes_is_home = sib_ml
+                                sib_prob = float(sib_outcome.current_probability)
+                                sib_home = sib_prob if sib_yes_is_home else 1.0 - sib_prob
+                                home_probs.append(sib_home)
+                    if len(home_probs) == 2:
+                        home_prob = sum(home_probs) / 2.0
 
                 # Cross-check against sportsbook consensus to catch inversions
                 home_prob = await _check_and_fix_inversion(
