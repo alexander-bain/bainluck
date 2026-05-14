@@ -993,6 +993,31 @@ class DiscoverInteraction(Base):
     )
 
 
+class DiscoverReviewDecision(Base):
+    """Admin decisions on aggregate Discover engagement signals."""
+
+    __tablename__ = "discover_review_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    item_name: Mapped[Optional[str]] = mapped_column(String(300))
+    category: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    surface: Mapped[Optional[str]] = mapped_column(String(20))
+    auth_segment: Mapped[Optional[str]] = mapped_column(String(20))
+    family_key: Mapped[Optional[str]] = mapped_column(String(300))
+    archetype: Mapped[Optional[str]] = mapped_column(String(80))
+    decision: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    admin_notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index("ix_discover_review_decisions_item", "item_type", "item_id", "created_at"),
+    )
+
+
 class BugReport(Base):
     """User-submitted bug reports via rage shake."""
 
