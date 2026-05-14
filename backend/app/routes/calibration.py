@@ -67,7 +67,10 @@ async def calibration_diagnostics(
           AND fo.current_probability IS NOT NULL
           AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
           AND COALESCE(fm.llm_sport_category, 'uncategorized') IN
-              ('economics', 'hockey', 'golf', 'tennis', 'weather', 'politics', 'basketball', 'baseball')
+              ('economics', 'hockey', 'golf', 'tennis', 'weather', 'politics',
+               'basketball', 'baseball', 'soccer', 'esports', 'entertainment',
+               'football', 'cricket', 'mma', 'motorsports', 'geopolitics',
+               'lacrosse', 'tech', 'olympics')
         GROUP BY cat, fm.source ORDER BY cat, fm.source
     """))
     problem_cats = [
