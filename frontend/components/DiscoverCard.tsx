@@ -825,6 +825,16 @@ export function GuessCard({
     setGuess(g);
     const isCorrect = g === "higher" ? actualPct > threshold : actualPct < threshold;
     onGuessCompleted?.();
+    trackEvent("prediction_submit", {
+      market_id: itemId,
+      guess: g,
+      threshold,
+      actual_probability: actualProb,
+      correct: isCorrect,
+      content_type: isEvent ? "event" : "futures",
+      category: sportCat,
+      surface: "discover",
+    }, { immediate: true });
     try {
       await fetch("/api/predictions", {
         method: "POST",

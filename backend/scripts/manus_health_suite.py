@@ -87,6 +87,12 @@ MODULES = {
         "priority": 1,
         "timeout": 1800,
     },
+    "category_page": {
+        "file": "category_page_audit.md",
+        "name": "Category Page Audit (Politics, Entertainment, Economics, Weather)",
+        "priority": 1,
+        "timeout": 2400,
+    },
 }
 
 

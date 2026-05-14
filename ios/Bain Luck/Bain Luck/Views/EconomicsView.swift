@@ -75,6 +75,7 @@ struct EconomicsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear { AnalyticsService.trackScreen(name: "economics", type: "economics") }
         .task { await vm.load() }
         .refreshable { await vm.load() }
     }

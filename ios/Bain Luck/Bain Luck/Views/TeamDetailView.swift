@@ -17,6 +17,7 @@ struct TeamDetailView: View {
                 teamContent(data)
             }
         }
+        .onAppear { AnalyticsService.trackScreen(name: "team_\(slug)", type: "team") }
         .task { await loadTeam() }
     }
 

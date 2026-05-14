@@ -64,6 +64,7 @@ struct PoliticsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear { AnalyticsService.trackScreen(name: "politics", type: "politics") }
         .task { await vm.load() }
         .refreshable { await vm.load() }
     }

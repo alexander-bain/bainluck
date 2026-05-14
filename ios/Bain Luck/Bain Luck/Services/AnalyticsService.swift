@@ -92,7 +92,7 @@ enum AnalyticsService {
         ])
     }
 
-    // MARK: - Discover
+    // MARK: - Discover (event names match web GA4 taxonomy)
 
     nonisolated static func trackDiscoverCardImpression(
         itemId: String,
@@ -101,13 +101,13 @@ enum AnalyticsService {
         rank: Int,
         score: Int?
     ) {
-        Analytics.logEvent("discover_card_impression", parameters: [
+        Analytics.logEvent("feed_card_impression", parameters: [
             "item_id": itemId,
             "item_type": itemType,
             "category": category,
-            "rank": rank,
+            "position": rank,
             "score": score ?? 0,
-            "surface": "native",
+            "surface": "discover",
         ])
     }
 
@@ -118,27 +118,51 @@ enum AnalyticsService {
         category: String,
         source: String
     ) {
-        Analytics.logEvent("discover_card_action", parameters: [
+        Analytics.logEvent("feed_card_action", parameters: [
             "action": action,
             "item_id": itemId,
             "item_type": itemType,
             "category": category,
             "source": source,
-            "surface": "native",
+            "surface": "discover",
         ])
     }
 
     nonisolated static func trackDiscoverCategoryFilter(category: String) {
-        Analytics.logEvent("discover_category_filter", parameters: [
+        Analytics.logEvent("filter_category", parameters: [
+            "action": "select",
             "category": category,
-            "surface": "native",
+            "surface": "discover",
         ])
     }
 
     nonisolated static func trackDiscoverTuningReset(affinityCount: Int) {
         Analytics.logEvent("discover_tuning_reset", parameters: [
             "affinity_count": affinityCount,
-            "surface": "native",
+            "surface": "discover",
+        ])
+    }
+
+    // MARK: - Predictions
+
+    nonisolated static func trackPredictionSubmit(
+        marketId: Int,
+        guess: String,
+        threshold: Int,
+        actualProbability: Double,
+        correct: Bool,
+        contentType: String,
+        category: String?
+    ) {
+        Analytics.logEvent("prediction_submit", parameters: [
+            "market_id": marketId,
+            "guess": guess,
+            "threshold": threshold,
+            "actual_probability": actualProbability,
+            "correct": correct,
+            "content_type": contentType,
+            "category": category ?? "unknown",
+            "surface": "discover",
         ])
     }
 

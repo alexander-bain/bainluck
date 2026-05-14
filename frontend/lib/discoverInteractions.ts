@@ -146,7 +146,7 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
   }
 }
 
-function getSessionId(): string | undefined {
+export function getDiscoverSessionId(): string | undefined {
   if (typeof window === "undefined") return undefined;
 
   try {
@@ -169,7 +169,7 @@ export function sendDiscoverInteraction(
   if (typeof window === "undefined") return;
 
   try {
-    const sessionId = getSessionId();
+    const sessionId = getDiscoverSessionId();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };

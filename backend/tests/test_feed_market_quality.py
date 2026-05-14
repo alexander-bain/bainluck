@@ -123,6 +123,32 @@ class TestMarketQualityClassification:
         assert all("entertainment_metric" in q.reasons for q in qualities)
         assert len({q.family_key for q in qualities}) <= 3
 
+    def test_regional_us_elections_are_low_quality_and_story_capped(self):
+        examples = [
+            "KY-04 Republican nominee?",
+            "South Carolina Republican Governor nominee?",
+            "NY-11 Democratic nominee?",
+        ]
+
+        qualities = [
+            classify_market_quality(name, sport_category="politics")
+            for name in examples
+        ]
+
+        assert all(q.quality_class == "low_quality" for q in qualities)
+        assert all("regional_us_election" in q.reasons for q in qualities)
+        assert all(q.story_key == "story:regional_us_elections" for q in qualities)
+
+    def test_niche_low_signal_sports_are_low_quality(self):
+        quality = classify_market_quality(
+            "Women's Table Tennis World Championship winner?",
+            sport_category="sports",
+        )
+
+        assert quality.quality_class == "low_quality"
+        assert "low_signal_sport" in quality.reasons
+        assert quality.story_key == "story:niche_low_signal_sports"
+
     def test_sports_personnel_story_is_compelling(self):
         quality = classify_market_quality(
             "Will Mike Vrabel be fired before the Patriots' next game?",
@@ -643,6 +669,36 @@ class TestLowQualityFamilyCap:
 
         assert len(capped) == 2
 
+    def test_cap_uses_story_key_for_low_quality_story_families(self):
+        items = [
+            {
+                "score": 100,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "ky 04 republican nominee",
+                "_quality_story_key": "story:regional_us_elections",
+            },
+            {
+                "score": 95,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "ok 01 republican nominee",
+                "_quality_story_key": "story:regional_us_elections",
+            },
+            {
+                "score": 90,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "women table tennis winner",
+                "_quality_story_key": "story:niche_low_signal_sports",
+            },
+        ]
+
+        capped = cap_low_quality_families(items, cap=1)
+
+        assert len(capped) == 2
+        assert [i["_quality_story_key"] for i in capped] == [
+            "story:regional_us_elections",
+            "story:niche_low_signal_sports",
+        ]
+
 
 class TestQualityFamilyDiversity:
     def test_diversify_caps_exact_duplicate_families(self):
@@ -731,6 +787,39 @@ class TestQualityFamilyDiversity:
         ]
         assert len(election) == 2
         assert len(stakes) == 2
+
+    def test_diversify_hard_caps_regional_and_niche_low_signal_stories(self):
+        items = [
+            {
+                "score": 100 - i,
+                "_quality_class": "low_quality",
+                "_quality_family_key": f"regional race {i}",
+                "_quality_story_key": "story:regional_us_elections",
+            }
+            for i in range(4)
+        ]
+        items.extend([
+            {
+                "score": 90 - i,
+                "_quality_class": "low_quality",
+                "_quality_family_key": f"table tennis {i}",
+                "_quality_story_key": "story:niche_low_signal_sports",
+            }
+            for i in range(3)
+        ])
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        regional = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:regional_us_elections"
+        ]
+        niche = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:niche_low_signal_sports"
+        ]
+        assert len(regional) == 1
+        assert len(niche) == 1
 
 
 class TestDiscoverFirstPageMixer:

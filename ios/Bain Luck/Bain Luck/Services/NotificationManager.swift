@@ -5,6 +5,7 @@
 //  Created by bain on 5/13/26.
 //
 
+import Combine
 import Foundation
 import os
 import UserNotifications
@@ -143,7 +144,7 @@ class BainLuckAppDelegate: NSObject, UIApplicationDelegate {
 
     func application(
         _ application: UIApplication,
-        didFailToRegisterForRemoteNotificationsWithDeviceToken error: Error
+        didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         NotificationManager.shared.didFailToRegisterForRemoteNotifications(error: error)
     }

@@ -300,7 +300,8 @@ actor APIClient {
         includeFutures: Bool = true,
         includeEvents: Bool = true,
         eventPct: Double? = nil,
-        tags: [String]? = nil
+        tags: [String]? = nil,
+        cacheTTL: TimeInterval? = 30
     ) async throws -> FeedResponse {
         var q: [String: String] = [
             "limit": "\(limit)",
@@ -316,7 +317,7 @@ actor APIClient {
            let str = String(data: data, encoding: .utf8) {
             q["tags"] = str
         }
-        return try await fetch("/api/feed", query: q, cacheTTL: 30)
+        return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL)
     }
 
     // MARK: - Grouped Futures Feed

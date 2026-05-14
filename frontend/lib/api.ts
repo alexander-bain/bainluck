@@ -44,6 +44,7 @@ import type {
   Event,
   GolfLeaderboardResponse,
 } from "./types";
+import { getDiscoverSessionId } from "./discoverInteractions";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -810,7 +811,9 @@ export async function fetchFeed(params?: {
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
 
   const query = searchParams.toString();
-  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`);
+  const sessionId = getDiscoverSessionId();
+  const headers = sessionId ? { "x-session-id": sessionId } : undefined;
+  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`, { headers });
 }
 
 // ============================================================================
@@ -1653,4 +1656,3 @@ export interface SourceIntelligenceData {
 export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData> {
   return apiFetch<SourceIntelligenceData>("/api/source-intelligence");
 }
-

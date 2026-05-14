@@ -28,7 +28,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
-from app.models.models import DiscoverInteraction, User, UserFavorite, UserPreference, UserPin, Team
+from app.models.models import DiscoverInteraction, DiscoverReviewDecision, User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
 from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability as _compute_aggregate_probability
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
@@ -145,6 +145,42 @@ def _check_admin_secret(secret: str | None) -> bool:
     return bool(expected and secret == expected)
 
 
+def _discover_runtime_config_defaults() -> dict[str, float | bool]:
+    return {
+        "interaction_suppression_enabled": os.getenv("DISCOVER_INTERACTION_SUPPRESSION", "true").lower() != "false",
+        "seen_suppression_hours": float(os.getenv("DISCOVER_SEEN_SUPPRESSION_HOURS", "48")),
+        "dismiss_suppression_days": float(os.getenv("DISCOVER_DISMISS_SUPPRESSION_DAYS", "14")),
+        "stale_no_movement_days": float(os.getenv("DISCOVER_STALE_NO_MOVEMENT_DAYS", "2")),
+        "no_resolution_stale_days": float(os.getenv("DISCOVER_NO_RESOLUTION_STALE_DAYS", "5")),
+    }
+
+
+async def _load_discover_runtime_config() -> dict[str, float | bool]:
+    config = _discover_runtime_config_defaults()
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        redis = get_async_redis_client()
+        raw = await redis.hgetall("bainluck:discover_runtime_config")
+        decoded = {
+            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }
+        if "interaction_suppression_enabled" in decoded:
+            config["interaction_suppression_enabled"] = decoded["interaction_suppression_enabled"].lower() == "true"
+        for key in (
+            "seen_suppression_hours",
+            "dismiss_suppression_days",
+            "stale_no_movement_days",
+            "no_resolution_stale_days",
+        ):
+            if key in decoded:
+                config[key] = float(decoded[key])
+    except Exception:
+        pass
+    return config
+
+
 @router.post("/interactions")
 async def record_discover_interactions(
     body: DiscoverInteractionBatch,
@@ -155,6 +191,7 @@ async def record_discover_interactions(
     """Record web/native Discover engagement events for ranking diagnostics."""
     user_id = user.id if user else None
     session_id = _session_id_from_request(request)
+    discover_config = await _load_discover_runtime_config()
 
     rows = []
     for event in body.interactions:
@@ -322,6 +359,7 @@ _pulse_label = _ei_label
 @router.get("")
 async def get_feed(
     response: Response,
+    request: Request,
     limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
@@ -360,6 +398,9 @@ async def get_feed(
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
+    session_id = _session_id_from_request(request)
+    discover_config = await _load_discover_runtime_config()
+
     # --- Redis response cache (anon 15s, auth 5s) ---
     _cache_key = None
     _cache_ttl = 15 if user is None else 5
@@ -368,7 +409,7 @@ async def get_feed(
         try:
             from app.tasks.redis_state import get_async_redis_client
             _async_redis = get_async_redis_client()
-            _user_part = f"u:{user.id}" if user else "anon"
+            _user_part = f"u:{user.id}" if user else f"s:{session_id}" if session_id else "anon"
             _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
             cached = await _async_redis.get(_cache_key)
@@ -417,7 +458,12 @@ async def get_feed(
         }
 
     # Load personalization context (one DB query for all user data)
-    ctx = await _load_personalization_context(db, user)
+    ctx = await _load_personalization_context(
+        db,
+        user,
+        session_id=session_id,
+        config=discover_config,
+    )
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "personalization")
 
     # Build team name set once (used by both scoring functions + response).
@@ -495,12 +541,16 @@ async def get_feed(
                 static_tag_filter=static_tag_filter or None,
                 timing_records=_timings,
                 timing_started_at=_started_at,
+                config=discover_config,
             )
 
             feed_items.extend(_dedupe_futures_by_canonical(futures_items))
         except Exception as e:
             logger.error("Feed: futures scoring failed, returning partial feed: %s", e)
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
+
+    await _apply_manual_review_decisions(db, feed_items)
+    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "review_decisions")
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker
@@ -596,6 +646,7 @@ async def get_feed(
         item.pop("_quality_class", None)
         item.pop("_quality_family_key", None)
         item.pop("_quality_story_key", None)
+        item.pop("_review_decision", None)
 
     payload = {
         "items": paginated,
@@ -643,6 +694,50 @@ async def get_feed(
 
     _set_feed_timing_header(response, _started_at)
     return payload
+
+
+def _apply_manual_review_decision_map(
+    feed_items: list[dict],
+    decisions: dict[tuple[str, str], str],
+) -> None:
+    """Apply bounded human review nudges recorded from the Discover admin page."""
+    for item in feed_items:
+        data = item.get("data") or {}
+        item_id = data.get("id")
+        if item_id is None:
+            continue
+        decision = decisions.get((str(item.get("type")), str(item_id)))
+        if decision == "accepted_promote":
+            item["score"] = min(100, float(item.get("score") or 0) + 8)
+            item["_review_decision"] = decision
+        elif decision == "accepted_downrank":
+            item["score"] = max(0, float(item.get("score") or 0) - 18)
+            item["_review_decision"] = decision
+
+
+async def _apply_manual_review_decisions(
+    db: AsyncSession,
+    feed_items: list[dict],
+) -> None:
+    if not feed_items:
+        return
+
+    result = await db.execute(
+        select(
+            DiscoverReviewDecision.item_type,
+            DiscoverReviewDecision.item_id,
+            DiscoverReviewDecision.decision,
+        )
+        .where(DiscoverReviewDecision.decision.in_(["accepted_promote", "accepted_downrank"]))
+        .order_by(DiscoverReviewDecision.created_at.desc())
+        .limit(500)
+    )
+    decisions: dict[tuple[str, str], str] = {}
+    for row in result.all():
+        key = (str(row.item_type), str(row.item_id))
+        if key not in decisions:
+            decisions[key] = row.decision
+    _apply_manual_review_decision_map(feed_items, decisions)
 
 
 async def _attach_missing_ground_truth_traces(
@@ -811,7 +906,7 @@ def _market_runtime_filter_trace(
     updated_at = _utc(market.updated_at)
     if updated_at:
         days_stale = (now - updated_at).total_seconds() / 86400
-        if days_stale > 7 and not has_any_movement:
+        if days_stale > 2 and not has_any_movement:
             blockers.append("stale_no_movement")
 
     commence_time = _utc(market.commence_time)
@@ -1309,22 +1404,45 @@ async def build_discover_market_trace(
 async def _load_personalization_context(
     db: AsyncSession,
     user: Optional[User],
+    *,
+    session_id: str | None = None,
+    config: dict[str, float | bool] | None = None,
 ) -> PersonalizationContext:
     """Load all user personalization data into a context object.
 
     Single query pattern: load favorites, preferences, and pins in parallel-ish
     SQLAlchemy queries, then assemble into the context.
     """
-    if not user:
+    if not user and not session_id:
         return PersonalizationContext()
 
     interaction_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    config = config or _discover_runtime_config_defaults()
+    interaction_suppression_enabled = bool(config.get("interaction_suppression_enabled", True))
+    seen_cutoff = datetime.now(timezone.utc) - timedelta(hours=float(config.get("seen_suppression_hours", 48)))
+    dismiss_cutoff = datetime.now(timezone.utc) - timedelta(days=float(config.get("dismiss_suppression_days", 14)))
+
+    interaction_identity_filters = []
+    if user:
+        interaction_identity_filters.append(DiscoverInteraction.user_id == user.id)
+    if session_id:
+        interaction_identity_filters.append(DiscoverInteraction.session_id == session_id)
+    interaction_identity_clause = or_(*interaction_identity_filters)
 
     # Load user favorites, preferences, pins, and recent Discover behavior in parallel
-    favorites_result, prefs_result, pins_result, interactions_result = await asyncio.gather(
-        db.execute(select(UserFavorite).where(UserFavorite.user_id == user.id)),
-        db.execute(select(UserPreference).where(UserPreference.user_id == user.id)),
-        db.execute(select(UserPin).where(UserPin.user_id == user.id)),
+    if user:
+        favorites_query = select(UserFavorite).where(UserFavorite.user_id == user.id)
+        prefs_query = select(UserPreference).where(UserPreference.user_id == user.id)
+        pins_query = select(UserPin).where(UserPin.user_id == user.id)
+    else:
+        favorites_query = select(UserFavorite).where(False)
+        prefs_query = select(UserPreference).where(False)
+        pins_query = select(UserPin).where(False)
+
+    favorites_result, prefs_result, pins_result, interactions_result, recent_items_result = await asyncio.gather(
+        db.execute(favorites_query),
+        db.execute(prefs_query),
+        db.execute(pins_query),
         db.execute(
             select(
                 DiscoverInteraction.category,
@@ -1332,11 +1450,30 @@ async def _load_personalization_context(
                 func.count(DiscoverInteraction.id).label("count"),
             )
             .where(
-                DiscoverInteraction.user_id == user.id,
+                interaction_identity_clause,
                 DiscoverInteraction.created_at >= interaction_cutoff,
                 DiscoverInteraction.category.isnot(None),
             )
             .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
+        ),
+        db.execute(
+            select(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_id,
+                DiscoverInteraction.action,
+                func.max(DiscoverInteraction.created_at).label("last_seen"),
+            )
+            .where(
+                interaction_identity_clause,
+                DiscoverInteraction.item_type.in_(("event", "futures")),
+                DiscoverInteraction.action.in_(("impression", "dismiss")),
+                DiscoverInteraction.created_at >= dismiss_cutoff,
+            )
+            .group_by(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_id,
+                DiscoverInteraction.action,
+            )
         ),
     )
 
@@ -1358,6 +1495,27 @@ async def _load_personalization_context(
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
     category_affinities = _build_discover_category_affinities(interactions_result.all())
+    recent_seen_event_ids: set[int] = set()
+    recent_seen_futures_ids: set[int] = set()
+    recent_dismissed_event_ids: set[int] = set()
+    recent_dismissed_futures_ids: set[int] = set()
+    if interaction_suppression_enabled:
+        for item_type, item_id_raw, action, last_seen in recent_items_result.all():
+            try:
+                item_id = int(item_id_raw)
+            except (TypeError, ValueError):
+                continue
+            last_seen_dt = _utc(last_seen)
+            if action == "dismiss":
+                if item_type == "event":
+                    recent_dismissed_event_ids.add(item_id)
+                elif item_type == "futures":
+                    recent_dismissed_futures_ids.add(item_id)
+            elif action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff:
+                if item_type == "event":
+                    recent_seen_event_ids.add(item_id)
+                elif item_type == "futures":
+                    recent_seen_futures_ids.add(item_id)
 
     # Load roster player names from followed teams for player-futures matching
     roster_player_names: set[str] = set()
@@ -1392,7 +1550,11 @@ async def _load_personalization_context(
         pinned_futures_ids=pinned_futures_ids,
         roster_player_names=roster_player_names,
         discover_category_affinities=category_affinities,
-        is_authenticated=True,
+        recent_seen_event_ids=recent_seen_event_ids,
+        recent_seen_futures_ids=recent_seen_futures_ids,
+        recent_dismissed_event_ids=recent_dismissed_event_ids,
+        recent_dismissed_futures_ids=recent_dismissed_futures_ids,
+        is_authenticated=bool(user),
     )
 
 
@@ -1616,6 +1778,18 @@ async def _score_events(
     from app.tasks.odds_polling import get_statpal_end_time
 
     for event in events:
+        if not my_teams_only:
+            if event.id in ctx.recent_dismissed_event_ids:
+                continue
+            if event.id in ctx.recent_seen_event_ids and event.status != "live":
+                continue
+            if (
+                event.status == "live"
+                and event.commence_time
+                and event.commence_time < now - timedelta(hours=8)
+            ):
+                continue
+
         # my_teams_only: skip events that don't involve the user's teams
         if my_teams_only:
             # Try team_id matching first (fast, when IDs are linked)
@@ -1868,6 +2042,7 @@ async def _score_futures(
     static_tag_filter: Optional[list[str]] = None,
     timing_records: Optional[list[dict[str, float | str]]] = None,
     timing_started_at: float | None = None,
+    config: dict[str, float | bool] | None = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -1876,6 +2051,9 @@ async def _score_futures(
     markets, so we query each category separately.
     """
     timing_previous_at = time.perf_counter()
+    config = config or _discover_runtime_config_defaults()
+    stale_no_movement_days = float(config.get("stale_no_movement_days", 2))
+    no_resolution_stale_days = float(config.get("no_resolution_stale_days", 5))
 
     def mark_timing(
         stage: str,
@@ -2137,6 +2315,12 @@ async def _score_futures(
 
     scored_items = []
     for market in markets:
+        if not my_teams_only:
+            if market.id in ctx.recent_dismissed_futures_ids:
+                continue
+            if market.id in ctx.recent_seen_futures_ids:
+                continue
+
         # Prepare outcome data for scoring
         outcomes_data = []
         leader_name = None
@@ -2193,9 +2377,9 @@ async def _score_futures(
         )
         if market.updated_at:
             days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
-            if days_stale > 7 and not has_any_movement:
+            if days_stale > stale_no_movement_days and not has_any_movement:
                 continue
-            if market.resolution_date is None and days_stale > 14 and not has_any_movement:
+            if market.resolution_date is None and days_stale > no_resolution_stale_days and not has_any_movement:
                 continue
 
         # Get source count from canonical key

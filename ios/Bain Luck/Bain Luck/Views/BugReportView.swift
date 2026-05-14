@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import Network
 import os
@@ -159,6 +160,7 @@ struct BugReportView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .onAppear { AnalyticsService.trackScreen(name: "bug_report", type: "bug_report") }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -209,7 +211,7 @@ struct BugReportView: View {
                 let networkType = await currentNetworkType()
                 let userName = authManager.user?.displayName ?? authManager.user.map { "User \($0.id)" } ?? "anonymous"
 
-                let appState: [String: String] = [
+                var appState: [String: String] = [
                     "current_page": currentPage,
                     "current_tab": tabName,
                     "user_name": userName,
@@ -223,6 +225,7 @@ struct BugReportView: View {
                     "screen_size": screenSize(),
                     "timestamp": ISO8601DateFormatter().string(from: Date()),
                 ]
+                appState.merge(NativeDiscoverDebugState.appStateFields()) { _, new in new }
 
                 let submission = BugReportSubmission(
                     description: description,

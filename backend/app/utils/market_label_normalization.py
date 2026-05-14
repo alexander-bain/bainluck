@@ -296,7 +296,7 @@ _GAME_STAT_PROP_RE = re.compile(
 
 # Bare "Team vs. Team" markets (Polymarket moneyline, no stat qualifier)
 _BARE_MATCHUP_RE = re.compile(
-    r"^[A-Z][\w\s.]+\s+vs\.?\s+[A-Z][\w\s.]+$",
+    r"^[A-Z0-9][\w\s.]+\s+vs\.?\s+[A-Z0-9][\w\s.]+$",
     re.IGNORECASE,
 )
 

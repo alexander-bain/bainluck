@@ -357,6 +357,65 @@ interface DiscoverEngagementOpportunity {
   recommendation: string;
 }
 
+interface DiscoverEngagementReviewItem {
+  kind: "promote" | "investigate" | "downrank";
+  priority: number;
+  item_type: string;
+  item_id: string;
+  item_name: string | null;
+  category: string | null;
+  surface: string;
+  auth_segment: "signed_in" | "anonymous" | string;
+  family_key: string;
+  archetype: string;
+  impressions: number;
+  opens: number;
+  dismisses: number;
+  shares: number;
+  context_expands: number;
+  avg_rank: number | null;
+  avg_score: number | null;
+  open_rate: number;
+  dismiss_rate: number;
+  share_rate: number;
+  context_expand_rate: number;
+  recommendation: string;
+}
+
+interface DiscoverRuntimeConfig {
+  interaction_suppression_enabled: boolean;
+  seen_suppression_hours: number;
+  dismiss_suppression_days: number;
+  stale_no_movement_days: number;
+  no_resolution_stale_days: number;
+}
+
+interface DiscoverLaunchHealthItem {
+  item_type: string;
+  item_id: string;
+  item_name: string | null;
+  category: string | null;
+  surface: string | null;
+  impressions: number;
+  extra_impressions?: number;
+  reason?: string;
+}
+
+interface DiscoverReviewDecision {
+  id: number;
+  item_type: string;
+  item_id: string;
+  item_name: string | null;
+  category: string | null;
+  surface: string | null;
+  auth_segment: string | null;
+  family_key: string | null;
+  archetype: string | null;
+  decision: string;
+  admin_notes: string | null;
+  created_at: string | null;
+}
+
 interface DiscoverEngagementResponse {
   days: number;
   totals: {
@@ -379,6 +438,18 @@ interface DiscoverEngagementResponse {
   };
   groups: DiscoverEngagementGroup[];
   opportunities: DiscoverEngagementOpportunity[];
+  review_queue: DiscoverEngagementReviewItem[];
+  runtime_config: DiscoverRuntimeConfig;
+  launch_health: {
+    repeat_extra_impressions: number;
+    repeat_rate: number;
+    repeat_sessions: number;
+    stale_impressions: number;
+    stale_rate: number;
+    top_repeat_items: DiscoverLaunchHealthItem[];
+    top_stale_items: DiscoverLaunchHealthItem[];
+  };
+  recent_review_decisions: DiscoverReviewDecision[];
   top_items: DiscoverEngagementItem[];
 }
 
@@ -420,6 +491,47 @@ async function fetchDiscoverEngagement(secret: string, days: number): Promise<Di
   );
   if (!res.ok) throw new Error(`Engagement API error: ${res.status}`);
   return res.json();
+}
+
+async function updateDiscoverRuntimeConfig(
+  secret: string,
+  config: Partial<DiscoverRuntimeConfig>
+): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-config?secret=${encodeURIComponent(secret)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }
+  );
+  if (!res.ok) throw new Error(`Runtime config update failed: ${res.status}`);
+}
+
+async function submitDiscoverReviewDecision(
+  secret: string,
+  item: DiscoverEngagementReviewItem,
+  decision: string
+): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-review-decisions?secret=${encodeURIComponent(secret)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item_type: item.item_type,
+        item_id: item.item_id,
+        item_name: item.item_name,
+        category: item.category,
+        surface: item.surface,
+        auth_segment: item.auth_segment,
+        family_key: item.family_key,
+        archetype: item.archetype,
+        decision,
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Review decision failed: ${res.status}`);
 }
 
 function ratioText(value: number, total: number) {
@@ -749,7 +861,61 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
   );
 }
 
-function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
+function RuntimeActionButton({
+  title,
+  description,
+  busy,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="text-left rounded-lg border border-surface-border bg-surface-card p-3 hover:border-accent-brand/40 disabled:opacity-60"
+    >
+      <div className="text-xs font-semibold text-text-primary">
+        {busy ? "Applying..." : title}
+      </div>
+      <div className="mt-1 text-[11px] leading-4 text-text-muted">{description}</div>
+    </button>
+  );
+}
+
+function EngagementPanel({
+  data,
+  secret,
+  engagementDays,
+}: {
+  data: DiscoverEngagementResponse;
+  secret: string;
+  engagementDays: number;
+}) {
+  const [savingConfig, setSavingConfig] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const applyRuntimeConfig = async (
+    label: string,
+    config: Partial<DiscoverRuntimeConfig>
+  ) => {
+    setSavingConfig(label);
+    setActionMessage(null);
+    try {
+      await updateDiscoverRuntimeConfig(secret, config);
+      await mutate(["discover-engagement", secret, engagementDays]);
+      setActionMessage(`${label} applied`);
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : "Runtime config update failed");
+    } finally {
+      setSavingConfig(null);
+    }
+  };
+
   const strongestOpens = data.groups
     .filter((row) => row.impressions >= 5)
     .sort((a, b) => b.open_rate - a.open_rate)
@@ -816,6 +982,94 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
         </div>
       </div>
 
+      <div className="grid md:grid-cols-3 gap-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+        <div>
+          <div className="text-xs text-text-muted">Repeat rate</div>
+          <div className="text-lg font-semibold text-text-primary">{rateText(data.launch_health?.repeat_rate ?? 0)}</div>
+          <div className="text-[11px] text-text-muted">
+            {(data.launch_health?.repeat_extra_impressions ?? 0).toLocaleString()} extra impressions across {(data.launch_health?.repeat_sessions ?? 0).toLocaleString()} sessions
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Stale impression rate</div>
+          <div className="text-lg font-semibold text-text-primary">{rateText(data.launch_health?.stale_rate ?? 0)}</div>
+          <div className="text-[11px] text-text-muted">
+            {(data.launch_health?.stale_impressions ?? 0).toLocaleString()} impressions on currently stale cards
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted">Runtime controls</div>
+          <div className="text-sm font-semibold text-text-primary">
+            {data.runtime_config?.interaction_suppression_enabled ? "Suppression on" : "Suppression off"}
+          </div>
+          <div className="text-[11px] text-text-muted">
+            Seen {data.runtime_config?.seen_suppression_hours ?? "-"}h, dismiss {data.runtime_config?.dismiss_suppression_days ?? "-"}d, stale {data.runtime_config?.stale_no_movement_days ?? "-"}d
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium text-text-primary">Action Console</div>
+            <div className="text-[11px] text-text-muted mt-1">
+              Use these for launch guardrails. Use the Human Review Queue below for card-level promote/downrank decisions.
+            </div>
+          </div>
+          {actionMessage && (
+            <StatusPill tone={actionMessage.includes("failed") ? "warn" : "ok"}>
+              {actionMessage}
+            </StatusPill>
+          )}
+        </div>
+        <div className="grid md:grid-cols-3 gap-2">
+          <RuntimeActionButton
+            title="Suppress Repeats"
+            description="Hide seen cards for 72h and dismissed cards for 21d."
+            busy={savingConfig === "Suppress repeats"}
+            onClick={() =>
+              applyRuntimeConfig("Suppress repeats", {
+                interaction_suppression_enabled: true,
+                seen_suppression_hours: 72,
+                dismiss_suppression_days: 21,
+              })
+            }
+          />
+          <RuntimeActionButton
+            title="Tighten Stale Filter"
+            description="Reduce no-movement and no-resolution stale windows."
+            busy={savingConfig === "Tighten stale filter"}
+            onClick={() =>
+              applyRuntimeConfig("Tighten stale filter", {
+                stale_no_movement_days: 1,
+                no_resolution_stale_days: 3,
+              })
+            }
+          />
+          <RuntimeActionButton
+            title="Restore Defaults"
+            description="Return launch guardrails to the checked-in defaults."
+            busy={savingConfig === "Restore defaults"}
+            onClick={() =>
+              applyRuntimeConfig("Restore defaults", {
+                interaction_suppression_enabled: true,
+                seen_suppression_hours: 48,
+                dismiss_suppression_days: 14,
+                stale_no_movement_days: 2,
+                no_resolution_stale_days: 5,
+              })
+            }
+          />
+        </div>
+      </div>
+
+      {((data.launch_health?.top_repeat_items?.length ?? 0) > 0 || (data.launch_health?.top_stale_items?.length ?? 0) > 0) && (
+        <div className="grid md:grid-cols-2 gap-3">
+          <LaunchHealthList title="Repeated Cards" rows={data.launch_health?.top_repeat_items || []} metric="extra_impressions" />
+          <LaunchHealthList title="Currently Stale Cards" rows={data.launch_health?.top_stale_items || []} metric="impressions" />
+        </div>
+      )}
+
       {data.totals.impressions === 0 ? (
         <div className="text-sm text-text-muted rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
           No first-party engagement captured yet. Open `/discover` on web or native after this deploy to start populating this panel.
@@ -829,9 +1083,118 @@ function EngagementPanel({ data }: { data: DiscoverEngagementResponse }) {
         </div>
       )}
 
+      {data.review_queue?.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <div className="text-xs font-medium text-text-primary">Human Review Queue</div>
+              <div className="text-[11px] text-text-muted">
+                Card-level candidates segmented by surface and auth state. Promote/downrank decisions apply a bounded feed score nudge.
+              </div>
+            </div>
+            <StatusPill tone="muted">{data.review_queue.length} candidates</StatusPill>
+          </div>
+          <div className="space-y-2">
+            {data.review_queue.slice(0, 12).map((item) => (
+              <div
+                key={`${item.kind}-${item.surface}-${item.auth_segment}-${item.item_type}-${item.item_id}`}
+                className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-text-primary truncate">
+                      {item.item_name || `${item.item_type} #${item.item_id}`}
+                    </div>
+                    <div className="text-xs text-text-secondary mt-1">{item.recommendation}</div>
+                  </div>
+                  <StatusPill tone={item.kind === "promote" ? "ok" : item.kind === "downrank" ? "warn" : "muted"}>
+                    {item.kind}
+                  </StatusPill>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <StatusPill tone="muted">{item.surface}</StatusPill>
+                  <StatusPill tone="muted">{item.auth_segment}</StatusPill>
+                  <StatusPill tone="muted">{item.category || "other"}</StatusPill>
+                  <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
+                  <StatusPill tone="muted">{formatTargetName(item.family_key)}</StatusPill>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-3 text-xs">
+                  <div>
+                    <div className="text-text-muted">Impressions</div>
+                    <div className="font-semibold text-text-primary">{item.impressions}</div>
+                  </div>
+                  <div>
+                    <div className="text-text-muted">Dismiss</div>
+                    <div className="font-semibold text-text-primary">{rateText(item.dismiss_rate)}</div>
+                  </div>
+                  <div>
+                    <div className="text-text-muted">Open</div>
+                    <div className="font-semibold text-text-primary">{rateText(item.open_rate)}</div>
+                  </div>
+                  <div>
+                    <div className="text-text-muted">Share</div>
+                    <div className="font-semibold text-text-primary">{rateText(item.share_rate)}</div>
+                  </div>
+                  <div>
+                    <div className="text-text-muted">Context</div>
+                    <div className="font-semibold text-text-primary">{rateText(item.context_expand_rate)}</div>
+                  </div>
+                  <div>
+                    <div className="text-text-muted">Avg rank</div>
+                    <div className="font-semibold text-text-primary">{item.avg_rank ?? "-"}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {[
+                    ["accepted_promote", "Promote in feed"],
+                    ["accepted_downrank", "Downrank in feed"],
+                    ["needs_design_fix", "Design fix"],
+                    ["needs_data_fix", "Data fix"],
+                    ["ignored", "Ignore"],
+                  ].map(([decision, label]) => (
+                    <button
+                      key={decision}
+                      type="button"
+                      onClick={async () => {
+                        await submitDiscoverReviewDecision(secret, item, decision);
+                        await mutate(["discover-engagement", secret, engagementDays]);
+                      }}
+                      className="px-2 py-1 rounded-md border border-surface-border bg-surface-card text-[11px] text-text-secondary hover:text-text-primary"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.recent_review_decisions?.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-text-primary mb-2">Recent Review Decisions</div>
+          <div className="space-y-1">
+            {data.recent_review_decisions.slice(0, 8).map((decision) => (
+              <div key={decision.id} className="flex items-center justify-between gap-3 text-xs rounded-md border border-surface-border bg-surface-elevated/30 px-3 py-2">
+                <span className="truncate text-text-secondary">{decision.item_name || `${decision.item_type} #${decision.item_id}`}</span>
+                <StatusPill tone="muted">{formatTargetName(decision.decision)}</StatusPill>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {data.opportunities.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-text-primary mb-2">Ranking Opportunities</div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <div className="text-xs font-medium text-text-primary">Ranking Opportunities</div>
+              <div className="text-[11px] text-text-muted">
+                Aggregate patterns only. Use the Human Review Queue for card-level ranking changes.
+              </div>
+            </div>
+          </div>
           <div className="grid md:grid-cols-2 gap-2">
             {data.opportunities.slice(0, 6).map((item) => (
               <div key={`${item.kind}-${item.label}-${item.metric}`} className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
@@ -911,6 +1274,43 @@ function EngagementList({
               </div>
               <div className="text-[11px] text-text-muted">
                 {row.impressions} impressions, {row.opens} opens, {row.dismisses} dismisses, {row.shares} shares, {row.context_expands ?? 0} expands
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LaunchHealthList({
+  title,
+  rows,
+  metric,
+}: {
+  title: string;
+  rows: DiscoverLaunchHealthItem[];
+  metric: "impressions" | "extra_impressions";
+}) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+      <div className="text-xs font-medium text-text-primary mb-2">{title}</div>
+      {rows.length === 0 ? (
+        <div className="text-xs text-text-muted">No candidates.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.slice(0, 6).map((row) => (
+            <div key={`${title}-${row.item_type}-${row.item_id}-${row.surface || "unknown"}`} className="text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-text-primary truncate">
+                  {row.item_name || `${row.item_type} #${row.item_id}`}
+                </span>
+                <span className="text-text-muted shrink-0">{(row[metric] ?? 0).toLocaleString()}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1">
+                <StatusPill tone="muted">{row.surface || "unknown"}</StatusPill>
+                <StatusPill tone="muted">{row.category || "other"}</StatusPill>
+                {row.reason && <StatusPill tone="warn">{formatTargetName(row.reason)}</StatusPill>}
               </div>
             </div>
           ))}
@@ -1343,7 +1743,7 @@ export default function DiscoverQualityPage() {
               </select>
             </div>
             {engagementData ? (
-              <EngagementPanel data={engagementData} />
+              <EngagementPanel data={engagementData} secret={submittedSecret!} engagementDays={engagementDays} />
             ) : (
               <div className="bg-surface-card border border-surface-border rounded-lg p-4 text-sm text-text-muted">
                 Loading engagement...

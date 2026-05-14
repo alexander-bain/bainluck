@@ -45,13 +45,11 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker` ~line 893), `backend/app/tasks/prediction_market_matching.py` (Phase 2 date validation)
 
-### Stat Model Lacks Pregame Prior (MEDIUM PRI)
+### ~~Stat Model Lacks Pregame Prior~~ — FIXED (May 13)
 
-**Problem:** The stat model starts at ~50% for all games regardless of team quality, then only reacts to score/clock. ESPN's model bakes in team quality from the start (e.g., Gonzaga vs Pacific starts at 95% for Gonzaga). This causes a large initial divergence that's not a matching issue — it's a model quality gap.
+Model now starts at sportsbook consensus probability (via inverse-normal-CDF conversion to derive an equivalent spread) instead of 50%. The prior naturally fades as game evidence accumulates. 11 new tests, all pass.
 
-**Fix approach:** Initialize the stat model's pregame probability from `opening_home_probability` (sportsbook consensus) instead of 50%. This gives it a team-quality-aware starting point. The model already accepts a `pregame_spread` parameter — just need to use it more effectively.
-
-**Files:** `backend/app/utils/win_probability.py` (`compute_statistical_win_prob`), `backend/app/tasks/espn_sync.py` (where stat_model is computed)
+**Files:** `backend/app/utils/win_probability.py` (`compute_statistical_win_prob`), `backend/app/tasks/espn_sync.py`
 
 ### ~~Game-Markets Query Missing Kalshi Props~~ — FIXED (May 13)
 
@@ -81,11 +79,70 @@ Root cause: status and `llm_sport_category` filters were excluding linked market
 
 ## Tier 0.5 — Feed & Navigation Quality
 
+### 0ga4. GA4 Configuration via Admin API (HIGH PRI)
+
+**Problem:** GA4 custom dimensions, key events, audiences, explorations, and dashboards are not configured in the GA4 console. The events are being sent from code (web and iOS), but GA4 needs manual configuration to make the data useful in reports.
+
+**Code-side prerequisites (DONE, May 13):**
+- `prediction_submit` event fires on both web and iOS
+- iOS event names aligned with web GA4 taxonomy (`feed_card_impression`, `feed_card_action`, `filter_category`)
+- Screen tracking added to all 20+ iOS views
+- All web pages have 3 mandatory GA4 hooks (`usePageTracking`, `useScrollDepth`, `useEngagementTime`)
+
+**Preferred approach: Google Analytics Admin API (programmatic)**
+
+The GA Admin API can create dimensions, key events, and audiences in one script run — no clicking through the console. Steps:
+
+1. **Enable the API:** Go to [Google Cloud Console](https://console.cloud.google.com/apis/library/analyticsadmin.googleapis.com) → enable "Google Analytics Admin API" for the Bain Luck project.
+
+2. **Create a service account** (or reuse the existing Firebase one):
+   - IAM & Admin → Service Accounts → Create
+   - Grant it "Editor" role on the GA4 property (Admin → Property → Property Access Management → add the service account email)
+   - Download the JSON key file
+
+3. **Set env vars:**
+   ```bash
+   # Add to .env / Heroku config
+   GA4_PROPERTY_ID=<numeric property ID from Admin → Property Settings>
+   # Place the JSON key at a known path or base64-encode into an env var
+   GA4_ADMIN_CREDENTIALS=/path/to/service-account-key.json
+   ```
+
+4. **Run the setup script** (Claude will write `backend/scripts/setup_ga4.py`):
+   - Uses `google-analytics-admin` Python SDK
+   - Creates all 11 custom dimensions:
+     - Event-scoped: sport, league, event_id, event_status, source_section, position_index, is_live, is_close_game
+     - User-scoped: platform, app_version, days_since_install
+   - Creates 5 key events: sign_up, onboarding_complete, event_detail_view, prediction_submit, challenge_start
+   - Creates 5 audiences:
+     - Sports Enthusiasts (event_detail_view count >= 3 in 7 days)
+     - NBA Fans (sport = "basketball_nba", session count >= 5)
+     - Power Users (sessions >= 5 in 7 days)
+     - Prediction Players (prediction_submit count >= 3 in 7 days)
+     - Discover Browsers (page_view where page = "/" or "/discover", count >= 5 in 7 days)
+   - Idempotent — skips dimensions/events/audiences that already exist
+   - Prints a summary of what was created vs skipped
+
+5. **Manual console steps (API doesn't support):**
+   - Funnel exploration: session_start → page_view → event_detail_view → prediction_submit → sign_up
+   - Retention cohort: first visit date, any return event, daily granularity
+   - Dashboard: DAU by platform, top sports by engagement, Discover feed CTR, onboarding completion rate, prediction accuracy distribution
+
+**Fallback approach: Claude Desktop computer use**
+If the API setup is too much overhead, the prompt at `docs/ga4-setup-prompt.md` can drive Chrome through the GA4 console UI. Requires Claude Desktop with computer use enabled and a working Claude Code binary (update to latest version first — v1.7196.0 had a broken binary).
+
+**Fallback approach: Manual**
+Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
+
+**Files:** `docs/ga4-setup-guide.md`, `docs/ga4-setup-prompt.md`, `backend/scripts/setup_ga4.py` (to be written)
+**Pip dependency:** `google-analytics-admin>=0.22.0`
+**Parallel Safety:** Green (no runtime code changes)
+
 ### 0u. Discover Feed Quality + Personalization — ACTIVE
 
 **Problem:** The worst Discover feed quality failures are now fixed, but the product should keep improving toward a world-class personalized prediction feed across web and native.
 
-**Current production state (May 11):**
+**Current production state (May 13):**
 - ✅ Audit quality is clean: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`, `explanation-coverage@20=20/20`, `positive-archetypes@20=6/6`, `strict-variety@20=5/5`.
 - ✅ Deterministic explanations are first-class and do not depend on LLM hooks for first-page comprehension.
 - ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
@@ -101,21 +158,26 @@ Root cause: status and `llm_sport_category` filters were excluding linked market
 - ✅ Polymarket email-highlight sheet can now feed the Discover audit through CSV path/URL env vars, producing `email-hit@20` / `email-hit@50` coverage without changing ranking.
 - ✅ Email ground-truth parsing now accepts stable `Audit Export` headers, records row count/latest-date/stale metadata, supports private Google Sheets via service-account auth, and surfaces export errors in audit/admin diagnostics instead of crashing.
 - ✅ `/admin/discover-quality` now separates Polymarket email-highlight misses into a dedicated editorial audit panel with bucket counts, sheet scores, hooks, DB trace entry points, and recommended actions.
+- ✅ `/admin/discover-quality` now includes a card-level human review queue for aggregate Discover feedback, segmented by web/native and signed-in/anonymous, with promote/downrank/investigate candidates by category, archetype, and market family.
+- ✅ Anonymous and signed-in Discover requests use session/user interaction history to suppress recently seen cards and longer-lived dismisses, reducing repeated cards across visits.
+- ✅ Low-signal regional US election/primary markets and niche sports families are downranked and story-capped so they cannot dominate Discover just because they are liquid or timely.
+- ✅ TestFlight feedback loop is instrumented: `/admin/discover-quality` shows repeat-card rate, stale-impression rate, runtime suppression config, top repeated/stale cards, and persisted review decisions. Native rage-shake reports include visible Discover cards, current card, and recent Discover interactions.
 
 **Next phases:**
-1. Automate the Polymarket email-highlight ground truth pipeline:
+1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
+2. Automate the Polymarket email-highlight ground truth pipeline:
    - Keep the Apps Script as the Gmail parser, with a clean `Audit Export` tab using stable columns.
    - Configure production with `POLYMARKET_EMAIL_GROUND_TRUTH_SPREADSHEET_ID` and `POLYMARKET_EMAIL_GROUND_TRUTH_SHEET_NAME=Audit Export` so backend jobs read the restricted sheet through the shared Firebase service account.
    - Add a scheduled backend/admin import path that fetches the export and persists a snapshot, so audit/admin metrics do not depend on fetching Google Sheets during the request.
    - Alert or surface an admin warning when the export is stale for more than 48 hours, row count drops sharply, or parse coverage changes unexpectedly.
-2. Add persisted matching diagnostics for email-highlight rows: matched `futures_markets.id`, current Discover rank, score bucket, missing reason, category/story family, and whether the card had usable image/context/explanation treatment.
-3. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
-4. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-5. Add a runtime kill switch/config cap for interaction personalization if production engagement data is noisy.
-6. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-7. Use engagement opportunity signals and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
+3. Add persisted matching diagnostics for email-highlight rows: matched `futures_markets.id`, current Discover rank, score bucket, missing reason, category/story family, and whether the card had usable image/context/explanation treatment.
+4. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
+5. Use the aggregate feedback review queue daily during TestFlight: accept only human-reviewed ranking changes at first, prioritizing high-dismiss/high-rank downrank candidates, high-open/share/context-expand low-rank promote candidates, and rage-shake reports where Discover context identifies repeated or stale cards.
+6. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+7. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+8. Use engagement opportunity signals, repeat/stale launch-health signals, rage-shake context, and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
 
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
+**Files:** `backend/app/routes/feed.py`, `backend/app/routes/admin.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/BugReportView.swift`
 **Parallel Safety:** Yellow
 
 ### ~~0n. Navigation Redesign~~ — DONE (May 11-12)

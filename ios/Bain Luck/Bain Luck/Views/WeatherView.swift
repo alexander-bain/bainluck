@@ -50,6 +50,7 @@ struct WeatherView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear { AnalyticsService.trackScreen(name: "weather", type: "weather") }
         .task { await vm.load() }
         .refreshable { await vm.load() }
     }

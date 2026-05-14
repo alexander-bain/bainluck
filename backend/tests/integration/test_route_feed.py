@@ -6,6 +6,8 @@ The feed is the home page — the most important endpoint for user experience.
 
 import pytest
 
+from app.routes.feed import _apply_manual_review_decision_map
+
 
 class TestFeedEmptyShape:
     """With an empty DB, the feed returns a valid empty response."""
@@ -272,7 +274,18 @@ class TestDiscoverInteractions:
         top_items.all.return_value = [
             ("event", "1", "Lakers vs Celtics", "basketball", "native", 2),
         ]
-        mock_db.execute.side_effect = [grouped, top_items]
+        review = MagicMock()
+        review.all.return_value = [
+            ("event", "1", "Lakers vs Celtics", "basketball", "native", False, "impression", 10, 5, 91),
+            ("event", "1", "Lakers vs Celtics", "basketball", "native", False, "detail_click", 3, None, None),
+        ]
+        repeat = MagicMock()
+        repeat.all.return_value = []
+        impression_items = MagicMock()
+        impression_items.all.return_value = []
+        decisions = MagicMock()
+        decisions.scalars.return_value.all.return_value = []
+        mock_db.execute.side_effect = [grouped, review, repeat, impression_items, decisions, top_items]
 
         resp = await client.get("/api/admin/discover-engagement?secret=test-admin&days=7")
         body = resp.json()
@@ -288,6 +301,10 @@ class TestDiscoverInteractions:
             for row in body["groups"]
         )
         assert body["opportunities"][0]["kind"] == "promote"
+        assert body["review_queue"][0]["kind"] == "promote"
+        assert body["review_queue"][0]["auth_segment"] == "anonymous"
+        assert body["launch_health"]["repeat_rate"] == 0
+        assert body["runtime_config"]["interaction_suppression_enabled"] is True
         assert body["top_items"][0]["item_name"] == "Lakers vs Celtics"
 
 
@@ -325,3 +342,28 @@ class TestFeedResponseTypes:
         resp = await client.get("/api/feed")
         body = resp.json()
         assert isinstance(body["has_more"], bool)
+
+
+class TestDiscoverReviewDecisionScoring:
+    """Human review decisions from admin should nudge ranking scores."""
+
+    def test_manual_review_decisions_apply_bounded_score_changes(self):
+        items = [
+            {"type": "futures", "score": 96, "data": {"id": 1}},
+            {"type": "futures", "score": 12, "data": {"id": 2}},
+            {"type": "event", "score": 50, "data": {"id": 3}},
+        ]
+
+        _apply_manual_review_decision_map(
+            items,
+            {
+                ("futures", "1"): "accepted_promote",
+                ("futures", "2"): "accepted_downrank",
+            },
+        )
+
+        assert items[0]["score"] == 100
+        assert items[0]["_review_decision"] == "accepted_promote"
+        assert items[1]["score"] == 0
+        assert items[1]["_review_decision"] == "accepted_downrank"
+        assert items[2]["score"] == 50

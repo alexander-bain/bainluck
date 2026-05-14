@@ -122,6 +122,22 @@ _OBSCURE_PROCEDURAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+_REGIONAL_US_ELECTION_RE = re.compile(
+    r"("
+    r"\b[A-Z]{2}[-\s]?\d{1,2}\b|"
+    r"\b(state house|state senate|city council|county executive|school board)\b|"
+    r"\b(republican|democratic|gop|dem)\s+(nominee|primary)\b|"
+    r"\b(governor|senate|house)\s+(nominee|primary)\b|"
+    r"\b(lieutenant governor|attorney general|secretary of state)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_LOW_SIGNAL_SPORT_RE = re.compile(
+    r"\b(table tennis|ping pong|wtt|badminton|snooker|darts)\b",
+    re.IGNORECASE,
+)
+
 _SPORTS_PERSONNEL_RE = re.compile(
     r"\b("
     r"fired|fire|resign|resignation|step down|retire|retirement|"
@@ -305,6 +321,9 @@ def _story_key(name: str, category: str) -> str | None:
     if "2028" in lower and re.search(r"\b(president|presidential|nominee|election)\b", lower):
         return "story:us_2028_election"
 
+    if _REGIONAL_US_ELECTION_RE.search(name) and not re.search(r"\bpresidential\b", lower):
+        return "story:regional_us_elections"
+
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
         return "story:macro_rates"
 
@@ -325,6 +344,9 @@ def _story_key(name: str, category: str) -> str | None:
 
     if "truist championship" in lower:
         return "story:golf_truist_championship"
+
+    if _LOW_SIGNAL_SPORT_RE.search(name):
+        return "story:niche_low_signal_sports"
 
     return None
 
@@ -353,6 +375,12 @@ def classify_market_quality(
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
     entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
+    regional_election = bool(_REGIONAL_US_ELECTION_RE.search(name)) and not re.search(
+        r"\b(president|presidential|trump|biden|obama|2028)\b",
+        name,
+        re.IGNORECASE,
+    )
+    low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
 
     ladder_or_bucket = price_bucket or weather_bucket
     if ladder_or_bucket:
@@ -365,6 +393,10 @@ def classify_market_quality(
         reasons.append("entertainment_metric")
     if obscure:
         reasons.append("obscure_procedural")
+    if regional_election:
+        reasons.append("regional_us_election")
+    if low_signal_sport:
+        reasons.append("low_signal_sport")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = bool(_SPORTS_PERSONNEL_RE.search(name)) and has_salient
@@ -389,7 +421,7 @@ def classify_market_quality(
 
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
-    elif entertainment_metric:
+    elif entertainment_metric or regional_election or low_signal_sport:
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
@@ -912,7 +944,7 @@ def apply_explanation_quality_score(
 
 
 def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
-    """Cap low-quality ladder/bucket families after scoring.
+    """Cap low-quality ladder/bucket/story families after scoring.
 
     Items are expected to be sorted later by the caller; this helper sorts by
     score first to keep the strongest representative per family.
@@ -926,7 +958,7 @@ def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
     kept: list[dict] = []
     for item in sorted_items:
         qclass = item.get("_quality_class")
-        family = item.get("_quality_family_key")
+        family = item.get("_quality_story_key") or item.get("_quality_family_key")
         if qclass == "low_quality" and family:
             count = counts.get(family, 0)
             if count >= cap:
@@ -966,6 +998,8 @@ def diversify_quality_families(
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,
         "story:basketball_finals_path": 4,
+        "story:regional_us_elections": 1,
+        "story:niche_low_signal_sports": 1,
     }
 
     for item in sorted_items:

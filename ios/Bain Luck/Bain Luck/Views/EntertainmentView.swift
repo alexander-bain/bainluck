@@ -73,6 +73,7 @@ struct EntertainmentView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear { AnalyticsService.trackScreen(name: "entertainment", type: "entertainment") }
         .task { await vm.load() }
         .refreshable { await vm.load() }
     }

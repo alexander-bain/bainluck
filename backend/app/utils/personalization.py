@@ -81,6 +81,12 @@ class PersonalizationContext:
     roster_player_names: set[str] = field(default_factory=set)
     # category → bounded multiplier delta from recent Discover interactions
     discover_category_affinities: dict[str, float] = field(default_factory=dict)
+    # Exact Discover cards recently shown/dismissed. Used for feed hygiene, not
+    # broad ranking: avoid showing the same stale card repeatedly.
+    recent_seen_event_ids: set[int] = field(default_factory=set)
+    recent_seen_futures_ids: set[int] = field(default_factory=set)
+    recent_dismissed_event_ids: set[int] = field(default_factory=set)
+    recent_dismissed_futures_ids: set[int] = field(default_factory=set)
     # Whether this is a real user context (vs anonymous)
     is_authenticated: bool = False
 

@@ -38,6 +38,7 @@ struct PredictionStatsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear { AnalyticsService.trackScreen(name: "prediction_stats", type: "prediction_stats") }
         .task { await loadStats() }
         .refreshable { await loadStats() }
     }

@@ -423,6 +423,17 @@ export interface SharedLinkOpenParams {
   campaign?: string;
 }
 
+export interface PredictionSubmitParams {
+  market_id: number;
+  guess: 'higher' | 'lower';
+  threshold: number;
+  actual_probability: number;
+  correct: boolean;
+  content_type: 'event' | 'futures';
+  category: string;
+  surface: 'discover' | 'challenge';
+}
+
 export interface FeedCardImpressionParams {
   content_type: 'event' | 'futures' | 'grid';
   item_id: number | string;
@@ -583,6 +594,7 @@ export interface AnalyticsEventMap {
   market_map_interact: MarketMapInteractParams;
   share: ShareParams;
   shared_link_open: SharedLinkOpenParams;
+  prediction_submit: PredictionSubmitParams;
   feed_card_impression: FeedCardImpressionParams;
   feed_card_action: FeedCardActionParams;
   feed_refresh: FeedRefreshParams;

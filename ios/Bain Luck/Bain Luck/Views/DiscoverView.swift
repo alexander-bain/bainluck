@@ -68,6 +68,88 @@ private struct NativeDiscoverProfile {
     }
 }
 
+struct NativeDiscoverDebugCard: Codable {
+    let itemType: String
+    let itemId: String
+    let itemName: String?
+    let category: String
+    let rank: Int?
+    let score: Int
+}
+
+struct NativeDiscoverDebugInteraction: Codable {
+    let action: String
+    let itemType: String
+    let itemId: String
+    let itemName: String?
+    let category: String
+    let source: String
+    let timestamp: String
+}
+
+enum NativeDiscoverDebugState {
+    private static let visibleCardsKey = "discover_debug_visible_cards"
+    private static let recentInteractionsKey = "discover_debug_recent_interactions"
+    private static let currentCardKey = "discover_debug_current_card"
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+    private static let iso = ISO8601DateFormatter()
+
+    static func recordVisibleCard(_ card: NativeDiscoverDebugCard) {
+        var cards = visibleCards()
+        cards.removeAll { $0.itemType == card.itemType && $0.itemId == card.itemId }
+        cards.append(card)
+        cards = Array(cards.suffix(20))
+        save(cards, key: visibleCardsKey)
+        save(card, key: currentCardKey)
+    }
+
+    static func recordInteraction(_ interaction: NativeDiscoverDebugInteraction) {
+        var interactions = recentInteractions()
+        interactions.append(interaction)
+        interactions = Array(interactions.suffix(20))
+        save(interactions, key: recentInteractionsKey)
+    }
+
+    static func appStateFields() -> [String: String] {
+        var fields: [String: String] = [:]
+        fields["discover_visible_cards"] = UserDefaults.standard.string(forKey: visibleCardsKey) ?? "[]"
+        fields["discover_recent_interactions"] = UserDefaults.standard.string(forKey: recentInteractionsKey) ?? "[]"
+        fields["discover_current_card"] = UserDefaults.standard.string(forKey: currentCardKey) ?? "{}"
+        return fields
+    }
+
+    static func timestamp() -> String {
+        iso.string(from: Date())
+    }
+
+    private static func visibleCards() -> [NativeDiscoverDebugCard] {
+        guard
+            let raw = UserDefaults.standard.string(forKey: visibleCardsKey),
+            let data = raw.data(using: .utf8),
+            let cards = try? decoder.decode([NativeDiscoverDebugCard].self, from: data)
+        else { return [] }
+        return cards
+    }
+
+    private static func recentInteractions() -> [NativeDiscoverDebugInteraction] {
+        guard
+            let raw = UserDefaults.standard.string(forKey: recentInteractionsKey),
+            let data = raw.data(using: .utf8),
+            let interactions = try? decoder.decode([NativeDiscoverDebugInteraction].self, from: data)
+        else { return [] }
+        return interactions
+    }
+
+    private static func save<T: Encodable>(_ value: T, key: String) {
+        guard
+            let data = try? encoder.encode(value),
+            let raw = String(data: data, encoding: .utf8)
+        else { return }
+        UserDefaults.standard.set(raw, forKey: key)
+    }
+}
+
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @State private var categoryFilter = "all"
@@ -213,6 +295,17 @@ struct DiscoverView: View {
             )
             _ = try? await APIClient.shared.recordDiscoverInteraction(event)
         }
+        NativeDiscoverDebugState.recordInteraction(
+            NativeDiscoverDebugInteraction(
+                action: actionName,
+                itemType: itemType(item),
+                itemId: rawItemId(item),
+                itemName: itemName(item),
+                category: itemCategory(item),
+                source: source,
+                timestamp: NativeDiscoverDebugState.timestamp()
+            )
+        )
     }
 
     private func recordChallengeAction(_ actionName: String) {
@@ -237,6 +330,17 @@ struct DiscoverView: View {
             )
             _ = try? await APIClient.shared.recordDiscoverInteraction(event)
         }
+        NativeDiscoverDebugState.recordInteraction(
+            NativeDiscoverDebugInteraction(
+                action: actionName,
+                itemType: "grid",
+                itemId: "daily_challenge",
+                itemName: "Today's Challenge",
+                category: "challenge",
+                source: "challenge",
+                timestamp: NativeDiscoverDebugState.timestamp()
+            )
+        )
     }
 
     private func trackImpression(for grouped: DiscoverGroupedItem, rank: Int) {
@@ -506,6 +610,7 @@ struct DiscoverView: View {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
+            #if DEBUG
             ToolbarItem(placement: .automatic) {
                 Menu {
                     let affinities = interactionProfile.topAffinities()
@@ -532,7 +637,9 @@ struct DiscoverView: View {
                     Label("Discover Tuning", systemImage: "slider.horizontal.3")
                 }
             }
+            #endif
         }
+        .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
@@ -732,7 +839,7 @@ final class DiscoverViewModel: ObservableObject {
         loading = true
         error = nil
         do {
-            let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15)
+            let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
             items = Self.interleave(response.items)
         } catch {
             if items.isEmpty {
@@ -1594,6 +1701,15 @@ private struct NativeGuessCard: View {
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
         withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
         onGuessCompleted?()
+        AnalyticsService.trackPredictionSubmit(
+            marketId: data.id,
+            guess: g,
+            threshold: threshold,
+            actualProbability: leader?.probability ?? 0,
+            correct: isCorrect,
+            contentType: "futures",
+            category: data.llmSportCategory
+        )
         Task {
             let request = PredictionRequest(
                 marketId: data.id,
@@ -1812,6 +1928,16 @@ private struct NativeEventGuessCard: View {
         guess = g
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
         onGuessCompleted?()
+        let cat = event.sport?.split(separator: "_").first.map(String.init)
+        AnalyticsService.trackPredictionSubmit(
+            marketId: event.id,
+            guess: g,
+            threshold: threshold,
+            actualProbability: event.currentOdds?.homeProbability ?? 0.5,
+            correct: isCorrect,
+            contentType: "event",
+            category: cat
+        )
         Task {
             let request = PredictionRequest(
                 marketId: event.id,
@@ -1819,7 +1945,7 @@ private struct NativeEventGuessCard: View {
                 threshold: threshold,
                 actualProbability: event.currentOdds?.homeProbability ?? 0.5,
                 correct: isCorrect,
-                category: event.sport?.split(separator: "_").first.map(String.init)
+                category: cat
             )
             _ = try? await APIClient.shared.submitPrediction(request)
             if let stats = try? await APIClient.shared.fetchPredictionStats() {

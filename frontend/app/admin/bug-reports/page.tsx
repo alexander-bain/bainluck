@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { getAuth } from "firebase/auth";
+import { usePageTracking } from "@/hooks/usePageTracking";
+import { useScrollDepth } from "@/hooks/useScrollDepth";
+import { useEngagementTime } from "@/hooks/useEngagementTime";
 
 interface BugReport {
   id: number;
@@ -99,6 +102,10 @@ For each issue, note whether it should be a separate backlog item.`;
 }
 
 export default function BugReportsPage() {
+  usePageTracking({ pageType: "bug_reports", pageTitle: "Bug Reports" });
+  useScrollDepth({ pageType: "bug_reports" });
+  useEngagementTime({ pageType: "bug_reports" });
+
   const [reports, setReports] = useState<BugReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
