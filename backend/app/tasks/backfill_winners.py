@@ -767,7 +767,7 @@ async def _backfill_closing_lines():
                     WITH events_needing_closing AS (
                         SELECT e.id, e.commence_time
                         FROM events e
-                        WHERE e.status = 'completed'
+                        WHERE e.status IN ('completed', 'closed')
                           AND e.closing_home_probability IS NULL
                           AND e.commence_time IS NOT NULL
                           AND e.home_score IS NOT NULL

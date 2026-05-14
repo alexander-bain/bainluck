@@ -10568,7 +10568,7 @@ async def calibration_data(
                    (home_score > away_score) AS won,
                    sport_id
             FROM events
-            WHERE status = 'completed'
+            WHERE status IN ('completed', 'closed')
               AND opening_home_probability IS NOT NULL
               AND opening_home_probability > 0
               AND opening_home_probability < 1
@@ -10580,7 +10580,7 @@ async def calibration_data(
                    (away_score > home_score) AS won,
                    sport_id
             FROM events
-            WHERE status = 'completed'
+            WHERE status IN ('completed', 'closed')
               AND opening_away_probability IS NOT NULL
               AND opening_away_probability > 0
               AND opening_away_probability < 1
@@ -10604,7 +10604,7 @@ async def calibration_data(
     total_markets = total_markets_result.scalar()
 
     events_count_result = await db.execute(
-        text("SELECT COUNT(*) FROM events WHERE status = 'completed' AND opening_home_probability IS NOT NULL AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score")
+        text("SELECT COUNT(*) FROM events WHERE status IN ('completed', 'closed') AND opening_home_probability IS NOT NULL AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score")
     )
     total_events = events_count_result.scalar()
 

@@ -550,7 +550,7 @@ async def public_calibration(
             SELECT COALESCE(closing_home_probability, opening_home_probability) AS prob,
                    (home_score > away_score) AS won, sport_id
             FROM events
-            WHERE status = 'completed'
+            WHERE status IN ('completed', 'closed')
               AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
               AND COALESCE(closing_home_probability, opening_home_probability) > 0
               AND COALESCE(closing_home_probability, opening_home_probability) < 1
@@ -560,7 +560,7 @@ async def public_calibration(
             SELECT COALESCE(closing_away_probability, opening_away_probability) AS prob,
                    (away_score > home_score) AS won, sport_id
             FROM events
-            WHERE status = 'completed'
+            WHERE status IN ('completed', 'closed')
               AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
               AND COALESCE(closing_away_probability, opening_away_probability) > 0
               AND COALESCE(closing_away_probability, opening_away_probability) < 1
@@ -591,7 +591,7 @@ async def public_calibration(
                              AND commence_time IS NOT NULL) AS needs_closing,
             COUNT(*) AS total_completed
         FROM events
-        WHERE status = 'completed'
+        WHERE status IN ('completed', 'closed')
           AND home_score IS NOT NULL AND away_score IS NOT NULL
     """)
     closing_result = await db.execute(closing_sql)
