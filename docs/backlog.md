@@ -79,15 +79,65 @@ Root cause: status and `llm_sport_category` filters were excluding linked market
 
 ## Tier 0.5 — Feed & Navigation Quality
 
-### 0ga4. GA4 Configuration via Admin API (HIGH PRI)
+### 0ga4. GA4 Configuration — MOSTLY DONE (May 14)
 
 **Problem:** GA4 custom dimensions, key events, audiences, explorations, and dashboards are not configured in the GA4 console. The events are being sent from code (web and iOS), but GA4 needs manual configuration to make the data useful in reports.
 
-**Code-side prerequisites (DONE, May 13):**
-- `prediction_submit` event fires on both web and iOS
-- iOS event names aligned with web GA4 taxonomy (`feed_card_impression`, `feed_card_action`, `filter_category`)
-- Screen tracking added to all 20+ iOS views
-- All web pages have 3 mandatory GA4 hooks (`usePageTracking`, `useScrollDepth`, `useEngagementTime`)
+**Completed (May 14):**
+- ✅ All 11 custom dimensions created (Sport, League, Event ID, Event Status, Source Section, Position Index, Is Live, Is Close Game, Platform, App Version, Days Since Install)
+- ✅ 2 key events marked (onboarding_complete, event_detail_view)
+- ✅ 3 audiences created (Sports Enthusiasts, NBA Fans, Power Users)
+- ✅ `prediction_submit` event fires on both web and iOS (code shipped May 14)
+- ✅ iOS event names aligned with web GA4 taxonomy
+- ✅ Screen tracking added to all 20+ iOS views
+- ✅ All web pages have 3 mandatory GA4 hooks
+
+**Remaining (come back in 24-48h):**
+- Star `prediction_submit` as key event once it appears in the events list
+- Create "Prediction Players" audience (prediction_submit count >= 3 in 7 days)
+- ✅ "Discover Browsers" audience created (page_path = "/" or contains "/discover")
+- ✅ Retention cohort exploration created (first_visit, any return event, daily)
+
+### 0ga4b. GA4 Deep-Dive Explorations (MEDIUM PRI)
+
+Build GA4 Explorations to answer product questions we can't see in our admin dashboard. These require data to accumulate (give it 1-2 weeks after May 14 setup), then build as Explorations.
+
+**Discover Feed Deep Dive:**
+- Funnel: feed_card_impression → feed_card_action (detail_click) → time_on_page. Where do users drop off?
+- Free-form: top categories by impression volume vs action rate — what content gets shown vs what gets engaged?
+- Segment comparison: authenticated vs anonymous engagement rates
+- Card position analysis: does position_index correlate with action rate?
+
+**Onboarding Deep Dive:**
+- Funnel: onboarding_start → onboarding_step (by step_name) → onboarding_complete. Which step has the biggest drop-off?
+- Cohort: users who completed onboarding vs didn't — do they retain better?
+- Breakdown by platform (web vs iOS) — is one onboarding flow worse?
+
+**Search Deep Dive:**
+- Free-form: search_submit → search_result_click conversion rate
+- Top queries with zero clicks (search intent we're not serving)
+- Search → event_detail_view → return_visit chain (does search drive retention?)
+
+**Event Detail Page Deep Dive:**
+- Free-form: event_detail_view by sport, filtered to engagement_time > 30s — which sports hold attention?
+- Chart interaction rate: chart_time_range events / event_detail_view — are users using charts?
+- Segment: live games vs scheduled vs completed — where is engagement time highest?
+- Path exploration: what do users do AFTER viewing an event detail? (feed → detail → back to feed? → another detail? → leave?)
+
+**Cross-Platform Deep Dive:**
+- User overlap: how many users appear on both web and iOS?
+- Feature parity gaps: which events fire on web but not iOS (and vice versa)?
+- DAU trend by platform with 7-day rolling average
+- Retention by platform: is iOS retaining better than web?
+
+**Prediction Game Deep Dive** (after prediction_submit starts flowing):
+- Predictions per session distribution — how many guesses per visit?
+- prediction_submit → share conversion — do correct guesses drive sharing?
+- Daily challenge completion funnel: challenge_start → prediction_submit (x5) → challenge_complete
+- Streak length vs return rate — do streaks drive retention?
+
+**Files:** All console-only (GA4 Explorations). No code changes needed.
+**Parallel Safety:** Green
 
 **Preferred approach: Google Analytics Admin API (programmatic)**
 
@@ -807,6 +857,37 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: 
 ### Platform & API Features Audit (May 14)
 
 **Status:** Audit running. Checking what free features we're leaving on the table across GitHub, Sentry, GA4, Vercel, Heroku, and all external APIs (StatPal, ESPN, TMDB, Odds API, Kalshi, Polymarket, DataGolf).
+
+### BUG: Alcaraz Shows as "ATP Indian Wells" Team in Search (May 14)
+
+**Problem:** Searching "alcaraz" returns a team card "Carlos Alcaraz — ATP INDIAN WELLS". Alcaraz is a player, not a team. The Indian Wells tournament association is leaking into the team identity. The Odds API creates "team" entries for individual tennis players, and the league/tournament context sticks as the team's league label.
+
+**Files:** `backend/app/routes/events.py` (search endpoint), `backend/app/models/models.py` (Team), team identity pipeline
+**Parallel Safety:** Yellow
+
+### BUG: French Open / US Open Futures Show "Player B 100%" Placeholder Names (May 14)
+
+**Problem:** "2026 Men's French Open Winner" and "2026 Men's US Open Winner" futures in search show anonymized placeholder names ("Player B", "Player S", "Player N") all at 100%. Looks completely broken.
+
+**Root cause (likely):** Polymarket outcome names are anonymized or the name parsing failed. The 100% probabilities on all outcomes suggest a rendering or data issue — these are open markets, not resolved.
+
+**Files:** `backend/app/tasks/polymarket.py` (outcome name parsing), `backend/app/routes/events.py` (futures in search)
+**Parallel Safety:** Yellow
+
+### About Page: Visual "Why Probability?" Storytelling (May 14)
+
+**Problem:** The product pitch has two compelling stories that need a premium, native, visual experience on the site — not screenshots or static text.
+
+**Story 1: "Winning big, then barely surviving"** — Alcaraz vs Zverev, 2026 Australian Open SF. Alcaraz at 96% after two sets, adductor injury, probability crashes to 13%, Zverev serves for the match, Alcaraz breaks back and wins 7-5 in the 5th. The probability chart shows the entire drama that the 3-2 scoreline hides. Kalshi market: `kxatpmatch-26jan29alczve`, $27M volume.
+
+**Story 2: "6th place, but the favorite"** — Scheffler at 2025 Masters Round 1. T6 at -2 but 19.0% win probability — more than 2x co-leader Burns at 8.6%. McIlroy (model's #1 at 24.4%) won. Probability identified the real contenders; the leaderboard didn't.
+
+**Approach:** Build `/about` page with two interactive panels — animated probability charts, match photos, concise captions. Reconstruct timelines from our stored Kalshi/DataGolf snapshot data.
+
+**Dependencies:** Verify we have Kalshi snapshot data for the AO match. May need Kalshi history API backfill.
+
+**Files:** `frontend/app/about/page.tsx` (new), new chart components
+**Parallel Safety:** Green
 
 ### Run Another Manus Sweep (May 14)
 
