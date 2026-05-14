@@ -805,8 +805,9 @@ async def _match_prediction_markets(limit: int = 500):
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
                         _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
                         # Use tight threshold when HHMM was parsed (non-midnight),
-                        # loose threshold for date-only tickers
-                        _max_diff = 4 * 3600 if (_td.hour or _td.minute) else 18 * 3600
+                        # loose threshold for date-only tickers.
+                        # ±3h separates double-headers (~5h apart); ±18h for date-only.
+                        _max_diff = 3 * 3600 if (_td.hour or _td.minute) else 18 * 3600
                         if abs((_td - _ec).total_seconds()) > _max_diff:
                             logger.warning(
                                 "Phase 2 date mismatch: %s ticker=%s event=%s (diff=%.0fh) — unlinking",
@@ -982,15 +983,16 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     # ── Pass 1: Time-windowed search ──────────────────────────────────
     # Kalshi commence_time is the market RESOLUTION date (often weeks after
     # the game), so we use the ticker-extracted game date when available.
-    # When the ticker date IS available (now includes HHMM for precision),
-    # use a tight ±6h window. This correctly distinguishes double-header
-    # games (same teams, same day, ~5h apart). Without a ticker date,
-    # fall back to the wider 7-day window for Kalshi or 48h for Polymarket.
+    # When the ticker date includes HHMM (non-midnight), use a tight ±3h
+    # window. This correctly distinguishes double-header games (same teams,
+    # same day, ~5h apart — e.g., 1:40 PM and 7:10 PM). Without HHMM,
+    # fall back to ±18h (date-only), or wider windows for Kalshi/Polymarket
+    # markets without ticker dates.
     reference_time = game_date_override or market.commence_time or now
     if game_date_override:
         # Tight window when HHMM is available (non-midnight), wider for date-only
         has_time = game_date_override.hour != 0 or game_date_override.minute != 0
-        time_delta = timedelta(hours=6) if has_time else timedelta(hours=18)
+        time_delta = timedelta(hours=3) if has_time else timedelta(hours=18)
     elif market.source == "kalshi":
         time_delta = timedelta(days=7)
     else:
@@ -1190,10 +1192,12 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
     if not reference_time:
         return None
 
-    if game_date_override and market.source == "kalshi":
-        window_hours = 48
-    elif game_date_override:
-        window_hours = 3
+    if game_date_override:
+        # Tight window when HHMM is available; wider for date-only tickers
+        has_time = game_date_override.hour != 0 or game_date_override.minute != 0
+        window_hours = 3 if has_time else 18
+    elif market.source == "kalshi":
+        window_hours = 48  # Kalshi commence_time is resolution date, very imprecise
     else:
         window_hours = 6
     time_start = reference_time - timedelta(hours=window_hours)

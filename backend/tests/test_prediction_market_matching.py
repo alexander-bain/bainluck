@@ -1713,6 +1713,54 @@ class TestExtractGameDateFromTicker:
         """Invalid month abbreviation should return None."""
         assert extract_game_date_from_ticker("KXNBAGAME-26XYZ21DETCHI") is None
 
+    def test_mlb_ticker_with_hhmm(self):
+        """MLB ticker with embedded HHMM game time."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXMLBGAME-26APR291840COLCIN")
+        assert result == datetime(2026, 4, 29, 18, 40, tzinfo=timezone.utc)
+
+    def test_mlb_double_header_game1(self):
+        """First game of a double-header at 1:40 PM (1340 UTC)."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXMLBGAME-26APR291340COLCIN")
+        assert result == datetime(2026, 4, 29, 13, 40, tzinfo=timezone.utc)
+
+    def test_mlb_double_header_game2(self):
+        """Second game of a double-header at 7:10 PM (1910 UTC)."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXMLBGAME-26APR291910COLCIN")
+        assert result == datetime(2026, 4, 29, 19, 10, tzinfo=timezone.utc)
+
+    def test_double_header_games_are_distinguishable(self):
+        """Two games between same teams on same day return different datetimes."""
+        game1 = extract_game_date_from_ticker("KXMLBGAME-26APR291340COLCIN")
+        game2 = extract_game_date_from_ticker("KXMLBGAME-26APR291910COLCIN")
+        assert game1 is not None
+        assert game2 is not None
+        assert game1 != game2
+        # Games are ~5.5h apart
+        delta = abs((game2 - game1).total_seconds())
+        assert 18000 < delta < 21600  # 5-6 hours apart
+
+    def test_ticker_without_hhmm_returns_midnight(self):
+        """Ticker without HHMM should return midnight UTC."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNBAGAME-26FEB21DETCHI")
+        assert result is not None
+        assert result.hour == 0
+        assert result.minute == 0
+
+    def test_mlb_ticker_hhmm_at_midnight(self):
+        """HHMM of 0000 is valid but treated as midnight (date-only)."""
+        from datetime import datetime, timezone
+        # A ticker like "0000" would parse as hour=0, minute=0, which is
+        # indistinguishable from no HHMM. This is fine — midnight games
+        # are extremely rare and fall back to the wider date-only window.
+        result = extract_game_date_from_ticker("KXMLBGAME-26APR290000COLCIN")
+        assert result is not None
+        assert result.hour == 0
+        assert result.minute == 0
+
 
 # =============================================================================
 # Polymarket prefix stripping (expanded prefixes)
