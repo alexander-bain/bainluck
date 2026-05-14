@@ -108,10 +108,80 @@ async def calibration_diagnostics(
         for r in snapshot_result
     ]
 
+    # Check why Part C rescue failed: sample stuck Polymarket outcomes
+    rescue_check = await db.execute(text("""
+        SELECT fm.source,
+            COUNT(*) AS stuck_total,
+            COUNT(CASE WHEN snap_exists THEN 1 END) AS has_any_snap,
+            COUNT(CASE WHEN snap_exists AND snap_prob != fo_open THEN 1 END) AS has_diff_snap
+        FROM (
+            SELECT fo.id AS foid, fo.opening_probability AS fo_open,
+                fm.id AS fmid, fm.source, fm.commence_time,
+                EXISTS(
+                    SELECT 1 FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id
+                      AND fos.probability > 0 AND fos.probability < 1
+                ) AS snap_exists,
+                (
+                    SELECT fos.probability FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id
+                      AND fos.probability > 0 AND fos.probability < 1
+                    ORDER BY fos.captured_at DESC LIMIT 1
+                ) AS snap_prob
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.calibration_probability IS NOT NULL
+              AND fo.opening_probability IS NOT NULL
+              AND fo.calibration_probability = fo.opening_probability
+              AND fm.source = 'polymarket'
+            LIMIT 5000
+        ) sub
+        JOIN futures_markets fm ON fm.id = sub.fmid
+        JOIN futures_outcomes fo ON fo.id = sub.foid
+        GROUP BY fm.source
+    """))
+    rescue_info = [
+        {"source": r.source, "stuck_total": r.stuck_total,
+         "has_any_snap": r.has_any_snap, "has_diff_snap": r.has_diff_snap}
+        for r in rescue_check
+    ]
+
+    # Also check commence_time vs first snapshot timing
+    timing_check = await db.execute(text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(CASE WHEN first_snap < commence_time THEN 1 END) AS snap_before_commence,
+            COUNT(CASE WHEN first_snap >= commence_time THEN 1 END) AS snap_after_commence,
+            ROUND(AVG(EXTRACT(EPOCH FROM (first_snap - commence_time)) / 3600)::numeric, 1) AS avg_hours_diff
+        FROM (
+            SELECT fm.commence_time,
+                (SELECT MIN(fos.captured_at) FROM futures_odds_snapshots fos
+                 WHERE fos.outcome_id = fo.id) AS first_snap
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fm.source = 'polymarket'
+              AND fo.calibration_probability = fo.opening_probability
+              AND fo.opening_probability IS NOT NULL
+            LIMIT 2000
+        ) sub
+        WHERE first_snap IS NOT NULL
+    """))
+    timing_row = timing_check.first()
+    timing_info = {
+        "total": timing_row.total if timing_row else 0,
+        "snap_before_commence": timing_row.snap_before_commence if timing_row else 0,
+        "snap_after_commence": timing_row.snap_after_commence if timing_row else 0,
+        "avg_hours_first_snap_minus_commence": float(timing_row.avg_hours_diff) if timing_row and timing_row.avg_hours_diff else None,
+    } if timing_row else {}
+
     return {
         "by_category": by_category,
         "problem_categories_in_calibration": problem_cats,
         "near_50_snapshot_counts": snap_info,
+        "polymarket_rescue_check": rescue_info,
+        "polymarket_timing": timing_info,
     }
 
 
