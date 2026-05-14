@@ -1572,6 +1572,7 @@ export interface CalibrationBucket {
   bucket_idx: number;
   source: string;
   category: string;
+  price_moved?: boolean | null;
   n: number;
   winners: number;
   avg_prob: number;

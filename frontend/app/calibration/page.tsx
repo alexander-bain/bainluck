@@ -91,6 +91,12 @@ function mce(cal: AggBucket[]): number {
   return cal.reduce((s, b) => s + Math.abs(b.error), 0) / cal.length;
 }
 
+function ece(cal: AggBucket[]): number {
+  const totalN = cal.reduce((s, b) => s + b.n, 0);
+  if (!totalN) return 0;
+  return cal.reduce((s, b) => s + (b.n / totalN) * Math.abs(b.error), 0);
+}
+
 function brierScore(buckets: CalibrationBucket[], filter?: (b: CalibrationBucket) => boolean): number {
   let n = 0, sq = 0;
   for (const b of buckets) {
@@ -120,7 +126,17 @@ export default function CalibrationPage() {
 
   const overall = useMemo(() => normalized ? aggregateBuckets(normalized) : [], [normalized]);
   const overallMCE = useMemo(() => mce(overall), [overall]);
+  const overallECE = useMemo(() => ece(overall), [overall]);
   const overallBrier = useMemo(() => normalized ? brierScore(normalized) : 0, [normalized]);
+
+  const movedBuckets = useMemo(() =>
+    normalized ? aggregateBuckets(normalized, b => b.price_moved === true) : [], [normalized]);
+  const unchangedBuckets = useMemo(() =>
+    normalized ? aggregateBuckets(normalized, b => b.price_moved === false) : [], [normalized]);
+  const movedN = useMemo(() => movedBuckets.reduce((s, b) => s + b.n, 0), [movedBuckets]);
+  const unchangedN = useMemo(() => unchangedBuckets.reduce((s, b) => s + b.n, 0), [unchangedBuckets]);
+  const movedECE = useMemo(() => ece(movedBuckets), [movedBuckets]);
+  const unchangedECE = useMemo(() => ece(unchangedBuckets), [unchangedBuckets]);
 
   const sources = useMemo(() => {
     if (!normalized) return [];
@@ -150,9 +166,10 @@ export default function CalibrationPage() {
       const srcBuckets = aggregateBuckets(normalized, b => b.source === src);
       const srcN = normalized.filter(b => b.source === src).reduce((s, b) => s + b.n, 0);
       const srcMCE = mce(srcBuckets);
+      const srcECE = ece(srcBuckets);
       const srcBrier = brierScore(normalized, b => b.source === src);
       const bucketsInBand = srcBuckets.filter(b => Math.abs(b.error) <= 5).length;
-      return { source: src, n: srcN, mce: srcMCE, brier: srcBrier, bucketsInBand, totalBuckets: srcBuckets.length };
+      return { source: src, n: srcN, mce: srcMCE, ece: srcECE, brier: srcBrier, bucketsInBand, totalBuckets: srcBuckets.length };
     });
   }, [normalized, sources]);
 
@@ -220,9 +237,9 @@ export default function CalibrationPage() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="Resolved Outcomes" value={data.total_outcomes.toLocaleString()}
           detail={`${data.total_markets.toLocaleString()} markets`} />
-        <StatCard label="Mean Calibration Error"
+        <StatCard label="Calibration Error (MCE)"
           value={`${overallMCE.toFixed(1)}pp`}
-          detail={overallMCE < 4 ? "Excellent" : overallMCE < 8 ? "Good" : "Fair"}
+          detail={`ECE: ${overallECE.toFixed(1)}pp (weighted)`}
           valueClass={overallMCE < 4 ? "text-green-600" : overallMCE < 8 ? "text-blue-600" : "text-orange-600"} />
         <StatCard label="Brier Score" value={overallBrier.toFixed(4)}
           detail="0 = oracle, lower = better" />
@@ -245,6 +262,7 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-4">Source</th>
                 <th className="pb-2 pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-4 text-right">MCE</th>
+                <th className="pb-2 pr-4 text-right">ECE</th>
                 <th className="pb-2 pr-4 text-right">Brier</th>
                 <th className="pb-2 text-right">Buckets within 5pp</th>
               </tr>
@@ -259,6 +277,11 @@ export default function CalibrationPage() {
                   }`}>
                     {sm.mce.toFixed(1)}pp
                   </td>
+                  <td className={`py-2.5 pr-4 text-right tabular-nums ${
+                    sm.ece < 3 ? "text-green-600" : sm.ece < 5 ? "text-blue-600" : "text-orange-600"
+                  }`}>
+                    {sm.ece.toFixed(1)}pp
+                  </td>
                   <td className="py-2.5 pr-4 text-right tabular-nums">{sm.brier.toFixed(4)}</td>
                   <td className="py-2.5 text-right tabular-nums">
                     {sm.bucketsInBand}/{sm.totalBuckets}
@@ -272,6 +295,11 @@ export default function CalibrationPage() {
                   overallMCE < 4 ? "text-green-600" : overallMCE < 6 ? "text-blue-600" : "text-orange-600"
                 }`}>
                   {overallMCE.toFixed(1)}pp
+                </td>
+                <td className={`py-2.5 pr-4 text-right tabular-nums ${
+                  overallECE < 3 ? "text-green-600" : overallECE < 5 ? "text-blue-600" : "text-orange-600"
+                }`}>
+                  {overallECE.toFixed(1)}pp
                 </td>
                 <td className="py-2.5 pr-4 text-right tabular-nums">{overallBrier.toFixed(4)}</td>
                 <td className="py-2.5 text-right tabular-nums">
@@ -342,6 +370,42 @@ export default function CalibrationPage() {
           height={400}
         />
       </section>
+
+      {/* Trading Activity */}
+      {movedN > 0 && unchangedN > 0 && (
+        <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+          <h2 className="text-title-3 text-text-primary mb-1">Does Trading Activity Matter?</h2>
+          <p className="text-xs text-text-muted mb-4">
+            Outcomes where the market price moved from its opening value (indicating real trading
+            activity) vs. outcomes where the price never changed. Active trading produces
+            dramatically better predictions.
+          </p>
+          <CalibrationChart
+            series={[
+              { data: movedBuckets, color: "#16a34a", label: `Price moved (${movedN.toLocaleString()})` },
+              { data: unchangedBuckets, color: "#dc2626", label: `Price unchanged (${unchangedN.toLocaleString()})` },
+            ]}
+            width={700}
+            height={400}
+          />
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <StatCard label="Active Trading"
+              value={`${movedECE.toFixed(1)}pp`}
+              detail={`${movedN.toLocaleString()} outcomes`}
+              valueClass="text-green-600" />
+            <StatCard label="Opening Price Only"
+              value={`${unchangedECE.toFixed(1)}pp`}
+              detail={`${unchangedN.toLocaleString()} outcomes`}
+              valueClass="text-orange-600" />
+          </div>
+          {movedECE > 0 && unchangedECE > 0 && (
+            <p className="text-sm text-text-secondary mt-3 text-center">
+              Markets with active trading are <strong>{(unchangedECE / movedECE).toFixed(1)}x</strong> more
+              accurately calibrated than markets using opening prices alone.
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Table */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
