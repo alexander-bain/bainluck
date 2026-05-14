@@ -746,13 +746,32 @@ async def _match_prediction_markets(limit: int = 500):
         # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
         # are linked to the same event, processing both writes conflicting
         # probabilities, causing sawtooth oscillation in win_prob_snapshots.
-        # Pick ONE market per (event_id, source) — same fix as the live
-        # polling task at lines 1601-1620.
+        # Pick ONE market per (event_id, source).
+        #
+        # CRITICAL: The tiebreaker must be DETERMINISTIC across runs to avoid
+        # sawtooth. Both Phase 2 (every 15 min) and the live poller (every
+        # 2 min) must pick the SAME market. We use: prefer more outcomes
+        # (primary matchup market), then lowest market.id (stable tiebreaker).
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for market, event in linked_rows:
             key = (event.id, market.source)
             if key not in best_per_event_source:
                 best_per_event_source[key] = (market, event)
+            else:
+                existing_market = best_per_event_source[key][0]
+                # Load outcome counts for tiebreaking
+                existing_outcomes = await session.execute(
+                    select(func.count()).where(FuturesOutcome.market_id == existing_market.id)
+                )
+                new_outcomes = await session.execute(
+                    select(func.count()).where(FuturesOutcome.market_id == market.id)
+                )
+                existing_count = existing_outcomes.scalar() or 0
+                new_count = new_outcomes.scalar() or 0
+                # Prefer more outcomes, then lowest market.id for stability
+                if (new_count > existing_count
+                        or (new_count == existing_count and market.id < existing_market.id)):
+                    best_per_event_source[key] = (market, event)
 
         stats["phase2_markets_raw"] = len(linked_rows)
         stats["phase2_markets_deduped"] = len(best_per_event_source)
@@ -1659,20 +1678,25 @@ async def _poll_live_prediction_market_prices():
         # are linked to the same event, processing both would write conflicting
         # probabilities to win_probability_sources["kalshi"], causing oscillation
         # (80% → 20% → 80%) on the chart.  Fix: pick ONE market per (event, source).
-        # Prefer the market whose moneyline outcome maps to yes_is_home=True
-        # (direct probability, no inversion — less error-prone).
+        #
+        # CRITICAL: The tiebreaker must be DETERMINISTIC and IDENTICAL to the
+        # Phase 2 dedup strategy. Both paths must pick the same market for
+        # the same (event, source) pair, otherwise they write different
+        # probabilities and create sawtooth oscillation.
+        # Strategy: prefer more outcomes, then lowest market.id.
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for market, event in rows:
             key = (event.id, market.source)
             if key not in best_per_event_source:
                 best_per_event_source[key] = (market, event)
             else:
-                # If we already have one, prefer the market with more outcomes
-                # (more outcomes = more likely to be the primary matchup market)
+                # Prefer market with more outcomes (primary matchup market),
+                # then lowest market.id as stable tiebreaker
                 existing_market = best_per_event_source[key][0]
                 existing_count = len(outcomes_by_market.get(existing_market.id, []))
                 new_count = len(outcomes_by_market.get(market.id, []))
-                if new_count > existing_count:
+                if (new_count > existing_count
+                        or (new_count == existing_count and market.id < existing_market.id)):
                     best_per_event_source[key] = (market, event)
 
         for market, event in best_per_event_source.values():
