@@ -188,6 +188,95 @@ async def calibration_diagnostics(
     }
 
 
+@router.get("/calibration/events-funnel")
+async def calibration_events_funnel(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Per-sport filter funnel for odds_api calibration events — admin only."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT s.key,
+            COUNT(*) AS completed,
+            COUNT(CASE WHEN e.opening_home_probability IS NOT NULL THEN 1 END) AS has_opening,
+            COUNT(CASE WHEN e.closing_home_probability IS NOT NULL THEN 1 END) AS has_closing,
+            COUNT(CASE WHEN COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL THEN 1 END) AS has_any_prob,
+            COUNT(CASE WHEN COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL
+                        AND COALESCE(e.closing_home_probability, e.opening_home_probability) > 0
+                        AND COALESCE(e.closing_home_probability, e.opening_home_probability) < 1 THEN 1 END) AS prob_in_range,
+            COUNT(CASE WHEN e.home_score IS NOT NULL AND e.away_score IS NOT NULL THEN 1 END) AS has_scores,
+            COUNT(CASE WHEN e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+                        AND e.home_score != e.away_score THEN 1 END) AS no_ties,
+            COUNT(CASE WHEN COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL
+                        AND COALESCE(e.closing_home_probability, e.opening_home_probability) > 0
+                        AND COALESCE(e.closing_home_probability, e.opening_home_probability) < 1
+                        AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+                        AND e.home_score != e.away_score THEN 1 END) AS passes_all_filters
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE e.status = 'completed'
+        GROUP BY s.key
+        ORDER BY completed DESC
+    """))
+    per_sport = [
+        {
+            "sport_key": r.key, "completed": r.completed,
+            "has_opening": r.has_opening, "has_closing": r.has_closing,
+            "has_any_prob": r.has_any_prob, "prob_in_range": r.prob_in_range,
+            "has_scores": r.has_scores, "no_ties": r.no_ties,
+            "passes_all_filters": r.passes_all_filters,
+            "pct_opening": round(r.has_opening * 100.0 / max(r.completed, 1), 1),
+            "gap": r.completed - r.passes_all_filters,
+        }
+        for r in result
+    ]
+
+    # Monthly breakdown for key sports
+    monthly = await db.execute(text("""
+        SELECT s.key,
+            DATE_TRUNC('month', e.commence_time)::date AS month,
+            COUNT(*) AS completed,
+            COUNT(CASE WHEN e.opening_home_probability IS NOT NULL THEN 1 END) AS has_opening,
+            COUNT(CASE WHEN e.closing_home_probability IS NOT NULL THEN 1 END) AS has_closing
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE e.status = 'completed'
+          AND s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'baseball_mlb_preseason')
+        GROUP BY s.key, month
+        ORDER BY s.key, month
+    """))
+    monthly_data = [
+        {"sport_key": r.key, "month": str(r.month), "completed": r.completed,
+         "has_opening": r.has_opening, "has_closing": r.has_closing}
+        for r in monthly
+    ]
+
+    # Events with scores but no probability at all
+    no_prob = await db.execute(text("""
+        SELECT s.key, COUNT(*) AS n
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE e.status = 'completed'
+          AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+          AND e.opening_home_probability IS NULL
+          AND e.closing_home_probability IS NULL
+        GROUP BY s.key
+        ORDER BY n DESC
+        LIMIT 20
+    """))
+    no_prob_data = [{"sport_key": r.key, "count": r.n} for r in no_prob]
+
+    return {
+        "per_sport": per_sport,
+        "monthly_key_sports": monthly_data,
+        "no_prob_top20": no_prob_data,
+    }
+
+
 @router.post("/calibration/rescue")
 async def calibration_rescue(
     db: AsyncSession = Depends(get_db),
