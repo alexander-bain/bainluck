@@ -438,12 +438,12 @@ async def _backfill_polymarket_group_ids_from_api():
     from app.services.polymarket_api import PolymarketAPIService
 
     stats = {"events_fetched": 0, "events_with_markets": 0,
-             "markets_updated": 0, "errors": []}
+             "markets_updated": 0, "zero_update_pages": 0, "errors": []}
 
     service = PolymarketAPIService()
     try:
         offset = 0
-        max_events = 10000
+        max_events = 200000
 
         while stats["events_fetched"] < max_events:
             try:
@@ -460,6 +460,7 @@ async def _backfill_polymarket_group_ids_from_api():
 
             stats["events_fetched"] += len(events_data)
 
+            page_updates = 0
             async with get_task_session() as session:
                 for event_data in events_data:
                     event_id = str(event_data.get("id", ""))
@@ -471,16 +472,12 @@ async def _backfill_polymarket_group_ids_from_api():
                     stats["events_with_markets"] += 1
                     group_id = f"polymarket:{event_id}"
 
-                    # Collect all external_ids to match:
-                    # - event.id (parent market external_id)
-                    # - each market.condition_id (sub-market external_id)
                     match_ids = [event_id]
                     for m in markets:
                         cid = m.get("conditionId") or m.get("condition_id")
                         if cid:
                             match_ids.append(str(cid))
 
-                    # Update matching markets
                     result = await session.execute(
                         text("""
                             UPDATE futures_markets
@@ -491,6 +488,7 @@ async def _backfill_polymarket_group_ids_from_api():
                         """),
                         {"group_id": group_id, "ids": match_ids},
                     )
+                    page_updates += result.rowcount
                     stats["markets_updated"] += result.rowcount
 
                 await session.commit()
@@ -498,6 +496,13 @@ async def _backfill_polymarket_group_ids_from_api():
             offset += len(events_data)
             if len(events_data) < 100:
                 break
+
+            if page_updates == 0:
+                stats["zero_update_pages"] += 1
+                if stats["zero_update_pages"] >= 50:
+                    break
+            else:
+                stats["zero_update_pages"] = 0
 
             await asyncio.sleep(0.3)
 
