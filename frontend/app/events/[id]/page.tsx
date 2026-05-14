@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { format as fmtDate } from "date-fns";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
 import type { GameMarketsResponse } from "@/lib/api";
 import type { TeamProgressionResponse } from "@/lib/types";
@@ -38,23 +37,18 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
-
-// Maps Odds API sport keys to sport hierarchy paths
-const SPORT_KEY_TO_LEAGUE_PATH: Record<string, { path: string; label: string }> = {
-  basketball_nba: { path: "/sport/basketball/nba", label: "NBA" },
-  americanfootball_nfl: { path: "/sport/football/nfl", label: "NFL" },
-  baseball_mlb: { path: "/sport/baseball/mlb", label: "MLB" },
-  icehockey_nhl: { path: "/sport/hockey/nhl", label: "NHL" },
-  basketball_ncaab: { path: "/sport/basketball/ncaab", label: "NCAA Basketball" },
-  americanfootball_ncaaf: { path: "/sport/football/ncaaf", label: "NCAA Football" },
-  basketball_wnba: { path: "/sport/basketball/wnba", label: "WNBA" },
-  soccer_usa_mls: { path: "/sport/soccer/mls", label: "MLS" },
-  soccer_epl: { path: "/sport/soccer/epl", label: "EPL" },
-  soccer_spain_la_liga: { path: "/sport/soccer/laliga", label: "La Liga" },
-  soccer_uefa_champs_league: { path: "/sport/soccer/ucl", label: "Champions League" },
-  soccer_germany_bundesliga: { path: "/sport/soccer/bundesliga", label: "Bundesliga" },
-  basketball_wncaab: { path: "/sport/basketball/wncaab", label: "NCAA Basketball" },
-};
+import {
+  SPORT_KEY_TO_LEAGUE_PATH,
+  TAG_LABELS,
+  TAG_COLORS,
+  hasAnyWinProbData,
+  formatCountdown,
+  filterDisplayTags,
+  resolveProbability,
+  computeSharedChartDomain,
+  computeRealStartTime,
+  computeLastChartPoint,
+} from "@/lib/eventKeyStats";
 
 interface EventPageProps {
   params: { id: string };
@@ -62,102 +56,6 @@ interface EventPageProps {
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
-
-/** Check if history response has ANY win probability data beyond sportsbook odds. */
-function _hasAnyWinProbData(data: any): boolean {
-  if (!data) return false;
-  if (data.espn_history && data.espn_history.length > 0) return true;
-  if (data.win_prob_history) {
-    for (const points of Object.values(data.win_prob_history)) {
-      if (Array.isArray(points) && points.length > 0) return true;
-    }
-  }
-  return false;
-}
-
-function formatCountdown(targetTime: string): string {
-  const target = new Date(targetTime);
-  const now = new Date();
-  const diff = target.getTime() - now.getTime();
-
-  if (diff <= 0) return "";
-
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function formatStartTime(commenceTime: string): string {
-  const date = new Date(commenceTime);
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const timeStr = date.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-  if (date.toDateString() === today.toDateString()) {
-    return `Today at ${timeStr}`;
-  } else if (date.toDateString() === tomorrow.toDateString()) {
-    return `Tomorrow at ${timeStr}`;
-  } else {
-    const dateStr = date.toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-    return `${dateStr} at ${timeStr}`;
-  }
-}
-
-
-// Pick key season stats to display based on sport
-function getKeyStats(
-  stats: Record<string, number | string> | null | undefined,
-  sportKey: string | undefined
-): Array<{ label: string; value: string | number }> {
-  if (!stats) return [];
-  const result: Array<{ label: string; value: string | number }> = [];
-  const s = sportKey?.toLowerCase() || "";
-
-  if (s.includes("basketball")) {
-    if (stats.ppg != null) result.push({ label: "PPG", value: stats.ppg });
-    if (stats.rpg != null) result.push({ label: "RPG", value: stats.rpg });
-    if (stats.apg != null) result.push({ label: "APG", value: stats.apg });
-    if (stats.opp_ppg != null) result.push({ label: "Opp PPG", value: stats.opp_ppg });
-  } else if (s.includes("football")) {
-    if (stats.points_per_game != null) result.push({ label: "PTS/G", value: stats.points_per_game });
-    if (stats.yards_per_game != null) result.push({ label: "YDS/G", value: stats.yards_per_game });
-    if (stats.opp_points_per_game != null) result.push({ label: "Opp PTS/G", value: stats.opp_points_per_game });
-  } else if (s.includes("baseball")) {
-    if (stats.batting_avg != null) result.push({ label: "AVG", value: stats.batting_avg });
-    if (stats.era != null) result.push({ label: "ERA", value: stats.era });
-    if (stats.runs_per_game != null) result.push({ label: "R/G", value: stats.runs_per_game });
-  } else if (s.includes("hockey")) {
-    if (stats.goals_for_per_game != null) result.push({ label: "GF/G", value: stats.goals_for_per_game });
-    if (stats.goals_against_per_game != null) result.push({ label: "GA/G", value: stats.goals_against_per_game });
-    if (stats.power_play_pct != null) result.push({ label: "PP%", value: stats.power_play_pct });
-  } else if (s.includes("soccer")) {
-    if (stats.goals_per_game != null) result.push({ label: "G/G", value: stats.goals_per_game });
-    if (stats.clean_sheets != null) result.push({ label: "CS", value: stats.clean_sheets });
-    if (stats.goals_against_per_game != null) result.push({ label: "GA/G", value: stats.goals_against_per_game });
-  } else {
-    // Generic: show first 3 numeric stats
-    for (const [key, val] of Object.entries(stats)) {
-      if (result.length >= 3) break;
-      if (typeof val === "number" || (typeof val === "string" && !isNaN(Number(val)))) {
-        result.push({ label: key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), value: val });
-      }
-    }
-  }
-  return result.slice(0, 4);
-}
 
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
@@ -349,42 +247,11 @@ export default function EventPage({ params }: EventPageProps) {
     { revalidateOnFocus: false, dedupingInterval: 300000 }
   );
 
-  // Compute real game start time: use earliest livescores data point when it's
-  // notably later than the Odds API commence_time (which can be off by minutes).
-  // Priority: StatPal score_history (most frequent) > ESPN > win_prob_history
-  const realStartTime = useMemo(() => {
-    const nominal = event?.commence_time;
-    if (!nominal) return undefined;
-    const nominalMs = new Date(nominal).getTime();
-
-    // Find earliest livescores data point across all sources
-    let earliestLive = Infinity;
-    // StatPal livescores — most frequent updates, best source for real start
-    if (historyData?.score_history?.length) {
-      const first = new Date(historyData.score_history[0].timestamp).getTime();
-      if (first < earliestLive) earliestLive = first;
-    }
-    // ESPN history
-    if (historyData?.espn_history?.length) {
-      const first = new Date(historyData.espn_history[0].timestamp).getTime();
-      if (first < earliestLive) earliestLive = first;
-    }
-    // Win prob history (all sources)
-    if (historyData?.win_prob_history) {
-      for (const points of Object.values(historyData.win_prob_history)) {
-        if (points.length > 0) {
-          const first = new Date(points[0].timestamp).getTime();
-          if (first < earliestLive) earliestLive = first;
-        }
-      }
-    }
-
-    // If livescores start is >3min later than nominal, use livescores start
-    if (earliestLive !== Infinity && earliestLive > nominalMs + 3 * 60 * 1000) {
-      return new Date(earliestLive).toISOString();
-    }
-    return nominal;
-  }, [event?.commence_time, historyData?.score_history, historyData?.espn_history, historyData?.win_prob_history]);
+  // Compute real game start time from livescores data (see eventKeyStats.ts)
+  const realStartTime = useMemo(
+    () => computeRealStartTime(event?.commence_time, historyData),
+    [event?.commence_time, historyData?.score_history, historyData?.espn_history, historyData?.win_prob_history],
+  );
 
   // Derive period boundaries from history data for chart annotations
   const periodBoundaries = useMemo(() => {
@@ -397,153 +264,17 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers]);
 
-  // Shared chart domain — time-range-aware, passed to both OddsChart and ScoreDiffChart
-  // so they have IDENTICAL x-axes, tick labels, and period markers.
-  const sharedChartDomain = useMemo(() => {
-    if (!historyData) return null;
-    const timestamps: number[] = [];
-    for (const pt of historyData.history ?? []) {
-      const t = new Date(pt.timestamp).getTime();
-      if (!isNaN(t)) timestamps.push(t);
-    }
-    for (const pts of Object.values(historyData.win_prob_history ?? {})) {
-      for (const pt of pts) {
-        const t = new Date(pt.timestamp).getTime();
-        if (!isNaN(t)) timestamps.push(t);
-      }
-    }
-    for (const pt of historyData.espn_history ?? []) {
-      const t = new Date(pt.timestamp).getTime();
-      if (!isNaN(t)) timestamps.push(t);
-    }
-    for (const pts of Object.values(historyData.bookmaker_history ?? {})) {
-      for (const pt of pts) {
-        const t = new Date(pt.timestamp).getTime();
-        if (!isNaN(t)) timestamps.push(t);
-      }
-    }
-    if (timestamps.length === 0) return null;
+  // Shared chart domain (see eventKeyStats.ts)
+  const sharedChartDomain = useMemo(
+    () => computeSharedChartDomain(historyData, chartTimeRange, event?.status, event?.commence_time, event?.sport || undefined),
+    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport],
+  );
 
-    const allStart = new Date(Math.min(...timestamps));
-    let end = new Date(Math.max(...timestamps));
-
-    // For completed games, derive end time ONLY from game-end sources.
-    // Sportsbooks, Kalshi, and Polymarket continue polling 30-45 min after
-    // the final whistle, so using their timestamps extends the chart too far.
-    const isCompleted = event?.status === "completed" || event?.status === "closed";
-    if (isCompleted) {
-      const GAME_END_SOURCES = new Set(["espn", "stat_model", "fangraphs", "mlb"]);
-      const gameEndTs: number[] = [];
-
-      for (const pt of historyData.espn_history ?? []) {
-        const t = new Date(pt.timestamp).getTime();
-        if (!isNaN(t)) gameEndTs.push(t);
-      }
-      for (const [source, pts] of Object.entries(historyData.win_prob_history ?? {})) {
-        if (!GAME_END_SOURCES.has(source)) continue;
-        for (const pt of pts) {
-          const t = new Date(pt.timestamp).getTime();
-          if (!isNaN(t)) gameEndTs.push(t);
-        }
-      }
-
-      if (gameEndTs.length > 0) {
-        const lastGameData = new Date(Math.max(...gameEndTs));
-        lastGameData.setMinutes(lastGameData.getMinutes() + 2);
-        end = lastGameData;
-      } else if (event?.commence_time) {
-        // Fallback for non-US sports (soccer, cricket, tennis) with no ESPN/model data.
-        // Estimate game end from commence_time + sport-specific duration.
-        const ct = new Date(event.commence_time);
-        if (!isNaN(ct.getTime())) {
-          const sport = event.sport || "";
-          const isSoccer = sport.startsWith("soccer");
-          const isTennis = sport.startsWith("tennis");
-          const isCricket = sport.startsWith("cricket");
-          const durationMin = isSoccer ? 110 : isTennis ? 180 : isCricket ? 240 : 150;
-          const estimated = new Date(ct.getTime() + durationMin * 60_000);
-          end = estimated < end ? estimated : end;
-        }
-      } else if (historyData.completed_at) {
-        const ca = new Date(historyData.completed_at);
-        if (!isNaN(ca.getTime())) {
-          end = ca;
-        }
-      }
-    }
-
-    // "Since Start" mode: start from commenceTime (game start)
-    const gameStart = event?.commence_time ? new Date(event.commence_time) : null;
-    const liveStart = gameStart && !isNaN(gameStart.getTime()) ? gameStart : allStart;
-
-    const start = chartTimeRange === "live" ? liveStart : allStart;
-    start.setSeconds(0, 0);
-    end.setSeconds(0, 0);
-    // Compute explicit X-axis ticks at clean time boundaries so both charts
-    // render identical tick labels. Uses 30-min intervals for games <3h,
-    // 60-min for longer games, snapped to round clock times (:00, :30).
-    const durationMs = end.getTime() - start.getTime();
-    const durationMin = durationMs / 60000;
-    let intervalMin = durationMin < 180 ? 30 : 60;
-    while (durationMin / intervalMin > 10) intervalMin *= 2;
-
-    const ticks: string[] = [];
-    ticks.push(fmtDate(start, "h:mm a"));
-
-    const cursor = new Date(start);
-    const curMins = cursor.getMinutes();
-    const nextBoundary = Math.ceil((curMins + 1) / intervalMin) * intervalMin;
-    cursor.setMinutes(nextBoundary, 0, 0);
-    while (cursor < end) {
-      ticks.push(fmtDate(cursor, "h:mm a"));
-      cursor.setMinutes(cursor.getMinutes() + intervalMin);
-    }
-
-    const endLabel = fmtDate(end, "h:mm a");
-    if (ticks[ticks.length - 1] !== endLabel) {
-      ticks.push(endLabel);
-    }
-
-    return { start: start.toISOString(), end: end.toISOString(), ticks };
-  }, [historyData, chartTimeRange, event?.commence_time]);
-
-  // Compute the most recent chart point for GamePlayCard default display
-  const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
-    if (!historyData) return null;
-    // Use the last ESPN history point for score/period/clock
-    const espn = historyData.espn_history;
-    const lastEspn = espn?.length ? espn[espn.length - 1] : null;
-    // Use the last win prob history point for probability — win_prob_history is Record<string, WinProbHistoryPoint[]>
-    const wpHistory = historyData.win_prob_history;
-    let lastWp: { home_probability: number | null; timestamp: string } | null = null;
-    if (wpHistory) {
-      for (const pts of Object.values(wpHistory)) {
-        if (pts.length) {
-          const last = pts[pts.length - 1];
-          if (!lastWp || last.timestamp > lastWp.timestamp) {
-            lastWp = last;
-          }
-        }
-      }
-    }
-    // Use latest history point for odds-based probability
-    const hist = historyData.history;
-    const lastHist = hist?.length ? hist[hist.length - 1] : null;
-
-    const homeProb = lastWp?.home_probability
-      ?? (lastHist?.home_probability != null ? lastHist.home_probability / 100 : null)
-      ?? 0.5;
-
-    return {
-      timestamp: lastEspn?.timestamp || lastWp?.timestamp || lastHist?.timestamp || "",
-      homeProb,
-      awayProb: 1 - homeProb,
-      homeScore: lastEspn?.home_score ?? event?.home_score ?? null,
-      awayScore: lastEspn?.away_score ?? event?.away_score ?? null,
-      period: lastEspn?.period?.toString() ?? null,
-      clock: lastEspn?.game_clock ?? null,
-    };
-  }, [historyData, event?.home_score, event?.away_score]);
+  // Most recent chart point for GamePlayCard (see eventKeyStats.ts)
+  const lastChartPoint = useMemo<ActiveChartPoint | null>(
+    () => computeLastChartPoint(historyData, event?.home_score, event?.away_score),
+    [historyData, event?.home_score, event?.away_score],
+  );
 
   // Best-known scores: prefer latest ESPN history (more frequent updates) over event SWR
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
@@ -590,95 +321,9 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
-  const odds = event.current_odds;
-  const opening = event.opening_odds;
-
-  // Determine the probability to display based on game status:
-  // - Scheduled: current betting consensus
-  // - Live: current live odds (from history cross-check for reliability) + opening reference
-  // - Completed/Closed: opening odds (what was expected before the game)
-  let homeProb: number | null = null;
-  let awayProb: number | null = null;
-  let probSourceLabel: string | null = null;
-  let openingHomeProb = opening?.home_probability ?? null;
-  let openingAwayProb = opening?.away_probability ?? null;
-
-  if (isFinished) {
-    // Completed/closed: show opening odds — "what was expected"
-    homeProb = openingHomeProb;
-    awayProb = openingAwayProb;
-    if (homeProb !== null) {
-      probSourceLabel = "Pre-game odds";
-    } else {
-      // Fallback if no opening odds stored (old events)
-      homeProb = odds?.home_probability ?? null;
-      awayProb = odds?.away_probability ?? null;
-    }
-  } else if (isLive) {
-    // Live: show current odds, cross-checked against history for accuracy
-    homeProb = odds?.home_probability ?? null;
-    awayProb = odds?.away_probability ?? null;
-    const count = odds?.bookmaker_count ?? 0;
-
-    if (historyData?.history && historyData.history.length > 0) {
-      let latestValidHistory: typeof historyData.history[0] | null = null;
-      for (let i = historyData.history.length - 1; i >= 0; i--) {
-        if (historyData.history[i].home_probability !== null && historyData.history[i].home_probability !== undefined) {
-          latestValidHistory = historyData.history[i];
-          break;
-        }
-      }
-      if (latestValidHistory) {
-        const historyHome = latestValidHistory.home_probability!;
-        const historyBookmakers = latestValidHistory.bookmaker_count ?? 0;
-        if (homeProb === null || Math.abs(historyHome - homeProb) > 0.05) {
-          homeProb = historyHome;
-          awayProb = latestValidHistory.away_probability ?? (1 - historyHome);
-          if (historyBookmakers > 0) {
-            probSourceLabel = `Live · ${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
-          }
-        }
-      }
-    }
-    if (!probSourceLabel && count > 0) {
-      probSourceLabel = `Live · ${count} sportsbook${count !== 1 ? "s" : ""}`;
-    }
-    // Fallback label when aggregate probability comes from non-sportsbook sources
-    if (!probSourceLabel && homeProb !== null && odds?.source === "aggregate") {
-      probSourceLabel = "Live · Aggregate";
-    }
-  } else {
-    // Scheduled: current betting consensus
-    homeProb = odds?.home_probability ?? null;
-    awayProb = odds?.away_probability ?? null;
-    const count = odds?.bookmaker_count ?? 0;
-    if (count > 0) {
-      probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
-    } else if (homeProb !== null && odds?.source === "aggregate") {
-      probSourceLabel = "Aggregate";
-    }
-  }
-
-  // Fallback: if no sportsbook odds, use win_prob_history (ESPN/stat_model/Kalshi)
-  // For finished events, skip this fallback if the value is essentially 100%/0%
-  // (post-game completion probability, not a meaningful pre-game prediction)
-  if (homeProb === null && lastChartPoint && lastChartPoint.homeProb !== 0.5
-      && !(isFinished && (lastChartPoint.homeProb > 0.95 || lastChartPoint.homeProb < 0.05))) {
-    homeProb = lastChartPoint.homeProb;
-    awayProb = lastChartPoint.awayProb;
-    // Determine source label from win_prob_sources
-    const wpSources = historyData?.win_prob_sources;
-    if (wpSources && Object.keys(wpSources).length > 0) {
-      const sourceNames = Object.keys(wpSources).map(s =>
-        s === "stat_model" ? "Model" : s === "espn" ? "ESPN" : s.charAt(0).toUpperCase() + s.slice(1)
-      );
-      probSourceLabel = isLive
-        ? `Live · ${sourceNames.join(", ")}`
-        : sourceNames.join(", ");
-    }
-  }
-
-  const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
+  // Resolve display probability based on game status (see eventKeyStats.ts)
+  const { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb } =
+    resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
@@ -849,85 +494,15 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
 
         {/* Tag chips — contextual labels from taxonomy */}
-        {event.event_tags && event.event_tags.length > 0 && (() => {
-          const displayTags = event.event_tags.filter((t: string) => {
-            const ns = t.split(":")[0];
-            return ["importance", "signal", "timing", "tier", "ei", "stakes", "narrative", "audience", "competitive_structure"].includes(ns);
-          });
-          const filteredTags = displayTags.filter((t: string) => {
-            return t !== "competitive_structure:head_to_head"
-              && t !== "audience:local_interest"
-              && t !== "stakes:meaningless";
-          });
-          if (filteredTags.length === 0) return null;
-
-          const tagLabels: Record<string, string> = {
-            "importance:championship": "Championship",
-            "importance:playoff": "Playoff",
-            "importance:exhibition": "Exhibition",
-            "signal:close_matchup": "Close Game",
-            "signal:upset": "Upset",
-            "signal:line_moving": "Line Moving",
-            "signal:blowout": "Blowout",
-            "timing:primetime": "Primetime",
-            "timing:national_tv": "National TV",
-            "timing:weekend": "Weekend",
-            "tier:1": "Major",
-            "tier:2": "Tier 2",
-            "ei:must_watch": "Must-Watch",
-            "ei:incredible": "Incredible",
-            "ei:exciting": "Exciting",
-            "stakes:elimination": "Elimination",
-            "stakes:clinch": "Clinch Scenario",
-            "stakes:playoff_race": "Playoff Race",
-            "stakes:title_defense": "Title Defense",
-            "stakes:must_win": "Must-Win",
-            "stakes:record_chase": "Record Chase",
-            "stakes:seeding": "Seeding",
-            "stakes:streak": "Streak",
-            "narrative:rivalry": "Rivalry",
-            "narrative:historic_rivalry": "Historic Rivalry",
-            "narrative:revenge_game": "Revenge Game",
-            "narrative:cinderella": "Cinderella",
-            "narrative:upset_alert": "Upset Alert",
-            "narrative:comeback": "Comeback",
-            "narrative:rematch": "Rematch",
-            "narrative:david_vs_goliath": "David vs. Goliath",
-            "narrative:farewell_tour": "Farewell Tour",
-            "narrative:winning_streak": "Winning Streak",
-            "narrative:losing_streak": "Losing Streak",
-            "narrative:debut": "Debut",
-            "narrative:return_from_injury": "Return from Injury",
-            "audience:national_interest": "National Interest",
-            "audience:crossover_appeal": "Crossover Appeal",
-            "audience:viral_potential": "Viral Potential",
-            "audience:casual_friendly": "Casual-Friendly",
-            "competitive_structure:knockout": "Knockout",
-            "competitive_structure:single_elimination": "Single Elimination",
-            "competitive_structure:bracket": "Bracket",
-            "competitive_structure:series": "Series",
-            "competitive_structure:best_of_7": "Best of 7",
-            "competitive_structure:group_stage": "Group Stage",
-          };
-
-          const tagColors: Record<string, string> = {
-            importance: "bg-purple-50 text-purple-600",
-            signal: "bg-orange-50 text-orange-600",
-            timing: "bg-yellow-50 text-yellow-700",
-            tier: "bg-blue-50 text-blue-600",
-            ei: "bg-emerald-50 text-emerald-600",
-            stakes: "bg-red-50 text-red-600",
-            narrative: "bg-amber-50 text-amber-600",
-            audience: "bg-cyan-50 text-cyan-600",
-            competitive_structure: "bg-indigo-50 text-indigo-600",
-          };
-
+        {(() => {
+          const tags = filterDisplayTags(event.event_tags);
+          if (!tags) return null;
           return (
             <div className="flex flex-wrap gap-1.5 justify-center px-4 pt-2">
-              {filteredTags.map((tag: string) => {
+              {tags.map((tag: string) => {
                 const ns = tag.split(":")[0];
-                const color = tagColors[ns] || "bg-slate/10 text-text-muted";
-                const label = tagLabels[tag] || tag.split(":")[1]?.replace(/_/g, " ");
+                const color = TAG_COLORS[ns] || "bg-slate/10 text-text-muted";
+                const label = TAG_LABELS[tag] || tag.split(":")[1]?.replace(/_/g, " ");
                 return (
                   <span
                     key={tag}
@@ -1194,7 +769,7 @@ export default function EventPage({ params }: EventPageProps) {
                 Retry
               </button>
             </div>
-          ) : historyData?.history?.length === 0 && !_hasAnyWinProbData(historyData) ? (
+          ) : historyData?.history?.length === 0 && !hasAnyWinProbData(historyData) ? (
             <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
               Tracking will begin when odds are available
             </div>
