@@ -17,6 +17,74 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/snapshot-health")
+async def calibration_snapshot_health(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """How many calibration-eligible outcomes have 0 snapshots?"""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fm.source,
+            COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            snap_bucket,
+            COUNT(*) AS n
+        FROM (
+            SELECT fo.id, fm.id AS fmid, fm.source,
+                COALESCE(fm.llm_sport_category, 'uncategorized') AS fcat,
+                CASE
+                    WHEN snap_ct = 0 THEN '0_none'
+                    WHEN snap_ct <= 2 THEN '1_low'
+                    WHEN snap_ct <= 10 THEN '2_mid'
+                    ELSE '3_high'
+                END AS snap_bucket
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            CROSS JOIN LATERAL (
+                SELECT COUNT(*) AS snap_ct
+                FROM futures_odds_snapshots fos
+                WHERE fos.outcome_id = fo.id
+            ) sc
+            WHERE fm.status = 'resolved'
+              AND fo.opening_probability IS NOT NULL
+              AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND fo.current_probability IS NOT NULL
+              AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+        ) sub
+        JOIN futures_markets fm ON fm.id = sub.fmid
+        GROUP BY fm.source, cat, snap_bucket
+        ORDER BY fm.source, cat, snap_bucket
+    """))
+
+    rows = {}
+    for r in result:
+        key = f"{r.source}:{r.cat}"
+        if key not in rows:
+            rows[key] = {"source": r.source, "category": r.cat,
+                         "zero": 0, "low": 0, "mid": 0, "high": 0, "total": 0}
+        bucket_map = {"0_none": "zero", "1_low": "low", "2_mid": "mid", "3_high": "high"}
+        rows[key][bucket_map[r.snap_bucket]] = r.n
+        rows[key]["total"] += r.n
+
+    out = sorted(rows.values(), key=lambda x: -x["total"])
+    total_all = sum(r["total"] for r in out)
+    total_zero = sum(r["zero"] for r in out)
+    total_low = sum(r["low"] for r in out)
+
+    return {
+        "total_outcomes": total_all,
+        "zero_snapshots": total_zero,
+        "pct_zero": round(total_zero * 100.0 / max(total_all, 1), 1),
+        "low_snapshots_1_2": total_low,
+        "pct_zero_or_low": round((total_zero + total_low) * 100.0 / max(total_all, 1), 1),
+        "by_source_category": [r for r in out if r["total"] >= 50],
+    }
+
+
 @router.get("/calibration/unchanged-samples")
 async def calibration_unchanged_samples(
     db: AsyncSession = Depends(get_db),
