@@ -4,9 +4,9 @@
 
 The score is lying to you.
 
-When Carlos Alcaraz beat Jannik Sinner in the 2025 French Open final, the scoreboard read 3-0 in sets. A blowout, right? Except it wasn't. The match featured multiple tiebreaks, dramatic momentum swings, and stretches where Sinner looked like the better player. The score said domination; the reality was a coin flip that happened to land heads three times in a row.
+In the 2026 Australian Open semifinal, Carlos Alcaraz took the first two sets from Alexander Zverev, 6-4, 7-6. The scoreboard said comfortable. The match looked over. Then Alcaraz's right adductor seized up. He could barely move. He took a medical timeout while commentators debated whether he'd retire. Zverev stormed back to take sets three and four in tiebreaks, then served for the match at 5-4 in the fifth set. Anyone watching the score saw a competitive five-setter. Anyone watching the *probability* saw something completely different: a 95% favorite cratering to under 30%, a near-certain exit, and then — impossibly — a break back and a 7-5 fifth set to survive. "I didn't know what was going on," Alcaraz said afterward. "Quitting never crossed my mind." The final score reads 3-2 Alcaraz. The story was a near-death experience that the scoreboard never captured.
 
-Or take Scottie Scheffler at the Masters. After three rounds, he might sit "only" two shots ahead on the leaderboard. Casual fans see a tight race. But his win probability is 85% or higher, because of how consistently he converts from that position. The score looks close; the probability tells you it's already over.
+Or take Scottie Scheffler at the 2025 Masters. After Round 1, he was tied for sixth place at two under par — three shots behind co-leaders Rory McIlroy and Sam Burns. Casual fans scrolling the leaderboard saw five golfers ahead of him. But Scheffler's win probability was 19.0% — more than double Sam Burns's 8.6%, despite Burns being three shots ahead. The market knew what the leaderboard didn't: Scheffler was the world's #1 ranked player and a two-time Masters champion (2022, 2024) at Augusta National. The score said "middle of the pack." The probability said "second favorite to win." McIlroy, the model's #1 pick at 24.4%, ultimately won and completed the career Grand Slam. The two golfers probability identified as the real contenders — McIlroy and Scheffler — were exactly right. Burns, the co-leader? He faded.
 
 We live in a world drowning in scores, standings, and stats — but starved of the one thing that actually tells us what's happening: **probability**.
 
@@ -68,7 +68,7 @@ It turns probability literacy into a game. People who play regularly start devel
 
 On the calibration page, anyone can see exactly how accurate the data is. When Bain Luck says something has a 70% chance of happening, it happens roughly 70% of the time — across 151,000 resolved outcomes and counting.
 
-This isn't a marketing claim. It's a live, public dashboard that updates automatically. The data is transparent, the methodology is open, and the results speak for themselves: our aggregate probabilities are accurate to within about 4 percentage points across all categories.
+This isn't a marketing claim. It's a live, public dashboard that updates automatically. The data is transparent, the methodology is open, and the results speak for themselves: our aggregate probabilities are accurate to within 3.8 percentage points across all categories — comparable to academic benchmarks and platforms like Metaculus.
 
 ## How We're Different
 
