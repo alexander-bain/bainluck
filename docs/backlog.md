@@ -820,16 +820,45 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: 
 
 ## Strategic
 
-### Expert Review / Audit (Dexter + Alex, May 14)
+### Expert Review / Audit — ✅ COMPLETED May 14
 
-**Goal:** Get external expert eyes on the product across four dimensions before scaling.
+Four VP-level audits completed via Claude subagents. Full results in conversation history. Key findings integrated into backlog below.
 
-1. **VP of Engineering audit** — code quality, architecture, scalability, deployment practices
-2. **VP of DS audit** — data pipeline correctness, calibration methodology, model quality
-3. **VP of Product audit** — user flows, feature prioritization, product-market fit
-4. **VP of Design audit** — visual polish, information hierarchy, accessibility, mobile UX
+### Post-Audit Priority Stack (May 14)
 
-**Action:** Identify 1-2 candidates per dimension. Share repo access + live site + this backlog. Ask for a written assessment with top 3 recommendations.
+**P0 — Security & Reliability:**
+- [ ] Gate 24 unprotected admin GET endpoints with `_check_admin_secret` (read-only diagnostics but shouldn't be public)
+- [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
+
+**P0 — Product (Growth):**
+- [ ] **Dedicated `/daily` page** — Wordle for predictions. 5 curated questions/day, same for all users, shareable scorecard, streak counter, countdown timer. This is the daily habit loop and the front door to the product. The daily challenge card already exists in the Discover feed; this promotes it to a standalone experience.
+- [ ] **Shareable prediction scorecards** — After completing daily challenge, generate image card: "I got 4/5 — can you beat me?" with unique daily URL. Wordle playbook.
+- [ ] **Redesign first 30 seconds** — Hero headline for first visit ("What does the world think will happen?"), first card is always a guess card (force interaction in 5 seconds), progressive disclosure toward sign-up.
+
+**P1 — Engineering:**
+- [ ] **Add API rate limiting** — Zero rate limiting on public endpoints. Add `slowapi` or Redis-backed: 60 req/min anonymous, 120 authenticated. Must not impact admin/developer access.
+- [ ] **Split `admin.py`** (11K lines, 174 handlers) — Needs robust plan before starting. Split into `admin_celery.py`, `admin_matching.py`, `admin_taxonomy.py`, `admin_engagement.py`, `admin_data_quality.py`.
+
+**P1 — DS (Calibration Integrity):**
+- [ ] **Confidence intervals on calibration metrics** — Wilson score intervals per bucket, bootstrap CI on MCE, error bars on chart. Converts "appears rigorous" to "is rigorous."
+- [ ] **Separate closing-line from opening-price cohorts** — Report closing-line-only as primary metric, blended as secondary. The `price_moved` dimension already supports this.
+- [ ] **Confidence tiers on Discover cards** — Signal bars (high/medium/low) based on data-driven thresholds from trading activity analysis. Plan approved.
+
+**P1 — Design:**
+- [ ] **Eliminate hardcoded colors** — 50+ raw Tailwind/hex colors bypass design tokens. Mechanical search-and-replace, zero visual change.
+- [ ] **Decompose DiscoverCard.tsx** (1,042 lines) — Extract into `components/discover/` directory. 6-7 files at 100-200 lines each.
+- [ ] **Remove max-width constraint** — Let pages go full-width; constrain card widths via grid, not page-level max-width.
+- [ ] **Define formal button system** — 3 variants: Primary, Ghost, Text. Replace 6+ ad-hoc button styles.
+
+**P2 — DS:**
+- [ ] **Empirically derive aggregation weights** — Retrospective Brier score analysis per source, make weights context-dependent (NFL vs K-League)
+- [ ] **Stat model evaluation framework** — Validate `base_std` constants against actual data, weekly Brier comparison
+- [ ] **Proactive data quality monitoring** — Calibration drift alerts, source freshness SLOs, upstream API contract tests
+
+**P2 — Product:**
+- [ ] **Archive dead pages** — Remove from nav/routing but keep code: `/oscars`, `/pulse`, `/ei`, `/source-intelligence`, `/explore`, `/masters`. Archive pattern TBD.
+- [ ] **Actually send push notifications** — Device token capture is built but sends nothing. One daily push: "Today's challenge is ready. Streak: 7 days."
+- [ ] **Weekly prediction accuracy report email** — "You were 73% accurate across 22 predictions this week."
 
 ### Weather: Meteorologist Forecast Comparison (Dexter idea, May 14)
 
