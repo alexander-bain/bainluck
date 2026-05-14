@@ -256,7 +256,7 @@ async def calibration_events_funnel(
                         AND e.home_score != e.away_score THEN 1 END) AS passes_all_filters
         FROM events e
         JOIN sports s ON s.id = e.sport_id
-        WHERE e.status = 'completed'
+        WHERE e.status IN ('completed', 'closed')
         GROUP BY s.key
         ORDER BY completed DESC
     """))
@@ -282,7 +282,7 @@ async def calibration_events_funnel(
             COUNT(CASE WHEN e.closing_home_probability IS NOT NULL THEN 1 END) AS has_closing
         FROM events e
         JOIN sports s ON s.id = e.sport_id
-        WHERE e.status = 'completed'
+        WHERE e.status IN ('completed', 'closed')
           AND s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl', 'baseball_mlb_preseason')
         GROUP BY s.key, month
         ORDER BY s.key, month
@@ -298,7 +298,7 @@ async def calibration_events_funnel(
         SELECT s.key, COUNT(*) AS n
         FROM events e
         JOIN sports s ON s.id = e.sport_id
-        WHERE e.status = 'completed'
+        WHERE e.status IN ('completed', 'closed')
           AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
           AND e.opening_home_probability IS NULL
           AND e.closing_home_probability IS NULL
