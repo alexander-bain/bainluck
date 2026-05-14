@@ -10743,6 +10743,29 @@ async def backfill_winners_status(
             "pair_size_2": group_row.pair_group_id,
             "proper_size_3_plus": group_row.proper_group_id,
         },
+        "orphan_samples": [
+            {"id": r.id, "name": r.name, "category": r.cat,
+             "group_id": r.group_id, "group_type": r.group_type,
+             "external_id": r.external_id, "outcomes": r.outcome_count,
+             "poly_event_id": r.poly_event_id}
+            for r in (await db.execute(text("""
+                WITH orphan_groups AS (
+                    SELECT group_id FROM futures_markets
+                    WHERE source = 'polymarket' AND status = 'resolved'
+                      AND group_id IS NOT NULL
+                    GROUP BY group_id HAVING COUNT(*) = 1
+                )
+                SELECT fm.id, fm.name,
+                    COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+                    fm.group_id, fm.group_type, fm.external_id,
+                    fm.market_metadata->>'polymarket_event_id' AS poly_event_id,
+                    (SELECT COUNT(*) FROM futures_outcomes fo WHERE fo.market_id = fm.id) AS outcome_count
+                FROM futures_markets fm
+                JOIN orphan_groups og ON og.group_id = fm.group_id
+                WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+                ORDER BY RANDOM() LIMIT 15
+            """))).all()
+        ],
         "soccer_samples": [
             {"id": r.id, "opening": float(r.opening_probability),
              "outcome": r.outcome_name, "market": r.market_name,
