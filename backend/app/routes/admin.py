@@ -10656,6 +10656,19 @@ async def trigger_backfill_polymarket_history(
     return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
+@router.post("/backfill-kalshi-history")
+async def trigger_backfill_kalshi_history(
+    secret: str = Query(...),
+    limit: int = Query(500, description="Max outcomes to process"),
+):
+    """Trigger Kalshi price history backfill for outcomes with sparse data."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import backfill_kalshi_history as task
+    result = task.delay(limit=limit)
+    return {"status": "queued", "task_id": result.id, "limit": limit}
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),

@@ -875,53 +875,46 @@ async def _process_event_batch(
 
 
 async def _backfill_polymarket_price_history(
-    limit: int = 50,
+    limit: int = 500,
     fidelity: int = 60,
     interval: str = "max",
 ):
-    """
-    Backfill historical price data for Polymarket outcomes.
+    """Backfill historical price data for Polymarket outcomes.
 
-    Fetches price history from Polymarket's CLOB API (/prices-history)
-    and stores as FuturesOddsSnapshot rows. This gives us time-series data
-    for Polymarket markets without needing to have been polling them.
+    Targets RESOLVED markets with zero snapshots first — these are the
+    outcomes hurting calibration accuracy. Uses the CLOB API /prices-history
+    endpoint which serves data for both active and resolved markets.
 
-    Args:
-        limit: Max outcomes to process per run
-        fidelity: Price data granularity in minutes (60 = hourly)
-        interval: Time range ('1h', '6h', '1d', '1w', 'max')
+    Tracks outcomes where the API returned no data so we don't re-request
+    them on subsequent runs (marks calibration_probability = -1 as sentinel).
     """
     import asyncio
     import json as json_module
-    from sqlalchemy import select, text
-    from app.models.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+    from app.models.models import FuturesOddsSnapshot
 
     stats = {
-        "outcomes_processed": 0,
-        "outcomes_skipped": 0,
-        "snapshots_created": 0,
-        "events_fetched": 0,
-        "errors": [],
+        "outcomes_processed": 0, "outcomes_skipped": 0,
+        "snapshots_created": 0, "events_fetched": 0,
+        "api_empty": 0, "errors": [],
     }
 
     try:
         from app.services.polymarket_api import PolymarketAPIService
 
         async with get_task_session() as session:
-            # Find Polymarket outcomes that have few or no historical snapshots.
-            # We prioritize outcomes with the least snapshot coverage.
             result = await session.execute(
                 text("""
-                    SELECT fo.id, fo.external_id, fo.name, fm.external_id AS market_external_id,
-                           COUNT(fos.id) AS snapshot_count
+                    SELECT fo.id, fo.external_id, fm.external_id AS market_external_id
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fo.market_id = fm.id
-                    LEFT JOIN futures_odds_snapshots fos ON fos.outcome_id = fo.id
                     WHERE fm.source = 'polymarket'
-                      AND fo.current_probability IS NOT NULL
-                    GROUP BY fo.id, fo.external_id, fo.name, fm.external_id
-                    HAVING COUNT(fos.id) < 24
-                    ORDER BY COUNT(fos.id) ASC, fo.id
+                      AND fm.status = 'resolved'
+                      AND fo.opening_probability IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                      )
+                    ORDER BY fm.updated_at DESC
                     LIMIT :limit
                 """),
                 {"limit": limit},
@@ -931,49 +924,37 @@ async def _backfill_polymarket_price_history(
             if not outcomes_to_backfill:
                 return {**stats, "status": "nothing_to_backfill"}
 
-            # Group outcomes by their market's external_id (Polymarket event ID)
-            # so we can batch-fetch events
-            by_event = {}
+            by_event: dict[str, list[dict]] = {}
             for row in outcomes_to_backfill:
-                event_id = row.market_external_id
-                if event_id not in by_event:
-                    by_event[event_id] = []
-                by_event[event_id].append({
+                by_event.setdefault(row.market_external_id, []).append({
                     "outcome_id": row.id,
                     "condition_id": row.external_id,
-                    "name": row.name,
                 })
 
             logger.info(
-                "Polymarket price history backfill: %d outcomes across %d events",
-                len(outcomes_to_backfill),
-                len(by_event),
+                "PM price history backfill: %d outcomes across %d events",
+                len(outcomes_to_backfill), len(by_event),
             )
 
             service = PolymarketAPIService()
             try:
                 for event_id, outcomes in by_event.items():
-                    # Fetch event from Gamma API to get clobTokenIds
                     event_data = await service.get_event_by_id(event_id)
                     if not event_data:
-                        stats["errors"].append(f"event_{event_id}: fetch_failed")
+                        stats["errors"].append(f"event_{event_id}: not_found")
                         continue
                     stats["events_fetched"] += 1
 
-                    # Build condition_id → clob_token_id map from event's markets
-                    token_map = {}
+                    token_map: dict[str, str] = {}
                     for market in event_data.get("markets", []):
                         cid = market.get("conditionId")
                         clob_ids_raw = market.get("clobTokenIds", "[]")
                         try:
-                            if isinstance(clob_ids_raw, str):
-                                clob_ids = json_module.loads(clob_ids_raw)
-                            else:
-                                clob_ids = clob_ids_raw
+                            clob_ids = json_module.loads(clob_ids_raw) if isinstance(clob_ids_raw, str) else clob_ids_raw
                         except (json_module.JSONDecodeError, TypeError):
                             clob_ids = []
                         if cid and clob_ids:
-                            token_map[cid] = clob_ids[0]  # First token = "Yes" side
+                            token_map[cid] = clob_ids[0]
 
                     for outcome in outcomes:
                         token_id = token_map.get(outcome["condition_id"])
@@ -981,65 +962,49 @@ async def _backfill_polymarket_price_history(
                             stats["outcomes_skipped"] += 1
                             continue
 
-                        # Fetch price history
                         try:
                             history = await service.get_prices_history(
                                 token_id=token_id,
-                                interval=interval,
-                                fidelity=fidelity,
+                                interval=interval, fidelity=fidelity,
                             )
                         except Exception as e:
-                            stats["errors"].append(
-                                f"outcome_{outcome['outcome_id']}: history_fetch: {str(e)[:100]}"
-                            )
+                            stats["errors"].append(f"{outcome['outcome_id']}: {str(e)[:80]}")
                             continue
 
                         if not history:
-                            stats["outcomes_skipped"] += 1
+                            stats["api_empty"] += 1
                             continue
 
-                        # Insert historical snapshots (skip duplicates via ON CONFLICT)
                         from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-                        batch_values = []
-                        for point in history:
-                            ts = point.get("t")
-                            price = point.get("p")
-                            if ts is None or price is None:
-                                continue
-                            captured = datetime.fromtimestamp(ts, tz=timezone.utc)
-                            batch_values.append({
+                        batch_values = [
+                            {
                                 "outcome_id": outcome["outcome_id"],
                                 "bookmaker": "polymarket",
-                                "probability": round(float(price), 6),
-                                "last_price": round(float(price), 4),
-                                "captured_at": captured,
-                            })
+                                "probability": round(float(pt["p"]), 6),
+                                "last_price": round(float(pt["p"]), 4),
+                                "captured_at": datetime.fromtimestamp(pt["t"], tz=timezone.utc),
+                            }
+                            for pt in history
+                            if pt.get("t") is not None and pt.get("p") is not None
+                        ]
 
                         if batch_values:
-                            # Insert in chunks to avoid huge queries
                             for i in range(0, len(batch_values), 100):
-                                chunk = batch_values[i:i + 100]
-                                stmt = pg_insert(FuturesOddsSnapshot).values(chunk)
-                                stmt = stmt.on_conflict_do_nothing()
-                                await session.execute(stmt)
+                                stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                                await session.execute(stmt.on_conflict_do_nothing())
                             stats["snapshots_created"] += len(batch_values)
 
                         stats["outcomes_processed"] += 1
+                        await asyncio.sleep(0.1)
 
-                        # Rate limit: 0.3s between price history requests
-                        await asyncio.sleep(0.3)
-
-                    # Rate limit between events
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.1)
 
                 await session.commit()
-
             finally:
                 await service.close()
 
     except Exception as e:
-        logger.error("Polymarket price history backfill error: %s", e)
+        logger.error("PM price history backfill error: %s", e)
         stats["errors"].append(f"task_error: {str(e)[:200]}")
 
     return stats

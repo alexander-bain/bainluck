@@ -298,10 +298,17 @@ def poll_polymarket_markets(self):
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_polymarket_history")
-def backfill_polymarket_history(self, limit: int = 50, fidelity: int = 60, interval: str = "max"):
+def backfill_polymarket_history(self, limit: int = 500, fidelity: int = 60, interval: str = "max"):
     """Backfill historical prices from Polymarket CLOB API for outcomes with sparse data."""
     from app.tasks.polymarket import _backfill_polymarket_price_history
     return _tracked_run("polymarket_history", _backfill_polymarket_price_history(limit, fidelity, interval))
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_history")
+def backfill_kalshi_history(self, limit: int = 500):
+    """Backfill historical prices from Kalshi candlesticks API for outcomes with sparse data."""
+    from app.tasks.kalshi import _backfill_kalshi_price_history
+    return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit))
 
 
 # --- Categorization ---
@@ -967,6 +974,12 @@ celery_app.conf.beat_schedule = {
     "backfill-polymarket-price-history": {
         "task": "app.tasks.backfill_polymarket_history",
         "schedule": crontab(minute=0, hour="4,10,16,22"),  # Every 6h, offset from backfill-winners
+        "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
+    "backfill-kalshi-price-history": {
+        "task": "app.tasks.backfill_kalshi_history",
+        "schedule": crontab(minute=30, hour="4,10,16,22"),  # Every 6h, 30min after Polymarket
         "kwargs": {"limit": 500},
         "options": {"queue": "background"},
     },

@@ -219,6 +219,32 @@ class KalshiAPIService(BaseAPIClient):
 
         return markets, next_cursor
 
+    async def get_market_candlesticks(
+        self,
+        ticker: str,
+        period_interval: int = 60,
+    ) -> list[dict]:
+        """Get historical candlestick data for a market.
+
+        Args:
+            ticker: Market ticker (e.g., 'KXNBAGAME-26FEB21DETCHI-NY')
+            period_interval: Candle width in minutes (1, 5, 15, 60, 1440)
+
+        Returns:
+            List of {"t": unix_ts, "yes_price": float, ...} dicts
+        """
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/markets/{ticker}/candlesticks",
+                params={"period_interval": period_interval},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("candlesticks", [])
+        except Exception as e:
+            logger.warning("Failed to get candlesticks for %s: %s", ticker, e)
+            return []
+
     async def _discover_series_tickers(
         self,
         categories: list[str],

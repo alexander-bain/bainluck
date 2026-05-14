@@ -204,6 +204,7 @@ class TestBeatScheduleCompleteness:
         "check-tier1-coverage",
         "daily-digest",
         "backfill-polymarket-price-history",
+        "backfill-kalshi-price-history",
     }
 
     def test_no_missing_entries(self):

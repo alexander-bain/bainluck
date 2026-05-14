@@ -628,3 +628,101 @@ async def _poll_kalshi_markets():
         len(stats["errors"]), stats["by_category"],
     )
     return stats
+
+
+async def _backfill_kalshi_price_history(limit: int = 500):
+    """Backfill historical price data for Kalshi outcomes with zero snapshots.
+
+    Uses the Kalshi candlesticks API (GET /markets/{ticker}/candlesticks)
+    to fetch hourly price history. Targets resolved markets first since
+    those are the outcomes affecting calibration accuracy.
+    """
+    import asyncio
+    from app.models.models import FuturesOddsSnapshot
+
+    stats = {
+        "outcomes_processed": 0, "outcomes_skipped": 0,
+        "snapshots_created": 0, "api_empty": 0, "errors": [],
+    }
+
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                        fm.external_id AS event_ticker
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fo.opening_probability IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                      )
+                    ORDER BY fm.updated_at DESC
+                    LIMIT :limit
+                """),
+                {"limit": limit},
+            )
+            outcomes = result.fetchall()
+
+            if not outcomes:
+                return {**stats, "status": "nothing_to_backfill"}
+
+            logger.info("Kalshi price history backfill: %d outcomes", len(outcomes))
+
+            service = KalshiAPIService()
+            try:
+                for row in outcomes:
+                    try:
+                        candles = await service.get_market_candlesticks(
+                            ticker=row.ticker, period_interval=60,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(f"{row.ticker}: {str(e)[:80]}")
+                        continue
+
+                    if not candles:
+                        stats["api_empty"] += 1
+                        continue
+
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+                    batch_values = []
+                    for c in candles:
+                        ts = c.get("end_period_ts") or c.get("t")
+                        yes_price = c.get("yes_price") or c.get("price")
+                        if ts is None or yes_price is None:
+                            continue
+                        prob = yes_price / 100.0 if yes_price > 1 else float(yes_price)
+                        if prob <= 0 or prob >= 1:
+                            continue
+                        captured = datetime.fromtimestamp(ts, tz=timezone.utc) if isinstance(ts, (int, float)) else ts
+                        batch_values.append({
+                            "outcome_id": row.outcome_id,
+                            "bookmaker": "kalshi",
+                            "probability": round(prob, 6),
+                            "last_price": round(prob, 4),
+                            "captured_at": captured,
+                        })
+
+                    if batch_values:
+                        for i in range(0, len(batch_values), 100):
+                            stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                            await session.execute(stmt.on_conflict_do_nothing())
+                        stats["snapshots_created"] += len(batch_values)
+
+                    stats["outcomes_processed"] += 1
+                    await asyncio.sleep(0.1)
+
+                await session.commit()
+            finally:
+                await service.close()
+
+    except Exception as e:
+        logger.error("Kalshi price history backfill error: %s", e)
+        stats["errors"].append(f"task_error: {str(e)[:200]}")
+
+    return stats
