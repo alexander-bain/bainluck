@@ -17,6 +17,91 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/unchanged-samples")
+async def calibration_unchanged_samples(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Show specific outcomes where calibration_probability = opening_probability."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    # Sample of unchanged outcomes by category, with snapshot count and volume
+    result = await db.execute(text("""
+        SELECT fm.source, COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            fm.name AS market_name, fo.name AS outcome_name,
+            fo.opening_probability, fo.calibration_probability,
+            fo.current_probability,
+            fm.volume, fm.volume_24h, fm.liquidity,
+            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
+            (SELECT ROUND(AVG(fos.probability)::numeric, 4)
+             FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
+             AND fos.probability > 0 AND fos.probability < 1) AS avg_snap_prob,
+            (SELECT MIN(fos.probability)
+             FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
+             AND fos.probability > 0 AND fos.probability < 1) AS min_snap_prob,
+            (SELECT MAX(fos.probability)
+             FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
+             AND fos.probability > 0 AND fos.probability < 1) AS max_snap_prob
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND fo.calibration_probability = fo.opening_probability
+          AND fo.current_probability IS NOT NULL
+          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+        ORDER BY RANDOM()
+        LIMIT 50
+    """))
+    samples = []
+    for r in result:
+        samples.append({
+            "source": r.source, "category": r.cat,
+            "market": r.market_name[:80], "outcome": r.outcome_name[:50],
+            "opening": float(r.opening_probability),
+            "calibration": float(r.calibration_probability),
+            "resolved_to": "winner" if r.current_probability >= 0.95 else "loser",
+            "volume": r.volume, "snap_count": r.snap_count,
+            "snap_range": f"{float(r.min_snap_prob):.3f}-{float(r.max_snap_prob):.3f}" if r.min_snap_prob else "none",
+            "avg_snap": float(r.avg_snap_prob) if r.avg_snap_prob else None,
+        })
+
+    # Summary by source + category
+    summary = await db.execute(text("""
+        SELECT fm.source, COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            COUNT(*) AS n,
+            COUNT(CASE WHEN fm.volume IS NULL THEN 1 END) AS vol_null,
+            COUNT(CASE WHEN fm.volume > 0 THEN 1 END) AS vol_positive,
+            ROUND(AVG(
+                (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id)
+            )::numeric, 1) AS avg_snaps
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND fo.calibration_probability = fo.opening_probability
+          AND fo.current_probability IS NOT NULL
+          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+        GROUP BY fm.source, cat
+        HAVING COUNT(*) >= 50
+        ORDER BY COUNT(*) DESC
+        LIMIT 20
+    """))
+    cat_summary = [
+        {"source": r.source, "category": r.cat, "n": r.n,
+         "vol_null": r.vol_null, "vol_positive": r.vol_positive,
+         "pct_vol_null": round(r.vol_null * 100.0 / max(r.n, 1), 1),
+         "avg_snaps": float(r.avg_snaps)}
+        for r in summary
+    ]
+
+    return {"summary": cat_summary, "samples": samples}
+
+
 @router.get("/calibration/volume-samples")
 async def calibration_volume_samples(
     db: AsyncSession = Depends(get_db),
