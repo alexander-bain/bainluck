@@ -308,10 +308,48 @@ async def calibration_events_funnel(
     """))
     no_prob_data = [{"sport_key": r.key, "count": r.n} for r in no_prob]
 
+    # All statuses for key sports
+    status_dist = await db.execute(text("""
+        SELECT s.key, e.status, COUNT(*) AS n
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE s.key IN ('baseball_mlb', 'basketball_nba', 'icehockey_nhl',
+                        'baseball_mlb_preseason', 'basketball_ncaab')
+        GROUP BY s.key, e.status
+        ORDER BY s.key, n DESC
+    """))
+    status_data = [
+        {"sport_key": r.key, "status": r.status, "count": r.n}
+        for r in status_dist
+    ]
+
+    # Check for non-completed MLB events that look like they should be completed
+    stuck_mlb = await db.execute(text("""
+        SELECT e.status, COUNT(*) AS n,
+            MIN(e.commence_time)::date AS earliest,
+            MAX(e.commence_time)::date AS latest,
+            COUNT(CASE WHEN e.home_score IS NOT NULL THEN 1 END) AS has_scores
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE s.key = 'baseball_mlb'
+          AND e.status != 'completed'
+          AND e.commence_time < NOW() - INTERVAL '1 day'
+        GROUP BY e.status
+        ORDER BY n DESC
+    """))
+    stuck_data = [
+        {"status": r.status, "count": r.n,
+         "earliest": str(r.earliest), "latest": str(r.latest),
+         "has_scores": r.has_scores}
+        for r in stuck_mlb
+    ]
+
     return {
         "per_sport": per_sport,
         "monthly_key_sports": monthly_data,
         "no_prob_top20": no_prob_data,
+        "status_distribution": status_data,
+        "stuck_mlb_events": stuck_data,
     }
 
 
