@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import text, func, delete, and_
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
-from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision
+from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision, WinProbSnapshot
 from app.services import get_db
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
@@ -10997,4 +10997,605 @@ async def sawtooth_audit(
             "still_affected": int(postfix.still_affected) if postfix else 0,
             "fix_working": (postfix.still_affected == 0) if postfix else True,
         },
+    }
+
+
+@router.get("/sawtooth-diagnosis")
+async def sawtooth_diagnosis(
+    secret: str = Query(..., description="Admin secret"),
+    jump_threshold: float = Query(0.03, description="Min |delta| to count as a big jump"),
+    rate_threshold: float = Query(0.30, description="Min jump_rate to flag"),
+    limit: int = Query(52, description="Max events to diagnose"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnose root cause of sawtooth oscillation for each affected event.
+
+    For each event with sawtooth Kalshi snapshots, returns:
+    - Currently linked Kalshi futures_markets (event_id FK)
+    - Distinct market_ids referenced in win_prob_snapshot game_state
+    - Classification: multi_game (Type A), dual_market (Type B), or other (Type C)
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Step 1: Find affected events (same query as sawtooth-audit)
+    affected_sql = text("""
+        WITH consecutive AS (
+            SELECT
+                event_id,
+                home_win_probability,
+                LAG(home_win_probability) OVER (
+                    PARTITION BY event_id ORDER BY captured_at
+                ) AS prev_prob
+            FROM win_prob_snapshots
+            WHERE source = 'kalshi'
+        ),
+        jumps AS (
+            SELECT
+                event_id,
+                COUNT(*) AS total_snaps,
+                COUNT(*) FILTER (
+                    WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                ) AS big_jumps
+            FROM consecutive
+            WHERE prev_prob IS NOT NULL
+            GROUP BY event_id
+        )
+        SELECT
+            j.event_id,
+            e.home_team_name,
+            e.away_team_name,
+            e.status,
+            e.commence_time,
+            j.total_snaps,
+            j.big_jumps,
+            ROUND((j.big_jumps::numeric / NULLIF(j.total_snaps, 0)), 4) AS jump_rate
+        FROM jumps j
+        JOIN events e ON e.id = j.event_id
+        WHERE j.total_snaps >= 4
+          AND j.big_jumps::float / NULLIF(j.total_snaps, 0) > :rate_threshold
+        ORDER BY j.big_jumps DESC, jump_rate DESC
+        LIMIT :lim
+    """)
+
+    affected_result = await db.execute(
+        affected_sql,
+        {"jump_threshold": jump_threshold, "rate_threshold": rate_threshold, "lim": limit},
+    )
+    affected_events = affected_result.fetchall()
+
+    diagnoses = []
+    for row in affected_events:
+        event_id = row.event_id
+
+        # Get currently linked Kalshi futures_markets
+        linked_result = await db.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.event_id == event_id,
+                FuturesMarket.source == "kalshi",
+            )
+        )
+        linked_markets = linked_result.scalars().all()
+
+        # Get distinct market_ids from win_prob_snapshot game_state
+        # game_state->'market_id' tells us which market generated each snapshot
+        snapshot_markets_sql = text("""
+            SELECT
+                DISTINCT game_state->>'market_id' AS market_id,
+                game_state->>'market_name' AS market_name,
+                COUNT(*) AS snapshot_count,
+                MIN(captured_at) AS first_snap,
+                MAX(captured_at) AS last_snap,
+                MIN(home_win_probability) AS min_prob,
+                MAX(home_win_probability) AS max_prob,
+                AVG(home_win_probability) AS avg_prob
+            FROM win_prob_snapshots
+            WHERE event_id = :event_id
+              AND source = 'kalshi'
+              AND game_state IS NOT NULL
+              AND game_state->>'market_id' IS NOT NULL
+            GROUP BY game_state->>'market_id', game_state->>'market_name'
+            ORDER BY snapshot_count DESC
+        """)
+        snap_markets_result = await db.execute(
+            snapshot_markets_sql, {"event_id": event_id}
+        )
+        snap_market_rows = snap_markets_result.fetchall()
+
+        # Also get snapshots WITHOUT game_state (legacy snapshots)
+        legacy_count_result = await db.execute(text("""
+            SELECT COUNT(*) FROM win_prob_snapshots
+            WHERE event_id = :event_id
+              AND source = 'kalshi'
+              AND (game_state IS NULL OR game_state->>'market_id' IS NULL)
+        """), {"event_id": event_id})
+        legacy_count = legacy_count_result.scalar() or 0
+
+        # Classify the root cause
+        distinct_market_ids = set()
+        market_avg_probs = {}
+        for srow in snap_market_rows:
+            mid = srow.market_id
+            if mid:
+                distinct_market_ids.add(mid)
+                market_avg_probs[mid] = float(srow.avg_prob) if srow.avg_prob else None
+
+        # Check if linked markets have different tickers (different games)
+        linked_tickers = {}
+        for m in linked_markets:
+            # Extract ticker prefix + date to identify unique games
+            ticker = m.external_id or ""
+            linked_tickers[str(m.id)] = {
+                "ticker": ticker,
+                "name": m.name,
+                "status": m.status,
+            }
+
+        # Classification logic
+        if len(distinct_market_ids) >= 2:
+            # Multiple markets wrote snapshots — check if they're different games
+            # Type A: different game tickers (multi-game)
+            # Type B: same game, dual market (Team A win? + Team B win?)
+            avg_probs = list(market_avg_probs.values())
+            avg_probs = [p for p in avg_probs if p is not None]
+
+            if len(avg_probs) >= 2:
+                # If average probs are roughly complementary (~sum to 1), it's dual market
+                avg_probs.sort()
+                prob_sum = avg_probs[0] + avg_probs[-1]
+                if 0.85 < prob_sum < 1.15:
+                    cause_type = "B_dual_market"
+                else:
+                    cause_type = "A_multi_game"
+            else:
+                cause_type = "A_multi_game"
+        elif len(linked_markets) >= 2 and len(distinct_market_ids) <= 1:
+            cause_type = "B_dual_market_linked"
+        else:
+            cause_type = "C_other"
+
+        diagnoses.append({
+            "event_id": event_id,
+            "home_team": row.home_team_name,
+            "away_team": row.away_team_name,
+            "status": row.status,
+            "commence_time": row.commence_time.isoformat() if row.commence_time else None,
+            "snapshot_count": int(row.total_snaps),
+            "jump_count": int(row.big_jumps),
+            "jump_rate": float(row.jump_rate),
+            "cause_type": cause_type,
+            "linked_kalshi_markets": [
+                {
+                    "market_id": m.id,
+                    "external_id": m.external_id,
+                    "name": m.name,
+                    "status": m.status,
+                    "commence_time": m.commence_time.isoformat() if m.commence_time else None,
+                }
+                for m in linked_markets
+            ],
+            "snapshot_source_markets": [
+                {
+                    "market_id": srow.market_id,
+                    "market_name": srow.market_name,
+                    "snapshot_count": int(srow.snapshot_count),
+                    "first_snap": srow.first_snap.isoformat() if srow.first_snap else None,
+                    "last_snap": srow.last_snap.isoformat() if srow.last_snap else None,
+                    "min_prob": round(float(srow.min_prob), 4) if srow.min_prob is not None else None,
+                    "max_prob": round(float(srow.max_prob), 4) if srow.max_prob is not None else None,
+                    "avg_prob": round(float(srow.avg_prob), 4) if srow.avg_prob is not None else None,
+                }
+                for srow in snap_market_rows
+            ],
+            "legacy_snapshots_no_market_id": legacy_count,
+        })
+
+    # Summary stats
+    type_counts = {}
+    for d in diagnoses:
+        t = d["cause_type"]
+        type_counts[t] = type_counts.get(t, 0) + 1
+
+    return {
+        "total_diagnosed": len(diagnoses),
+        "cause_type_summary": type_counts,
+        "diagnoses": diagnoses,
+    }
+
+
+@router.post("/sawtooth-fix")
+async def sawtooth_fix(
+    secret: str = Query(..., description="Admin secret"),
+    event_id: Optional[int] = Query(None, description="Fix a single event (or all if omitted)"),
+    dry_run: bool = Query(True, description="Preview changes without applying"),
+    jump_threshold: float = Query(0.03, description="Min |delta| to count as big jump"),
+    rate_threshold: float = Query(0.30, description="Min jump_rate to flag"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fix sawtooth oscillation by unlinking wrong markets and deleting bad snapshots.
+
+    For each affected event:
+    - Type A (multi-game): Identifies which market is the outlier (by avg probability
+      distance from sportsbook consensus) and unlinks it + deletes its snapshots.
+    - Type B (dual-market): Keeps all linked markets but deletes ALL historical
+      snapshots (the devig averaging fix handles future writes correctly).
+    - Type C (other): Deletes all Kalshi snapshots for the event (nuclear option
+      for events with no linked markets or unparseable patterns).
+
+    Use dry_run=true (default) to preview, then dry_run=false to apply.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Find affected events
+    if event_id:
+        affected_sql = text("""
+            WITH consecutive AS (
+                SELECT
+                    event_id,
+                    home_win_probability,
+                    LAG(home_win_probability) OVER (
+                        PARTITION BY event_id ORDER BY captured_at
+                    ) AS prev_prob
+                FROM win_prob_snapshots
+                WHERE source = 'kalshi'
+                  AND event_id = :event_id
+            ),
+            jumps AS (
+                SELECT
+                    event_id,
+                    COUNT(*) AS total_snaps,
+                    COUNT(*) FILTER (
+                        WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                    ) AS big_jumps
+                FROM consecutive
+                WHERE prev_prob IS NOT NULL
+                GROUP BY event_id
+            )
+            SELECT j.event_id, j.total_snaps, j.big_jumps,
+                   e.home_team_name, e.away_team_name, e.status
+            FROM jumps j
+            JOIN events e ON e.id = j.event_id
+            WHERE j.total_snaps >= 4
+        """)
+        affected_result = await db.execute(
+            affected_sql,
+            {"event_id": event_id, "jump_threshold": jump_threshold},
+        )
+    else:
+        affected_sql = text("""
+            WITH consecutive AS (
+                SELECT
+                    event_id,
+                    home_win_probability,
+                    LAG(home_win_probability) OVER (
+                        PARTITION BY event_id ORDER BY captured_at
+                    ) AS prev_prob
+                FROM win_prob_snapshots
+                WHERE source = 'kalshi'
+            ),
+            jumps AS (
+                SELECT
+                    event_id,
+                    COUNT(*) AS total_snaps,
+                    COUNT(*) FILTER (
+                        WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                    ) AS big_jumps
+                FROM consecutive
+                WHERE prev_prob IS NOT NULL
+                GROUP BY event_id
+            )
+            SELECT j.event_id, j.total_snaps, j.big_jumps,
+                   e.home_team_name, e.away_team_name, e.status
+            FROM jumps j
+            JOIN events e ON e.id = j.event_id
+            WHERE j.total_snaps >= 4
+              AND j.big_jumps::float / NULLIF(j.total_snaps, 0) > :rate_threshold
+        """)
+        affected_result = await db.execute(
+            affected_sql,
+            {"jump_threshold": jump_threshold, "rate_threshold": rate_threshold},
+        )
+
+    affected_rows = affected_result.fetchall()
+
+    results = []
+    total_markets_unlinked = 0
+    total_snapshots_deleted = 0
+
+    for row in affected_rows:
+        eid = row.event_id
+        fix_detail = {
+            "event_id": eid,
+            "home_team": row.home_team_name,
+            "away_team": row.away_team_name,
+            "status": row.status,
+            "snapshot_count": int(row.total_snaps),
+            "actions": [],
+        }
+
+        # Get currently linked Kalshi markets
+        linked_result = await db.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.event_id == eid,
+                FuturesMarket.source == "kalshi",
+            )
+        )
+        linked_markets = linked_result.scalars().all()
+
+        # Get snapshot source breakdown by market_id
+        snap_markets_result = await db.execute(text("""
+            SELECT
+                game_state->>'market_id' AS market_id,
+                game_state->>'market_name' AS market_name,
+                COUNT(*) AS snap_count,
+                AVG(home_win_probability) AS avg_prob
+            FROM win_prob_snapshots
+            WHERE event_id = :event_id
+              AND source = 'kalshi'
+              AND game_state IS NOT NULL
+              AND game_state->>'market_id' IS NOT NULL
+            GROUP BY game_state->>'market_id', game_state->>'market_name'
+            ORDER BY snap_count DESC
+        """), {"event_id": eid})
+        snap_sources = snap_markets_result.fetchall()
+
+        distinct_market_ids = {s.market_id for s in snap_sources if s.market_id}
+        market_avgs = {
+            s.market_id: float(s.avg_prob) for s in snap_sources
+            if s.market_id and s.avg_prob is not None
+        }
+
+        # Get sportsbook consensus for this event
+        consensus_result = await db.execute(text("""
+            SELECT home_win_probability FROM odds_snapshots
+            WHERE event_id = :event_id
+              AND home_win_probability IS NOT NULL
+            ORDER BY captured_at DESC
+            LIMIT 1
+        """), {"event_id": eid})
+        consensus_row = consensus_result.fetchone()
+
+        # Also try opening odds as fallback
+        if not consensus_row:
+            consensus_result2 = await db.execute(text("""
+                SELECT opening_home_probability FROM events WHERE id = :event_id
+            """), {"event_id": eid})
+            consensus_row = consensus_result2.fetchone()
+
+        consensus = None
+        if consensus_row and consensus_row[0] is not None:
+            consensus = float(consensus_row[0])
+
+        # Classify and decide fix action
+        if len(distinct_market_ids) >= 2 and market_avgs:
+            avg_probs = list(market_avgs.values())
+            avg_probs_sorted = sorted(avg_probs)
+
+            # Check if dual-market (complementary probs sum ~1)
+            if len(avg_probs_sorted) == 2:
+                prob_sum = avg_probs_sorted[0] + avg_probs_sorted[1]
+                if 0.85 < prob_sum < 1.15:
+                    # Type B: dual-market inversion — delete ALL Kalshi snapshots
+                    # The devig averaging in Phase 2 handles future writes correctly
+                    fix_detail["cause_type"] = "B_dual_market"
+
+                    snap_count_result = await db.execute(text("""
+                        SELECT COUNT(*) FROM win_prob_snapshots
+                        WHERE event_id = :event_id AND source = 'kalshi'
+                    """), {"event_id": eid})
+                    to_delete = snap_count_result.scalar() or 0
+
+                    fix_detail["actions"].append({
+                        "action": "delete_all_kalshi_snapshots",
+                        "reason": "dual-market complementary probs cause oscillation; devig fix handles future writes",
+                        "snapshots_to_delete": to_delete,
+                    })
+
+                    if not dry_run:
+                        del_result = await db.execute(
+                            delete(WinProbSnapshot).where(
+                                WinProbSnapshot.event_id == eid,
+                                WinProbSnapshot.source == "kalshi",
+                            )
+                        )
+                        total_snapshots_deleted += del_result.rowcount
+                        fix_detail["actions"][-1]["snapshots_deleted"] = del_result.rowcount
+                    else:
+                        total_snapshots_deleted += to_delete
+                else:
+                    # Type A: multi-game linkage
+                    fix_detail["cause_type"] = "A_multi_game"
+
+                    # Find the outlier market — the one whose avg prob is furthest
+                    # from consensus (if available), or the one with fewer snapshots
+                    if consensus is not None:
+                        # Pick the market closest to consensus as "correct"
+                        best_mid = min(market_avgs, key=lambda mid: abs(market_avgs[mid] - consensus))
+                        outlier_mids = [mid for mid in distinct_market_ids if mid != best_mid]
+                    else:
+                        # No consensus — keep the market with more snapshots
+                        snap_counts = {s.market_id: int(s.snap_count) for s in snap_sources}
+                        best_mid = max(snap_counts, key=lambda mid: snap_counts.get(mid, 0))
+                        outlier_mids = [mid for mid in distinct_market_ids if mid != best_mid]
+
+                    for omid in outlier_mids:
+                        # Delete snapshots from the outlier market
+                        snap_del_count_result = await db.execute(text("""
+                            SELECT COUNT(*) FROM win_prob_snapshots
+                            WHERE event_id = :event_id
+                              AND source = 'kalshi'
+                              AND game_state->>'market_id' = :market_id
+                        """), {"event_id": eid, "market_id": str(omid)})
+                        to_delete = snap_del_count_result.scalar() or 0
+
+                        # Find the market name for this outlier
+                        outlier_name = next(
+                            (s.market_name for s in snap_sources if s.market_id == omid),
+                            "unknown"
+                        )
+
+                        fix_detail["actions"].append({
+                            "action": "delete_outlier_snapshots",
+                            "outlier_market_id": omid,
+                            "outlier_market_name": outlier_name,
+                            "outlier_avg_prob": round(market_avgs.get(omid, 0), 4),
+                            "kept_market_id": best_mid,
+                            "consensus": round(consensus, 4) if consensus else None,
+                            "reason": f"market avg={market_avgs.get(omid, 0):.3f} is far from consensus={consensus:.3f}" if consensus else "market has fewer snapshots",
+                            "snapshots_to_delete": to_delete,
+                        })
+
+                        if not dry_run:
+                            del_result = await db.execute(text("""
+                                DELETE FROM win_prob_snapshots
+                                WHERE event_id = :event_id
+                                  AND source = 'kalshi'
+                                  AND game_state->>'market_id' = :market_id
+                            """), {"event_id": eid, "market_id": str(omid)})
+                            total_snapshots_deleted += del_result.rowcount
+                            fix_detail["actions"][-1]["snapshots_deleted"] = del_result.rowcount
+
+                        # Unlink the outlier market if it's still linked
+                        omid_int = int(omid) if omid and omid.isdigit() else None
+                        if omid_int:
+                            for m in linked_markets:
+                                if m.id == omid_int:
+                                    fix_detail["actions"].append({
+                                        "action": "unlink_market",
+                                        "market_id": m.id,
+                                        "market_name": m.name,
+                                        "external_id": m.external_id,
+                                        "reason": "wrong game linked to this event",
+                                    })
+                                    if not dry_run:
+                                        m.event_id = None
+                                        total_markets_unlinked += 1
+            else:
+                # 3+ distinct markets — nuclear: delete all, keep the majority
+                fix_detail["cause_type"] = "A_multi_game_complex"
+
+                snap_counts = {s.market_id: int(s.snap_count) for s in snap_sources}
+                best_mid = max(snap_counts, key=lambda mid: snap_counts.get(mid, 0)) if snap_counts else None
+
+                # Delete snapshots from all outlier markets
+                for omid in distinct_market_ids:
+                    if omid == best_mid:
+                        continue
+                    snap_del_count_result = await db.execute(text("""
+                        SELECT COUNT(*) FROM win_prob_snapshots
+                        WHERE event_id = :event_id
+                          AND source = 'kalshi'
+                          AND game_state->>'market_id' = :market_id
+                    """), {"event_id": eid, "market_id": str(omid)})
+                    to_delete = snap_del_count_result.scalar() or 0
+
+                    fix_detail["actions"].append({
+                        "action": "delete_outlier_snapshots",
+                        "outlier_market_id": omid,
+                        "kept_market_id": best_mid,
+                        "snapshots_to_delete": to_delete,
+                    })
+
+                    if not dry_run:
+                        del_result = await db.execute(text("""
+                            DELETE FROM win_prob_snapshots
+                            WHERE event_id = :event_id
+                              AND source = 'kalshi'
+                              AND game_state->>'market_id' = :market_id
+                        """), {"event_id": eid, "market_id": str(omid)})
+                        total_snapshots_deleted += del_result.rowcount
+
+                    omid_int = int(omid) if omid and omid.isdigit() else None
+                    if omid_int:
+                        for m in linked_markets:
+                            if m.id == omid_int:
+                                fix_detail["actions"].append({
+                                    "action": "unlink_market",
+                                    "market_id": m.id,
+                                    "external_id": m.external_id,
+                                })
+                                if not dry_run:
+                                    m.event_id = None
+                                    total_markets_unlinked += 1
+
+        elif len(distinct_market_ids) == 0:
+            # No game_state market_ids — legacy snapshots. Delete all.
+            fix_detail["cause_type"] = "C_legacy_no_market_id"
+            snap_count_result = await db.execute(text("""
+                SELECT COUNT(*) FROM win_prob_snapshots
+                WHERE event_id = :event_id AND source = 'kalshi'
+            """), {"event_id": eid})
+            to_delete = snap_count_result.scalar() or 0
+
+            fix_detail["actions"].append({
+                "action": "delete_all_kalshi_snapshots",
+                "reason": "legacy snapshots without market_id; cannot attribute to specific market",
+                "snapshots_to_delete": to_delete,
+            })
+
+            if not dry_run:
+                del_result = await db.execute(
+                    delete(WinProbSnapshot).where(
+                        WinProbSnapshot.event_id == eid,
+                        WinProbSnapshot.source == "kalshi",
+                    )
+                )
+                total_snapshots_deleted += del_result.rowcount
+
+        else:
+            # Single market_id but still sawtooth — must be inversion within
+            # one market. Delete all Kalshi snapshots.
+            fix_detail["cause_type"] = "C_single_market_oscillation"
+            snap_count_result = await db.execute(text("""
+                SELECT COUNT(*) FROM win_prob_snapshots
+                WHERE event_id = :event_id AND source = 'kalshi'
+            """), {"event_id": eid})
+            to_delete = snap_count_result.scalar() or 0
+
+            fix_detail["actions"].append({
+                "action": "delete_all_kalshi_snapshots",
+                "reason": "single market oscillating; likely yes_is_home flip-flop",
+                "snapshots_to_delete": to_delete,
+            })
+
+            if not dry_run:
+                del_result = await db.execute(
+                    delete(WinProbSnapshot).where(
+                        WinProbSnapshot.event_id == eid,
+                        WinProbSnapshot.source == "kalshi",
+                    )
+                )
+                total_snapshots_deleted += del_result.rowcount
+
+        # Also clear kalshi from win_probability_sources on the event
+        if not dry_run and fix_detail["actions"]:
+            wps_result = await db.execute(
+                select(Event.win_probability_sources).where(Event.id == eid)
+            )
+            wps = wps_result.scalar_one_or_none() or {}
+            if "kalshi" in wps:
+                del wps["kalshi"]
+                await db.execute(
+                    update(Event)
+                    .where(Event.id == eid)
+                    .values(win_probability_sources=wps)
+                )
+                fix_detail["actions"].append({
+                    "action": "clear_kalshi_from_win_prob_sources",
+                })
+
+        results.append(fix_detail)
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "events_processed": len(results),
+        "total_markets_unlinked": total_markets_unlinked,
+        "total_snapshots_deleted": total_snapshots_deleted,
+        "results": results,
     }

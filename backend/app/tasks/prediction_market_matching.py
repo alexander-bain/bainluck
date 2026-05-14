@@ -100,6 +100,83 @@ async def _register_market_team_identities(session, event_id, matchup, market):
             source_name=matchup.team_b if matchup else event.away_team_name,
         )
 
+# ── Duplicate linkage guard ──────────────────────────────────────────────────
+# Prevents multiple Kalshi game markets from DIFFERENT games being linked to
+# the same event. This is the root cause of sawtooth oscillation: e.g.,
+# "Washington vs Loyola Marymount Game 1" and "Game 2" both linked to one
+# event, producing alternating probabilities in win_prob_snapshots.
+
+
+async def _check_duplicate_kalshi_linkage(
+    session, event_id: int, market, ticker_game_date,
+) -> bool:
+    """Check if linking this Kalshi market would create a multi-game conflict.
+
+    Returns True if the link should PROCEED (no conflict), False to SKIP.
+
+    Conflict detection: if the event already has a Kalshi game market linked
+    with a different ticker date, this is a different game and should NOT be
+    linked to the same event.
+    """
+    from app.models.models import FuturesMarket
+
+    if market.source != "kalshi":
+        return True  # Only guard Kalshi markets
+
+    ext = (market.external_id or "").lower()
+    prefix = ext.split("-")[0] if "-" in ext else ext
+    if not prefix.endswith("game"):
+        return True  # Only guard game-level markets
+
+    # Find existing Kalshi game markets already linked to this event
+    existing_result = await session.execute(
+        select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.name)
+        .where(
+            FuturesMarket.event_id == event_id,
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.id != market.id,
+        )
+    )
+    existing = existing_result.all()
+    if not existing:
+        return True  # No existing Kalshi markets — safe to link
+
+    # Check if any existing market is a game market with a different date
+    for row in existing:
+        existing_ext = (row.external_id or "").lower()
+        existing_prefix = existing_ext.split("-")[0] if "-" in existing_ext else existing_ext
+        if not existing_prefix.endswith("game"):
+            continue  # Skip non-game markets (props, totals, etc.)
+
+        # Both are game markets — compare ticker dates
+        existing_date = extract_game_date_from_ticker(row.external_id)
+        if ticker_game_date and existing_date:
+            # If dates differ by more than 4 hours, these are different games
+            td1 = ticker_game_date if ticker_game_date.tzinfo else ticker_game_date.replace(tzinfo=timezone.utc)
+            td2 = existing_date if existing_date.tzinfo else existing_date.replace(tzinfo=timezone.utc)
+            if abs((td1 - td2).total_seconds()) > 4 * 3600:
+                logger.warning(
+                    "Duplicate linkage blocked: market %s (date=%s) vs existing market %d '%s' (date=%s) on event %d",
+                    market.external_id, td1.date(), row.id, row.external_id, td2.date(), event_id,
+                )
+                return False  # Different game — do NOT link
+
+        # Same date or unparseable — compare full tickers.
+        # If external_ids are different but same prefix, they might be
+        # different games on the same day (Game 1 vs Game 2 in a tournament).
+        # The ticker suffix after the date encodes teams, so if tickers differ
+        # significantly, it's a different matchup or game number.
+        if market.external_id and row.external_id:
+            if market.external_id.lower() == row.external_id.lower():
+                continue  # Same market (duplicate) — safe
+            # Different tickers — could be dual market (Team A win? + Team B win?)
+            # or truly different games. Dual markets have the same date+teams portion
+            # but that's already handled by the devig averaging. For safety, allow
+            # the link — the Phase 2 devig logic will handle dual markets correctly.
+
+    return True  # No conflicts detected
+
+
 # ── Consensus inversion detection ─────────────────────────────────────────────
 # Prediction market data sometimes gets stored with inverted home/away mapping
 # due to outcome-order mismatches or matchup parsing errors. This threshold
@@ -298,6 +375,15 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["funnel"]["sport_time_fallback_linked"] += 1
 
             if matched_event:
+                # Guard: prevent multi-game Kalshi linkage (sawtooth prevention)
+                if not await _check_duplicate_kalshi_linkage(
+                    session, matched_event["event_id"], market, ticker_game_date,
+                ):
+                    stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
+                    stats["funnel"]["duplicate_linkage_blocked"] += 1
+                    matched_event = None  # Fall through to auto-create or skip
+
+            if matched_event:
                 market.event_id = matched_event["event_id"]
                 _set_market_sport_fields(market, matched_event)
                 stats["newly_linked"] += 1
@@ -468,6 +554,15 @@ async def _match_prediction_markets(limit: int = 500):
                 session, matchup, market, now,
                 game_date_override=pass2_game_date,
             )
+
+            if matched_event:
+                # Guard: prevent multi-game Kalshi linkage (sawtooth prevention)
+                if not await _check_duplicate_kalshi_linkage(
+                    session, matched_event["event_id"], market, pass2_game_date,
+                ):
+                    stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
+                    stats["funnel"]["duplicate_linkage_blocked"] += 1
+                    matched_event = None
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
@@ -755,9 +850,69 @@ async def _match_prediction_markets(limit: int = 500):
                 all_per_event_source[key] = []
             all_per_event_source[key].append((market, event))
 
+        # ── Multi-game detection: unlink Kalshi game markets from different
+        # games that were incorrectly linked to the same event (sawtooth fix).
+        # For each (event_id, "kalshi") group with 3+ game markets, compare
+        # ticker dates. If they span multiple dates, unlink the ones that are
+        # furthest from the event's commence_time.
+        stats["funnel"].setdefault("phase2_multi_game_unlinked", 0)
+        for key, group in list(all_per_event_source.items()):
+            if key[1] != "kalshi" or len(group) < 3:
+                continue
+            # Collect game markets with their ticker dates
+            game_markets_with_dates = []
+            for m, ev in group:
+                ext = (m.external_id or "").lower()
+                prefix = ext.split("-")[0] if "-" in ext else ext
+                if prefix.endswith("game"):
+                    td = extract_game_date_from_ticker(m.external_id)
+                    game_markets_with_dates.append((m, ev, td))
+
+            if len(game_markets_with_dates) < 3:
+                continue  # Dual market (2 game markets) is expected
+
+            # Check if ticker dates span multiple days
+            dated_markets = [(m, ev, td) for m, ev, td in game_markets_with_dates if td]
+            if len(dated_markets) < 2:
+                continue
+
+            dates = set()
+            for _, _, td in dated_markets:
+                d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
+                dates.add(d.date())
+
+            if len(dates) <= 1:
+                continue  # All same date — likely dual market, not multi-game
+
+            # Multiple dates detected — keep markets closest to event commence_time
+            ev_ref = group[0][1]  # Event from first market in group
+            if not ev_ref.commence_time:
+                continue
+
+            ec = ev_ref.commence_time if ev_ref.commence_time.tzinfo else ev_ref.commence_time.replace(tzinfo=timezone.utc)
+
+            for m, ev, td in game_markets_with_dates:
+                if not td:
+                    continue
+                d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
+                diff_hours = abs((d - ec).total_seconds()) / 3600
+                if diff_hours > 18:  # More than 18h from event — wrong game
+                    logger.warning(
+                        "Phase 2 multi-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
+                        m.external_id, d.date(), diff_hours, ev_ref.id, ec.date(),
+                    )
+                    m.event_id = None
+                    stats["funnel"]["phase2_multi_game_unlinked"] += 1
+                    # Remove from the group so it doesn't participate in dedup
+                    group[:] = [(gm, ge) for gm, ge in group if gm.id != m.id]
+
+            await session.commit()
+
         # Pick the primary market per group: prefer more outcomes, then lowest id
         best_per_event_source: dict[tuple[int, str], tuple] = {}
         for key, group in all_per_event_source.items():
+            if not group:
+                continue  # Group emptied by multi-game unlink
             primary = group[0]
             for market, event in group[1:]:
                 pm = primary[0]
