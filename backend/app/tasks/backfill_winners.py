@@ -382,21 +382,28 @@ async def _backfill_kalshi_group_ids():
 
 
 async def _null_untradeable_openings():
-    """Null out opening_probability on outcomes with no snapshot data.
+    """Null out opening_probability AND calibration_probability on outcomes
+    with insufficient trading activity.
 
-    If an outcome has zero futures_odds_snapshots, it was created but
-    never actively tracked — its opening_probability is a placeholder,
-    not a real market signal. Setting it to NULL excludes it from
-    calibration via the existing IS NOT NULL filter.
+    Two passes:
+    - Pass 1: outcomes with ZERO snapshots (never tracked)
+    - Pass 2: outcomes with ≤ 2 snapshots where calibration_probability
+      still equals opening_probability (briefly polled but no real price
+      discovery)
+
+    Setting opening_probability to NULL excludes from calibration via the
+    existing IS NOT NULL filter. Also nulls calibration_probability to
+    prevent stale values from a prior backfill run.
     """
-    stats = {"nulled": 0, "errors": []}
+    stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
-                    SET opening_probability = NULL
+                    SET opening_probability = NULL,
+                        calibration_probability = NULL
                     WHERE fo.opening_probability IS NOT NULL
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
@@ -408,11 +415,38 @@ async def _null_untradeable_openings():
                           JOIN futures_markets fm ON fm.id = fo2.market_id
                           WHERE fm.status = 'resolved'
                             AND fo2.opening_probability IS NOT NULL
-                          LIMIT 10000
+                          LIMIT 100000
                       )
                 """)
             )
-            stats["nulled"] = result.rowcount
+            stats["nulled_zero_snap"] = result.rowcount
+
+            result2 = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = NULL,
+                        calibration_probability = NULL
+                    WHERE fo.opening_probability IS NOT NULL
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.calibration_probability = fo.opening_probability
+                      AND (
+                          SELECT COUNT(*) FROM futures_odds_snapshots fos
+                          WHERE fos.outcome_id = fo.id
+                      ) <= 2
+                      AND fo.id IN (
+                          SELECT fo2.id
+                          FROM futures_outcomes fo2
+                          JOIN futures_markets fm ON fm.id = fo2.market_id
+                          WHERE fm.status = 'resolved'
+                            AND fo2.opening_probability IS NOT NULL
+                            AND fo2.calibration_probability IS NOT NULL
+                            AND fo2.calibration_probability = fo2.opening_probability
+                          LIMIT 50000
+                      )
+                """)
+            )
+            stats["nulled_low_snap"] = result2.rowcount
+
             await session.commit()
 
     except Exception as e:
@@ -420,8 +454,9 @@ async def _null_untradeable_openings():
         logger.error("Null untradeable openings error: %s", e)
 
     logger.info(
-        "Null untradeable openings: %d outcomes nulled, %d errors",
-        stats["nulled"], len(stats["errors"]),
+        "Null untradeable openings: %d zero-snap, %d low-snap, %d errors",
+        stats["nulled_zero_snap"], stats["nulled_low_snap"],
+        len(stats["errors"]),
     )
     return stats
 
