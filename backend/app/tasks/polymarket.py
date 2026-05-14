@@ -490,7 +490,7 @@ async def _process_event_batch(
                     poly_metadata["event_title"] = event.title
                 if event.neg_risk:
                     poly_metadata["neg_risk"] = True
-                if has_multiple_markets:
+                if len(event.markets) > 1:
                     poly_metadata["market_count"] = len(event.markets)
 
                 # Aggregate volume/liquidity from event + markets
@@ -562,16 +562,7 @@ async def _process_event_batch(
                 if event.neg_risk and len(event.markets) > 1:
                     # NegRisk multi-outcome event: each market is one outcome
                     for market in event.markets:
-                        prob = market.outcome_prices[0] if market.outcome_prices else None
-
-                        if prob is None or prob <= 0:
-                            if (market.best_bid is not None and market.best_bid > 0
-                                    and market.best_ask is not None and market.best_ask > 0):
-                                prob = (market.best_bid + market.best_ask) / 2
-                            elif market.last_trade_price is not None and market.last_trade_price > 0:
-                                prob = market.last_trade_price
-                            elif market.best_ask is not None and market.best_ask > 0:
-                                prob = market.best_ask
+                        prob = _resolve_market_probability(market)
 
                         if prob is None or prob <= 0:
                             continue
@@ -608,16 +599,7 @@ async def _process_event_batch(
                     parent_event_id = _parent_eid_r.scalar_one_or_none()
 
                     for market in event.markets:
-                        prob = market.outcome_prices[0] if market.outcome_prices else None
-
-                        if prob is None or prob <= 0:
-                            if (market.best_bid is not None and market.best_bid > 0
-                                    and market.best_ask is not None and market.best_ask > 0):
-                                prob = (market.best_bid + market.best_ask) / 2
-                            elif market.last_trade_price is not None and market.last_trade_price > 0:
-                                prob = market.last_trade_price
-                            elif market.best_ask is not None and market.best_ask > 0:
-                                prob = market.best_ask
+                        prob = _resolve_market_probability(market)
 
                         if prob is None or prob <= 0:
                             continue
@@ -771,16 +753,7 @@ async def _process_event_batch(
                 else:
                     # Single-market event
                     for market in event.markets:
-                        prob = market.outcome_prices[0] if market.outcome_prices else None
-
-                        if prob is None or prob <= 0:
-                            if (market.best_bid is not None and market.best_bid > 0
-                                    and market.best_ask is not None and market.best_ask > 0):
-                                prob = (market.best_bid + market.best_ask) / 2
-                            elif market.last_trade_price is not None and market.last_trade_price > 0:
-                                prob = market.last_trade_price
-                            elif market.best_ask is not None and market.best_ask > 0:
-                                prob = market.best_ask
+                        prob = _resolve_market_probability(market)
 
                         if prob is None or prob <= 0:
                             continue
@@ -1070,6 +1043,44 @@ async def _backfill_polymarket_price_history(
         stats["errors"].append(f"task_error: {str(e)[:200]}")
 
     return stats
+
+
+def _resolve_market_probability(market) -> float | None:
+    """
+    Resolve the Yes-side probability for a Polymarket market.
+
+    Priority: outcomePrices[0] → bid/ask midpoint → lastTradePrice.
+
+    Skips placeholder markets that Polymarket creates as reserved slots
+    (e.g., "Player B", "Player S"). These have:
+      - empty outcomePrices ([])
+      - bestBid = 0 or None
+      - bestAsk = 1 (max spread, no real market-making)
+      - lastTradePrice = 0 or None
+    Without this filter, the ask-only fallback would set prob = 1.0 (100%).
+    """
+    prob = market.outcome_prices[0] if market.outcome_prices else None
+
+    if prob is not None and prob > 0:
+        return prob
+
+    # Midpoint fallback: both bid and ask must be present and positive
+    if (market.best_bid is not None and market.best_bid > 0
+            and market.best_ask is not None and market.best_ask > 0):
+        return (market.best_bid + market.best_ask) / 2
+
+    # Last trade fallback
+    if market.last_trade_price is not None and market.last_trade_price > 0:
+        return market.last_trade_price
+
+    # Ask-only fallback: reject if ask >= 0.99 (placeholder/no real market)
+    if (market.best_ask is not None
+            and market.best_ask > 0
+            and market.best_ask < 0.99):
+        return market.best_ask
+
+    # No reliable price — skip this market
+    return None
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:

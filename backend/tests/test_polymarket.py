@@ -13,6 +13,7 @@ import pytest
 from app.services.polymarket_api import PolymarketAPIService
 from app.tasks.polymarket import (
     _extract_outcome_name,
+    _resolve_market_probability,
     _tags_to_category,
 )
 
@@ -509,3 +510,113 @@ class TestParseMarket:
         assert market.last_trade_price is None
         assert market.best_bid is None
         assert market.volume is None
+
+
+# =========================================================================
+# Probability resolution tests
+# =========================================================================
+
+
+class TestResolveMarketProbability:
+    """Test _resolve_market_probability skips placeholders and uses correct fallbacks."""
+
+    def _make_market(self, **kwargs):
+        """Create a PolymarketMarket with sensible defaults, overridden by kwargs."""
+        from app.services.polymarket_api import PolymarketMarket
+        defaults = {
+            "condition_id": "0xtest",
+            "question": "Test?",
+            "outcomes": ["Yes", "No"],
+            "outcome_prices": [],
+            "best_bid": None,
+            "best_ask": None,
+            "last_trade_price": None,
+        }
+        defaults.update(kwargs)
+        return PolymarketMarket(**defaults)
+
+    def test_normal_outcome_prices(self):
+        """Standard case: outcomePrices has a valid price."""
+        m = self._make_market(outcome_prices=[0.65, 0.35])
+        assert _resolve_market_probability(m) == 0.65
+
+    def test_zero_outcome_price_falls_through(self):
+        """outcomePrices[0] = 0 should fall through to fallbacks."""
+        m = self._make_market(
+            outcome_prices=[0.0, 1.0],
+            best_bid=0.03,
+            best_ask=0.05,
+        )
+        assert _resolve_market_probability(m) == pytest.approx(0.04)
+
+    def test_empty_outcome_prices_with_bid_ask(self):
+        """Empty outcomePrices should use bid/ask midpoint."""
+        m = self._make_market(best_bid=0.10, best_ask=0.15)
+        assert _resolve_market_probability(m) == pytest.approx(0.125)
+
+    def test_empty_prices_with_last_trade(self):
+        """Empty outcomePrices, no bid, should use lastTradePrice."""
+        m = self._make_market(last_trade_price=0.08)
+        assert _resolve_market_probability(m) == 0.08
+
+    def test_empty_prices_with_reasonable_ask(self):
+        """Empty outcomePrices, no bid/trade, ask < 0.99 should use ask."""
+        m = self._make_market(best_ask=0.50)
+        assert _resolve_market_probability(m) == 0.50
+
+    def test_placeholder_market_skipped(self):
+        """Placeholder market (empty prices, bid=0, ask=1, trade=0) returns None.
+
+        This is the core bug fix: Polymarket creates reserved slots like
+        'Player B', 'Player S' with bestBid=0, bestAsk=1, outcomePrices=[].
+        These should NOT be ingested at 100% probability.
+        """
+        m = self._make_market(
+            outcome_prices=[],
+            best_bid=0.0,
+            best_ask=1.0,
+            last_trade_price=0.0,
+        )
+        assert _resolve_market_probability(m) is None
+
+    def test_placeholder_market_none_fields(self):
+        """Placeholder with None fields instead of zeros also returns None."""
+        m = self._make_market(
+            outcome_prices=[],
+            best_bid=None,
+            best_ask=1.0,
+            last_trade_price=None,
+        )
+        assert _resolve_market_probability(m) is None
+
+    def test_placeholder_with_ask_099(self):
+        """Ask of 0.99 should also be rejected (near-max spread)."""
+        m = self._make_market(
+            outcome_prices=[],
+            best_bid=None,
+            best_ask=0.99,
+            last_trade_price=None,
+        )
+        assert _resolve_market_probability(m) is None
+
+    def test_all_none_returns_none(self):
+        """No pricing data at all returns None."""
+        m = self._make_market()
+        assert _resolve_market_probability(m) is None
+
+    def test_bid_zero_ask_reasonable(self):
+        """Bid=0, ask reasonable (<0.99): use ask as last resort."""
+        m = self._make_market(
+            outcome_prices=[],
+            best_bid=0.0,
+            best_ask=0.30,
+            last_trade_price=0.0,
+        )
+        assert _resolve_market_probability(m) == 0.30
+
+    def test_real_low_probability_market(self):
+        """A real long-shot market (1%) with valid pricing should work."""
+        m = self._make_market(
+            outcome_prices=[0.01, 0.99],
+        )
+        assert _resolve_market_probability(m) == 0.01
