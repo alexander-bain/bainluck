@@ -38,6 +38,7 @@ if sentry_dsn:
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.1,
         profiles_sample_rate=0.1,
         send_default_pii=False,
