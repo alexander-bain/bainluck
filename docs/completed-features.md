@@ -1,5 +1,27 @@
 # Completed Features (Shipped)
 
+## May 14, 2026 — Calibration Pipeline Improvements
+
+### Calibration Probability Backfill — 100% Coverage
+- ✅ **`calibration_probability` column backfilled to 100% coverage** — Uses closing line (last snapshot before event start) when available, falls back to `opening_probability`. Methodologically correct: closing line IS what the market predicted at kickoff.
+- ✅ **Poison-row fix** — Backfill was stuck because outcomes without any snapshots blocked entire batches. Fixed with LEFT JOIN + COALESCE fallback in a single CTE so every outcome gets a value in one pass.
+- ✅ **A/B test: closing vs opening prices** — Confirmed closing line prices are methodologically correct even though they produce worse MCE than opening prices. Opening prices flatter the metric with placeholder noise from early-listed markets.
+
+### `is_multi` Classification Fix — MCE 5.2pp → 3.8pp
+- ✅ **Highest-impact single calibration change** — Changed multi-outcome classification from `cv.is_grouped` to `(cv.is_grouped OR cv.eligible >= 3)`. Markets with 3+ eligible outcomes are now treated as multi-outcome regardless of whether they share a `group_id`. This correctly handles Polymarket's many single-market events (46% of resolved Polymarket markets are legitimate ungrouped markets with multiple outcomes). MCE dropped from 5.2pp to 3.8pp. 8 of 10 buckets now within 5pp of perfect calibration.
+
+### Backfill Status Endpoint Enhancements
+- ✅ **`calibration_probability` coverage metric** — `/api/admin/backfill-winners/status` now reports what percentage of resolved outcomes have `calibration_probability` populated.
+- ✅ **`group_id` health metric** — Shows grouped vs ungrouped breakdown for resolved Polymarket markets.
+- ✅ **Orphan samples** — Returns sample orphan markets (resolved Polymarket markets without `group_id`) for investigation.
+
+### Cache-Bust Parameter
+- ✅ **`?bust=1` on calibration endpoint** — Forces fresh data computation without waiting for the 1-hour cache to expire. Useful during backfill iterations.
+
+**Results:** MCE **3.8pp**, **151,060 outcomes** across 3 sources. Per-source: Odds API 2.4pp (N=15,916), Polymarket 5.2pp (N=97,104), Kalshi 5.5pp (N=38,040). Worst buckets: 40-50% at -7.8pp, 60-70% at +7.1pp.
+
+**Files:** `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py`
+
 ## May 13, 2026 — Category Page Polish + Infrastructure + Cleanup
 
 ### Native Category Page Polish (NATIVE-DESIGN complete — ALL 5 pages)

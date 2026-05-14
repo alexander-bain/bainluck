@@ -436,31 +436,30 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 ### Calibration Page — User-Facing `/calibration` or `/about/calibration`
 
-**Current state (May 11, end of day):** MCE **4.8pp**, Brier **0.1745** (30% better than random), **181K outcomes** across 3 sources (Kalshi, Polymarket, Odds API). 7 of 10 probability buckets within 5pp of perfect calibration. Static HTML report at `calibration_report.html`. `is_winner` backfill task running every 6h (52K of 131K markets backfilled).
+**Current state (May 14):** MCE **3.8pp** (down from 5.2pp before `is_multi` fix), Brier **0.1745** (30% better than random), **151,060 outcomes** across 3 sources. 8 of 10 probability buckets within 5pp of perfect calibration. Worst buckets: 40-50% at -7.8pp, 60-70% at +7.1pp. Per-source: Odds API 2.4pp (N=15,916), Polymarket 5.2pp (N=97,104), Kalshi 5.5pp (N=38,040). Static HTML report at `calibration_report.html`. `is_winner` backfill task running every 6h. Next.js page exists at `/calibration` (19KB `page.tsx`).
 
 **Data pipeline shipped:**
-- ✅ Backend calibration endpoint (`GET /api/admin/calibration-data`) with virtual market reconstruction from `group_id` + `event_id` fallback
-- ✅ Odds API ground-truth integration (13,806 outcomes from completed games with scores)
+- ✅ Backend calibration endpoint (`GET /api/calibration`, public, 1h cache) with virtual market reconstruction from `group_id` + `event_id` fallback
+- ✅ Odds API ground-truth integration (15,916 outcomes from completed games with scores)
 - ✅ `is_winner` backfill task (`backfill_winners`, every 6h) — sets winner flag from settlement data
-- ✅ Backfill status endpoint (`GET /api/admin/backfill-winners/status`)
+- ✅ Backfill status endpoint (`GET /api/admin/backfill-winners/status`) — includes `calibration_probability` coverage, `group_id` health, orphan samples
 - ✅ Default-price filter for large field markets (50%+ of outcomes sharing same opening_probability)
 - ✅ Static HTML report builder with SVG charts, external studies, methodology section
 - ✅ Admin proxy route for browser-accessible triggers (`/api/admin-proxy`)
+- ✅ `calibration_probability` backfilled to 100% coverage — uses closing line (last snapshot before event start) when available, falls back to `opening_probability`. Methodologically correct: closing line IS what the market predicted. Backfill was stuck due to poison rows (outcomes without snapshots blocked batches); fixed with LEFT JOIN + COALESCE fallback in single CTE.
+- ✅ `is_multi` classification fix — markets with 3+ eligible outcomes now treated as multi-outcome regardless of group size: `(cv.is_grouped OR cv.eligible >= 3)` instead of just `cv.is_grouped`. Highest-impact single change: MCE 5.2pp → 3.8pp.
+- ✅ Cache-bust parameter on calibration endpoint for fresh data without waiting for cache expiry.
+- ✅ A/B test confirmed closing line prices are methodologically correct even though they give worse MCE than opening prices. Opening prices flatter the metric with placeholder noise.
 
-**Per-category calibration (✓ = MCE < 8pp):**
-- ✓ Weather (4.5pp), Tennis (3.6pp), Esports (3.8pp), Politics (6.4pp), Soccer (7.7pp), MMA (7.8pp), Geopolitics (6.2pp)
-- ~ Golf (8.4pp, was 20pp), Basketball (8.7pp), Entertainment (9.6pp), Economics (9.3pp), Baseball (10.4pp)
-- ✗ Football (25.9pp, n=532 — Polymarket sub-markets without group_id/event_id), Hockey (17.0pp), Cricket (12.0pp)
+**Remaining work:**
 
-**Remaining work to make it user-facing:**
+1. **Live Next.js page polish** — Page exists at `/calibration` (19KB `page.tsx`) but needs enhancement: category tabs, source comparison, external studies section, mobile-responsive layout.
 
-1. **Build live Next.js page** at `/calibration` — render SVG calibration curve from the endpoint. Category tabs, source comparison, external studies section. The data pipeline is done; this is frontend work.
+2. ~~**Closing line capture**~~ — ✅ DONE. `calibration_probability` column backfilled to 100% coverage. Uses last snapshot before event start (closing line) when available, falls back to `opening_probability`.
 
-2. **Closing line capture** — snapshot probabilities at event start time from `futures_odds_snapshots`. Currently uses first-seen price (can be weeks early). Academic gold standard for calibration.
+3. **Kalshi API settlement backfill** — 58K Kalshi markets have intermediate `current_probability` (not cleanly 0/1). Kalshi API returns `result='yes'|'no'` for settled markets. First attempt failed (API paginates by recency, our DB has older events). Fix: query by specific event ticker, not paginate all settled.
 
-3. **Kalshi API settlement backfill** — 79K Kalshi markets have intermediate `current_probability` (not cleanly 0/1). Kalshi API returns `result='yes'|'no'` for settled markets. First attempt failed (API paginates by recency, our DB has older events). Fix: query by specific event ticker, not paginate all settled.
-
-4. **Fix 40-50% bucket** (MCE -14.7pp) — Polymarket sub-markets without `group_id`. Fix: backfill `group_id` via Gamma API.
+4. ~~**Fix 40-50% bucket**~~ — PARTIALLY DONE. Investigation revealed orphans are legitimate single-market events (46% of resolved Polymarket markets). The real fix was changing `is_multi` classification: markets with 3+ eligible outcomes now treated as multi-outcome regardless of group size. MCE dropped from 5.2pp to 3.8pp. The 40-50% bucket improved but is still the worst at -7.8pp.
 
 5. **Football + hockey** — Football (n=532) is too small and structurally broken. Hockey (17pp) needs investigation. Both will improve as `is_winner` backfill coverage grows.
 
@@ -472,7 +471,7 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
-**Files:** `backend/app/routes/admin.py`, `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
+**Files:** `backend/app/routes/admin.py`, `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
 **Parallel Safety:** Green
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
