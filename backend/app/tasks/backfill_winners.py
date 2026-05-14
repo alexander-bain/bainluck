@@ -662,35 +662,43 @@ async def _compute_calibration_prices():
             # This happens when commence_time predates all snapshots (common for
             # Polymarket where commence_time = market creation, not event start).
             # Uses the last non-extreme snapshot captured for the outcome.
-            result_c = await session.execute(
-                text("""
-                    WITH stuck AS (
-                        SELECT fo.id AS outcome_id, fo.opening_probability
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.status = 'resolved'
-                          AND fo.calibration_probability IS NOT NULL
-                          AND fo.opening_probability IS NOT NULL
-                          AND fo.calibration_probability = fo.opening_probability
-                        LIMIT 200000
-                    ),
-                    last_snap AS (
-                        SELECT DISTINCT ON (s.outcome_id)
-                            s.outcome_id,
-                            fos.probability
-                        FROM stuck s
-                        JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
-                        WHERE fos.probability > 0 AND fos.probability < 1
-                        ORDER BY s.outcome_id, fos.captured_at DESC
-                    )
-                    UPDATE futures_outcomes fo
-                    SET calibration_probability = ls.probability
-                    FROM last_snap ls
-                    WHERE fo.id = ls.outcome_id
-                      AND ls.probability != fo.opening_probability
-                """)
-            )
-            stats["rescued"] = result_c.rowcount
+            # Runs in batches of 2000 to avoid DISTINCT ON timeouts on large
+            # snapshot tables (200K batch caused Celery worker timeouts).
+            rescued_total = 0
+            for _ in range(100):
+                result_c = await session.execute(
+                    text("""
+                        WITH stuck AS (
+                            SELECT fo.id AS outcome_id, fo.opening_probability
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.calibration_probability IS NOT NULL
+                              AND fo.opening_probability IS NOT NULL
+                              AND fo.calibration_probability = fo.opening_probability
+                            LIMIT 2000
+                        ),
+                        last_snap AS (
+                            SELECT DISTINCT ON (s.outcome_id)
+                                s.outcome_id,
+                                fos.probability
+                            FROM stuck s
+                            JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
+                            WHERE fos.probability > 0 AND fos.probability < 1
+                            ORDER BY s.outcome_id, fos.captured_at DESC
+                        )
+                        UPDATE futures_outcomes fo
+                        SET calibration_probability = ls.probability
+                        FROM last_snap ls
+                        WHERE fo.id = ls.outcome_id
+                          AND ls.probability != fo.opening_probability
+                    """)
+                )
+                await session.commit()
+                if result_c.rowcount == 0:
+                    break
+                rescued_total += result_c.rowcount
+            stats["rescued"] = rescued_total
 
             await session.commit()
 
