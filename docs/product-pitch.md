@@ -4,7 +4,15 @@
 
 The score is lying to you.
 
-In the 2026 Australian Open semifinal, Carlos Alcaraz took the first two sets from Alexander Zverev, 6-4, 7-6. The scoreboard said comfortable. The match looked over. Then Alcaraz's right adductor seized up. He could barely move. He took a medical timeout while commentators debated whether he'd retire. Zverev stormed back to take sets three and four in tiebreaks, then served for the match at 5-4 in the fifth set. Anyone watching the score saw a competitive five-setter. Anyone watching the *probability* saw something completely different: a 95% favorite cratering to under 30%, a near-certain exit, and then — impossibly — a break back and a 7-5 fifth set to survive. "I didn't know what was going on," Alcaraz said afterward. "Quitting never crossed my mind." The final score reads 3-2 Alcaraz. The story was a near-death experience that the scoreboard never captured.
+In the 2026 Australian Open semifinal, Carlos Alcaraz took the first two sets from Alexander Zverev, 6-4, 7-6. The scoreboard said comfortable. The match looked over. His win probability on Kalshi hit **96%**.
+
+Then his right adductor seized up.
+
+In the span of a few minutes, while the scoreboard still read "Alcaraz leads 2-0," his win probability **crashed from 96% to 13%**. You can [see the exact moment on the Kalshi chart](https://kalshi.com/markets/kxatpmatch/atp-tennis-match/kxatpmatch-26jan29alczve) — the green line falls off a cliff around 10:30pm. Twenty-seven million dollars in trading volume captured what the scoreboard couldn't: this match was suddenly, dramatically over — just not in the direction anyone expected.
+
+Alcaraz took a medical timeout. Commentators debated whether he'd retire. "I didn't know what was going on," he said afterward. Zverev stormed back to take sets three and four in tiebreaks, then **served for the match at 5-4 in the fifth set**. Alcaraz's probability bottomed out again. Then — impossibly — he broke back. Won the fifth set 7-5. "Quitting never crossed my mind."
+
+The final score reads Alcaraz 3, Zverev 2. A competitive five-setter. But the probability chart tells the *real* story: a 96% favorite who nearly lost everything, twice, and somehow survived. The score lied. The probability told the truth.
 
 Or take Scottie Scheffler at the 2025 Masters. After Round 1, he was tied for sixth place at two under par — three shots behind co-leaders Rory McIlroy and Sam Burns. Casual fans scrolling the leaderboard saw five golfers ahead of him. But Scheffler's win probability was 19.0% — more than double Sam Burns's 8.6%, despite Burns being three shots ahead. The market knew what the leaderboard didn't: Scheffler was the world's #1 ranked player and a two-time Masters champion (2022, 2024) at Augusta National. The score said "middle of the pack." The probability said "second favorite to win." McIlroy, the model's #1 pick at 24.4%, ultimately won and completed the career Grand Slam. The two golfers probability identified as the real contenders — McIlroy and Scheffler — were exactly right. Burns, the co-leader? He faded.
 
