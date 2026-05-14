@@ -185,6 +185,49 @@ async def calibration_diagnostics(
     }
 
 
+@router.post("/calibration/rescue")
+async def calibration_rescue(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+    limit: int = Query(50000),
+):
+    """Run Part C rescue directly — admin only."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        WITH stuck AS (
+            SELECT fo.id AS outcome_id, fo.opening_probability
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.status = 'resolved'
+              AND fo.calibration_probability IS NOT NULL
+              AND fo.opening_probability IS NOT NULL
+              AND fo.calibration_probability = fo.opening_probability
+            LIMIT :limit
+        ),
+        last_snap AS (
+            SELECT DISTINCT ON (s.outcome_id)
+                s.outcome_id,
+                fos.probability
+            FROM stuck s
+            JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
+            WHERE fos.probability > 0 AND fos.probability < 1
+            ORDER BY s.outcome_id, fos.captured_at DESC
+        )
+        UPDATE futures_outcomes fo
+        SET calibration_probability = ls.probability
+        FROM last_snap ls
+        WHERE fo.id = ls.outcome_id
+          AND ls.probability != fo.opening_probability
+    """), {"limit": limit})
+    await db.commit()
+
+    return {"rescued": result.rowcount, "limit": limit}
+
+
 @router.get("/calibration")
 async def public_calibration(
     db: AsyncSession = Depends(get_db),
