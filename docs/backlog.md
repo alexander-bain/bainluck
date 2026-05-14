@@ -771,6 +771,49 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: 
 
 ---
 
+## Strategic
+
+### Expert Review / Audit (Dexter + Alex, May 14)
+
+**Goal:** Get external expert eyes on the product across four dimensions before scaling.
+
+1. **VP of Engineering audit** — code quality, architecture, scalability, deployment practices
+2. **VP of DS audit** — data pipeline correctness, calibration methodology, model quality
+3. **VP of Product audit** — user flows, feature prioritization, product-market fit
+4. **VP of Design audit** — visual polish, information hierarchy, accessibility, mobile UX
+
+**Action:** Identify 1-2 candidates per dimension. Share repo access + live site + this backlog. Ask for a written assessment with top 3 recommendations.
+
+### Weather: Meteorologist Forecast Comparison (Dexter idea, May 14)
+
+**Problem:** The weather page shows Kalshi/Polymarket prediction market probabilities for temperature and rain, but doesn't show what an actual meteorologist forecasts. Users can't tell if the market is accurate without a reference point.
+
+**Idea:** Pull real weather forecast data from a weather API and display it alongside market probabilities. "What does the market say vs what the meteorologist says." This is the weather equivalent of the calibration page — measuring prediction market accuracy against ground truth, but in real-time.
+
+**API options:** Weather.gov (NWS API, free, US-only, official forecasts), OpenWeatherMap (free tier 1000 calls/day), AccuWeather, Tomorrow.io.
+
+**Files:** `backend/app/routes/weather.py`, new weather API service, `frontend/app/weather/page.tsx`
+**Parallel Safety:** Yellow
+**Decision needed:** Which weather API to use. TBD.
+
+### Product Pitch Document (Alex, May 14)
+
+**Status:** Draft in `docs/product-pitch.md`. Core thesis: score doesn't tell the full story, odds are universally interesting, gambling gives odds but entices gambling, Bain Luck gives probability context without gambling pressure.
+
+### Tech Debt + Repo Cleanup Audit (May 14)
+
+**Status:** Audit running. Results will be added here when complete. Covers: large files, god functions, TODO/FIXME comments, unused dependencies, stale branches, untracked artifacts.
+
+### Platform & API Features Audit (May 14)
+
+**Status:** Audit running. Checking what free features we're leaving on the table across GitHub, Sentry, GA4, Vercel, Heroku, and all external APIs (StatPal, ESPN, TMDB, Odds API, Kalshi, Polymarket, DataGolf).
+
+### Run Another Manus Sweep (May 14)
+
+Last sweep: May 11 (10 modules, 10/14 resolved). Time for a fresh sweep to catch regressions and new issues from the past 3 days of shipping.
+
+---
+
 ## Housekeeping
 
 ### Other Housekeeping
