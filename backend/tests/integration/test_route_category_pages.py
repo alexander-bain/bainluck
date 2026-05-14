@@ -328,6 +328,12 @@ class TestEntertainmentEndpoint:
         assert isinstance(by_source["kalshi"], int)
         assert isinstance(by_source["polymarket"], int)
 
+    async def test_cross_source_is_list(self, client):
+        resp = await client.get("/api/entertainment")
+        body = resp.json()
+        assert "cross_source" in body
+        assert isinstance(body["cross_source"], list)
+
 
 # ============================================================================
 # Economics — /api/economics
@@ -348,6 +354,7 @@ class TestEconomicsEndpoint:
         assert "updated_at" in body
         assert "themes" in body
         assert "by_source" in body
+        assert "cross_source" in body
 
     async def test_total_markets_is_int(self, client):
         resp = await client.get("/api/economics")
@@ -477,9 +484,32 @@ class TestEconomicsEndpoint:
         assert isinstance(by_source["kalshi"], int)
         assert isinstance(by_source["polymarket"], int)
 
+    async def test_cross_source_is_list(self, client):
+        resp = await client.get("/api/economics")
+        body = resp.json()
+        assert isinstance(body["cross_source"], list)
+
     async def test_all_theme_counts_non_negative(self, client):
         """Every theme count should be >= 0."""
         resp = await client.get("/api/economics")
         body = resp.json()
         for theme_key, section in body["themes"].items():
             assert section["count"] >= 0, f"{theme_key} has negative count"
+
+
+# ============================================================================
+# Weather cross-source — /api/weather/cross-source
+# ============================================================================
+
+
+class TestWeatherCrossSource:
+    """GET /api/weather/cross-source — cross-platform weather markets."""
+
+    async def test_returns_200(self, client):
+        resp = await client.get("/api/weather/cross-source")
+        assert resp.status_code == 200
+
+    async def test_response_is_list(self, client):
+        resp = await client.get("/api/weather/cross-source")
+        body = resp.json()
+        assert isinstance(body, list)
