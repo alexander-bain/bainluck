@@ -565,14 +565,15 @@ async def _compute_calibration_prices():
     """Pre-compute calibration_probability on resolved outcomes.
 
     Uses the RIGHT price for calibration based on market type:
-    - Markets WITH commence_time: last snapshot before event starts (closing line)
-    - Markets WITHOUT commence_time: first snapshot ≥1h after opening (settled price)
+    - Part A: Markets WITH commence_time → last snapshot before event starts (closing line)
+    - Part B: Markets WITHOUT commence_time → first snapshot ≥1h after opening (settled price)
+    - Part C: Outcomes still at opening_probability → last non-extreme snapshot overall
+      (catches markets where commence_time predates all snapshots, e.g. Polymarket)
     - Fallback: opening_probability
 
-    Only processes outcomes where calibration_probability is NULL.
     Uses compound index (outcome_id, captured_at) for fast DISTINCT ON.
     """
-    stats = {"with_commence": 0, "without_commence": 0, "fallback": 0, "errors": []}
+    stats = {"with_commence": 0, "without_commence": 0, "rescued": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
@@ -657,6 +658,40 @@ async def _compute_calibration_prices():
             )
             stats["without_commence"] = result_b.rowcount
 
+            # Part C: Rescue outcomes where Parts A/B fell back to opening_probability.
+            # This happens when commence_time predates all snapshots (common for
+            # Polymarket where commence_time = market creation, not event start).
+            # Uses the last non-extreme snapshot captured for the outcome.
+            result_c = await session.execute(
+                text("""
+                    WITH stuck AS (
+                        SELECT fo.id AS outcome_id, fo.opening_probability
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo.calibration_probability IS NOT NULL
+                          AND fo.opening_probability IS NOT NULL
+                          AND fo.calibration_probability = fo.opening_probability
+                        LIMIT 200000
+                    ),
+                    last_snap AS (
+                        SELECT DISTINCT ON (s.outcome_id)
+                            s.outcome_id,
+                            fos.probability
+                        FROM stuck s
+                        JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
+                        WHERE fos.probability > 0 AND fos.probability < 1
+                        ORDER BY s.outcome_id, fos.captured_at DESC
+                    )
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = ls.probability
+                    FROM last_snap ls
+                    WHERE fo.id = ls.outcome_id
+                      AND ls.probability != fo.opening_probability
+                """)
+            )
+            stats["rescued"] = result_c.rowcount
+
             await session.commit()
 
     except Exception as e:
@@ -664,9 +699,9 @@ async def _compute_calibration_prices():
         logger.error("Compute calibration prices error: %s", e)
 
     logger.info(
-        "Calibration prices: %d with commence_time, %d without, %d fallback, %d errors",
-        stats["with_commence"], stats["without_commence"],
-        stats["fallback"], len(stats["errors"]),
+        "Calibration prices: %d with commence_time, %d without, %d rescued, %d errors",
+        stats["with_commence"], stats["without_commence"], stats["rescued"],
+        len(stats["errors"]),
     )
     return stats
 
