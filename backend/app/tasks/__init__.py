@@ -964,6 +964,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_winners",
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
     },
+    "backfill-polymarket-price-history": {
+        "task": "app.tasks.backfill_polymarket_history",
+        "schedule": crontab(minute=0, hour="4,10,16,22"),  # Every 6h, offset from backfill-winners
+        "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
     "backfill-canonical-keys-daily": {
         "task": "app.tasks.backfill_canonical_keys",
         "schedule": crontab(minute=30, hour=8),  # Daily at 8:30 AM UTC

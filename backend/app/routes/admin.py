@@ -10643,6 +10643,19 @@ async def trigger_backfill_winners(
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
 
 
+@router.post("/backfill-polymarket-history")
+async def trigger_backfill_polymarket_history(
+    secret: str = Query(...),
+    limit: int = Query(500, description="Max outcomes to process"),
+):
+    """Trigger Polymarket price history backfill for outcomes with sparse data."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import backfill_polymarket_history as task
+    result = task.delay(limit=limit)
+    return {"status": "queued", "task_id": result.id, "limit": limit}
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
