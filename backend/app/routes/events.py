@@ -2566,13 +2566,18 @@ def _is_team_stat_market(name: str) -> bool:
     ))
 
 
-def _classify_game_market(name: str) -> str:
+def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
     Distinguishes team-level stat markets ("Cleveland at LA: Rebounds")
     from player props ("Trae Young Points") by checking whether the
     stat word is the ENTIRE content after the colon (team stat) vs.
     having a player name before it (player prop).
+
+    Falls back to the Kalshi ticker prefix (``external_id``) when the
+    market *name* doesn't contain explicit period markers such as "1st
+    Half" or "2H".  Kalshi uses tickers like ``KXNBA2HSPREAD-…`` even
+    though the event title is just "Celtics at Warriors".
     """
     lower = name.lower()
 
@@ -2590,6 +2595,10 @@ def _classify_game_market(name: str) -> str:
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
+        # Name says "total" but no period marker — check ticker for period
+        ticker_type = _classify_from_ticker(external_id) if external_id else None
+        if ticker_type and ticker_type.endswith("_total"):
+            return ticker_type  # half_total or quarter_total
         return "game_total"
     # Over/Under without "total" — check if it's a player prop or game total
     if "over" in lower or "under" in lower:
@@ -2603,6 +2612,10 @@ def _classify_game_market(name: str) -> str:
             return "half_spread"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_spread"
+        # Name says "spread" but no period marker — check ticker
+        ticker_type = _classify_from_ticker(external_id) if external_id else None
+        if ticker_type and ticker_type.endswith("_spread"):
+            return ticker_type  # half_spread or quarter_spread
         return "spread"
     # Team-level stat markets: "Team at Team: Points" (no player name)
     if _is_team_stat_market(name):
@@ -2615,6 +2628,52 @@ def _classify_game_market(name: str) -> str:
             return "half_winner"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_winner"
+        # Name says "winner" but no period marker — check ticker
+        ticker_type = _classify_from_ticker(external_id) if external_id else None
+        if ticker_type and ticker_type.endswith("_winner"):
+            return ticker_type  # half_winner or quarter_winner
+        return "moneyline"
+
+    # ── Ticker-only fallback ───────────────────────────────────────────
+    # Market name has no recognizable keywords at all.  Derive entirely
+    # from the Kalshi ticker prefix when available.
+    if external_id:
+        ticker_type = _classify_from_ticker(external_id)
+        if ticker_type != "other":
+            return ticker_type
+    return "other"
+
+
+# Ticker-prefix → market type mapping.  Built once at import time so
+# the hot path in _classify_game_market does a cheap dict lookup.
+_TICKER_PERIOD_MAP: dict[str, str] = {}
+for _league in ("nba", "nfl", "nhl", "mlb", "wnba", "mls", "ncaab", "ncaaf"):
+    for _h in ("1h", "2h"):
+        _TICKER_PERIOD_MAP[f"kx{_league}{_h}total"] = "half_total"
+        _TICKER_PERIOD_MAP[f"kx{_league}{_h}spread"] = "half_spread"
+        _TICKER_PERIOD_MAP[f"kx{_league}{_h}winner"] = "half_winner"
+    for _q in ("1q", "2q", "3q", "4q"):
+        _TICKER_PERIOD_MAP[f"kx{_league}{_q}total"] = "quarter_total"
+        _TICKER_PERIOD_MAP[f"kx{_league}{_q}spread"] = "quarter_spread"
+        _TICKER_PERIOD_MAP[f"kx{_league}{_q}winner"] = "quarter_winner"
+
+
+def _classify_from_ticker(external_id: str) -> str:
+    """Derive market type from a Kalshi external_id (ticker).
+
+    Returns a period-specific type (half_spread, quarter_total, …) or
+    "other" if the ticker doesn't match any known period prefix.
+    """
+    ticker_lower = external_id.lower()
+    for prefix, mtype in _TICKER_PERIOD_MAP.items():
+        if ticker_lower.startswith(prefix):
+            return mtype
+    # Catch-all for base types when no period prefix matched.
+    if "spread" in ticker_lower:
+        return "spread"
+    if "total" in ticker_lower:
+        return "game_total"
+    if "winner" in ticker_lower or "game" in ticker_lower:
         return "moneyline"
     return "other"
 
@@ -2910,7 +2969,7 @@ async def get_game_markets(
         if not market_outcomes:
             continue
 
-        market_type = _classify_game_market(market.name)
+        market_type = _classify_game_market(market.name, external_id=market.external_id)
 
         if market_type in ("game_total", "half_total", "quarter_total", "team_total"):
             # Extract thresholds with probabilities

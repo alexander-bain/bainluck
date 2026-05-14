@@ -53,6 +53,52 @@ class TestClassifyGameMarket:
     def test_winner(self):
         assert _classify_game_market("Game Winner") == "moneyline"
 
+    # ── Ticker-based period classification (2H / quarter) ──────────────
+    # Kalshi market names are often just "Celtics at Warriors" with the
+    # period encoded only in the ticker prefix (e.g. KXNBA2HSPREAD-…).
+
+    def test_2h_spread_via_ticker(self):
+        """2nd half spread ticker with a generic matchup name."""
+        assert _classify_game_market(
+            "Celtics at Warriors", external_id="KXNBA2HSPREAD-26MAY14BOSGSW"
+        ) == "half_spread"
+
+    def test_2h_total_via_ticker(self):
+        assert _classify_game_market(
+            "Celtics at Warriors", external_id="KXNBA2HTOTAL-26MAY14BOSGSW"
+        ) == "half_total"
+
+    def test_2h_winner_via_ticker(self):
+        assert _classify_game_market(
+            "Celtics at Warriors", external_id="KXNBA2HWINNER-26MAY14BOSGSW"
+        ) == "half_winner"
+
+    def test_1h_spread_via_ticker(self):
+        """1st half should also work via ticker (consistency check)."""
+        assert _classify_game_market(
+            "Celtics at Warriors", external_id="KXNBA1HSPREAD-26MAY14BOSGSW"
+        ) == "half_spread"
+
+    def test_quarter_total_via_ticker(self):
+        assert _classify_game_market(
+            "Celtics at Warriors", external_id="KXNBA3QTOTAL-26MAY14BOSGSW"
+        ) == "quarter_total"
+
+    def test_nfl_2h_spread_via_ticker(self):
+        assert _classify_game_market(
+            "Chiefs at Eagles", external_id="KXNFL2HSPREAD-26FEB09KCEPHI"
+        ) == "half_spread"
+
+    def test_name_still_wins_when_explicit(self):
+        """When the name already says '1st Half Total', the ticker is irrelevant."""
+        assert _classify_game_market(
+            "1st Half Total", external_id="KXNBA2HTOTAL-26MAY14BOSGSW"
+        ) == "half_total"
+
+    def test_no_ticker_returns_other(self):
+        """A bare matchup name with no ticker stays 'other'."""
+        assert _classify_game_market("Celtics at Warriors") == "other"
+
 
 class TestExtractThreshold:
     def test_over(self):

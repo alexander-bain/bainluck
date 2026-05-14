@@ -600,11 +600,23 @@ export default function MarketMapSection({
     type MapData = Parameters<typeof MarketMap>[0] & { status: "pre" | "live" | "done" };
     const maps: Array<{ key: string; data: MapData }> = [];
 
+    // Group half_total markets by period.  Markets whose name/outcome
+    // contain "1h"/"1st"/"first" are 1H; everything else defaults to
+    // 2H (Kalshi 2H markets often have a plain matchup name with the
+    // period only in the ticker, not the market name).
+    const halfTotalAll = allPeriod.filter(
+      (p) => p.market_type === "half_total" && isGameTotal(p.outcome_name)
+    );
+    const halfTotalGroups: Record<string, typeof halfTotalAll> = {};
+    for (const item of halfTotalAll) {
+      const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
+      const key = /1h|1st|first/.test(text) ? "1H" : "2H";
+      if (!halfTotalGroups[key]) halfTotalGroups[key] = [];
+      halfTotalGroups[key].push(item);
+    }
+
     for (const halfKey of ["1H", "2H"] as const) {
-      const pattern = halfKey === "1H" ? /1h|1st|first/i : /2h|2nd|second/i;
-      const halfItems = allPeriod.filter(
-        (p) => p.market_type === "half_total" && (pattern.test(p.outcome_name) || pattern.test(p.market_name || "")) && isGameTotal(p.outcome_name)
-      );
+      const halfItems = halfTotalGroups[halfKey] || [];
       if (halfItems.length < 2) continue;
 
       const sorted = [...halfItems].sort((a, b) => (a.threshold ?? 0) - (b.threshold ?? 0));
