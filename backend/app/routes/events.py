@@ -77,6 +77,31 @@ def _normalize_futures_dedup_key(market) -> str:
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
 # should match the sport key rather than accidentally matching substrings
 # in team names (e.g., "NBA" matching "Gebenbach" or "Pekanbaru").
+# Individual sports where the Odds API creates per-tournament sport keys
+# (e.g., "tennis_atp_indian_wells" instead of just "tennis_atp").
+# Map the base prefix to the canonical display key so search results
+# show "Tennis — ATP" instead of "Tennis — ATP INDIAN WELLS".
+_INDIVIDUAL_SPORT_BASE_KEYS: dict[str, str] = {
+    "tennis_atp": "tennis_atp",
+    "tennis_wta": "tennis_wta",
+    "boxing_": "boxing_boxing",
+}
+
+
+def _normalize_team_sport_key(sport_key: str | None) -> str | None:
+    """Collapse tournament-specific sport keys to their base league.
+
+    E.g., "tennis_atp_indian_wells" → "tennis_atp",
+          "tennis_wta_italian_open" → "tennis_wta".
+    """
+    if not sport_key:
+        return sport_key
+    for prefix, base in _INDIVIDUAL_SPORT_BASE_KEYS.items():
+        if sport_key.startswith(prefix) and sport_key != base:
+            return base
+    return sport_key
+
+
 _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "nba": ["basketball_nba"],
     "nfl": ["americanfootball_nfl"],
@@ -983,7 +1008,7 @@ async def search_events(
                 "abbreviation": row.abbreviation,
                 "logo": row.logo_url_small,
                 "record": row.current_record,
-                "sport_key": row.sport_key,
+                "sport_key": _normalize_team_sport_key(row.sport_key),
             })
 
     return {
@@ -1092,7 +1117,7 @@ async def typeahead_search(
                 "logo": row.logo_url_small,
                 "team_id": row.id,
                 "team_slug": row.slug,
-                "sport_key": row.sport_key,
+                "sport_key": _normalize_team_sport_key(row.sport_key),
             })
 
     # 2. Events (live/upcoming) — with team logos
