@@ -82,10 +82,7 @@ SPORT_POLLING_TIERS: dict[str, int] = {
 
 # Per-sport region overrides (temporary or permanent).
 # When set, overrides the default tier-based region selection for live/soon polls.
-# TODO(May 2026): Remove baseball_mlb override — restore to us,us2.
-SPORT_REGION_OVERRIDES: dict[str, str] = {
-    "baseball_mlb": "us",
-}
+SPORT_REGION_OVERRIDES: dict[str, str] = {}
 
 # Per-sport minimum poll intervals (seconds). Applied as a floor AFTER tier
 # multipliers and adaptive slowdown. Useful for high-event-count sports where

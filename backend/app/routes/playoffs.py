@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import statistics
-import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -19,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config.league_configs import LeagueConfig, get_league_config, get_all_league_slugs
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride, Team
+from app.models import FuturesMarket, FuturesOddsSnapshot, MatchingOverride, Team
 from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 
@@ -633,7 +632,7 @@ _TEAM_NAME_ALIASES: dict[str, str] = {
 
 
 from app.utils.name_normalization import (
-    strip_diacritics as _strip_diacritics,
+    strip_diacritics as _strip_diacritics,  # noqa: F811 — re-exported for tests
     normalize_team_name as _normalize_team_name,
 )
 
@@ -1263,8 +1262,6 @@ async def _build_golf_tour_grid(
     Returns a dict with tournament info, teams, movers, trend chart, etc.
     Returns None if no current event or no players for this tour.
     """
-    from app.services.datagolf_api import normalize_player_name, strip_diacritics
-
     tour_label = _TOUR_LABELS.get(tour, tour.upper())
 
     try:

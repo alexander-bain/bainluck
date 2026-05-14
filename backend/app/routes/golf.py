@@ -9,7 +9,6 @@ Enriches with PGA tour schedule from DataGolf for accurate current-event detecti
 import logging
 import re
 import time
-import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
