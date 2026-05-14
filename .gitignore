@@ -123,6 +123,10 @@ tv-mode-prototype.jsx
 # Generated audit results
 backend/scripts/audit_results/
 
+# Cache / test artifacts
+backend/scripts/.chartjs_cache.js
+test_chart.html
+
 # iOS build artifacts
 ios/Bain Luck/build/
 docs/designs/
