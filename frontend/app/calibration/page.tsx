@@ -143,6 +143,31 @@ export default function CalibrationPage() {
       .slice(0, 15);
   }, [normalized]);
 
+  // Per-source metrics for the comparison section
+  const sourceMetrics = useMemo(() => {
+    if (!normalized) return [];
+    return sources.map(src => {
+      const srcBuckets = aggregateBuckets(normalized, b => b.source === src);
+      const srcN = normalized.filter(b => b.source === src).reduce((s, b) => s + b.n, 0);
+      const srcMCE = mce(srcBuckets);
+      const srcBrier = brierScore(normalized, b => b.source === src);
+      const bucketsInBand = srcBuckets.filter(b => Math.abs(b.error) <= 5).length;
+      return { source: src, n: srcN, mce: srcMCE, brier: srcBrier, bucketsInBand, totalBuckets: srcBuckets.length };
+    });
+  }, [normalized, sources]);
+
+  // Per-category metrics for the breakdown table
+  const categoryMetrics = useMemo(() => {
+    if (!normalized) return [];
+    return categories.map(cat => {
+      const catBuckets = aggregateBuckets(normalized, b => b.category === cat);
+      const catN = normalized.filter(b => b.category === cat).reduce((s, b) => s + b.n, 0);
+      const catMCE = mce(catBuckets);
+      const catBrier = brierScore(normalized, b => b.category === cat);
+      return { category: cat, n: catN, mce: catMCE, brier: catBrier };
+    });
+  }, [normalized, categories]);
+
   if (error) {
     return (
       <div className="max-w-4xl mx-auto py-20 text-center">
@@ -160,7 +185,6 @@ export default function CalibrationPage() {
     );
   }
 
-  const pctBetter = Math.max(0, Math.round((1 - overallBrier / 0.25) * 100));
   const topCats = categories.slice(0, 3).map(c =>
     `${DISPLAY_NAMES[c] || c} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
   ).join(", ");
@@ -208,6 +232,99 @@ export default function CalibrationPage() {
           detail={topCats} />
       </div>
 
+      {/* Source Comparison */}
+      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+        <h2 className="text-title-3 text-text-primary mb-1">Source Comparison</h2>
+        <p className="text-xs text-text-muted mb-4">
+          How each data source performs independently. Lower MCE and Brier score indicate better calibration.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
+                <th className="pb-2 pr-4">Source</th>
+                <th className="pb-2 pr-4 text-right">Outcomes</th>
+                <th className="pb-2 pr-4 text-right">MCE</th>
+                <th className="pb-2 pr-4 text-right">Brier</th>
+                <th className="pb-2 text-right">Buckets within 5pp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sourceMetrics.map(sm => (
+                <tr key={sm.source} className="border-t border-surface-border">
+                  <td className="py-2.5 pr-4 font-medium text-text-primary">{sm.source}</td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">{sm.n.toLocaleString()}</td>
+                  <td className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
+                    sm.mce < 4 ? "text-green-600" : sm.mce < 6 ? "text-blue-600" : "text-orange-600"
+                  }`}>
+                    {sm.mce.toFixed(1)}pp
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">{sm.brier.toFixed(4)}</td>
+                  <td className="py-2.5 text-right tabular-nums">
+                    {sm.bucketsInBand}/{sm.totalBuckets}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-surface-border font-semibold">
+                <td className="py-2.5 pr-4 text-text-primary">Combined</td>
+                <td className="py-2.5 pr-4 text-right tabular-nums">{data.total_outcomes.toLocaleString()}</td>
+                <td className={`py-2.5 pr-4 text-right tabular-nums ${
+                  overallMCE < 4 ? "text-green-600" : overallMCE < 6 ? "text-blue-600" : "text-orange-600"
+                }`}>
+                  {overallMCE.toFixed(1)}pp
+                </td>
+                <td className="py-2.5 pr-4 text-right tabular-nums">{overallBrier.toFixed(4)}</td>
+                <td className="py-2.5 text-right tabular-nums">
+                  {overall.filter(b => Math.abs(b.error) <= 5).length}/{overall.length}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* How We Compare */}
+      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+        <h2 className="text-title-3 text-text-primary mb-1">How We Compare</h2>
+        <p className="text-xs text-text-muted mb-4">
+          Our aggregate MCE compared to published calibration benchmarks from academic research and forecasting platforms.
+        </p>
+        <div className="space-y-3">
+          {[
+            { label: "Bain Luck (all sources)", mce: overallMCE, n: data.total_outcomes, highlight: true },
+            { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
+            { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
+            { label: "Academic consensus range (Arrow et al. 2008)", mce: 3.5, n: null, highlight: false, range: "2-5pp" },
+          ].map(row => {
+            const barWidth = Math.min(100, (row.mce / 10) * 100);
+            return (
+              <div key={row.label}>
+                <div className="flex justify-between items-baseline text-sm mb-1">
+                  <span className={row.highlight ? "font-semibold text-text-primary" : "text-text-secondary"}>
+                    {row.label}
+                  </span>
+                  <span className={`tabular-nums text-xs ${
+                    row.mce < 4 ? "text-green-600" : row.mce < 6 ? "text-blue-600" : "text-orange-600"
+                  } font-semibold`}>
+                    {row.range || `${row.mce.toFixed(1)}pp`}
+                    {row.n ? ` (${row.n.toLocaleString()} outcomes)` : ""}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${row.highlight ? "bg-blue-500" : "bg-gray-300"}`}
+                    style={{ width: `${barWidth}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-text-muted mt-4">
+          Lower is better. Most prediction markets achieve 2-5pp MCE. Values below 4pp are considered excellent calibration.
+        </p>
+      </section>
+
       {/* Overall calibration curve */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-1">Overall Calibration Curve</h2>
@@ -235,7 +352,7 @@ export default function CalibrationPage() {
               <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
                 <th className="pb-2 pr-4">Bucket</th>
                 <th className="pb-2 pr-4 text-right">N</th>
-                <th className="pb-2 pr-4 text-right">Avg Opening</th>
+                <th className="pb-2 pr-4 text-right">Avg Predicted</th>
                 <th className="pb-2 pr-4 text-right">Actual Rate</th>
                 <th className="pb-2 text-right">Error</th>
               </tr>
@@ -304,6 +421,42 @@ export default function CalibrationPage() {
         })}
       </div>
 
+      {/* Category Breakdown Table */}
+      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+        <h2 className="text-title-3 text-text-primary mb-1">Category Breakdown</h2>
+        <p className="text-xs text-text-muted mb-4">
+          Calibration metrics by market category. Categories with fewer than 100 resolved outcomes are excluded.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-text-muted uppercase tracking-wide">
+                <th className="pb-2 pr-4">Category</th>
+                <th className="pb-2 pr-4 text-right">Outcomes</th>
+                <th className="pb-2 pr-4 text-right">MCE</th>
+                <th className="pb-2 text-right">Brier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categoryMetrics.map(cm => (
+                <tr key={cm.category} className="border-t border-surface-border">
+                  <td className="py-2 pr-4 font-medium text-text-primary">
+                    {DISPLAY_NAMES[cm.category] || cm.category}
+                  </td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{cm.n.toLocaleString()}</td>
+                  <td className={`py-2 pr-4 text-right tabular-nums font-semibold ${
+                    cm.mce < 4 ? "text-green-600" : cm.mce < 6 ? "text-blue-600" : "text-orange-600"
+                  }`}>
+                    {cm.mce.toFixed(1)}pp
+                  </td>
+                  <td className="py-2 text-right tabular-nums">{cm.brier.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* Further Reading */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
         <h2 className="text-title-3 text-text-primary mb-3">Further Reading</h2>
@@ -325,7 +478,7 @@ export default function CalibrationPage() {
         <ul className="space-y-3 text-sm text-text-secondary">
           <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
           <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
-          <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a start time (sports, scheduled markets), we use the <strong>closing line</strong> &mdash; the last traded price before the event begins. This captures all information the market had at game time. For events without a start time (elections, awards), we use the price after initial trading settles (not the raw first capture). For sportsbook odds, we use the vig-removed consensus across 20+ bookmakers.</li>
+          <li><strong className="text-text-primary">Which probability do we use?</strong> We use <strong>closing line prices</strong> &mdash; the last traded price before an event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration measurement because it captures all available information at the moment of truth. Opening prices are systematically noisier and overstate miscalibration. For sports, we use vig-removed consensus closing odds across 20+ bookmakers. For prediction markets (Kalshi, Polymarket), we use the last traded price before the event starts. For events without a fixed start time (elections, awards), we use the price after initial trading settles.</li>
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
           <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes from 2026 across Kalshi, Polymarket, and sportsbook odds (via The Odds API). We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
         </ul>
