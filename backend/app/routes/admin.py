@@ -10822,3 +10822,179 @@ async def test_daily_digest(
     from app.tasks.daily_digest import send_daily_digest
     success = await send_daily_digest(db, to_email=email)
     return {"status": "sent" if success else "no_content", "to": email}
+
+
+@router.get("/sawtooth-audit")
+async def sawtooth_audit(
+    secret: str = Query(..., description="Admin secret"),
+    jump_threshold: float = Query(0.03, description="Min |delta| to count as a big jump"),
+    rate_threshold: float = Query(0.30, description="Min jump_rate to flag as affected"),
+    limit: int = Query(10, description="Number of worst offenders to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Detect Kalshi dual-market sawtooth oscillation in win_prob_snapshots.
+
+    The bug: Phase 2 and the live poller picked different dual markets for
+    the same event, causing home_win_probability to oscillate between two
+    values (e.g., 60% and 58%) on consecutive snapshots.
+
+    Returns affected event counts, snapshot totals, worst offenders, and a
+    post-fix stability check on snapshots from the last 2 hours.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # ── Historical sawtooth detection via window functions ──
+    historical_sql = text("""
+        WITH consecutive AS (
+            SELECT
+                event_id,
+                home_win_probability,
+                LAG(home_win_probability) OVER (
+                    PARTITION BY event_id ORDER BY captured_at
+                ) AS prev_prob
+            FROM win_prob_snapshots
+            WHERE source = 'kalshi'
+        ),
+        jumps AS (
+            SELECT
+                event_id,
+                COUNT(*) AS total_snaps,
+                COUNT(*) FILTER (
+                    WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                ) AS big_jumps
+            FROM consecutive
+            WHERE prev_prob IS NOT NULL
+            GROUP BY event_id
+        )
+        SELECT
+            j.event_id,
+            e.home_team_name,
+            e.away_team_name,
+            e.status,
+            j.total_snaps,
+            j.big_jumps,
+            ROUND((j.big_jumps::numeric / NULLIF(j.total_snaps, 0)), 4) AS jump_rate
+        FROM jumps j
+        JOIN events e ON e.id = j.event_id
+        WHERE j.total_snaps >= 4
+          AND j.big_jumps::float / NULLIF(j.total_snaps, 0) > :rate_threshold
+        ORDER BY j.big_jumps DESC, jump_rate DESC
+        LIMIT :lim
+    """)
+
+    worst_result = await db.execute(
+        historical_sql,
+        {"jump_threshold": jump_threshold, "rate_threshold": rate_threshold, "lim": limit},
+    )
+    worst_offenders = worst_result.fetchall()
+
+    # ── Aggregate counts (affected events + total affected snapshots) ──
+    counts_sql = text("""
+        WITH consecutive AS (
+            SELECT
+                event_id,
+                home_win_probability,
+                LAG(home_win_probability) OVER (
+                    PARTITION BY event_id ORDER BY captured_at
+                ) AS prev_prob
+            FROM win_prob_snapshots
+            WHERE source = 'kalshi'
+        ),
+        jumps AS (
+            SELECT
+                event_id,
+                COUNT(*) AS total_snaps,
+                COUNT(*) FILTER (
+                    WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                ) AS big_jumps
+            FROM consecutive
+            WHERE prev_prob IS NOT NULL
+            GROUP BY event_id
+        )
+        SELECT
+            COUNT(*) AS affected_events,
+            COALESCE(SUM(total_snaps), 0) AS affected_snapshots,
+            COALESCE(SUM(big_jumps), 0) AS total_big_jumps
+        FROM jumps
+        WHERE jumps.total_snaps >= 4
+          AND jumps.big_jumps::float / NULLIF(jumps.total_snaps, 0) > :rate_threshold
+    """)
+
+    counts_result = await db.execute(
+        counts_sql,
+        {"jump_threshold": jump_threshold, "rate_threshold": rate_threshold},
+    )
+    counts = counts_result.fetchone()
+
+    # ── Post-fix check: last 2 hours of Kalshi snapshots ──
+    postfix_sql = text("""
+        WITH recent AS (
+            SELECT
+                event_id,
+                home_win_probability,
+                LAG(home_win_probability) OVER (
+                    PARTITION BY event_id ORDER BY captured_at
+                ) AS prev_prob
+            FROM win_prob_snapshots
+            WHERE source = 'kalshi'
+              AND captured_at > NOW() - INTERVAL '2 hours'
+        ),
+        recent_jumps AS (
+            SELECT
+                event_id,
+                COUNT(*) AS total_snaps,
+                COUNT(*) FILTER (
+                    WHERE ABS(home_win_probability - prev_prob) > :jump_threshold
+                ) AS big_jumps
+            FROM recent
+            WHERE prev_prob IS NOT NULL
+            GROUP BY event_id
+        )
+        SELECT
+            COUNT(*) AS events_checked,
+            COALESCE(SUM(total_snaps), 0) AS snapshots_checked,
+            COUNT(*) FILTER (
+                WHERE total_snaps >= 2
+                  AND big_jumps::float / NULLIF(total_snaps, 0) > :rate_threshold
+            ) AS still_affected
+        FROM recent_jumps
+    """)
+
+    postfix_result = await db.execute(
+        postfix_sql,
+        {"jump_threshold": jump_threshold, "rate_threshold": rate_threshold},
+    )
+    postfix = postfix_result.fetchone()
+
+    return {
+        "historical": {
+            "affected_events": int(counts.affected_events) if counts else 0,
+            "affected_snapshots": int(counts.affected_snapshots) if counts else 0,
+            "total_big_jumps": int(counts.total_big_jumps) if counts else 0,
+            "thresholds": {
+                "jump_threshold": jump_threshold,
+                "rate_threshold": rate_threshold,
+                "min_snapshots": 4,
+            },
+            "worst_offenders": [
+                {
+                    "event_id": row.event_id,
+                    "home_team": row.home_team_name,
+                    "away_team": row.away_team_name,
+                    "status": row.status,
+                    "snapshot_count": int(row.total_snaps),
+                    "jump_count": int(row.big_jumps),
+                    "jump_rate": float(row.jump_rate),
+                }
+                for row in worst_offenders
+            ],
+        },
+        "post_fix_check": {
+            "window": "last 2 hours",
+            "events_checked": int(postfix.events_checked) if postfix else 0,
+            "snapshots_checked": int(postfix.snapshots_checked) if postfix else 0,
+            "still_affected": int(postfix.still_affected) if postfix else 0,
+            "fix_working": (postfix.still_affected == 0) if postfix else True,
+        },
+    }
