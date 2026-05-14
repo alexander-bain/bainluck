@@ -11,6 +11,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Sequence
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
@@ -203,6 +204,100 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
         discrete.sort(key=lambda x: x[1])
 
     return discrete
+
+
+# ---------------------------------------------------------------------------
+# Cross-source matching — find markets on both Kalshi & Polymarket
+# ---------------------------------------------------------------------------
+
+_GARBAGE_OUTCOME_RE = re.compile(
+    r"^(?:player|person|candidate|option|party)\s+[A-Z]{1,3}$", re.I
+)
+
+
+def _clean_outcomes(outcomes: list) -> list:
+    """Filter garbage placeholder outcomes."""
+    return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
+
+
+def _is_resolved(market: FuturesMarket) -> bool:
+    """A market is effectively resolved if the top outcome is >= 99%."""
+    for o in market.outcomes:
+        if float(o.current_probability or 0) >= 0.99:
+            return True
+    return False
+
+
+def _normalize_q(q: str) -> str:
+    """Normalize a question for cross-source matching."""
+    return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
+
+
+def _cross_source_row(market: FuturesMarket) -> dict | None:
+    """Build a market row suitable for cross-source comparison."""
+    outcomes = _clean_outcomes(list(market.outcomes))
+    outcomes = sorted(
+        outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
+    )
+    if not outcomes:
+        return None
+    top = outcomes[:3]
+    return {
+        "q": market.name,
+        "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
+        "src": _source(market),
+        "market_id": market.id,
+        "top_outcomes": [
+            {
+                "name": o.name,
+                "prob": round(float(o.current_probability or 0) * 100, 1),
+            }
+            for o in top
+        ],
+        "outcome_count": len(outcomes),
+    }
+
+
+def _find_cross_source(
+    all_markets: Sequence[FuturesMarket],
+) -> list[dict]:
+    """Find markets that exist on both platforms, ranked by disagreement."""
+    by_norm: dict[str, dict[str, dict]] = defaultdict(dict)
+
+    for m in all_markets:
+        if _is_resolved(m):
+            continue
+        row = _cross_source_row(m)
+        if not row:
+            continue
+        if row["outcome_count"] <= 2 and row["prob"] > 95:
+            continue
+        src = _source(m)
+        if src not in ("kalshi", "polymarket"):
+            continue
+        norm = _normalize_q(row["q"])
+        if norm and src not in by_norm[norm]:
+            by_norm[norm][src] = {**row, "theme": _classify_theme(m)}
+
+    matches = []
+    for norm, sources in by_norm.items():
+        if "kalshi" not in sources or "polymarket" not in sources:
+            continue
+        k = sources["kalshi"]
+        p = sources["polymarket"]
+        delta = round(abs(k["prob"] - p["prob"]), 1)
+        matches.append({
+            "q": k["q"],
+            "kalshi": k["prob"],
+            "poly": p["prob"],
+            "delta": delta,
+            "category": k["theme"],
+            "kalshi_market_id": k["market_id"],
+            "poly_market_id": p["market_id"],
+        })
+
+    matches.sort(key=lambda x: -x["delta"])
+    return matches[:8]
 
 
 # ---------------------------------------------------------------------------
@@ -462,12 +557,16 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
     trade_rows = [r for m in trade_markets if (r := _market_row(m))]
     gov_rows = [r for m in gov_markets if (r := _market_row(m))]
 
+    # Cross-source spotlight
+    cross_source = _find_cross_source(all_markets)
+
     # Count total active markets
     total = len(all_markets)
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
+        "cross_source": cross_source,
         "themes": {
             "fed": {
                 "count": len(fed_markets),
