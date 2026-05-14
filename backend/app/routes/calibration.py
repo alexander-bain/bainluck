@@ -36,7 +36,10 @@ async def calibration_price_quality(
             COUNT(CASE WHEN fo.calibration_probability IS NOT NULL
                         AND fo.calibration_probability != fo.opening_probability THEN 1 END) AS price_moved,
             ROUND(AVG(ABS(COALESCE(fo.calibration_probability, 0)
-                        - COALESCE(fo.opening_probability, 0)))::numeric, 4) AS avg_shift
+                        - COALESCE(fo.opening_probability, 0)))::numeric, 4) AS avg_shift,
+            ROUND(AVG(fm.volume)::numeric, 0) AS avg_volume,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(fm.volume, 0))::numeric, 0) AS median_volume,
+            ROUND(AVG(fm.volume_24h)::numeric, 0) AS avg_volume_24h
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         WHERE fm.status = 'resolved'
@@ -50,7 +53,10 @@ async def calibration_price_quality(
         {"source": r.source, "category": r.cat, "total": r.total,
          "same_as_open": r.same_as_open,
          "pct_same": round(r.same_as_open * 100.0 / max(r.total, 1), 1),
-         "price_moved": r.price_moved, "avg_shift": float(r.avg_shift)}
+         "price_moved": r.price_moved, "avg_shift": float(r.avg_shift),
+         "avg_volume": int(r.avg_volume) if r.avg_volume else 0,
+         "median_volume": int(r.median_volume) if r.median_volume else 0,
+         "avg_volume_24h": int(r.avg_volume_24h) if r.avg_volume_24h else 0}
         for r in result
     ]
 
