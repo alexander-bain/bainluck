@@ -475,6 +475,7 @@ async def public_calibration(
             SELECT
                 COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
                 (fo.current_probability >= 0.95) AS is_winner,
+                (fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR cv.eligible >= 3) AS is_multi,
@@ -519,15 +520,15 @@ async def public_calibration(
             SELECT *, LEAST(FLOOR(adj_opening_probability * 10)::int, 9) AS bucket_idx
             FROM deduped
         )
-        SELECT bucket_idx, source, category,
+        SELECT bucket_idx, source, category, price_moved,
             COUNT(*) AS n,
             SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
             AVG(adj_opening_probability) AS avg_prob,
             SUM(adj_opening_probability::float) AS sum_prob,
             SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM bucketed
-        GROUP BY bucket_idx, source, category
-        ORDER BY bucket_idx, source, category
+        GROUP BY bucket_idx, source, category, price_moved
+        ORDER BY bucket_idx, source, category, price_moved
     """)
 
     result = await db.execute(sql)
@@ -606,6 +607,7 @@ async def public_calibration(
         "buckets": [
             {
                 "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
+                "price_moved": getattr(r, "price_moved", None),
                 "n": r.n, "winners": r.winners,
                 "avg_prob": round(float(r.avg_prob), 4),
                 "sum_prob": round(float(r.sum_prob), 4),
