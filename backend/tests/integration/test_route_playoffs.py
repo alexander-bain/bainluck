@@ -494,7 +494,7 @@ class TestLeagueFuturesEndpoint:
         """Sections should be one of the known section types."""
         resp = await client.get("/api/leagues/basketball_nba")
         body = resp.json()
-        valid_sections = {"series", "awards", "playoff_props", "season_stats", "novelty"}
+        valid_sections = {"series", "awards", "props", "season_stats", "more_markets"}
         for section_name in body["sections"]:
             assert section_name in valid_sections, (
                 f"Unknown section '{section_name}', expected one of {valid_sections}"

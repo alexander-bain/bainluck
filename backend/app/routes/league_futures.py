@@ -1,14 +1,15 @@
 """League-scoped futures endpoint.
 
 Returns all open futures markets for a specific league, grouped by section
-(series, awards, playoff_props, season_stats, novelty). Powers the league
+(series, awards, props, season_stats, more_markets). Powers the league
 page's below-the-grid sections.
+
+Phase 3 generalizes the sectioned layout to all major sports (NBA, NHL, MLB, NFL)
+with sport-aware keyword classification for awards, series, and props.
 """
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,51 +48,111 @@ LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
     "soccer_epl": ["KXEPL"],
 }
 
-# Section assignment based on market_tier + category + name patterns
-SECTION_RULES: list[tuple[str, dict]] = [
-    ("series", {"name_patterns": ["%series%", "% vs %"]}),
-    ("awards", {"tiers": [3], "categories": ["award", "mvp"]}),
-    ("championship", {"tiers": [1, 2]}),
-    ("playoff_props", {"tiers": [4, 5], "name_patterns": ["%sweep%", "%game 7%", "%playoff%win%total%"]}),
-    ("season_stats", {"categories": ["season_stat"], "name_patterns": ["%leader%", "%win total%", "%record%"]}),
-    ("novelty", {}),
+# ---------------------------------------------------------------------------
+# Section assignment: sport-aware classification
+# ---------------------------------------------------------------------------
+# Target sections (matching frontend expectations):
+#   series       — Playoff series matchups (Team A vs Team B, total games O/U)
+#   awards       — MVP, ROY, Cy Young, Vezina, Selke, etc.
+#   props        — Team-level props (win totals, div winners, playoff quals,
+#                  trades, no-hitters, draft, Madden cover, etc.)
+#   season_stats — Player stat-based markets (scoring leader, HR leader, etc.)
+#   more_markets — Everything else
+# ---------------------------------------------------------------------------
+
+# Sport-specific award name fragments (matched case-insensitively).
+# Generic awards ("MVP", "Rookie of the Year") are caught by tier == 3.
+_AWARD_KEYWORDS: list[str] = [
+    # NBA
+    "defensive player of the year", "sixth man", "most improved",
+    "clutch player", "finals mvp",
+    # NHL
+    "vezina", "selke", "norris", "conn smythe", "hart", "calder",
+    "richard trophy", "art ross", "jack adams", "lady byng",
+    # MLB
+    "cy young", "hank aaron", "gold glove", "silver slugger",
+    "reliever of the year", "manager of the year", "rookie of the year",
+    # NFL
+    "comeback player", "offensive player of the year",
+    "defensive player of the year", "walter payton",
+    "offensive rookie", "defensive rookie", "coach of the year",
+]
+
+# Keywords that identify a market as a playoff series matchup.
+_SERIES_KEYWORDS: list[str] = [
+    "series", "total games o/u", "total games over",
+]
+
+# Keywords for team/season-level props (not player stats).
+_PROPS_KEYWORDS: list[str] = [
+    "win total", "win more than", "win 100", "win 90", "win 80",
+    "division winner", "make playoff", "clinch",
+    "postseason", "wild card",
+    "traded", "be traded", "trade",
+    "no-hitter", "perfect game",
+    "draft", "lottery",
+    "cover of madden", "madden nfl",
+    "debut date", "free agent",
+    "sweep", "game 7", "playoff win total", "elimination",
+    "fired", "general manager", "head coach",
+]
+
+# Keywords for player-stat markets (season stats section).
+_SEASON_STAT_KEYWORDS: list[str] = [
+    "leader", "scoring title", "assists title", "rebounds title",
+    "home run leader", "batting average", "era leader", "strikeout leader",
+    "rushing leader", "passing leader", "receiving leader",
+    "goal leader", "points leader", "save leader",
+    "regular season record", "regular season wins",
 ]
 
 
-def _assign_section(market: FuturesMarket) -> str:
-    """Assign a market to a display section."""
+def _assign_section(market: FuturesMarket, sport_key: str = "") -> str:
+    """Assign a market to a display section.
+
+    Uses sport-aware keyword matching to classify into one of five sections:
+    series, awards, props, season_stats, more_markets.
+    """
     name_lower = (market.name or "").lower()
     cat = (market.category or "").lower()
     tier = market.market_tier
 
-    # Series markets
-    if "series" in name_lower or (" vs " in name_lower and tier == 5):
-        return "series"
-
-    # Awards (tier 3 or award category)
-    if tier == 3 or cat in ("award", "mvp"):
-        return "awards"
-
-    # Championship / conference (tier 1-2) — already on grid, skip
+    # Championship / conference / division (tier 1-2, 4) — already on grid
     if tier in (1, 2):
         return "championship"
-
-    # Playoff props
-    playoff_keywords = ["sweep", "game 7", "playoff win total", "elimination"]
-    if any(kw in name_lower for kw in playoff_keywords):
-        return "playoff_props"
-
-    # Season stats
-    stat_keywords = ["leader", "win total", "regular season", "scoring title",
-                     "assists title", "rebounds title", "record"]
-    if cat == "season_stat" or any(kw in name_lower for kw in stat_keywords):
-        return "season_stats"
-
-    # Division (tier 4) — already on grid, skip
     if tier == 4:
         return "championship"
 
-    return "novelty"
+    # --- Series markets ---
+    # "vs" in a tier-5 market is almost always a series matchup.
+    # Also catch "Total Games O/U" which is a series-length bet.
+    if any(kw in name_lower for kw in _SERIES_KEYWORDS):
+        # Exception: "World Series Winner" is a championship, not a series
+        if "world series winner" in name_lower:
+            return "championship"
+        return "series"
+    if " vs " in name_lower or " vs. " in name_lower:
+        # Tier-5 matchup = series (e.g., "Bruins vs. Sabres")
+        if tier == 5:
+            return "series"
+
+    # --- Awards ---
+    # Tier 3 = award by definition. Also match known award name fragments.
+    if tier == 3 or cat in ("award", "mvp"):
+        return "awards"
+    if any(kw in name_lower for kw in _AWARD_KEYWORDS):
+        return "awards"
+
+    # --- Season stats (player-level) ---
+    # Check before props because "leader" could overlap with "win total" props.
+    if cat == "season_stat" or any(kw in name_lower for kw in _SEASON_STAT_KEYWORDS):
+        return "season_stats"
+
+    # --- Props (team/season-level) ---
+    if any(kw in name_lower for kw in _PROPS_KEYWORDS):
+        return "props"
+
+    return "more_markets"
 
 
 @router.get("/{sport_key}")
@@ -157,15 +218,15 @@ async def get_league_futures(
     sections: dict[str, list[dict]] = {
         "series": [],
         "awards": [],
-        "playoff_props": [],
+        "props": [],
         "season_stats": [],
-        "novelty": [],
+        "more_markets": [],
     }
 
     seen_canonical: dict[str, dict] = {}
 
     for market in markets:
-        section = _assign_section(market)
+        section = _assign_section(market, sport_key)
 
         # Skip championship/conference/division — already on the grid
         if section == "championship":

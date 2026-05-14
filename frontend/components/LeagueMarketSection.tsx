@@ -14,9 +14,9 @@ interface LeagueMarketSectionProps {
 const SECTION_EMOJI: Record<string, string> = {
   series: "🏆",
   awards: "🏅",
-  playoff_props: "📊",
+  props: "📊",
   season_stats: "📈",
-  novelty: "🎲",
+  more_markets: "🎲",
 };
 
 function MarketCardForSection({ market, sectionKey }: { market: LeagueMarket; sectionKey: string }) {

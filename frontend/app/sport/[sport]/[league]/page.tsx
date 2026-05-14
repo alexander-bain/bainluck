@@ -36,9 +36,9 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 const SECTION_META: Record<string, { label: string; order: number }> = {
   series: { label: "Playoff Series", order: 0 },
   awards: { label: "Awards", order: 1 },
-  playoff_props: { label: "Playoff Props", order: 2 },
+  props: { label: "Props", order: 2 },
   season_stats: { label: "Season Stats", order: 3 },
-  novelty: { label: "More Markets", order: 4 },
+  more_markets: { label: "More Markets", order: 4 },
 };
 
 // ============================================================================
