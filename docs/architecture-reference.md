@@ -125,27 +125,48 @@ def my_task(self):
 
 ## Calibration Pipeline
 
-Answers "Do prediction markets predict anything?" by comparing opening probabilities to actual outcomes across all resolved markets.
+Answers "Do prediction markets predict anything?" by comparing calibration-adjusted probabilities to actual outcomes across all resolved markets.
 
 ### Data Sources (3)
-- **Kalshi + Polymarket** (`futures_markets` / `futures_outcomes`): `opening_probability` vs `current_probability` on resolved markets. Virtual market reconstruction via `group_id` for Polymarket multi-outcome events.
-- **Odds API** (`events` table): `opening_home_probability` / `opening_away_probability` vs `home_score` / `away_score`. Ground truth — no inference needed.
+- **Kalshi + Polymarket** (`futures_markets` / `futures_outcomes`): Uses `calibration_probability` (closing line from last pre-commence snapshot, or last snapshot overall if commence_time predates snapshots). Falls back to `opening_probability`. Virtual market reconstruction via `group_id` + `event_id` fallback.
+- **Odds API** (`events` table): Uses `COALESCE(closing_home_probability, opening_home_probability)` vs scores. Ground truth for sports. Includes both `completed` and `closed` events.
 
 ### Key Transformations
-- **Virtual market reconstruction**: When 3+ Polymarket markets share a `group_id`, treat as one multi-outcome market (structurally identical to a Kalshi championship market).
-- **Inverted field price correction**: In markets with 10+ outcomes, `opening_probability > 0.50` is inverted (stores "No" price). Corrected to `1 - opening_probability`.
-- **Threshold dedup**: For non-ME markets (player props), keep one outcome per virtual market (closest to 50%).
+- **Calibration probability** (`calibration_probability` column on `futures_outcomes`): Pre-computed by `_compute_calibration_prices()` in `backfill_winners.py`. Three passes: Part A (last snapshot before commence_time), Part B (first snapshot ≥1h after opening for non-commence markets), Part C (rescue — last snapshot overall for outcomes where Parts A/B fell back to opening).
+- **Untradeable filter** (`_null_untradeable_openings()`): Nulls `opening_probability` AND `calibration_probability` on outcomes with ≤2 snapshots. Excludes placeholder prices from calibration.
+- **Virtual market reconstruction**: Markets with 3+ outcomes treated as multi-outcome via `(is_grouped OR eligible >= 3)`.
+- **Default-price filter**: Excludes outcomes where 50%+ of a multi-outcome market share the same `calibration_probability` (no real price discovery).
+- **`price_moved` flag**: `calibration_probability IS DISTINCT FROM opening_probability` — indicates real trading occurred. Used for trading activity analysis on the calibration page.
 - **Clean resolution filter**: Only markets where 80%+ of outcomes resolved to near-0 or near-1.
 
+### Backfill Pipeline (runs every 6h via `backfill_winners`)
+1. Phase 0a-0b: Group ID backfill (Polymarket + Kalshi)
+2. Phase 0c: Null untradeable openings (≤2 snapshots)
+3. Phase 0d: Closing line backfill on events table
+4. Phase 0e: Calibration probability computation (Parts A/B/C)
+5. Phase 0f: Polymarket group_id from Gamma API
+6. Phase 1: Set `is_winner` from `current_probability`
+7. Phase 2: Kalshi API settlement data
+
+### Price History Backfill (`backfill_polymarket_history`, every 6h)
+Fetches historical price data from Polymarket's CLOB API (`/prices-history`) for outcomes with <24 snapshots. This fills in price history for markets we started tracking late or decomposed sub-markets that weren't individually polled. Critical for calibration accuracy.
+
 ### Endpoints
-- `GET /api/admin/calibration-data` — pre-aggregated buckets for report generation
-- `POST /api/admin/backfill-winners` — trigger `is_winner` backfill (supports `dry_run`, `limit`)
-- `GET /api/admin/backfill-winners/status` — backfill progress per source
+- `GET /api/calibration` — public, 1h cache. Returns per-bucket/source/category/price_moved aggregated data.
+- `POST /api/admin/backfill-winners` — trigger full backfill pipeline
+- `POST /api/admin/backfill-polymarket-history` — trigger price history backfill
+- `POST /api/calibration/rescue` — run Part C rescue for stuck outcomes
+- `GET /api/admin/backfill-winners/status` — backfill progress, calibration coverage, group_id health
+- `GET /api/calibration/diagnostics` — detailed debugging: by-category, rescue check, timing
+- `GET /api/calibration/price-quality` — same_as_open counts + volume by source×category
+- `GET /api/calibration/snapshot-health` — zero-snapshot and price-stuck counts
 
 ### Files
-- `backend/app/tasks/backfill_winners.py` — `is_winner` backfill task
-- `backend/app/routes/admin.py` — calibration endpoint (SQL query with virtual market logic)
-- `backend/scripts/build_calibration_report_svg.py` — static HTML report generator
+- `backend/app/routes/calibration.py` — public calibration endpoint + 6 diagnostic endpoints
+- `backend/app/tasks/backfill_winners.py` — calibration price computation, null filter, `is_winner` backfill
+- `backend/app/tasks/polymarket.py` — `_backfill_polymarket_price_history()`
+- `backend/app/routes/admin.py` — backfill triggers, status endpoint
+- `frontend/app/calibration/page.tsx` — calibration page with ECE, trading activity section
 
 ---
 

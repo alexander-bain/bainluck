@@ -486,38 +486,35 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 ### Calibration Page — User-Facing `/calibration` or `/about/calibration`
 
-**Current state (May 14):** MCE **3.8pp** (down from 5.2pp before `is_multi` fix), Brier **0.1745** (30% better than random), **151,060 outcomes** across 3 sources. 8 of 10 probability buckets within 5pp of perfect calibration. Worst buckets: 40-50% at -7.8pp, 60-70% at +7.1pp. Per-source: Odds API 2.4pp (N=15,916), Polymarket 5.2pp (N=97,104), Kalshi 5.5pp (N=38,040). Static HTML report at `calibration_report.html`. `is_winner` backfill task running every 6h. Next.js page exists at `/calibration` (19KB `page.tsx`).
+**Current state (May 14, evening):** MCE **2.7pp** (target ≤3.0pp ✓), ECE **2.4pp**, **69K outcomes** across 3 sources. All 10 buckets within 5pp. Per-source: Odds API 1.3pp, Kalshi 3.5pp ECE, Polymarket 4.3pp ECE. Calibration page live at `/calibration` with ECE metric, source comparison, category breakdowns, and "Does Trading Activity Matter?" section. Polymarket price history backfill now running automatically (was missing from beat schedule — root cause of 23K zero-snapshot outcomes).
 
 **Data pipeline shipped:**
-- ✅ Backend calibration endpoint (`GET /api/calibration`, public, 1h cache) with virtual market reconstruction from `group_id` + `event_id` fallback
-- ✅ Odds API ground-truth integration (15,916 outcomes from completed games with scores)
-- ✅ `is_winner` backfill task (`backfill_winners`, every 6h) — sets winner flag from settlement data
-- ✅ Backfill status endpoint (`GET /api/admin/backfill-winners/status`) — includes `calibration_probability` coverage, `group_id` health, orphan samples
-- ✅ Default-price filter for large field markets (50%+ of outcomes sharing same opening_probability)
-- ✅ Static HTML report builder with SVG charts, external studies, methodology section
-- ✅ Admin proxy route for browser-accessible triggers (`/api/admin-proxy`)
-- ✅ `calibration_probability` backfilled to 100% coverage — uses closing line (last snapshot before event start) when available, falls back to `opening_probability`. Methodologically correct: closing line IS what the market predicted. Backfill was stuck due to poison rows (outcomes without snapshots blocked batches); fixed with LEFT JOIN + COALESCE fallback in single CTE.
-- ✅ `is_multi` classification fix — markets with 3+ eligible outcomes now treated as multi-outcome regardless of group size: `(cv.is_grouped OR cv.eligible >= 3)` instead of just `cv.is_grouped`. Highest-impact single change: MCE 5.2pp → 3.8pp.
-- ✅ Cache-bust parameter on calibration endpoint for fresh data without waiting for cache expiry.
-- ✅ A/B test confirmed closing line prices are methodologically correct even though they give worse MCE than opening prices. Opening prices flatter the metric with placeholder noise.
+- ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension, virtual market reconstruction, default-price filter
+- ✅ Odds API ground-truth integration (18,568 outcomes from completed+closed games with scores)
+- ✅ `backfill_winners` task (every 6h) — sets `is_winner`, computes `calibration_probability` (closing line), nulls untradeable outcomes (≤2 snapshots)
+- ✅ `backfill_polymarket_history` task (every 6h) — fetches historical prices from Polymarket CLOB API for outcomes with <24 snapshots. Draining 23K zero-snapshot backlog.
+- ✅ Part C rescue — updates outcomes where `calibration_probability = opening_probability` with last non-extreme snapshot
+- ✅ `is_multi` fix — `(cv.is_grouped OR cv.eligible >= 3)`. MCE 5.2pp → 3.8pp.
+- ✅ `status IN ('completed', 'closed')` — doubled MLB sample
+- ✅ 6 diagnostic admin endpoints for calibration debugging
 
 **Remaining work:**
 
-1. **Live Next.js page polish** — Page exists at `/calibration` (19KB `page.tsx`) but needs enhancement: category tabs, source comparison, external studies section, mobile-responsive layout.
+1. ~~**Live Next.js page polish**~~ — ✅ DONE. Full page with stat cards (MCE + ECE), source comparison table, category breakdowns, category mini-charts, "Does Trading Activity Matter?" section, methodology, external studies.
 
-2. ~~**Closing line capture**~~ — ✅ DONE. `calibration_probability` column backfilled to 100% coverage. Uses last snapshot before event start (closing line) when available, falls back to `opening_probability`.
+2. ~~**Closing line capture**~~ — ✅ DONE. `calibration_probability` at 100% coverage + Part C rescue.
 
-3. **Kalshi API settlement backfill** — 58K Kalshi markets have intermediate `current_probability` (not cleanly 0/1). Kalshi API returns `result='yes'|'no'` for settled markets. First attempt failed (API paginates by recency, our DB has older events). Fix: query by specific event ticker, not paginate all settled.
+3. **Kalshi API settlement backfill** — 59K Kalshi markets still need `is_winner`. API paginates by recency, our DB has older events.
 
-4. ~~**Fix 40-50% bucket**~~ — PARTIALLY DONE. Investigation revealed orphans are legitimate single-market events (46% of resolved Polymarket markets). The real fix was changing `is_multi` classification: markets with 3+ eligible outcomes now treated as multi-outcome regardless of group size. MCE dropped from 5.2pp to 3.8pp. The 40-50% bucket improved but is still the worst at -7.8pp.
+4. ~~**Fix 40-50% bucket**~~ — ✅ DONE (within 5pp). Root cause was zero-snapshot outcomes using placeholder prices. Fixed by: strengthened null function + wiring up Polymarket price history backfill. Continues improving automatically.
 
-5. **Football + hockey** — Football (n=532) is too small and structurally broken. Hockey (17pp) needs investigation. Both will improve as `is_winner` backfill coverage grows.
+5. **Confidence tiers on Discover cards** — Signal-strength bars (high/medium/low) based on trading activity. Thresholds TBD from data analysis. Backend: `compute_confidence_tier()` pure function. Frontend: 14×12px SVG bars in FuturesCard header. Plan approved, Phase 3 of calibration project.
 
-6. **Default-price filter for S&P/Nasdaq ladders** — Kalshi economics markets have 400 outcomes all at `opening_probability = 0.500` (placeholder, no real trading). The existing `mode_prices` filter catches these for `is_multi AND eligible >= 20`, but some slip through (markets with fewer siblings or where mode_price isn't quite 50%). Tighten: flag any market where 50%+ of outcomes have identical `opening_probability` regardless of market size.
+6. **Source "fair fight" comparison** — Methodology for comparing source accuracy when controlling for market difficulty and volume. Needed to answer "is Kalshi or Polymarket more accurate?"
 
-7. **Nightly refresh** — Celery task to refresh and cache calibration data.
+7. **Default-price filter tightening** — S&P/Nasdaq ladders with varied-but-still-placeholder pricing slip through the `mode_prices` filter.
 
-8. **`commence_time` grouping attempt reverted** — Tried grouping ungrouped markets by `(source, category, commence_time)` but too loose: would group unrelated S&P + Nasdaq + Gold markets. The right fix is `group_id` backfill from the Polymarket Gamma API, querying resolved events to get their group structure.
+8. **Volume field DQ on Polymarket sub-markets** — Decomposed sub-markets (player props, spreads) have `volume = NULL` because volume is stored at the event level, not propagated to child markets. Makes volume unreliable as a filter; use snapshot count or `price_moved` instead.
 
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 

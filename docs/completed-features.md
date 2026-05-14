@@ -1,26 +1,40 @@
 # Completed Features (Shipped)
 
-## May 14, 2026 — Calibration Pipeline Improvements
+## May 14, 2026 — Calibration Deep Dive: MCE 4.5pp → 2.7pp
 
-### Calibration Probability Backfill — 100% Coverage
-- ✅ **`calibration_probability` column backfilled to 100% coverage** — Uses closing line (last snapshot before event start) when available, falls back to `opening_probability`. Methodologically correct: closing line IS what the market predicted at kickoff.
-- ✅ **Poison-row fix** — Backfill was stuck because outcomes without any snapshots blocked entire batches. Fixed with LEFT JOIN + COALESCE fallback in a single CTE so every outcome gets a value in one pass.
-- ✅ **A/B test: closing vs opening prices** — Confirmed closing line prices are methodologically correct even though they produce worse MCE than opening prices. Opening prices flatter the metric with placeholder noise from early-listed markets.
+### Calibration Probability Rescue — 18,947 Outcomes Fixed
+- ✅ **Part C rescue** — Polymarket outcomes all had `commence_time` set before any snapshots existed, so the closing-line backfill found nothing and fell back to opening prices. Part C uses the last non-extreme snapshot regardless of commence_time. Rescued 18,947 outcomes with real closing prices.
+- ✅ **Batch rescue endpoint** — `POST /api/calibration/rescue` runs Part C in 2K batches to avoid Celery worker timeouts on the DISTINCT ON query against the large snapshots table.
 
-### `is_multi` Classification Fix — MCE 5.2pp → 3.8pp
-- ✅ **Highest-impact single calibration change** — Changed multi-outcome classification from `cv.is_grouped` to `(cv.is_grouped OR cv.eligible >= 3)`. Markets with 3+ eligible outcomes are now treated as multi-outcome regardless of whether they share a `group_id`. This correctly handles Polymarket's many single-market events (46% of resolved Polymarket markets are legitimate ungrouped markets with multiple outcomes). MCE dropped from 5.2pp to 3.8pp. 8 of 10 buckets now within 5pp of perfect calibration.
+### Untradeable Outcome Filter — Strengthened
+- ✅ **Extended `_null_untradeable_openings()`** — Now catches outcomes with ≤2 snapshots (was only 0-snap). Also nulls `calibration_probability` (was only nulling `opening_probability`, leaving stale values from prior backfill runs). LIMIT increased 10x to 100K/50K per pass.
 
-### Backfill Status Endpoint Enhancements
-- ✅ **`calibration_probability` coverage metric** — `/api/admin/backfill-winners/status` now reports what percentage of resolved outcomes have `calibration_probability` populated.
-- ✅ **`group_id` health metric** — Shows grouped vs ungrouped breakdown for resolved Polymarket markets.
-- ✅ **Orphan samples** — Returns sample orphan markets (resolved Polymarket markets without `group_id`) for investigation.
+### Baseball MLB Fix — Doubled Sample Size
+- ✅ **`status IN ('completed', 'closed')`** — 52% of finished MLB games had `status = 'closed'` (set by staleness detector) instead of `'completed'`. Calibration and closing-line queries now include both. MLB outcomes: 614 → 1,164. Total odds_api: 15,916 → 18,568.
 
-### Cache-Bust Parameter
-- ✅ **`?bust=1` on calibration endpoint** — Forces fresh data computation without waiting for the 1-hour cache to expire. Useful during backfill iterations.
+### ECE Metric + Trading Activity Analysis
+- ✅ **Sample-weighted ECE** — Added Expected Calibration Error alongside MCE on the calibration page. ECE weights buckets by sample size, preventing tiny tail buckets (n=3) from dominating category metrics. baseball_mlb: 28pp MCE → 2.2pp ECE.
+- ✅ **`price_moved` dimension** — Calibration API now returns `price_moved: bool` per bucket row, indicating whether the outcome's price changed from opening. Enables splitting calibration curves by trading activity.
+- ✅ **"Does Trading Activity Matter?" section** — New calibration page section showing side-by-side curves for outcomes with vs without price movement, with ECE comparison and insight callout.
 
-**Results:** MCE **3.8pp**, **151,060 outcomes** across 3 sources. Per-source: Odds API 2.4pp (N=15,916), Polymarket 5.2pp (N=97,104), Kalshi 5.5pp (N=38,040). Worst buckets: 40-50% at -7.8pp, 60-70% at +7.1pp.
+### Polymarket Price History Backfill — Pipeline Fix
+- ✅ **Root cause found** — `backfill_polymarket_history` task existed but was NOT in the Celery beat schedule. 23,327 outcomes (7%) had zero snapshots because their historical prices were never fetched from Polymarket's CLOB API.
+- ✅ **Wired into beat schedule** — Every 6h, 500 outcomes/run, background queue. Admin trigger at `POST /api/admin/backfill-polymarket-history`.
 
-**Files:** `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py`
+### `is_multi` Classification Fix — MCE 5.2pp → 3.8pp (prior session)
+- ✅ **`(cv.is_grouped OR cv.eligible >= 3)`** — Markets with 3+ eligible outcomes treated as multi-outcome regardless of `group_id`. Highest single-impact calibration fix.
+
+### Diagnostic Endpoints (6 new)
+- ✅ **`/api/calibration/diagnostics`** — Full diagnostic: by-category breakdown, rescue check, timing analysis
+- ✅ **`/api/calibration/price-quality`** — Per source×category: same_as_open counts, avg volume, median volume
+- ✅ **`/api/calibration/volume-distribution`** — Volume bucket distribution ($0, <$1K, $1-10K, etc.)
+- ✅ **`/api/calibration/volume-samples`** — Sample markets with $0 volume to distinguish NULL vs real zero
+- ✅ **`/api/calibration/unchanged-samples`** — Random samples of unchanged outcomes with snapshot ranges
+- ✅ **`/api/calibration/snapshot-health`** — Zero-snapshot and price-stuck counts per source×category
+
+**Results:** MCE **2.7pp** (target ≤3.0pp ✓), ECE **2.4pp**, **69K outcomes**. Per-source: Odds API 1.3pp, Kalshi 4.4pp MCE / 3.5pp ECE, Polymarket 4.1pp MCE / 4.3pp ECE. All 10 buckets within 5pp. Polymarket price history backfill now running automatically — will continue improving as historical prices fill in.
+
+**Files:** `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py`, `backend/app/tasks/__init__.py`, `frontend/app/calibration/page.tsx`, `frontend/lib/api.ts`
 
 ## May 13, 2026 — Category Page Polish + Infrastructure + Cleanup
 
