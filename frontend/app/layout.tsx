@@ -10,6 +10,7 @@ import UserMenu from "@/components/UserMenu";
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 const MobileSearchTrigger = dynamic(() => import("@/components/MobileSearchTrigger"), { ssr: false });
@@ -96,6 +97,7 @@ export default function RootLayout({
         </AnalyticsProvider>
         </SWRProvider>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
