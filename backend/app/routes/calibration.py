@@ -17,6 +17,91 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/volume-samples")
+async def calibration_volume_samples(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+    category: str = Query("soccer"),
+):
+    """Sample resolved Polymarket markets with $0 volume to check if it's real."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fm.name, fm.external_id, fm.volume, fm.volume_24h,
+            fm.liquidity, fm.volume_updated_at, fm.commence_time,
+            fm.created_at, fm.updated_at, fm.status,
+            COUNT(fo.id) AS outcome_count,
+            (SELECT COUNT(*) FROM futures_odds_snapshots fos
+             JOIN futures_outcomes fo2 ON fo2.id = fos.outcome_id
+             WHERE fo2.market_id = fm.id) AS total_snapshots
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'polymarket'
+          AND fm.status = 'resolved'
+          AND COALESCE(fm.volume, 0) = 0
+          AND COALESCE(fm.llm_sport_category, 'uncategorized') = :category
+        GROUP BY fm.id
+        ORDER BY fm.commence_time DESC NULLS LAST
+        LIMIT 20
+    """), {"category": category})
+    zero_vol = [
+        {"name": r.name, "external_id": r.external_id,
+         "volume": r.volume, "volume_24h": r.volume_24h,
+         "liquidity": float(r.liquidity) if r.liquidity else None,
+         "volume_updated_at": str(r.volume_updated_at) if r.volume_updated_at else None,
+         "commence_time": str(r.commence_time) if r.commence_time else None,
+         "created_at": str(r.created_at) if r.created_at else None,
+         "updated_at": str(r.updated_at) if r.updated_at else None,
+         "outcome_count": r.outcome_count, "total_snapshots": r.total_snapshots}
+        for r in result
+    ]
+
+    # Also get samples of markets WITH volume for comparison
+    result2 = await db.execute(text("""
+        SELECT fm.name, fm.external_id, fm.volume, fm.volume_24h,
+            fm.liquidity, fm.volume_updated_at,
+            COUNT(fo.id) AS outcome_count
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'polymarket'
+          AND fm.status = 'resolved'
+          AND fm.volume > 0
+          AND COALESCE(fm.llm_sport_category, 'uncategorized') = :category
+        GROUP BY fm.id
+        ORDER BY fm.volume DESC
+        LIMIT 10
+    """), {"category": category})
+    with_vol = [
+        {"name": r.name, "volume": r.volume, "volume_24h": r.volume_24h,
+         "liquidity": float(r.liquidity) if r.liquidity else None,
+         "outcome_count": r.outcome_count}
+        for r in result2
+    ]
+
+    # Count NULL vs 0
+    null_vs_zero = await db.execute(text("""
+        SELECT
+            COUNT(CASE WHEN fm.volume IS NULL THEN 1 END) AS vol_null,
+            COUNT(CASE WHEN fm.volume = 0 THEN 1 END) AS vol_zero,
+            COUNT(CASE WHEN fm.volume > 0 THEN 1 END) AS vol_positive
+        FROM futures_markets fm
+        WHERE fm.source = 'polymarket'
+          AND fm.status = 'resolved'
+          AND COALESCE(fm.llm_sport_category, 'uncategorized') = :category
+    """), {"category": category})
+    nz = null_vs_zero.first()
+
+    return {
+        "category": category,
+        "null_vs_zero": {"null": nz.vol_null, "zero": nz.vol_zero, "positive": nz.vol_positive},
+        "zero_volume_samples": zero_vol,
+        "high_volume_samples": with_vol,
+    }
+
+
 @router.get("/calibration/volume-distribution")
 async def calibration_volume_distribution(
     db: AsyncSession = Depends(get_db),
