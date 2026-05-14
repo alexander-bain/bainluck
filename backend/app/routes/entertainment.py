@@ -11,6 +11,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Sequence
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
@@ -266,6 +267,55 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
 
 
 # ---------------------------------------------------------------------------
+# Cross-source matching — find markets on both Kalshi & Polymarket
+# ---------------------------------------------------------------------------
+
+def _normalize_q(q: str) -> str:
+    """Normalize a question for cross-source matching."""
+    return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
+
+
+def _find_cross_source(
+    all_markets: Sequence[FuturesMarket],
+) -> list[dict]:
+    """Find markets that exist on both platforms, ranked by disagreement."""
+    by_norm: dict[str, dict[str, dict]] = defaultdict(dict)
+
+    for m in all_markets:
+        if _is_resolved(m):
+            continue
+        row = _market_row(m)
+        if not row or not _is_interesting(row):
+            continue
+        src = _source(m)
+        if src not in ("kalshi", "polymarket"):
+            continue
+        norm = _normalize_q(row["q"])
+        if norm and src not in by_norm[norm]:
+            by_norm[norm][src] = {**row, "theme": _classify_theme(m)}
+
+    matches = []
+    for norm, sources in by_norm.items():
+        if "kalshi" not in sources or "polymarket" not in sources:
+            continue
+        k = sources["kalshi"]
+        p = sources["polymarket"]
+        delta = round(abs(k["prob"] - p["prob"]), 1)
+        matches.append({
+            "q": k["q"],
+            "kalshi": k["prob"],
+            "poly": p["prob"],
+            "delta": delta,
+            "category": k["theme"],
+            "kalshi_market_id": k["market_id"],
+            "poly_market_id": p["market_id"],
+        })
+
+    matches.sort(key=lambda x: -x["delta"])
+    return matches[:8]
+
+
+# ---------------------------------------------------------------------------
 # Trending hero — pick the 5 most interesting markets
 # ---------------------------------------------------------------------------
 
@@ -494,12 +544,16 @@ async def get_entertainment(db: AsyncSession = Depends(get_db)):
         themed.get("social_media", []), 15
     )
 
+    # Cross-source spotlight
+    cross_source = _find_cross_source(list(all_markets))
+
     total = sum(len(v) for v in themed.values())
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
         "trending": trending,
+        "cross_source": cross_source,
         "themes": {
             "music": music,
             "movies_tv": movies_tv,
