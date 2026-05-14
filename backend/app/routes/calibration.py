@@ -17,6 +17,45 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/volume-distribution")
+async def calibration_volume_distribution(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Volume distribution of outcomes in calibration, by source+category."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fm.source,
+            COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            COUNT(*) AS total,
+            COUNT(CASE WHEN COALESCE(fm.volume, 0) = 0 THEN 1 END) AS vol_zero,
+            COUNT(CASE WHEN fm.volume > 0 AND fm.volume < 1000 THEN 1 END) AS vol_lt_1k,
+            COUNT(CASE WHEN fm.volume >= 1000 AND fm.volume < 10000 THEN 1 END) AS vol_1k_10k,
+            COUNT(CASE WHEN fm.volume >= 10000 AND fm.volume < 100000 THEN 1 END) AS vol_10k_100k,
+            COUNT(CASE WHEN fm.volume >= 100000 THEN 1 END) AS vol_100k_plus
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND fm.source = 'polymarket'
+        GROUP BY fm.source, cat
+        HAVING COUNT(*) >= 500
+        ORDER BY COUNT(*) DESC
+    """))
+    return [
+        {"source": r.source, "category": r.cat, "total": r.total,
+         "vol_zero": r.vol_zero, "pct_zero": round(r.vol_zero * 100.0 / max(r.total, 1), 1),
+         "vol_lt_1k": r.vol_lt_1k, "vol_1k_10k": r.vol_1k_10k,
+         "vol_10k_100k": r.vol_10k_100k, "vol_100k_plus": r.vol_100k_plus}
+        for r in result
+    ]
+
+
 @router.get("/calibration/price-quality")
 async def calibration_price_quality(
     db: AsyncSession = Depends(get_db),
