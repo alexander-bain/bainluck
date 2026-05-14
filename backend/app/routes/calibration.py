@@ -17,6 +17,44 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/price-quality")
+async def calibration_price_quality(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+):
+    """Lightweight: how many outcomes still use opening prices, by source+category."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fm.source,
+            COALESCE(fm.llm_sport_category, 'uncategorized') AS cat,
+            COUNT(*) AS total,
+            COUNT(CASE WHEN fo.calibration_probability = fo.opening_probability THEN 1 END) AS same_as_open,
+            COUNT(CASE WHEN fo.calibration_probability IS NOT NULL
+                        AND fo.calibration_probability != fo.opening_probability THEN 1 END) AS price_moved,
+            ROUND(AVG(ABS(COALESCE(fo.calibration_probability, 0)
+                        - COALESCE(fo.opening_probability, 0)))::numeric, 4) AS avg_shift
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+        GROUP BY fm.source, cat
+        HAVING COUNT(*) >= 100
+        ORDER BY fm.source, COUNT(*) DESC
+    """))
+    return [
+        {"source": r.source, "category": r.cat, "total": r.total,
+         "same_as_open": r.same_as_open,
+         "pct_same": round(r.same_as_open * 100.0 / max(r.total, 1), 1),
+         "price_moved": r.price_moved, "avg_shift": float(r.avg_shift)}
+        for r in result
+    ]
+
+
 @router.get("/calibration/diagnostics")
 async def calibration_diagnostics(
     db: AsyncSession = Depends(get_db),
