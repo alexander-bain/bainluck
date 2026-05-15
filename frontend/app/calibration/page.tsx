@@ -132,15 +132,13 @@ export default function CalibrationPage() {
 
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
+  const [priceCohort, setPriceCohort] = useState<"all" | "closing" | "opening">("closing");
 
   const normalized = useMemo(() => {
     if (!data) return null;
     return data.buckets.map(b => ({ ...b, category: normalizeCat(b.category) }));
   }, [data]);
 
-  const overall = useMemo(() => normalized ? aggregateBuckets(normalized) : [], [normalized]);
-  const overallMCE = useMemo(() => mce(overall), [overall]);
-  const overallECE = useMemo(() => ece(overall), [overall]);
   const overallBrier = useMemo(() => normalized ? brierScore(normalized) : 0, [normalized]);
 
   const movedBuckets = useMemo(() =>
@@ -151,6 +149,24 @@ export default function CalibrationPage() {
   const unchangedN = useMemo(() => unchangedBuckets.reduce((s, b) => s + b.n, 0), [unchangedBuckets]);
   const movedECE = useMemo(() => ece(movedBuckets), [movedBuckets]);
   const unchangedECE = useMemo(() => ece(unchangedBuckets), [unchangedBuckets]);
+
+  // Cohort-aware computations for the main chart/table
+  // price_moved=true → closing line, price_moved=false → opening price,
+  // price_moved=null → odds_api sportsbook data (always closing line)
+  const cohortFilter = useMemo<((b: CalibrationBucket) => boolean) | undefined>(() => {
+    if (priceCohort === "closing") return (b: CalibrationBucket) => b.price_moved === true || b.price_moved == null;
+    if (priceCohort === "opening") return (b: CalibrationBucket) => b.price_moved === false;
+    return undefined;
+  }, [priceCohort]);
+  const cohortBuckets = useMemo(() =>
+    normalized ? aggregateBuckets(normalized, cohortFilter) : [], [normalized, cohortFilter]);
+  const cohortMCE = useMemo(() => mce(cohortBuckets), [cohortBuckets]);
+  const cohortECE = useMemo(() => ece(cohortBuckets), [cohortBuckets]);
+  const cohortBrier = useMemo(() =>
+    normalized ? brierScore(normalized, cohortFilter) : 0, [normalized, cohortFilter]);
+  const cohortN = useMemo(() =>
+    normalized ? normalized.filter(b => !cohortFilter || cohortFilter(b)).reduce((s, b) => s + b.n, 0) : 0,
+    [normalized, cohortFilter]);
 
   const sources = useMemo(() => {
     if (!normalized) return [];
@@ -177,27 +193,27 @@ export default function CalibrationPage() {
   const sourceMetrics = useMemo(() => {
     if (!normalized) return [];
     return sources.map(src => {
-      const srcBuckets = aggregateBuckets(normalized, b => b.source === src);
-      const srcN = normalized.filter(b => b.source === src).reduce((s, b) => s + b.n, 0);
+      const srcBuckets = aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)));
+      const srcN = normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0);
       const srcMCE = mce(srcBuckets);
       const srcECE = ece(srcBuckets);
-      const srcBrier = brierScore(normalized, b => b.source === src);
+      const srcBrier = brierScore(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b)));
       const bucketsInBand = srcBuckets.filter(b => Math.abs(b.error) <= 5).length;
       return { source: src, n: srcN, mce: srcMCE, ece: srcECE, brier: srcBrier, bucketsInBand, totalBuckets: srcBuckets.length };
     });
-  }, [normalized, sources]);
+  }, [normalized, sources, cohortFilter]);
 
   // Per-category metrics for the breakdown table
   const categoryMetrics = useMemo(() => {
     if (!normalized) return [];
     return categories.map(cat => {
-      const catBuckets = aggregateBuckets(normalized, b => b.category === cat);
-      const catN = normalized.filter(b => b.category === cat).reduce((s, b) => s + b.n, 0);
+      const catBuckets = aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
+      const catN = normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0);
       const catMCE = mce(catBuckets);
-      const catBrier = brierScore(normalized, b => b.category === cat);
+      const catBrier = brierScore(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
       return { category: cat, n: catN, mce: catMCE, brier: catBrier };
     });
-  }, [normalized, categories]);
+  }, [normalized, categories, cohortFilter]);
 
   if (error) {
     return (
@@ -221,15 +237,15 @@ export default function CalibrationPage() {
   ).join(", ");
 
   const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
-    data: aggregateBuckets(normalized, b => b.source === src),
+    data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
     color: COLORS[i % COLORS.length],
-    label: `${src} (${normalized.filter(b => b.source === src).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
+    label: `${src} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
-    data: aggregateBuckets(normalized, b => b.category === cat),
+    data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
     color: COLORS[i % COLORS.length],
-    label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
+    label: `${DISPLAY_NAMES[cat] || cat} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   return (
@@ -247,15 +263,28 @@ export default function CalibrationPage() {
         </p>
       </div>
 
+      {/* Cohort toggle */}
+      <div className="flex items-center justify-center gap-2">
+        <span className="text-xs text-text-muted font-medium mr-1">Price basis:</span>
+        <TabButton label="Closing Line" active={priceCohort === "closing"} onClick={() => setPriceCohort("closing")} />
+        <TabButton label="Opening Price" active={priceCohort === "opening"} onClick={() => setPriceCohort("opening")} />
+        <TabButton label="All" active={priceCohort === "all"} onClick={() => setPriceCohort("all")} />
+      </div>
+
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <StatCard label="Resolved Outcomes" value={data.total_outcomes.toLocaleString()}
-          detail={`${data.total_markets.toLocaleString()} markets`} />
+        <StatCard label="Resolved Outcomes" value={cohortN.toLocaleString()}
+          detail={priceCohort === "all" ? `${data.total_markets.toLocaleString()} markets` :
+            priceCohort === "closing" ? "Closing line prices" : "Opening prices only"} />
         <StatCard label="Calibration Error (MCE)"
-          value={`${overallMCE.toFixed(1)}pp`}
-          detail={`95% CI: ${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp`}
-          valueClass={overallMCE < 4 ? "text-green-600" : overallMCE < 8 ? "text-blue-600" : "text-orange-600"} />
-        <StatCard label="Brier Score" value={overallBrier.toFixed(4)}
+          value={`${cohortMCE.toFixed(1)}pp`}
+          detail={priceCohort === "all"
+            ? `95% CI: ${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp`
+            : priceCohort === "closing"
+              ? "Last traded price before resolution"
+              : "Price never moved from listing"}
+          valueClass={cohortMCE < 4 ? "text-green-600" : cohortMCE < 8 ? "text-blue-600" : "text-orange-600"} />
+        <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
           detail="0 = oracle, lower = better" />
         <StatCard label="Sources" value={String(sources.length)}
           detail={sources.join(", ")} />
@@ -304,20 +333,20 @@ export default function CalibrationPage() {
               ))}
               <tr className="border-t-2 border-surface-border font-semibold">
                 <td className="py-2.5 pr-4 text-text-primary">Combined</td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">{data.total_outcomes.toLocaleString()}</td>
+                <td className="py-2.5 pr-4 text-right tabular-nums">{cohortN.toLocaleString()}</td>
                 <td className={`py-2.5 pr-4 text-right tabular-nums ${
-                  overallMCE < 4 ? "text-green-600" : overallMCE < 6 ? "text-blue-600" : "text-orange-600"
+                  cohortMCE < 4 ? "text-green-600" : cohortMCE < 6 ? "text-blue-600" : "text-orange-600"
                 }`}>
-                  {overallMCE.toFixed(1)}pp
+                  {cohortMCE.toFixed(1)}pp
                 </td>
                 <td className={`py-2.5 pr-4 text-right tabular-nums ${
-                  overallECE < 3 ? "text-green-600" : overallECE < 5 ? "text-blue-600" : "text-orange-600"
+                  cohortECE < 3 ? "text-green-600" : cohortECE < 5 ? "text-blue-600" : "text-orange-600"
                 }`}>
-                  {overallECE.toFixed(1)}pp
+                  {cohortECE.toFixed(1)}pp
                 </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">{overallBrier.toFixed(4)}</td>
+                <td className="py-2.5 pr-4 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
                 <td className="py-2.5 text-right tabular-nums">
-                  {overall.filter(b => Math.abs(b.error) <= 5).length}/{overall.length}
+                  {cohortBuckets.filter(b => Math.abs(b.error) <= 5).length}/{cohortBuckets.length}
                 </td>
               </tr>
             </tbody>
@@ -333,7 +362,7 @@ export default function CalibrationPage() {
         </p>
         <div className="space-y-3">
           {[
-            { label: "Bain Luck (all sources)", mce: overallMCE, n: data.total_outcomes, highlight: true, ci: `${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp` },
+            { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true, ci: priceCohort === "all" ? `${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp` : undefined },
             { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
             { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
             { label: "Academic consensus range (Arrow et al. 2008)", mce: 3.5, n: null, highlight: false, range: "2-5pp" },
@@ -370,16 +399,20 @@ export default function CalibrationPage() {
 
       {/* Overall calibration curve */}
       <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
-        <h2 className="text-title-3 text-text-primary mb-1">Overall Calibration Curve</h2>
+        <h2 className="text-title-3 text-text-primary mb-1">
+          {priceCohort === "closing" ? "Closing Line" : priceCohort === "opening" ? "Opening Price" : "Overall"} Calibration Curve
+        </h2>
         <p className="text-xs text-text-muted mb-4">
           Points on the diagonal = perfect calibration. Above = outcomes happened <em>more</em> than predicted. Below = <em>less</em>.
           Shaded band = &plusmn;5pp. Point size reflects sample count.
+          {priceCohort === "closing" && " Showing only outcomes where the price moved from its opening value (real trading activity)."}
+          {priceCohort === "opening" && " Showing only outcomes where the price never changed from its initial listing."}
         </p>
         <CalibrationChart
           series={[{
-            data: overall,
-            color: "#2563eb",
-            label: `All Markets (${data.total_outcomes.toLocaleString()})`,
+            data: cohortBuckets,
+            color: priceCohort === "closing" ? "#16a34a" : priceCohort === "opening" ? "#dc2626" : "#2563eb",
+            label: `${priceCohort === "closing" ? "Closing Line" : priceCohort === "opening" ? "Opening Price" : "All Markets"} (${cohortN.toLocaleString()})`,
           }]}
           width={700}
           height={400}
@@ -438,7 +471,7 @@ export default function CalibrationPage() {
               </tr>
             </thead>
             <tbody>
-              {overall.map(b => (
+              {cohortBuckets.map(b => (
                 <tr key={b.bucket} className="border-t border-surface-border">
                   <td className="py-2 pr-4">{b.bucket}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
@@ -486,8 +519,8 @@ export default function CalibrationPage() {
       {/* Category cards grid */}
       <div className="grid gap-4 md:grid-cols-2">
         {categories.slice(0, 10).map((cat, i) => {
-          const catBuckets = aggregateBuckets(normalized, b => b.category === cat);
-          const catN = normalized.filter(b => b.category === cat).reduce((s, b) => s + b.n, 0);
+          const catBuckets = aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b)));
+          const catN = normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0);
           const catMCE = mce(catBuckets);
           return (
             <div key={cat} className="bg-surface-card rounded-xl p-4 border border-surface-border">
@@ -570,7 +603,8 @@ export default function CalibrationPage() {
       {/* Footer */}
       <footer className="text-center text-xs text-text-muted pt-4 border-t border-surface-border">
         <p>
-          {data.total_outcomes.toLocaleString()} resolved outcomes &middot; {sources.length} sources &middot; {categories.length} categories
+          {cohortN.toLocaleString()} resolved outcomes &middot; {sources.length} sources &middot; {categories.length} categories
+          {priceCohort !== "all" && ` (${priceCohort === "closing" ? "closing line" : "opening price"} cohort)`}
         </p>
         <p className="mt-1">
           <Link href="/source-intelligence" className="text-accent-brand hover:underline">When Sources Disagree</Link>

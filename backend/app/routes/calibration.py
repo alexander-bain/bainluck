@@ -1032,6 +1032,33 @@ async def public_calibration(
     ]
     mce_ci_lo, mce_ci_hi = bootstrap_mce_ci(agg_list)
 
+    # Compute cohort-level MCE: closing line (price_moved=True) vs opening price (price_moved=False)
+    def _cohort_mce(buckets: list[dict], pred: object) -> float | None:
+        """Compute MCE for a subset of bucket_dicts matching *pred*."""
+        cohort_agg: dict[int, dict] = {}
+        for b in buckets:
+            if b.get("price_moved") != pred:
+                continue
+            idx = b["bucket_idx"]
+            if idx not in cohort_agg:
+                cohort_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            cohort_agg[idx]["n"] += b["n"]
+            cohort_agg[idx]["winners"] += b["winners"]
+            cohort_agg[idx]["sum_prob"] += b["sum_prob"]
+        if not cohort_agg:
+            return None
+        total_abs_err = 0.0
+        for v in cohort_agg.values():
+            if v["n"] == 0:
+                continue
+            avg_prob = v["sum_prob"] / v["n"]
+            actual = v["winners"] / v["n"]
+            total_abs_err += abs(actual - avg_prob)
+        return round(total_abs_err / len(cohort_agg) * 100, 2)
+
+    mce_closing_line = _cohort_mce(bucket_dicts, True)
+    mce_opening_price = _cohort_mce(bucket_dicts, False)
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
@@ -1044,6 +1071,8 @@ async def public_calibration(
         "total_winners": total_winners,
         "mce_ci_lower": round(mce_ci_lo * 100, 2),
         "mce_ci_upper": round(mce_ci_hi * 100, 2),
+        "mce_closing_line": mce_closing_line,
+        "mce_opening_price": mce_opening_price,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

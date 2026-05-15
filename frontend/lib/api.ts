@@ -1488,6 +1488,8 @@ export interface CalibrationData {
   total_winners: number;
   mce_ci_lower: number;
   mce_ci_upper: number;
+  mce_closing_line: number | null;
+  mce_opening_price: number | null;
   generated_at: string;
 }
 

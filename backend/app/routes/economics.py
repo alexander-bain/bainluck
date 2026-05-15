@@ -203,6 +203,14 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
         discrete = discrete[:max_buckets]
         discrete.sort(key=lambda x: x[1])
 
+    # Normalize: independent binary markets can sum well over 100%.
+    # Same threshold as _brackets_from_outcomes / politics _normalize_outcome_probs.
+    if discrete:
+        total = sum(b[0] for b in discrete)
+        if total > 105:
+            for b in discrete:
+                b[0] = round(b[0] * 100 / total, 1)
+
     return discrete
 
 
