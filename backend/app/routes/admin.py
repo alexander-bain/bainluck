@@ -10951,6 +10951,50 @@ async def calibration_data(
     }
 
 
+@router.get("/celery-debug")
+async def celery_debug(secret: str = Query(...)):
+    """Inspect Celery worker status and queue lengths."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    import redis as redis_lib
+
+    result = {}
+
+    # Worker ping
+    try:
+        inspector = celery_app.control.inspect(timeout=5)
+        result["ping"] = inspector.ping() or "no response"
+        result["active"] = inspector.active() or "no response"
+        result["registered"] = {
+            k: len(v) for k, v in (inspector.registered() or {}).items()
+        }
+        result["stats"] = {
+            k: {"total": v.get("total", {}), "pool": v.get("pool", {}).get("max-concurrency")}
+            for k, v in (inspector.stats() or {}).items()
+        }
+    except Exception as e:
+        result["inspect_error"] = str(e)
+
+    # Queue lengths from Redis
+    try:
+        redis_url = celery_app.conf.broker_url
+        r = redis_lib.from_url(redis_url, ssl_cert_reqs=None if redis_url.startswith("rediss") else None)
+        result["queue_lengths"] = {
+            "background": r.llen("background"),
+            "realtime": r.llen("realtime"),
+            "celery": r.llen("celery"),
+        }
+        result["redis_info"] = {
+            "used_memory_human": r.info("memory").get("used_memory_human"),
+            "connected_clients": r.info("clients").get("connected_clients"),
+        }
+    except Exception as e:
+        result["redis_error"] = str(e)
+
+    return result
+
+
 @router.post("/backfill-winners")
 async def trigger_backfill_winners(
     secret: str = Query(...),
