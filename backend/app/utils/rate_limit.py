@@ -35,9 +35,6 @@ logger = logging.getLogger(__name__)
 ANON_RATE_LIMIT = "60/minute"
 AUTH_RATE_LIMIT = "120/minute"
 
-# Disable rate limiting entirely in test/CI environments
-_DISABLED = bool(os.getenv("TESTING") or os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
-
 # Paths exempt from rate limiting
 _EXEMPT_PREFIXES = (
     "/api/admin",
@@ -175,9 +172,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if _DISABLED:
-            return await call_next(request)
-
         path = request.url.path
 
         # Skip exempt paths
