@@ -114,8 +114,10 @@ def _make_seeded_session(event=None):
 
 
 @pytest.fixture
-async def seeded_client():
+async def seeded_client(monkeypatch):
     """Client with a seeded live NBA event for sub-endpoint tests."""
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
     from app.main import app
 
     event = _make_event(id=42, home_team="Celtics", away_team="76ers", status="live")

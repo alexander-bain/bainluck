@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 ANON_RATE_LIMIT = "60/minute"
 AUTH_RATE_LIMIT = "120/minute"
 
+# Disable rate limiting entirely in test/CI environments
+_DISABLED = bool(os.getenv("TESTING") or os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
+
 # Paths exempt from rate limiting
 _EXEMPT_PREFIXES = (
     "/api/admin",
@@ -145,6 +148,9 @@ def _extract_uid_from_token(token: str) -> Optional[str]:
 
 def _is_exempt(path: str) -> bool:
     """Return True if the path should skip rate limiting."""
+    if os.getenv("BYPASS_RATE_LIMITS") == "1":
+        return True
+
     for prefix in _EXEMPT_PREFIXES:
         if path.startswith(prefix):
             return True

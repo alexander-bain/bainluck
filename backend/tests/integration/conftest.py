@@ -35,8 +35,10 @@ def mock_db():
 
 
 @pytest.fixture
-async def client(mock_db):
+async def client(mock_db, monkeypatch):
     """httpx AsyncClient wired to the FastAPI app with mocked dependencies."""
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
     from app.main import app
 
     async def _mock_get_db():
