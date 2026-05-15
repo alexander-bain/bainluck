@@ -1263,6 +1263,21 @@ async def backfill_link_status(
     }
 
 
+@router.post("/prediction-markets/backfill-link-run")
+async def backfill_link_run(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    batch_size: int = Query(50, description="Markets to process"),
+):
+    """Trigger a single run of the historical link backfill."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.prediction_market_matching import _backfill_historical_links
+
+    result = await _backfill_historical_links(batch_size=batch_size)
+    return result
+
+
 @router.post("/prediction-markets/force-link")
 async def prediction_market_force_link(
     secret: str = Query(..., description="Admin secret for authorization"),
