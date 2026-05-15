@@ -1,6 +1,6 @@
 # Completed Features (Shipped)
 
-## May 15, 2026 — Rage Shake Triage #5 + Backlog Blitz (12 items)
+## May 15, 2026 — Rage Shake Triage #5 + Backlog Blitz (22 items, 4 waves)
 
 ### Rage Shake Triage #5 — Bugs #32-40 (6 fixed, 4 transient)
 - ✅ **BR40: Apple Sign-In audience mismatch** — iOS Apple Sign-In had NEVER worked. Backend validated JWT audience against web Services ID (`com.bainluck.web`) but iOS sends bundle ID (`com.bainluck.Bain-Luck`). Fix: accept both as valid audiences. (`auth.py`)
@@ -24,6 +24,21 @@
 ### Data Quality Bugs
 - ✅ **Alcaraz "ATP Indian Wells" team card** — Individual-sport athletes (tennis/MMA/boxing/golf) no longer show misleading "Team" cards in search. Still appear via event/futures results. (`events.py`)
 - ✅ **French Open "Player B 100%" placeholders** — Polymarket placeholder sub-markets detected and filtered at 3 layers: ingestion (`_is_placeholder_outcome()`), search display, and 5 futures endpoint code paths. 9 tests. (`polymarket.py`, `events.py`, `futures.py`)
+
+### P1 Design (Wave 3)
+- ✅ **PRD rewrite** — 310→249 lines. Restructured: Vision, Target Users, User Journeys, Feature Map, Data Architecture, Metrics, Principles, Non-Goals. Written in present tense. (`docs/PRD.md`)
+- ✅ **Formal button system** — `components/ui/button.tsx`: 3 variants (primary/ghost/text), 3 sizes (sm/md/lg), focus-visible accessibility ring, `asChild` support. Applied to 10 buttons across Discover, My Stuff, Daily, Challenge pages.
+- ✅ **Remove max-width constraint** — Global content 1200→1600px, sport pages 5xl→7xl, calibration 4xl→6xl, search xl→3xl. Text-heavy/admin pages left narrow. (14 files)
+- ✅ **Archive dead pages** — Deleted `/oscars`, `/pulse`, `/ei`, `/explore`, `/masters` + orphaned `OscarsModal.tsx`, `oscarsData.ts`, 9 API functions, 10 type interfaces. Routes 39→34.
+
+### P1 DS (Wave 3-4)
+- ✅ **Calibration confidence intervals** — Wilson score CIs per bucket, bootstrap MCE CI (1000 resamples), error bars on calibration chart, "95% CI" column in bucket table, "How We Compare" updated. (`calibration.py`, `CalibrationChart.tsx`, `calibration/page.tsx`)
+
+### Data & Infrastructure (Wave 3-4)
+- ✅ **2nd half market maps fixed** — Backend lacked `period` field in game-markets response; frontend guessed from names but Kalshi strips period indicators. Fix: `_extract_period_from_ticker()` derives period from ticker prefix, added `period` field. Web/iOS both use `derivePeriod()` with backend-first fallback. Added missing 2H tickers for NHL/MLB/NCAAB/NCAAF. 27 tests. (`events.py`, `sport_keys.py`, `MarketMapSection.tsx`, `MarketMapView.swift`)
+- ✅ **Structured JSON logging** — `python-json-logger` configured for web dyno + Celery workers. Production-only via `DYNO` env var. Local dev stays human-readable. (`main.py`, `tasks/__init__.py`)
+- ✅ **68 new contract tests** — Futures browse/categories/movers (33), market moves (8), search with individual-sport filtering (24), calibration bucket validation (9), politics normalization + economics (5). Total: 461 integration tests. (`tests/integration/`)
+- ✅ **iOS views audit** — All 27 views, 18 components, 16 Route cases, 15 model files verified reachable. No dead code found.
 
 ## May 14, 2026 — Calibration Deep Dive: MCE 4.5pp → 2.65pp
 

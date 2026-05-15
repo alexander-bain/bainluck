@@ -279,6 +279,12 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS. Fixed: hooks now call server API on every pin/unpin when authenticated.
 61. **Celery beat schedule test has an allowlist** — `tests/test_tasks_wiring.py` has `EXPECTED_ENTRIES` set that must include every entry in `celery_app.conf.beat_schedule`. Adding a new scheduled task without updating this set causes CI failure.
 62. **Gmail API OAuth refresh tokens via Google Workspace** — Using OAuth2 refresh token (not service account) to send email as `bugs@bainluck.com`. The OAuth Playground redirect URI must NOT have a trailing slash. Config vars: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL`.
+63. **Apple Sign-In audience differs between web and iOS** — Web uses `APPLE_SERVICES_ID` (`com.bainluck.web`) as JWT audience; iOS native uses the app bundle ID (`com.bainluck.Bain-Luck`). The `verify_apple_id_token()` call must accept BOTH as valid audiences. PyJWT's `audience` parameter natively accepts a list. This caused iOS Apple Sign-In to silently 401 for months.
+64. **Independent binary market probabilities must be normalized everywhere** — Kalshi creates separate "Will X win?" markets for each candidate. Raw probabilities sum well over 100%. Normalization (`if sum > 1.05: divide each by sum`) is applied in `feed.py`, AND must also be applied in `politics.py` nominee lists and any other ranked display of independent binary markets. Missing this on the Politics page caused Fujimori to show at 98.8%.
+65. **Game-markets `period` field must come from the backend** — Kalshi's `_build_game_market_name()` strips period indicators from market names ("2nd Half Total: X at Y" becomes "X at Y"). Frontend/iOS cannot reliably derive 1H vs 2H from the name. Backend must set `period` from the ticker prefix via `_extract_period_from_ticker()`. Without this, 2nd half maps silently disappear.
+66. **Polymarket placeholder outcomes have `outcomePrices=["1","0"]`** — Polymarket creates reserved-slot sub-markets ("Player B", "Player S") before real candidates are announced. These have 100% probability and zero trading activity. Filter with `_is_placeholder_outcome()`: name matches "Player [A-Z]" single letter, OR price ≥0.995 with no bestBid and no lastTradePrice.
+67. **iOS Decodable models must use `Double` for probability fields** — Backend `round(prob * 100, 1)` returns floats like `72.5`, not integers. Using `Int` in the iOS Decodable model causes the entire response to fail to decode. Always use `Double` (or `Double?` for nullable fields) for any probability, percentage, or numeric score from the API.
+68. **PKCanvasView annotation coordinates require explicit frame sizing** — Using `.frame(maxHeight: 300)` without width constraint makes the canvas wider than the rendered image. Touch coordinates then include dead space, and flattening uses wrong scale factors. Always size the canvas to match the image's aspect ratio exactly, disable scroll, and use independent scaleX/scaleY with `UIScreen.main.scale` for retina.
 
 ---
 
@@ -293,6 +299,10 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/integration/test_route_feed_scoring.py` | Feed scoring, ordering, event/futures data shape with seeded data | May 8 |
 | `tests/integration/test_route_events_seeded.py` | Event detail response shape, game-markets sections, related futures | May 8 |
 | `tests/integration/test_route_category_pages.py` | Weather, politics, entertainment, economics API response shapes | May 13 |
+| `tests/integration/test_route_futures_browse.py` | Futures browse, categories, movers, compare response shapes | May 15 |
+| `tests/integration/test_route_market_moves.py` | Market moves endpoint response shape and param validation | May 15 |
+| `tests/test_politics_normalization.py` | Politics probability normalization for independent binary markets | May 15 |
+| `tests/test_rate_limit.py` | Rate limiting middleware: thresholds, auth exemption, Redis fallback | May 15 |
 
 ---
 
