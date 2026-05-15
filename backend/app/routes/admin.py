@@ -10861,6 +10861,91 @@ async def backfill_winners_status(
              "last_snap": float(r.last_snap_prob) if r.last_snap_prob else None}
             for r in sample_diag.all()
         ],
+        "stuck_diagnosis": await _diagnose_stuck_winners(db),
+    }
+
+
+async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
+    """Why are is_winner backfills stuck? Categorize the blockers."""
+    # Polymarket: check current_probability distribution on stuck markets
+    poly_diag = await db.execute(text("""
+        WITH stuck AS (
+            SELECT fm.id AS market_id, fm.source
+            FROM futures_markets fm
+            WHERE fm.status = 'resolved'
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id AND fo.is_winner = true
+              )
+        ),
+        outcome_status AS (
+            SELECT s.source, fo.market_id,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE fo.current_probability >= 0.95) AS at_one,
+                COUNT(*) FILTER (WHERE fo.current_probability <= 0.05) AS at_zero,
+                COUNT(*) FILTER (WHERE fo.current_probability IS NULL) AS null_prob,
+                COUNT(*) FILTER (WHERE fo.current_probability > 0.05
+                                   AND fo.current_probability < 0.95) AS midrange
+            FROM stuck s
+            JOIN futures_outcomes fo ON fo.market_id = s.market_id
+            GROUP BY s.source, fo.market_id
+        )
+        SELECT source,
+            COUNT(*) AS stuck_markets,
+            COUNT(*) FILTER (WHERE at_one >= 1 AND midrange = 0 AND null_prob = 0) AS cleanly_resolved,
+            COUNT(*) FILTER (WHERE midrange > 0) AS has_midrange_probs,
+            COUNT(*) FILTER (WHERE null_prob > 0 AND midrange = 0) AS has_null_probs,
+            COUNT(*) FILTER (WHERE total = at_zero AND at_one = 0) AS all_losers_no_winner,
+            ROUND(AVG(total), 1) AS avg_outcomes
+        FROM outcome_status
+        GROUP BY source
+        ORDER BY source
+    """))
+    poly_rows = poly_diag.all()
+
+    # Sample stuck Polymarket markets with midrange probabilities
+    sample = await db.execute(text("""
+        WITH stuck AS (
+            SELECT fm.id, fm.name, fm.source
+            FROM futures_markets fm
+            WHERE fm.status = 'resolved'
+              AND fm.source IN ('polymarket', 'kalshi')
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id AND fo.is_winner = true
+              )
+            LIMIT 5000
+        )
+        SELECT s.source, s.name,
+            ARRAY_AGG(
+                fo.name || '=' || ROUND(fo.current_probability::numeric, 3)
+                ORDER BY fo.current_probability DESC NULLS LAST
+            ) AS outcome_probs
+        FROM stuck s
+        JOIN futures_outcomes fo ON fo.market_id = s.id
+        WHERE fo.current_probability > 0.05 AND fo.current_probability < 0.95
+        GROUP BY s.source, s.name, s.id
+        ORDER BY RANDOM()
+        LIMIT 10
+    """))
+
+    return {
+        "by_source": [
+            {
+                "source": r.source,
+                "stuck_markets": r.stuck_markets,
+                "cleanly_resolved_but_missed": r.cleanly_resolved,
+                "has_midrange_probs": r.has_midrange_probs,
+                "has_null_probs": r.has_null_probs,
+                "all_losers_no_winner": r.all_losers_no_winner,
+                "avg_outcomes": float(r.avg_outcomes),
+            }
+            for r in poly_rows
+        ],
+        "midrange_samples": [
+            {"source": r.source, "name": r.name, "probs": r.outcome_probs}
+            for r in sample.all()
+        ],
     }
 
 
