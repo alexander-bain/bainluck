@@ -4527,6 +4527,63 @@ async def prediction_market_match_trace(
     return trace
 
 
+@router.post("/prediction-markets/force-link")
+async def prediction_market_force_link(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    external_id: str = Query(..., description="Market external_id to link"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force-link a single unlinked market by running the full matching pipeline."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone
+    from app.models.models import FuturesMarket
+    from app.utils.prediction_market_matching import (
+        extract_matchup_with_ticker_fallback,
+        extract_game_date_from_ticker,
+    )
+    from app.tasks.prediction_market_matching import (
+        _find_matching_event,
+        _check_duplicate_kalshi_linkage,
+    )
+
+    result = await db.execute(
+        select(FuturesMarket).where(FuturesMarket.external_id == external_id).limit(1)
+    )
+    market = result.scalars().first()
+    if not market:
+        raise HTTPException(status_code=404, detail=f"Market not found: {external_id}")
+    if market.event_id is not None:
+        return {"status": "already_linked", "event_id": market.event_id}
+
+    matchup = extract_matchup_with_ticker_fallback(market.name, external_id=market.external_id)
+    ticker_date = extract_game_date_from_ticker(market.external_id)
+    now = datetime.now(timezone.utc)
+
+    if not matchup:
+        return {"status": "no_matchup"}
+
+    matched = await _find_matching_event(db, matchup, market, now, game_date_override=ticker_date)
+    if not matched:
+        return {"status": "no_event_found"}
+
+    guard_ok = await _check_duplicate_kalshi_linkage(db, matched["event_id"], market, ticker_date)
+    if not guard_ok:
+        return {"status": "duplicate_guard_blocked", "event_id": matched["event_id"]}
+
+    market.event_id = matched["event_id"]
+    await db.commit()
+
+    return {
+        "status": "linked",
+        "event_id": matched["event_id"],
+        "home_team": matched["home_team"],
+        "away_team": matched["away_team"],
+        "score": matched["score"],
+    }
+
+
 @router.get("/prediction-markets/event-debug")
 async def prediction_market_event_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
