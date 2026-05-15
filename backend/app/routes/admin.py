@@ -4271,6 +4271,148 @@ async def prediction_market_tier1_gaps(
     }
 
 
+@router.get("/prediction-markets/match-trace")
+async def prediction_market_match_trace(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    external_id: str = Query(..., description="Kalshi external_id to trace"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trace the matching logic for a specific unlinked market."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import or_
+    from app.models.models import FuturesMarket, Event
+    from app.utils.prediction_market_matching import (
+        extract_matchup_with_ticker_fallback,
+        extract_game_date_from_ticker,
+        _expand_team_search_terms,
+        _escape_like,
+    )
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    result = await db.execute(
+        select(FuturesMarket).where(FuturesMarket.external_id == external_id).limit(1)
+    )
+    market = result.scalars().first()
+    if not market:
+        raise HTTPException(status_code=404, detail=f"Market not found: {external_id}")
+
+    trace = {
+        "market": {
+            "id": market.id, "external_id": market.external_id,
+            "name": market.name, "source": market.source,
+            "event_id": market.event_id, "status": market.status,
+            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+        },
+    }
+
+    matchup = extract_matchup_with_ticker_fallback(market.name, external_id=market.external_id)
+    ticker_date = extract_game_date_from_ticker(market.external_id)
+    sport_key = get_sport_key_from_ticker(market.external_id)
+
+    trace["extraction"] = {
+        "matchup": {"team_a": matchup.team_a, "team_b": matchup.team_b, "format": matchup.format_type} if matchup else None,
+        "ticker_date": ticker_date.isoformat() if ticker_date else None,
+        "sport_key": sport_key,
+    }
+
+    if not matchup:
+        trace["result"] = "no_matchup"
+        return trace
+
+    now = datetime.now(timezone.utc)
+    reference_time = ticker_date or market.commence_time or now
+    if ticker_date:
+        has_time = ticker_date.hour != 0 or ticker_date.minute != 0
+        if has_time:
+            time_start = reference_time - timedelta(hours=3)
+            time_end = reference_time + timedelta(hours=3)
+        else:
+            time_start = reference_time - timedelta(hours=6)
+            time_end = reference_time + timedelta(hours=30)
+    elif market.source == "kalshi":
+        time_start = reference_time - timedelta(days=7)
+        time_end = reference_time + timedelta(days=7)
+    else:
+        time_start = reference_time - timedelta(hours=48)
+        time_end = reference_time + timedelta(hours=48)
+
+    trace["time_window"] = {
+        "reference": reference_time.isoformat(),
+        "has_time": ticker_date and (ticker_date.hour != 0 or ticker_date.minute != 0) if ticker_date else None,
+        "start": time_start.isoformat(),
+        "end": time_end.isoformat(),
+    }
+
+    teams_to_search = [matchup.team_a]
+    if matchup.team_b:
+        teams_to_search.append(matchup.team_b)
+
+    expanded_terms = {}
+    ilike_conditions = []
+    for team in teams_to_search:
+        terms = list(_expand_team_search_terms(team))
+        expanded_terms[team] = terms
+        for term in terms:
+            pattern = f"%{_escape_like(term)}%"
+            ilike_conditions.append(Event.home_team_name.ilike(pattern))
+            ilike_conditions.append(Event.away_team_name.ilike(pattern))
+
+    trace["search_terms"] = expanded_terms
+
+    past_cutoff = now - timedelta(hours=6)
+
+    event_result = await db.execute(
+        select(Event.id, Event.home_team_name, Event.away_team_name,
+               Event.commence_time, Event.status, Event.sport_id)
+        .where(
+            or_(*ilike_conditions),
+            Event.commence_time.between(time_start, time_end),
+            or_(
+                Event.status.in_(["scheduled", "live"]),
+                Event.commence_time >= past_cutoff,
+            ),
+        )
+        .order_by(Event.commence_time)
+        .limit(10)
+    )
+    candidates = event_result.all()
+
+    trace["candidates"] = [
+        {
+            "id": c.id,
+            "teams": f"{c.home_team_name} vs {c.away_team_name}",
+            "time": c.commence_time.isoformat() if c.commence_time else None,
+            "status": c.status,
+            "sport_id": c.sport_id,
+        }
+        for c in candidates
+    ]
+
+    if not candidates:
+        no_filter_result = await db.execute(
+            select(Event.id, Event.home_team_name, Event.away_team_name,
+                   Event.commence_time, Event.status)
+            .where(or_(*ilike_conditions))
+            .order_by(Event.commence_time.desc())
+            .limit(5)
+        )
+        trace["candidates_no_time_filter"] = [
+            {
+                "id": c.id,
+                "teams": f"{c.home_team_name} vs {c.away_team_name}",
+                "time": c.commence_time.isoformat() if c.commence_time else None,
+                "status": c.status,
+            }
+            for c in no_filter_result.all()
+        ]
+
+    trace["result"] = f"found {len(candidates)} candidates"
+    return trace
+
+
 @router.get("/prediction-markets/event-debug")
 async def prediction_market_event_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
