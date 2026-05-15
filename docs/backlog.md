@@ -1057,19 +1057,18 @@ Added `_INDIVIDUAL_SPORT_PREFIXES` (tennis, MMA, boxing, golf) and filtered indi
 
 Polymarket creates placeholder sub-markets with "Player B/S/N" names and `outcomePrices=["1","0"]` before real candidates are announced. Three-layer fix: (1) ingestion prevention via `_is_placeholder_outcome()` in polymarket.py, (2) search display filtering in events.py, (3) `_GARBAGE_OUTCOME_RE` applied to 5 additional futures.py code paths. 9 new tests.
 
-### About Page: Visual "Why Probability?" Storytelling (May 14)
+### About Page Polish — v1 Shipped, Needs Professional Treatment (May 15)
 
-**Problem:** The product pitch has two compelling stories that need a premium, native, visual experience on the site — not screenshots or static text.
+**Status:** v1 shipped with two stories (Alcaraz AO SF, Scheffler Masters), SVG probability chart, comparison table, CTA. Functional but reads more like a blog post than a premium product page.
 
-**Story 1: "Winning big, then barely surviving"** — Alcaraz vs Zverev, 2026 Australian Open SF. Alcaraz at 96% after two sets, adductor injury, probability crashes to 13%, Zverev serves for the match, Alcaraz breaks back and wins 7-5 in the 5th. The probability chart shows the entire drama that the 3-2 scoreline hides. Kalshi market: `kxatpmatch-26jan29alczve`, $27M volume.
+**Remaining for v2:**
+1. **Story 2 visual upgrade** — Replace the golf table with a horizontal bar chart or visual that creates the same "aha" as Story 1's probability arc. Currently it's just a data table.
+2. **Scroll-triggered animations** — Stories should fade/slide in as user scrolls. Use `IntersectionObserver` or `framer-motion`. Current version is fully static.
+3. **Real data from our snapshots** — Story 1 uses hardcoded data points. Pull actual Kalshi snapshot data for the Alcaraz match (`kxatpmatch-26jan29alczve`) to make the chart authentic.
+4. **Photos/imagery** — Match photos or player silhouettes would elevate the editorial feel. Check Pexels or licensed sources.
+5. **Mobile typography** — Verify the hero headline and story cards look right on iPhone SE (375pt width).
 
-**Story 2: "6th place, but the favorite"** — Scheffler at 2025 Masters Round 1. T6 at -2 but 19.0% win probability — more than 2x co-leader Burns at 8.6%. McIlroy (model's #1 at 24.4%) won. Probability identified the real contenders; the leaderboard didn't.
-
-**Approach:** Build `/about` page with two interactive panels — animated probability charts, match photos, concise captions. Reconstruct timelines from our stored Kalshi/DataGolf snapshot data.
-
-**Dependencies:** Verify we have Kalshi snapshot data for the AO match. May need Kalshi history API backfill.
-
-**Files:** `frontend/app/about/page.tsx` (new), new chart components
+**Files:** `frontend/app/about/page.tsx`
 **Parallel Safety:** Green
 
 ### Run Another Manus Sweep (May 14)
