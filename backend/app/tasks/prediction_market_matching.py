@@ -855,9 +855,13 @@ async def _match_prediction_markets(limit: int = 500):
             all_per_event_source[key].append((market, event))
 
         # ── Wrong-game detection: unlink Kalshi game markets whose ticker
-        # date is far from the event's commence_time. Handles both multi-game
-        # groups (3+ game markets on one event) and single wrong-game markets
-        # (e.g., a Game 5 market linked to a Game 6 event in a playoff series).
+        # date is far from the event's commence_time. Only for traditional
+        # sports (NBA/NHL/MLB/NFL) where each game is a distinct event.
+        # NOT for esports — tournament events legitimately span multiple days.
+        _WRONG_GAME_PREFIXES = frozenset({
+            "kxnbagame", "kxnhlgame", "kxmlbgame", "kxnflgame",
+            "kxwnbagame", "kxmlsgame", "kxsoccergame", "kxsocgame",
+        })
         stats["funnel"].setdefault("phase2_multi_game_unlinked", 0)
         for key, group in list(all_per_event_source.items()):
             if key[1] != "kalshi" or not group:
@@ -871,7 +875,7 @@ async def _match_prediction_markets(limit: int = 500):
             for m, ev in list(group):
                 ext = (m.external_id or "").lower()
                 prefix = ext.split("-")[0] if "-" in ext else ext
-                if not prefix.endswith("game"):
+                if prefix not in _WRONG_GAME_PREFIXES:
                     continue
                 td = extract_game_date_from_ticker(m.external_id)
                 if not td:
