@@ -30,6 +30,20 @@ from app.tasks.base import run_async
 
 import time as _time
 
+# ---------------------------------------------------------------------------
+# Structured JSON logging for production (Heroku)
+# ---------------------------------------------------------------------------
+if os.getenv("DYNO"):
+    from pythonjsonlogger import jsonlogger
+
+    _json_handler = logging.StreamHandler()
+    _json_handler.setFormatter(jsonlogger.JsonFormatter(
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+        rename_fields={"asctime": "timestamp", "levelname": "level"},
+    ))
+    logging.root.handlers = [_json_handler]
+    logging.root.setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 
@@ -779,11 +793,11 @@ celery_app.conf.beat_schedule = {
     },
     "discover-new-events": {
         "task": "app.tasks.discover_events",
-        "schedule": crontab(minute="5,20,35,50"),  # Offset to run AFTER StatPal schedule sync
+        "schedule": crontab(minute="5,35"),  # Every 30 min (was 15)
     },
     "compute-gei-batch": {
         "task": "app.tasks.compute_gei_batch",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(minute="*/30"),  # Every 30 min (was 10)
         "kwargs": {"limit": 50},
     },
     "compute-gei-percentiles-hourly": {
@@ -851,7 +865,7 @@ celery_app.conf.beat_schedule = {
     },
     "merge-duplicate-events": {
         "task": "app.tasks.merge_duplicate_events",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(minute="*/30"),  # Every 30 min (was 10)
         "kwargs": {"dry_run": False},
     },
     "sync-rosters-daily": {

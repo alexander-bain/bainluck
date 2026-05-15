@@ -75,7 +75,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
 
   if (eventError) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-4 py-8">
         <ErrorMessage message="Failed to load event" />
       </div>
     );
@@ -83,7 +83,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
 
   if (!event) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-4 py-8">
         <LoadingSpinner />
       </div>
     );
@@ -138,7 +138,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* Header */}
       <div>
         <Link

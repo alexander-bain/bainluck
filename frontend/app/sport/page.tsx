@@ -55,7 +55,7 @@ export default function SportsIndexPage() {
   return (
     <div className="min-h-screen">
       <div className="border-b border-surface-border">
-        <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
             <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
             <span>/</span>
@@ -68,7 +68,7 @@ export default function SportsIndexPage() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {sports.map((sport: SportHierarchy) => {
             const meta = SPORT_META[sport.slug] || { icon: "\ud83c\udfc6", description: "" };

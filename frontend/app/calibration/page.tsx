@@ -52,6 +52,17 @@ interface AggBucket {
   actual: number;
   error: number;
   bucket: string;
+  ciLower: number;
+  ciUpper: number;
+}
+
+function wilsonCI(wins: number, total: number, z = 1.96): [number, number] {
+  if (total === 0) return [0, 0];
+  const p = wins / total;
+  const denom = 1 + (z * z) / total;
+  const center = (p + (z * z) / (2 * total)) / denom;
+  const spread = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total)) / denom;
+  return [Math.max(0, center - spread), Math.min(1, center + spread)];
 }
 
 function aggregateBuckets(
@@ -73,6 +84,7 @@ function aggregateBuckets(
       const i = parseInt(idx);
       const avgProb = a.sumProb / a.n;
       const actual = a.winners / a.n;
+      const [ciLo, ciHi] = wilsonCI(a.winners, a.n);
       return {
         midpoint: i * 10 + 5,
         n: a.n,
@@ -81,6 +93,8 @@ function aggregateBuckets(
         actual: Math.round(actual * 1000) / 10,
         error: Math.round((actual - avgProb) * 1000) / 10,
         bucket: `${i * 10}-${i * 10 + 10}%`,
+        ciLower: Math.round(ciLo * 1000) / 10,
+        ciUpper: Math.round(ciHi * 1000) / 10,
       };
     })
     .sort((a, b) => a.midpoint - b.midpoint);
@@ -187,7 +201,7 @@ export default function CalibrationPage() {
 
   if (error) {
     return (
-      <div className="max-w-4xl mx-auto py-20 text-center">
+      <div className="max-w-6xl mx-auto py-20 text-center">
         <p className="text-text-secondary">Failed to load calibration data.</p>
       </div>
     );
@@ -195,7 +209,7 @@ export default function CalibrationPage() {
 
   if (!data || !normalized) {
     return (
-      <div className="max-w-4xl mx-auto py-20 text-center">
+      <div className="max-w-6xl mx-auto py-20 text-center">
         <div className="inline-block w-8 h-8 border-2 border-surface-border border-t-accent-brand rounded-full animate-spin" />
         <p className="text-text-muted mt-3 text-sm">Loading calibration data...</p>
       </div>
@@ -219,7 +233,7 @@ export default function CalibrationPage() {
   }));
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12">
+    <div className="max-w-6xl mx-auto space-y-8 pb-12">
       {/* Hero */}
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
@@ -239,7 +253,7 @@ export default function CalibrationPage() {
           detail={`${data.total_markets.toLocaleString()} markets`} />
         <StatCard label="Calibration Error (MCE)"
           value={`${overallMCE.toFixed(1)}pp`}
-          detail={`ECE: ${overallECE.toFixed(1)}pp (weighted)`}
+          detail={`95% CI: ${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp`}
           valueClass={overallMCE < 4 ? "text-green-600" : overallMCE < 8 ? "text-blue-600" : "text-orange-600"} />
         <StatCard label="Brier Score" value={overallBrier.toFixed(4)}
           detail="0 = oracle, lower = better" />
@@ -319,7 +333,7 @@ export default function CalibrationPage() {
         </p>
         <div className="space-y-3">
           {[
-            { label: "Bain Luck (all sources)", mce: overallMCE, n: data.total_outcomes, highlight: true },
+            { label: "Bain Luck (all sources)", mce: overallMCE, n: data.total_outcomes, highlight: true, ci: `${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp` },
             { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
             { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
             { label: "Academic consensus range (Arrow et al. 2008)", mce: 3.5, n: null, highlight: false, range: "2-5pp" },
@@ -335,7 +349,8 @@ export default function CalibrationPage() {
                     row.mce < 4 ? "text-green-600" : row.mce < 6 ? "text-blue-600" : "text-orange-600"
                   } font-semibold`}>
                     {row.range || `${row.mce.toFixed(1)}pp`}
-                    {row.n ? ` (${row.n.toLocaleString()} outcomes)` : ""}
+                    {"ci" in row && row.ci ? ` (95% CI: ${row.ci})` : ""}
+                    {row.n ? ` | ${row.n.toLocaleString()} outcomes` : ""}
                   </span>
                 </div>
                 <div className="h-2 bg-surface-secondary rounded-full overflow-hidden">
@@ -418,6 +433,7 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-4 text-right">N</th>
                 <th className="pb-2 pr-4 text-right">Avg Predicted</th>
                 <th className="pb-2 pr-4 text-right">Actual Rate</th>
+                <th className="pb-2 pr-4 text-right">95% CI</th>
                 <th className="pb-2 text-right">Error</th>
               </tr>
             </thead>
@@ -428,6 +444,9 @@ export default function CalibrationPage() {
                   <td className="py-2 pr-4 text-right tabular-nums">{b.n.toLocaleString()}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{b.avgProb}%</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{b.actual}%</td>
+                  <td className="py-2 pr-4 text-right tabular-nums text-text-muted">
+                    {b.ciLower.toFixed(1)}-{b.ciUpper.toFixed(1)}%
+                  </td>
                   <td className={`py-2 text-right tabular-nums ${
                     Math.abs(b.error) < 3 ? "text-text-muted" : b.error > 0 ? "text-green-600" : "text-red-600"
                   }`}>

@@ -119,13 +119,13 @@ export default function EconomicsPage() {
   const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 
   if (error) return (
-    <div className="max-w-5xl mx-auto py-20 text-center text-text-muted text-sm">
+    <div className="max-w-7xl mx-auto py-20 text-center text-text-muted text-sm">
       Failed to load economics data
     </div>
   );
 
   if (!data) return (
-    <div className="max-w-5xl mx-auto py-20 text-center text-text-muted text-sm animate-pulse">
+    <div className="max-w-7xl mx-auto py-20 text-center text-text-muted text-sm animate-pulse">
       Loading economics markets...
     </div>
   );

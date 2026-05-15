@@ -456,13 +456,21 @@ export default function MarketMapSection({
     };
   }, [gameMarkets.totals, gameMarkets.pace, status, homeScore, awayScore, overUnder, vocab, sportKey]);
 
+  // Helper: derive period from backend "period" field, falling back to text matching.
+  function derivePeriod(item: { period?: string | null; outcome_name: string; market_name: string }): string {
+    if (item.period) return item.period;
+    const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
+    if (text.includes("1h") || text.includes("1st") || text.includes("first")) return "1H";
+    if (text.includes("2h") || text.includes("2nd") || text.includes("second")) return "2H";
+    return "2H"; // default
+  }
+
   // ── Period Margin Maps (half spreads) ──
   const halfMarginMaps = useMemo(() => {
     const halfSpreads = (gameMarkets.period_markets || []).filter((s) => s.market_type === "half_spread");
     const halfGroups: Record<string, typeof halfSpreads> = {};
     for (const s of halfSpreads) {
-      const text = `${s.outcome_name} ${s.market_name || ""}`.toLowerCase();
-      const key = text.includes("1h") || text.includes("1st") || text.includes("first") ? "1H" : "2H";
+      const key = derivePeriod(s);
       if (!halfGroups[key]) halfGroups[key] = [];
       halfGroups[key].push(s);
     }
@@ -600,17 +608,15 @@ export default function MarketMapSection({
     type MapData = Parameters<typeof MarketMap>[0] & { status: "pre" | "live" | "done" };
     const maps: Array<{ key: string; data: MapData }> = [];
 
-    // Group half_total markets by period.  Markets whose name/outcome
-    // contain "1h"/"1st"/"first" are 1H; everything else defaults to
-    // 2H (Kalshi 2H markets often have a plain matchup name with the
-    // period only in the ticker, not the market name).
+    // Group half_total markets by period using backend-supplied "period"
+    // field (derived from ticker prefix).  Falls back to name-based
+    // matching via derivePeriod() for older data without the field.
     const halfTotalAll = allPeriod.filter(
       (p) => p.market_type === "half_total" && isGameTotal(p.outcome_name)
     );
     const halfTotalGroups: Record<string, typeof halfTotalAll> = {};
     for (const item of halfTotalAll) {
-      const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
-      const key = /1h|1st|first/.test(text) ? "1H" : "2H";
+      const key = derivePeriod(item);
       if (!halfTotalGroups[key]) halfTotalGroups[key] = [];
       halfTotalGroups[key].push(item);
     }

@@ -193,7 +193,7 @@ export default function SportHubPage() {
     <div className="min-h-screen">
       {/* Header */}
       <div className="border-b border-surface-border">
-        <div className="max-w-5xl mx-auto px-4 py-8">
+        <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
             <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
             <span>/</span>
@@ -208,7 +208,7 @@ export default function SportHubPage() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8 space-y-10">
+      <div className="max-w-7xl mx-auto px-4 py-8 space-y-10">
         {/* Leagues */}
         <section>
           <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Leagues</h2>

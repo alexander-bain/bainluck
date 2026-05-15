@@ -187,7 +187,7 @@ function SearchContent() {
   // Zero-state
   if (!query || query.length < 2) {
     return (
-      <div className="max-w-xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         {suggestionsLoading ? (
           <div className="text-center py-8">
             <p className="text-sm text-text-secondary">Loading suggestions...</p>

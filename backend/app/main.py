@@ -12,6 +12,20 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
 
+# ---------------------------------------------------------------------------
+# Structured JSON logging for production (Heroku)
+# ---------------------------------------------------------------------------
+if os.getenv("DYNO"):
+    from pythonjsonlogger import jsonlogger
+
+    _json_handler = logging.StreamHandler()
+    _json_handler.setFormatter(jsonlogger.JsonFormatter(
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+        rename_fields={"asctime": "timestamp", "levelname": "level"},
+    ))
+    logging.root.handlers = [_json_handler]
+    logging.root.setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges

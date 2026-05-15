@@ -81,6 +81,7 @@ nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
     let overProbability: Double?
     let marketType: String?
     let movement: Double?
+    let period: String?
 }
 
 // MARK: - Futures Market Detail

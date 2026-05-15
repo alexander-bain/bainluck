@@ -51,7 +51,7 @@ export default function TeamPage() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto px-4 py-12 text-center">
+      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
         <div className="text-4xl mb-4 animate-pulse">...</div>
         <p className="text-text-secondary">Loading team...</p>
       </div>
@@ -60,7 +60,7 @@ export default function TeamPage() {
 
   if (error || !data) {
     return (
-      <div className="max-w-5xl mx-auto px-4 py-12 text-center">
+      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
         <h1 className="text-title-2 text-text-primary mb-2">Team Not Found</h1>
         <p className="text-text-secondary">
           No team found for &quot;{teamSlug}&quot;
@@ -95,7 +95,7 @@ export default function TeamPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

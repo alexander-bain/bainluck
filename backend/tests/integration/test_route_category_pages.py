@@ -232,6 +232,67 @@ class TestPoliticsEndpoint:
         body = resp.json()
         assert isinstance(body["cross_source"], list)
 
+    async def test_presidential_candidate_probabilities_normalized(self, client):
+        """When candidates exist, their probabilities should sum to ~100%.
+
+        Independent binary markets (separate 'Will X win?' markets per candidate)
+        can sum well over 100%. The backend normalizes: if sum > 1.05, divide each
+        by sum. With empty DB there are no candidates, but we validate the contract.
+        """
+        resp = await client.get("/api/politics")
+        body = resp.json()
+        candidates = body["themes"]["presidential"]["candidates"]
+        if candidates:
+            probs = [
+                c.get("probability", 0) or 0
+                for c in candidates
+                if c.get("probability") is not None
+            ]
+            if probs:
+                total = sum(probs)
+                # After normalization, sum should be <= 1.1 (allowing small rounding)
+                assert total <= 1.1, (
+                    f"Presidential candidate probabilities sum to {total}, "
+                    f"expected <= 1.1 after normalization"
+                )
+
+    async def test_presidential_candidate_item_shape(self, client):
+        """Validate presidential candidate item shape when present."""
+        resp = await client.get("/api/politics")
+        body = resp.json()
+        candidates = body["themes"]["presidential"]["candidates"]
+        for candidate in candidates:
+            assert "name" in candidate
+            assert isinstance(candidate["name"], str)
+
+
+# ============================================================================
+# Economics — enhanced validation
+# ============================================================================
+
+
+class TestEconomicsEnhanced:
+    """Additional economics endpoint validations."""
+
+    async def test_total_markets_reflects_actual_count(self, client):
+        """total_markets should be 0 with empty DB."""
+        resp = await client.get("/api/economics")
+        body = resp.json()
+        assert body["total_markets"] == 0
+
+    async def test_by_source_both_sources_non_negative(self, client):
+        resp = await client.get("/api/economics")
+        body = resp.json()
+        assert body["by_source"]["kalshi"] >= 0
+        assert body["by_source"]["polymarket"] >= 0
+
+    async def test_total_markets_gte_by_source_max(self, client):
+        """total_markets should be >= max individual source count."""
+        resp = await client.get("/api/economics")
+        body = resp.json()
+        max_source = max(body["by_source"].values()) if body["by_source"] else 0
+        assert body["total_markets"] >= max_source
+
 
 # ============================================================================
 # Entertainment — /api/entertainment

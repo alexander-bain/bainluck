@@ -348,7 +348,7 @@ export default function GolfTournamentPage() {
 
   return (
     <main className="min-h-screen bg-white">
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         {/* Breadcrumb */}
         <nav className="text-xs text-gray-400">
           <Link href="/categories/golf" className="hover:text-gray-700 hover:underline">
@@ -1045,7 +1045,7 @@ function BubbleRow({
 function LoadingSkeleton() {
   return (
     <main className="min-h-screen bg-white">
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
         <div className="border border-gray-200 rounded-xl p-5 space-y-3">
           <div className="flex items-center gap-2">

@@ -235,7 +235,7 @@ const config: Config = {
   			probability: '400ms'
   		},
   		maxWidth: {
-  			content: '1200px'
+  			content: '1600px'
   		}
   	}
   },

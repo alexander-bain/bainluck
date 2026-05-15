@@ -8,6 +8,8 @@ interface CalPoint {
   n: number;
   bucket: string;
   error: number;
+  ciLower?: number;
+  ciUpper?: number;
 }
 
 interface Series {
@@ -91,13 +93,29 @@ export default function CalibrationChart({
         return (
           <g key={si}>
             <polyline points={pathPoints} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" />
+            {/* CI error bars — rendered behind dots */}
+            {s.data.map((d, di) => {
+              if (d.ciLower == null || d.ciUpper == null) return null;
+              const cx = px(d.midpoint);
+              const capW = 4;
+              return (
+                <g key={`ci-${di}`} opacity="0.4">
+                  <line x1={cx} y1={py(d.ciLower)} x2={cx} y2={py(d.ciUpper)} stroke={s.color} strokeWidth="2" />
+                  <line x1={cx - capW} y1={py(d.ciLower)} x2={cx + capW} y2={py(d.ciLower)} stroke={s.color} strokeWidth="2" />
+                  <line x1={cx - capW} y1={py(d.ciUpper)} x2={cx + capW} y2={py(d.ciUpper)} stroke={s.color} strokeWidth="2" />
+                </g>
+              );
+            })}
             {s.data.map((d, di) => {
               const r = 4 + 6 * Math.sqrt(d.n / maxN);
+              const ciStr = d.ciLower != null && d.ciUpper != null
+                ? `, 95% CI: ${d.ciLower.toFixed(1)}%-${d.ciUpper.toFixed(1)}%`
+                : "";
               return (
                 <g key={di}>
                   <circle cx={px(d.midpoint)} cy={py(d.actual)} r={r} fill={s.color} opacity="0.85" />
                   <title>
-                    {d.bucket}: {d.actual.toFixed(1)}% actual at {d.midpoint}% predicted (n={d.n.toLocaleString()}, error={d.error > 0 ? "+" : ""}{d.error.toFixed(1)}pp)
+                    {d.bucket}: {d.actual.toFixed(1)}% actual at {d.midpoint}% predicted (n={d.n.toLocaleString()}, error={d.error > 0 ? "+" : ""}{d.error.toFixed(1)}pp{ciStr})
                   </title>
                 </g>
               );

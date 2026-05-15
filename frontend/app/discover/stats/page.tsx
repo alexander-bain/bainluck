@@ -62,12 +62,12 @@ export default function PredictionStatsPage() {
     return (
       <div className="min-h-screen bg-surface-deep">
         <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
-          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
             <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
             <h1 className="text-lg font-black tracking-tight">Your Stats</h1>
           </div>
         </header>
-        <div className="max-w-2xl mx-auto px-4 py-20 text-center text-text-muted">
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center text-text-muted">
           <p className="text-4xl mb-4">🎯</p>
           <p className="text-lg font-medium">No predictions yet</p>
           <p className="text-sm mt-2">Play the &quot;What are the odds?&quot; cards in <Link href="/discover" className="text-blue-600 hover:underline">Discover</Link> to start tracking your stats.</p>
@@ -81,13 +81,13 @@ export default function PredictionStatsPage() {
   return (
     <div className="min-h-screen bg-surface-deep">
       <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
           <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
           <h1 className="text-lg font-black tracking-tight">Your Stats</h1>
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
         {/* Hero stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Total" value={stats.total.toString()} />

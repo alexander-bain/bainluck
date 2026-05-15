@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { motion } from "framer-motion";
 import type { EIData } from "@/lib/types";
 import { getEIClasses, getEIRingClass } from "@/lib/eiColors";
@@ -11,7 +10,6 @@ interface EIBadgeProps {
   ei: EIData;
   size?: "sm" | "md" | "lg";
   showTooltip?: boolean;
-  linkToExplainer?: boolean;
   /** When true, badge pulses with EI-mapped breathing speed */
   isLive?: boolean;
 }
@@ -26,7 +24,6 @@ export default function EIBadge({
   ei,
   size = "sm",
   showTooltip = true,
-  linkToExplainer = true,
   isLive = false,
 }: EIBadgeProps) {
   const sizeClasses = {
@@ -102,13 +99,6 @@ export default function EIBadge({
         </div>
       )}
 
-      {linkToExplainer && (
-        <div className="pt-1 border-t border-white/20">
-          <span className="text-xs text-sky-300 hover:text-sky-200">
-            Learn more about Excitement Index →
-          </span>
-        </div>
-      )}
     </div>
   );
 
@@ -116,21 +106,11 @@ export default function EIBadge({
     return badge;
   }
 
-  const tooltipBadge = (
+  return (
     <Tooltip content={tooltipContent} position="bottom">
       {badge}
     </Tooltip>
   );
-
-  if (linkToExplainer) {
-    return (
-      <Link href="/ei" className="inline-block">
-        {tooltipBadge}
-      </Link>
-    );
-  }
-
-  return tooltipBadge;
 }
 
 

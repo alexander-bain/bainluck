@@ -23,6 +23,7 @@ import type {
 } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
+import { Button } from "@/components/ui/button";
 
 const DAILY_GOAL = 5;
 const DAILY_STATE_KEY = "bainluck_daily_state_v1";
@@ -446,12 +447,11 @@ export default function DailyPage() {
             <p className="mt-2 text-sm text-text-secondary">
               {loadError || "There are not enough guessable markets in the feed right now."}
             </p>
-            <Link
-              href="/discover"
-              className="mt-5 inline-flex items-center justify-center rounded-md bg-accent-brand px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-live"
-            >
-              Browse Discover
-            </Link>
+            <Button asChild className="mt-5">
+              <Link href="/discover">
+                Browse Discover
+              </Link>
+            </Button>
           </div>
         </section>
       </main>
@@ -660,9 +660,11 @@ function QuestionCard({
           </button>
         </div>
 
-        <Link href={question.detailHref} className="mt-4 inline-flex text-sm font-semibold text-accent-brand hover:text-accent-live">
-          Open market details
-        </Link>
+        <Button variant="text" asChild className="mt-4">
+          <Link href={question.detailHref}>
+            Open market details
+          </Link>
+        </Button>
       </div>
     </article>
   );
@@ -713,22 +715,14 @@ function SummaryCard({
           {resultText(score, total, streak)}
         </p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <button
-            type="button"
-            onClick={onShare}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-accent-brand px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-accent-live"
-          >
+          <Button type="button" onClick={onShare}>
             {copied ? <Copy className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
             {copied ? "Copied" : "Share Score"}
-          </button>
-          <button
-            type="button"
-            onClick={onRestart}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-bold text-text-secondary transition-colors hover:text-text-primary"
-          >
+          </Button>
+          <Button type="button" variant="ghost" onClick={onRestart}>
             <RotateCcw className="h-4 w-4" />
             Replay Today
-          </button>
+          </Button>
         </div>
       </div>
 

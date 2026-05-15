@@ -1,5 +1,7 @@
 """Public calibration endpoint — no auth required, cached for 1 hour."""
 
+import math
+import random
 import time
 from datetime import datetime, timezone
 
@@ -10,6 +12,44 @@ from sqlalchemy import func
 
 from app.models import FuturesMarket
 from app.services import get_db
+
+
+def wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score 95% confidence interval for a binomial proportion."""
+    if total == 0:
+        return (0.0, 0.0)
+    p = wins / total
+    denom = 1 + z**2 / total
+    center = (p + z**2 / (2 * total)) / denom
+    spread = z * math.sqrt((p * (1 - p) + z**2 / (4 * total)) / total) / denom
+    return (max(0.0, center - spread), min(1.0, center + spread))
+
+
+def bootstrap_mce_ci(
+    bucket_list: list[dict],
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """Bootstrap 95% CI on MCE by resampling buckets.
+
+    Each bucket dict must have keys: ``avg_prob``, ``winners``, ``n``.
+    """
+    if not bucket_list:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    k = len(bucket_list)
+    mce_samples: list[float] = []
+    for _ in range(n_boot):
+        sample = rng.choices(bucket_list, k=k)
+        total_abs_err = 0.0
+        for b in sample:
+            actual = b["winners"] / b["n"] if b["n"] else 0.0
+            total_abs_err += abs(actual - b["avg_prob"])
+        mce_samples.append(total_abs_err / k)
+    mce_samples.sort()
+    lo = mce_samples[int(n_boot * 0.025)]
+    hi = mce_samples[int(n_boot * 0.975)]
+    return (lo, hi)
 
 router = APIRouter()
 
@@ -961,26 +1001,49 @@ async def public_calibration(
     closing_result = await db.execute(closing_sql)
     closing_row = closing_result.one()
 
+    # Build bucket dicts with Wilson CIs
+    bucket_dicts = []
+    for r in all_rows:
+        ci_lo, ci_hi = wilson_ci(r.winners, r.n)
+        bucket_dicts.append({
+            "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
+            "price_moved": getattr(r, "price_moved", None),
+            "n": r.n, "winners": r.winners,
+            "avg_prob": round(float(r.avg_prob), 4),
+            "sum_prob": round(float(r.sum_prob), 4),
+            "sum_sq_err": round(float(r.sum_sq_err), 4),
+            "ci_lower": round(ci_lo, 4),
+            "ci_upper": round(ci_hi, 4),
+        })
+
+    # Aggregate buckets for MCE bootstrap CI
+    agg: dict[int, dict] = {}
+    for b in bucket_dicts:
+        idx = b["bucket_idx"]
+        if idx not in agg:
+            agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        agg[idx]["n"] += b["n"]
+        agg[idx]["winners"] += b["winners"]
+        agg[idx]["sum_prob"] += b["sum_prob"]
+    agg_list = [
+        {"n": v["n"], "winners": v["winners"], "avg_prob": v["sum_prob"] / v["n"]}
+        for v in agg.values()
+        if v["n"] > 0
+    ]
+    mce_ci_lo, mce_ci_hi = bootstrap_mce_ci(agg_list)
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
             "needs_closing": closing_row.needs_closing,
             "total": closing_row.total_completed,
         },
-        "buckets": [
-            {
-                "bucket_idx": r.bucket_idx, "source": r.source, "category": r.category,
-                "price_moved": getattr(r, "price_moved", None),
-                "n": r.n, "winners": r.winners,
-                "avg_prob": round(float(r.avg_prob), 4),
-                "sum_prob": round(float(r.sum_prob), 4),
-                "sum_sq_err": round(float(r.sum_sq_err), 4),
-            }
-            for r in all_rows
-        ],
+        "buckets": bucket_dicts,
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,
+        "mce_ci_lower": round(mce_ci_lo * 100, 2),
+        "mce_ci_upper": round(mce_ci_hi * 100, 2),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

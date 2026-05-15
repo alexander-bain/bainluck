@@ -1,7 +1,10 @@
 """Tests for the game-markets endpoint helpers."""
 
 import pytest
-from app.routes.events import _classify_game_market, _extract_threshold, _estimate_game_pace, _PLAYER_OUTCOME_RE
+from app.routes.events import (
+    _classify_game_market, _extract_threshold, _estimate_game_pace,
+    _PLAYER_OUTCOME_RE, _extract_period_from_ticker, _extract_period_from_name,
+)
 
 
 class TestClassifyGameMarket:
@@ -187,3 +190,92 @@ class TestPlayerOutcomeRegex:
     def test_yes_no_not_player(self):
         assert not _PLAYER_OUTCOME_RE.match("Yes")
         assert not _PLAYER_OUTCOME_RE.match("No")
+
+
+class TestExtractPeriodFromTicker:
+    """Period extraction from Kalshi ticker prefixes."""
+
+    def test_nba_1h_total(self):
+        assert _extract_period_from_ticker("KXNBA1HTOTAL-26MAY15BOSNYQ") == "1H"
+
+    def test_nba_2h_total(self):
+        assert _extract_period_from_ticker("KXNBA2HTOTAL-26MAY15BOSNYQ") == "2H"
+
+    def test_nba_2h_spread(self):
+        assert _extract_period_from_ticker("KXNBA2HSPREAD-26MAY15BOSNYQ") == "2H"
+
+    def test_nba_2h_winner(self):
+        assert _extract_period_from_ticker("KXNBA2HWINNER-26MAY15BOSNYQ") == "2H"
+
+    def test_nba_1h_spread(self):
+        assert _extract_period_from_ticker("KXNBA1HSPREAD-26MAY15BOSNYQ") == "1H"
+
+    def test_nfl_2h_spread(self):
+        assert _extract_period_from_ticker("KXNFL2HSPREAD-26FEB09KCEPHI") == "2H"
+
+    def test_nba_1q(self):
+        assert _extract_period_from_ticker("KXNBA1QTOTAL-26MAY15BOSNYQ") == "1Q"
+
+    def test_nba_3q(self):
+        assert _extract_period_from_ticker("KXNBA3QTOTAL-26MAY15BOSNYQ") == "3Q"
+
+    def test_nba_4q(self):
+        assert _extract_period_from_ticker("KXNBA4QSPREAD-26MAY15BOSNYQ") == "4Q"
+
+    def test_mlb_1h(self):
+        assert _extract_period_from_ticker("KXMLB1HTOTAL-26MAY15NYYLAAD") == "1H"
+
+    def test_mlb_2h(self):
+        assert _extract_period_from_ticker("KXMLB2HTOTAL-26MAY15NYYLAAD") == "2H"
+
+    def test_nhl_2h(self):
+        assert _extract_period_from_ticker("KXNHL2HSPREAD-26MAY15NYRCAR") == "2H"
+
+    def test_full_game_returns_none(self):
+        assert _extract_period_from_ticker("KXNBAGAME-26MAY15BOSNYQ") is None
+
+    def test_full_game_total_returns_none(self):
+        assert _extract_period_from_ticker("KXNBATOTAL-26MAY15BOSNYQ") is None
+
+    def test_none_input(self):
+        assert _extract_period_from_ticker(None) is None
+
+    def test_empty_input(self):
+        assert _extract_period_from_ticker("") is None
+
+
+class TestExtractPeriodFromName:
+    """Period extraction from market/outcome name text (fallback)."""
+
+    def test_1st_half_total(self):
+        assert _extract_period_from_name("1st Half Total: Celtics at Knicks", "Over 103.5") == "1H"
+
+    def test_2nd_half_total(self):
+        assert _extract_period_from_name("2nd Half Total: Celtics at Knicks", "Over 103.5") == "2H"
+
+    def test_first_half(self):
+        assert _extract_period_from_name("First Half Spread", "") == "1H"
+
+    def test_second_half(self):
+        assert _extract_period_from_name("Second Half Spread", "") == "2H"
+
+    def test_1h_shorthand(self):
+        assert _extract_period_from_name("1H Total", "") == "1H"
+
+    def test_2h_shorthand(self):
+        assert _extract_period_from_name("2H Total", "") == "2H"
+
+    def test_first_5_innings(self):
+        assert _extract_period_from_name("First 5 Innings", "") == "1H"
+
+    def test_generic_matchup_returns_none(self):
+        assert _extract_period_from_name("Celtics at Knicks", "Over 103.5") is None
+
+    def test_1st_quarter(self):
+        assert _extract_period_from_name("1st Quarter Total", "") == "1Q"
+
+    def test_3rd_quarter(self):
+        assert _extract_period_from_name("3rd Quarter Spread", "") == "3Q"
+
+    def test_outcome_has_period(self):
+        assert _extract_period_from_name("Celtics at Knicks", "1st Half Over 55.5") == "1H"

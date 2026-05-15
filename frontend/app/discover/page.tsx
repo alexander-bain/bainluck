@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
+import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import {
@@ -342,13 +343,14 @@ function ChallengeModal({
               <p className="mt-2 text-sm text-text-secondary">
                 Your predictions are counted. Come back tomorrow for a fresh set.
               </p>
-              <button
+              <Button
                 type="button"
                 onClick={onClose}
-                className="mt-5 w-full rounded-xl bg-text-primary py-3 text-sm font-bold text-white hover:bg-text-primary transition-colors"
+                size="lg"
+                className="mt-5 w-full rounded-xl"
               >
                 Back to Discover
-              </button>
+              </Button>
             </div>
           ) : currentItem ? (
             <GuessCard
@@ -362,13 +364,14 @@ function ChallengeModal({
             <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
               <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
               <p className="mt-2 text-sm text-text-secondary">Check back after the feed refreshes.</p>
-              <button
+              <Button
                 type="button"
                 onClick={onClose}
-                className="mt-5 w-full rounded-xl bg-text-primary py-3 text-sm font-bold text-white hover:bg-text-primary transition-colors"
+                size="lg"
+                className="mt-5 w-full rounded-xl"
               >
                 Back to Discover
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -676,7 +679,7 @@ export default function DiscoverPage() {
             </p>
             <p className="text-sm mt-1">
               {categoryFilter !== "all"
-                ? <button onClick={() => setCategoryFilter("all")} className="text-blue-600 hover:underline">Show all markets</button>
+                ? <Button variant="text" onClick={() => setCategoryFilter("all")}>Show all markets</Button>
                 : "Check back later for new markets"}
             </p>
           </div>
@@ -820,12 +823,13 @@ function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: strin
           ))}
         </div>
 
-        <button
+        <Button
           onClick={() => onComplete([...selected])}
-          className="w-full py-3 rounded-xl bg-text-primary text-white font-bold text-sm hover:bg-text-primary transition-colors"
+          size="lg"
+          className="w-full rounded-xl"
         >
           {selected.size === 0 ? "Show me everything" : `Start with ${selected.size} topic${selected.size > 1 ? "s" : ""}`}
-        </button>
+        </Button>
       </div>
     </div>
   );

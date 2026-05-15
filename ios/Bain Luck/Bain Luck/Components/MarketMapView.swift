@@ -250,8 +250,8 @@ struct MarketMapView: View {
         let halfSpreads = periodMarkets.filter { isSpreadMarket($0) } +
             spreads.filter { !isFullGameSpread($0.marketName) }
 
-        let h1 = halfSpreads.filter { isFirstHalf($0.outcomeName) || isFirstHalf($0.marketName) }
-        let h2 = halfSpreads.filter { isSecondHalf($0.outcomeName) || isSecondHalf($0.marketName) }
+        let h1 = halfSpreads.filter { derivePeriod($0) == "1H" }
+        let h2 = halfSpreads.filter { derivePeriod($0) == "2H" }
         if !h1.isEmpty { halfMarginCard(outcomes: h1, label: "1st half margin") }
         if !h2.isEmpty { halfMarginCard(outcomes: h2, label: "2nd half margin") }
     }
@@ -263,8 +263,8 @@ struct MarketMapView: View {
         let halfTotals = periodMarkets.filter { isTotalMarket($0) } +
             totals.filter { $0.outcomeName.contains(":") }
 
-        let h1 = halfTotals.filter { isFirstHalf($0.outcomeName) || isFirstHalf($0.marketName) }
-        let h2 = halfTotals.filter { isSecondHalf($0.outcomeName) || isSecondHalf($0.marketName) }
+        let h1 = halfTotals.filter { derivePeriod($0) == "1H" }
+        let h2 = halfTotals.filter { derivePeriod($0) == "2H" }
         if !h1.isEmpty { halfTotalCard(outcomes: h1, label: "1st half total map") }
         if !h2.isEmpty { halfTotalCard(outcomes: h2, label: "2nd half total map") }
     }
@@ -523,6 +523,16 @@ struct MarketMapView: View {
         guard !parsed.isEmpty else { return nil }
         let closest = parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!
         return closest.isHome ? closest.margin : closest.margin
+    }
+
+    /// Derive the period label for a market outcome.
+    /// Uses backend-supplied ``period`` field (derived from ticker prefix);
+    /// falls back to text-based detection in outcome/market names.
+    private func derivePeriod(_ o: GameMarketOutcome) -> String? {
+        if let p = o.period, !p.isEmpty { return p }
+        if isFirstHalf(o.outcomeName) || isFirstHalf(o.marketName) { return "1H" }
+        if isSecondHalf(o.outcomeName) || isSecondHalf(o.marketName) { return "2H" }
+        return nil
     }
 
     private func isFirstHalf(_ s: String) -> Bool {

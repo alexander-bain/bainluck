@@ -638,7 +638,7 @@ export default function PlayoffGridPage({
   if (!league) {
     return (
       <main className="min-h-screen">
-        <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="max-w-7xl mx-auto px-4 py-8">
           <h1 className="text-2xl font-bold text-text-primary mb-4">
             League Not Found
           </h1>
@@ -653,7 +653,7 @@ export default function PlayoffGridPage({
 
   return (
     <main className="min-h-screen">
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-1">

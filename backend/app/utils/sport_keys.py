@@ -358,6 +358,12 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # NHL game-level props
     "kxnhlspread": "icehockey_nhl",                  # Game spread (puck line)
     "kxnhltotal": "icehockey_nhl",                   # Game goal total
+    "kxnhl1hwinner": "icehockey_nhl",                # 1st half winner
+    "kxnhl1hspread": "icehockey_nhl",                # 1st half spread
+    "kxnhl1htotal": "icehockey_nhl",                 # 1st half total
+    "kxnhl2hwinner": "icehockey_nhl",                # 2nd half winner
+    "kxnhl2hspread": "icehockey_nhl",                # 2nd half spread
+    "kxnhl2htotal": "icehockey_nhl",                 # 2nd half total
     "kxnhlanygoal": "icehockey_nhl",                 # Anytime goal scorer
     "kxnhlgoal": "icehockey_nhl",                    # Goal scorer props
     "kxnhlfirstgoal": "icehockey_nhl",               # First goal scorer
@@ -369,6 +375,12 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxmlbspread": "baseball_mlb",                   # Game spread (run line)
     "kxmlbtotal": "baseball_mlb",                    # Game total runs
     "kxmlbteamtotal": "baseball_mlb",                # Team total runs
+    "kxmlb1hwinner": "baseball_mlb",                 # 1st half winner
+    "kxmlb1hspread": "baseball_mlb",                 # 1st half spread
+    "kxmlb1htotal": "baseball_mlb",                  # 1st half total
+    "kxmlb2hwinner": "baseball_mlb",                 # 2nd half winner
+    "kxmlb2hspread": "baseball_mlb",                 # 2nd half spread
+    "kxmlb2htotal": "baseball_mlb",                  # 2nd half total
     "kxmlbf5": "baseball_mlb",                       # First 5 innings winner
     "kxmlbf5spread": "baseball_mlb",                 # First 5 innings spread
     "kxmlbf5total": "baseball_mlb",                  # First 5 innings total
@@ -386,6 +398,9 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxncaamb1hwinner": "basketball_ncaab",   # 1st half winner
     "kxncaamb1hspread": "basketball_ncaab",   # 1st half spread
     "kxncaamb1htotal": "basketball_ncaab",    # 1st half total
+    "kxncaamb2hwinner": "basketball_ncaab",   # 2nd half winner
+    "kxncaamb2hspread": "basketball_ncaab",   # 2nd half spread
+    "kxncaamb2htotal": "basketball_ncaab",    # 2nd half total
     "kxncaambspread": "basketball_ncaab",     # Game spread
     "kxncaambtotal": "basketball_ncaab",      # Game total
     "kxncaamb2ml": "basketball_ncaab",        # 2-game moneyline combo
@@ -398,6 +413,11 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # College football
     "kxncaafgame": "americanfootball_ncaaf",
     "kxncaaf1hwinner": "americanfootball_ncaaf",  # 1st half winner
+    "kxncaaf1hspread": "americanfootball_ncaaf",  # 1st half spread
+    "kxncaaf1htotal": "americanfootball_ncaaf",   # 1st half total
+    "kxncaaf2hwinner": "americanfootball_ncaaf",  # 2nd half winner
+    "kxncaaf2hspread": "americanfootball_ncaaf",  # 2nd half spread
+    "kxncaaf2htotal": "americanfootball_ncaaf",   # 2nd half total
     "kxncaafspread": "americanfootball_ncaaf",    # Game spread
     "kxncaaftotal": "americanfootball_ncaaf",     # Game total
     "kxncaafteamtotal": "americanfootball_ncaaf", # Team total
@@ -1081,6 +1101,12 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     # NHL game-level
     "kxnhlspread": "NHL",
     "kxnhltotal": "NHL",
+    "kxnhl1hwinner": "NHL",
+    "kxnhl1hspread": "NHL",
+    "kxnhl1htotal": "NHL",
+    "kxnhl2hwinner": "NHL",
+    "kxnhl2hspread": "NHL",
+    "kxnhl2htotal": "NHL",
     "kxnhlanygoal": "NHL",
     "kxnhlgoal": "NHL",
     "kxnhlfirstgoal": "NHL",
@@ -1091,6 +1117,12 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxmlbspread": "MLB",
     "kxmlbtotal": "MLB",
     "kxmlbteamtotal": "MLB",
+    "kxmlb1hwinner": "MLB",
+    "kxmlb1hspread": "MLB",
+    "kxmlb1htotal": "MLB",
+    "kxmlb2hwinner": "MLB",
+    "kxmlb2hspread": "MLB",
+    "kxmlb2htotal": "MLB",
     "kxmlbf5": "MLB",
     "kxmlbf5spread": "MLB",
     "kxmlbf5total": "MLB",
@@ -1107,6 +1139,9 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxncaamb1hwinner": "NCAAB",
     "kxncaamb1hspread": "NCAAB",
     "kxncaamb1htotal": "NCAAB",
+    "kxncaamb2hwinner": "NCAAB",
+    "kxncaamb2hspread": "NCAAB",
+    "kxncaamb2htotal": "NCAAB",
     "kxncaambspread": "NCAAB",
     "kxncaambtotal": "NCAAB",
     "kxncaamb2ml": "NCAAB",
@@ -1119,6 +1154,11 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     # College football
     "kxncaafgame": "NCAAF",
     "kxncaaf1hwinner": "NCAAF",
+    "kxncaaf1hspread": "NCAAF",
+    "kxncaaf1htotal": "NCAAF",
+    "kxncaaf2hwinner": "NCAAF",
+    "kxncaaf2hspread": "NCAAF",
+    "kxncaaf2htotal": "NCAAF",
     "kxncaafspread": "NCAAF",
     "kxncaaftotal": "NCAAF",
     "kxncaafteamtotal": "NCAAF",

@@ -30,6 +30,9 @@ PyJWT>=2.8.0
 # Google Sheets API (ground truth enrichment)
 google-api-python-client>=2.100.0
 
+# Logging
+python-json-logger>=2.0.0
+
 # Utilities
 python-dateutil>=2.8.2
 

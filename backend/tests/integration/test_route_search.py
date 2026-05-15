@@ -183,3 +183,130 @@ class TestTrendingEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert "error" not in body
+
+
+# ============================================================================
+# Search Suggestions — GET /api/events/search-suggestions
+# ============================================================================
+
+
+class TestSearchSuggestionsEndpoint:
+    """GET /api/events/search-suggestions — smart zero-state suggestions."""
+
+    async def test_returns_200(self, client):
+        resp = await client.get("/api/events/search-suggestions")
+        assert resp.status_code == 200
+
+    async def test_response_has_suggestions_key(self, client):
+        """Response has a 'suggestions' key containing a list."""
+        resp = await client.get("/api/events/search-suggestions")
+        body = resp.json()
+        assert "suggestions" in body
+        assert isinstance(body["suggestions"], list)
+
+    async def test_at_most_8_suggestions(self, client):
+        resp = await client.get("/api/events/search-suggestions")
+        body = resp.json()
+        assert len(body["suggestions"]) <= 8
+
+    async def test_suggestion_item_shape_if_present(self, client):
+        resp = await client.get("/api/events/search-suggestions")
+        body = resp.json()
+        for item in body["suggestions"]:
+            assert "query" in item, "Suggestion missing 'query'"
+            assert "label" in item, "Suggestion missing 'label'"
+            assert "type" in item, "Suggestion missing 'type'"
+            assert isinstance(item["query"], str)
+            assert isinstance(item["label"], str)
+            assert isinstance(item["type"], str)
+
+    async def test_suggestion_types_are_valid(self, client):
+        resp = await client.get("/api/events/search-suggestions")
+        body = resp.json()
+        valid_types = {"event", "futures", "team", "trending"}
+        for item in body["suggestions"]:
+            assert item["type"] in valid_types, (
+                f"Unknown suggestion type: {item['type']}"
+            )
+
+
+# ============================================================================
+# Search — Individual Sport Filtering
+# ============================================================================
+
+
+class TestSearchIndividualSportFiltering:
+    """Verify individual-sport teams (tennis, golf) are filtered from search team results.
+
+    With an empty mock DB there are no teams returned, but we can verify the
+    endpoint runs without error when querying sport terms that would match
+    individual-sport athletes on a real database.
+    """
+
+    async def test_golf_query_returns_200(self, client):
+        resp = await client.get("/api/events/search?q=golf")
+        assert resp.status_code == 200
+
+    async def test_tennis_query_returns_200(self, client):
+        resp = await client.get("/api/events/search?q=tennis")
+        assert resp.status_code == 200
+
+    async def test_golf_teams_not_in_results(self, client):
+        """In empty DB, teams should be empty. This documents the contract:
+        individual-sport players should never appear in the teams array."""
+        resp = await client.get("/api/events/search?q=djokovic")
+        body = resp.json()
+        assert isinstance(body["teams"], list)
+        # No individual-sport teams should appear
+        for team in body["teams"]:
+            sport_key = team.get("sport_key", "")
+            assert "tennis" not in (sport_key or ""), (
+                f"Individual sport team leaked: {team['name']} ({sport_key})"
+            )
+            assert "golf" not in (sport_key or ""), (
+                f"Individual sport team leaked: {team['name']} ({sport_key})"
+            )
+
+    async def test_typeahead_golf_query_returns_200(self, client):
+        resp = await client.get("/api/events/typeahead?q=golf")
+        assert resp.status_code == 200
+
+    async def test_typeahead_tennis_query_returns_200(self, client):
+        resp = await client.get("/api/events/typeahead?q=tennis")
+        assert resp.status_code == 200
+
+    async def test_typeahead_no_individual_sport_teams(self, client):
+        """Typeahead suggestions should never include individual-sport teams."""
+        resp = await client.get("/api/events/typeahead?q=nadal")
+        body = resp.json()
+        for suggestion in body["suggestions"]:
+            if suggestion["type"] == "team":
+                sport_key = suggestion.get("sport_key", "")
+                assert "tennis" not in (sport_key or ""), (
+                    f"Individual sport in typeahead: {suggestion['text']}"
+                )
+
+
+# ============================================================================
+# Multi-Word Search
+# ============================================================================
+
+
+class TestSearchMultiWord:
+    """Multi-word search queries like 'USA Canada' should be accepted."""
+
+    async def test_multi_word_search_returns_200(self, client):
+        resp = await client.get("/api/events/search?q=USA Canada")
+        assert resp.status_code == 200
+
+    async def test_multi_word_typeahead_returns_200(self, client):
+        resp = await client.get("/api/events/typeahead?q=USA Canada")
+        assert resp.status_code == 200
+
+    async def test_multi_word_search_has_standard_shape(self, client):
+        resp = await client.get("/api/events/search?q=Lakers Celtics")
+        body = resp.json()
+        assert "results" in body
+        assert "futures" in body
+        assert "teams" in body
+        assert "pagination" in body

@@ -11008,6 +11008,16 @@ async def calibration_data(
     }
 
 
+@router.post("/celery-purge-background")
+async def celery_purge_background(secret: str = Query(...)):
+    """Purge stale tasks from the background queue."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks import celery_app
+    purged = celery_app.control.purge()
+    return {"purged": purged}
+
+
 @router.get("/celery-debug")
 async def celery_debug(secret: str = Query(...)):
     """Inspect Celery worker status and queue lengths."""

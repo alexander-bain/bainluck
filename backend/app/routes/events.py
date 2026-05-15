@@ -2708,6 +2708,55 @@ def _classify_from_ticker(external_id: str) -> str:
     return "other"
 
 
+# Ticker-prefix → period label.  Built once at import time alongside
+# _TICKER_PERIOD_MAP so _extract_period_from_ticker is a cheap dict lookup.
+_TICKER_PERIOD_LABEL: dict[str, str] = {}
+for _league2 in ("nba", "nfl", "nhl", "mlb", "wnba", "mls", "ncaab", "ncaaf"):
+    for _h2 in ("1h", "2h"):
+        for _kind in ("total", "spread", "winner"):
+            _TICKER_PERIOD_LABEL[f"kx{_league2}{_h2}{_kind}"] = _h2.upper()
+    for _q2 in ("1q", "2q", "3q", "4q"):
+        for _kind in ("total", "spread", "winner"):
+            _TICKER_PERIOD_LABEL[f"kx{_league2}{_q2}{_kind}"] = _q2.upper()
+
+
+def _extract_period_from_ticker(external_id: Optional[str]) -> Optional[str]:
+    """Return the period label ("1H", "2H", "1Q"–"4Q") from a Kalshi ticker.
+
+    Returns ``None`` when the ticker is absent or doesn't encode a period.
+    """
+    if not external_id:
+        return None
+    ticker_lower = external_id.lower()
+    for prefix, label in _TICKER_PERIOD_LABEL.items():
+        if ticker_lower.startswith(prefix):
+            return label
+    return None
+
+
+def _extract_period_from_name(market_name: str, outcome_name: str) -> Optional[str]:
+    """Derive period label from market or outcome name text.
+
+    Fallback for non-Kalshi markets (e.g., Polymarket) where there is no
+    ticker prefix.  Returns ``None`` when no period is detected.
+    """
+    text = f"{outcome_name} {market_name}".lower()
+    if "1st half" in text or "first half" in text or "first 5" in text:
+        return "1H"
+    # Check for "1h" carefully – avoid false-positives on words like "1hr"
+    if re.search(r'\b1h\b', text):
+        return "1H"
+    if "2nd half" in text or "second half" in text:
+        return "2H"
+    if re.search(r'\b2h\b', text):
+        return "2H"
+    for q_label, q_pattern in [("1Q", "1st quarter"), ("2Q", "2nd quarter"),
+                                ("3Q", "3rd quarter"), ("4Q", "4th quarter")]:
+        if q_pattern in text or re.search(rf'\b{q_label.lower()}\b', text):
+            return q_label
+    return None
+
+
 def _extract_threshold(outcome_name: str) -> Optional[float]:
     """Extract the numeric threshold from an outcome name like 'Over 224.5'."""
     m = _THRESHOLD_RE.search(outcome_name)
@@ -3001,6 +3050,14 @@ async def get_game_markets(
 
         market_type = _classify_game_market(market.name, external_id=market.external_id)
 
+        # Determine period label ("1H", "2H", "1Q"–"4Q") for period markets.
+        # Ticker is authoritative; fall back to name-based detection.
+        market_period: Optional[str] = None
+        if market_type.startswith("half_") or market_type.startswith("quarter_"):
+            market_period = _extract_period_from_ticker(market.external_id)
+            if market_period is None:
+                market_period = _extract_period_from_name(market.name, "")
+
         if market_type in ("game_total", "half_total", "quarter_total", "team_total"):
             # Extract thresholds with probabilities
             for o in market_outcomes:
@@ -3050,6 +3107,7 @@ async def get_game_markets(
                     "outcome_name": o.name,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
+                    "period": market_period,
                     "_market_id": market.id,
                     "_external_id": market.external_id,
                 })
@@ -3111,6 +3169,7 @@ async def get_game_markets(
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     "market_type": market_type,
+                    "period": market_period,
                 })
 
         else:

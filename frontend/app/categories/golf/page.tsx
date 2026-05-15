@@ -292,7 +292,7 @@ export default function GolfPage() {
       {/* Hero */}
       <div className="relative overflow-hidden bg-gradient-to-b from-[#002e1f] via-surface-deep to-surface-deep">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(0,103,71,0.12)_0%,_transparent_70%)]" />
-        <div className="relative max-w-4xl mx-auto px-4 pt-8 pb-6 text-center">
+        <div className="relative max-w-6xl mx-auto px-4 pt-8 pb-6 text-center">
           <Link
             href="/"
             className="text-sm text-text-secondary hover:text-text-primary transition-colors mb-4 inline-block"
@@ -332,7 +332,7 @@ export default function GolfPage() {
       </div>
 
       {/* Content */}
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-10">
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-10">
         {loading && (
           <div className="text-center py-16">
             <div className="animate-pulse space-y-6 max-w-md mx-auto">

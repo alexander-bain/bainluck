@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
+import { Button } from "@/components/ui/button";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 const SESSION_KEY = "bainluck_session_id";
@@ -334,15 +335,16 @@ export default function ChallengePage({ params }: ChallengePageProps) {
               </div>
 
               {!isAccepted ? (
-                <button
+                <Button
                   type="button"
                   onClick={acceptChallenge}
                   disabled={!selectedGuess || submitting}
-                  className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-bold text-white transition hover:bg-text-secondary disabled:cursor-not-allowed disabled:bg-text-muted"
+                  size="lg"
+                  className="mt-4 w-full"
                 >
                   {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                   Lock Pick
-                </button>
+                </Button>
               ) : (
                 <div className="mt-4 rounded-lg border border-accent-live/30 bg-accent-live/10 p-3 text-sm font-semibold text-text-primary">
                   Your pick is locked: {guessLabel(challenge.friend_guess!)}
