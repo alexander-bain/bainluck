@@ -23,28 +23,26 @@ logger = logging.getLogger(__name__)
 
 
 async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
-    """Fetch settled Kalshi events and set is_winner on matching outcomes.
+    """Fetch settled Kalshi events by ticker and set is_winner from settlement data.
 
-    Args:
-        limit: Max events to process per run (pagination safety).
-        dry_run: If True, log what would change without writing.
+    Uses targeted GET /events/{ticker} lookups instead of paginating all settled
+    events. Much more efficient — O(markets needing backfill) not O(all settled).
     """
+    import asyncio
     from app.services.kalshi_api import KalshiAPIService
     from app.models import FuturesMarket, FuturesOutcome
 
     stats = {
-        "events_fetched": 0, "events_processed": 0,
-        "winners_set": 0, "losers_set": 0, "already_set": 0,
-        "not_found": 0, "no_result": 0, "errors": [],
-        "sample_not_found": [],
+        "tickers_queried": 0, "events_found": 0,
+        "winners_set": 0, "losers_set": 0,
+        "not_found": 0, "no_result": 0, "api_miss": 0,
+        "errors": [],
     }
 
-    # First: find which Kalshi markets still need is_winner backfilled.
-    # A market needs backfill if it's resolved AND no outcome has is_winner=true.
     async with get_task_session() as session:
         needs_backfill = await session.execute(
             text("""
-                SELECT fm.external_id
+                SELECT DISTINCT fm.external_id
                 FROM futures_markets fm
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
@@ -56,50 +54,31 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
             """),
             {"limit": limit},
         )
-        tickers_needing_backfill = {r[0] for r in needs_backfill.all()}
+        tickers = [r[0] for r in needs_backfill.all()]
 
-    if not tickers_needing_backfill:
-        logger.info("Kalshi winner backfill: no markets need backfill")
-        stats["already_set"] = -1  # sentinel: everything already done
+    if not tickers:
+        logger.info("Kalshi winner backfill: nothing to do")
         return stats
 
-    logger.info("Kalshi winner backfill: %d markets need backfill", len(tickers_needing_backfill))
+    logger.info("Kalshi winner backfill: %d tickers to look up", len(tickers))
 
     service = KalshiAPIService()
     try:
-        cursor = None
-        events_remaining = limit
+        batch_size = 50
+        for batch_start in range(0, len(tickers), batch_size):
+            batch = tickers[batch_start:batch_start + batch_size]
 
-        while events_remaining > 0:
-            batch_size = min(200, events_remaining)
-            try:
-                events, cursor = await service.get_events(
-                    status="settled", with_nested_markets=True,
-                    limit=batch_size, cursor=cursor,
-                )
-            except Exception as e:
-                stats["errors"].append(f"API fetch error: {e}")
-                logger.error("Kalshi API fetch failed: %s", e)
-                break
-
-            if not events:
-                break
-
-            stats["events_fetched"] += len(events)
-            events_remaining -= len(events)
-
-            # Process this batch
             async with get_task_session() as session:
-                for event_data in events:
-                    event_ticker = event_data.get("event_ticker", "")
+                for event_ticker in batch:
+                    stats["tickers_queried"] += 1
+                    event_data = await service.get_event(event_ticker)
 
-                    # Skip events we don't need to backfill
-                    if event_ticker not in tickers_needing_backfill:
-                        stats["already_set"] += 1
+                    if not event_data:
+                        stats["api_miss"] += 1
                         continue
 
+                    stats["events_found"] += 1
                     nested = event_data.get("markets") or []
-                    stats["events_processed"] += 1
 
                     for market_data in nested:
                         ticker = market_data.get("ticker", "")
@@ -113,34 +92,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
 
                         is_winner = result == "yes"
 
-                        if dry_run:
-                            # Just check if we'd find a match
-                            match = await session.execute(
-                                select(func.count()).select_from(FuturesOutcome).where(
-                                    FuturesOutcome.external_id == ticker,
-                                    FuturesOutcome.market_id.in_(
-                                        select(FuturesMarket.id).where(
-                                            FuturesMarket.source == "kalshi",
-                                            FuturesMarket.external_id == event_ticker,
-                                        )
-                                    ),
-                                )
-                            )
-                            count = match.scalar()
-                            if count > 0:
-                                if is_winner:
-                                    stats["winners_set"] += count
-                                else:
-                                    stats["losers_set"] += count
-                            else:
-                                stats["not_found"] += 1
-                                if len(stats["sample_not_found"]) < 20:
-                                    stats["sample_not_found"].append({
-                                        "event": event_ticker,
-                                        "ticker": ticker,
-                                        "result": result,
-                                    })
-                        else:
+                        if not dry_run:
                             updated = await session.execute(
                                 update(FuturesOutcome)
                                 .where(
@@ -161,55 +113,30 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                     stats["losers_set"] += updated.rowcount
                             else:
                                 stats["not_found"] += 1
-                                if len(stats["sample_not_found"]) < 20:
-                                    stats["sample_not_found"].append({
-                                        "event": event_ticker,
-                                        "ticker": ticker,
-                                        "result": result,
-                                    })
 
-                    # Mark resolved
-                    if not dry_run:
-                        await session.execute(
-                            update(FuturesMarket)
-                            .where(
-                                FuturesMarket.source == "kalshi",
-                                FuturesMarket.external_id == event_ticker,
-                                FuturesMarket.status != "resolved",
-                            )
-                            .values(status="resolved")
-                        )
-
-                # Commit per batch (not per event, not all at once)
                 if not dry_run:
                     await session.commit()
 
             logger.info(
-                "Kalshi backfill batch: fetched %d, processed %d so far",
-                len(events), stats["events_processed"],
+                "Kalshi backfill: %d/%d tickers, %d found, %d winners, %d losers",
+                min(batch_start + batch_size, len(tickers)), len(tickers),
+                stats["events_found"], stats["winners_set"], stats["losers_set"],
             )
-
-            if not cursor:
-                break
+            await asyncio.sleep(0.2)
 
     except Exception as e:
-        stats["errors"].append(f"Top-level: {str(e)}")
-        logger.error("Kalshi winner backfill top-level error: %s", e)
+        stats["errors"].append(str(e))
+        logger.error("Kalshi winner backfill error: %s", e)
     finally:
         await service.close()
 
-    mode = "DRY RUN" if dry_run else "LIVE"
     logger.info(
-        "Kalshi winner backfill [%s]: %d fetched, %d processed, %d winners, "
-        "%d losers, %d not_found, %d no_result, %d already_set, %d errors",
-        mode, stats["events_fetched"], stats["events_processed"],
+        "Kalshi winner backfill: %d queried, %d found, %d api_miss, "
+        "%d winners, %d losers, %d not_found, %d errors",
+        stats["tickers_queried"], stats["events_found"], stats["api_miss"],
         stats["winners_set"], stats["losers_set"],
-        stats["not_found"], stats["no_result"],
-        stats["already_set"], len(stats["errors"]),
+        stats["not_found"], len(stats["errors"]),
     )
-    if stats["sample_not_found"]:
-        logger.info("Sample not-found tickers: %s", stats["sample_not_found"][:5])
-
     return stats
 
 
@@ -271,13 +198,22 @@ async def _backfill_polymarket_winners():
 async def _backfill_from_current_probability():
     """Set is_winner from current_probability for ALL sources.
 
-    For cleanly-resolved markets (all outcomes at 0 or 1), current_probability
-    IS the settlement price. Works for Kalshi, Polymarket, DataGolf, odds_api.
+    Three passes:
+    1. Clean resolution: all outcomes at >=0.95 or <=0.05 (existing logic)
+    2. Mutually-exclusive markets: probability sum near 1.0, max-prob outcome wins
+    3. Independent thresholds: probability sum >> 1.0, each outcome > 0.50 wins
     """
-    stats = {"winners_set": 0, "losers_set": 0, "errors": []}
+    stats = {
+        "clean_winners": 0, "clean_losers": 0,
+        "mutex_winners": 0, "mutex_losers": 0,
+        "threshold_winners": 0, "threshold_losers": 0,
+        "all_losers_set": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
+            # Pass 1: Clean resolution (all at 0 or 1)
             result = await session.execute(
                 text("""
                     WITH cleanly_resolved AS (
@@ -302,17 +238,122 @@ async def _backfill_from_current_probability():
                 """)
             )
             rows = result.all()
-            stats["winners_set"] = sum(1 for r in rows if r[0])
-            stats["losers_set"] = sum(1 for r in rows if not r[0])
+            stats["clean_winners"] = sum(1 for r in rows if r[0])
+            stats["clean_losers"] = sum(1 for r in rows if not r[0])
+            await session.commit()
+
+            # Pass 2: Mutually-exclusive markets (prob sum 0.5-1.5)
+            # Max-probability outcome is the winner.
+            result2 = await session.execute(
+                text("""
+                    WITH stuck_markets AS (
+                        SELECT fm.id AS market_id,
+                               SUM(fo.current_probability) AS prob_sum,
+                               MAX(fo.current_probability) AS max_prob,
+                               COUNT(*) AS n_outcomes
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND SUM(fo.current_probability) BETWEEN 0.5 AND 1.5
+                           AND MAX(fo.current_probability) > 0.05
+                           AND COUNT(*) >= 2
+                        LIMIT 50000
+                    ),
+                    ranked AS (
+                        SELECT fo.id AS outcome_id, fo.market_id,
+                               fo.current_probability,
+                               sm.max_prob,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY fo.market_id
+                                   ORDER BY fo.current_probability DESC
+                               ) AS rn
+                        FROM futures_outcomes fo
+                        JOIN stuck_markets sm ON sm.market_id = fo.market_id
+                        WHERE fo.current_probability IS NOT NULL
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (r.rn = 1)
+                    FROM ranked r
+                    WHERE fo.id = r.outcome_id
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows2 = result2.all()
+            stats["mutex_winners"] = sum(1 for r in rows2 if r[0])
+            stats["mutex_losers"] = sum(1 for r in rows2 if not r[0])
+            await session.commit()
+
+            # Pass 3: Independent threshold markets (prob sum > 1.5)
+            # Each outcome decided independently: > 0.50 = winner, < 0.50 = loser
+            result3 = await session.execute(
+                text("""
+                    WITH threshold_markets AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND SUM(fo.current_probability) > 1.5
+                           AND COUNT(*) >= 2
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability > 0.50)
+                    FROM threshold_markets tm
+                    WHERE fo.market_id = tm.market_id
+                      AND fo.current_probability IS NOT NULL
+                      AND fo.current_probability != 0.50
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows3 = result3.all()
+            stats["threshold_winners"] = sum(1 for r in rows3 if r[0])
+            stats["threshold_losers"] = sum(1 for r in rows3 if not r[0])
+            await session.commit()
+
+            # Pass 4: All-losers markets — every outcome at <= 0.10
+            # The winning outcome isn't in our DB; mark existing as losers
+            result4 = await session.execute(
+                text("""
+                    WITH all_loser_markets AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND MAX(fo.current_probability) <= 0.10
+                           AND COUNT(*) >= 1
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = false
+                    FROM all_loser_markets al
+                    WHERE fo.market_id = al.market_id
+                    RETURNING 1
+                """)
+            )
+            stats["all_losers_set"] = result4.rowcount
             await session.commit()
 
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Current-probability winner backfill error: %s", e)
 
+    total_w = stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"]
+    total_l = stats["clean_losers"] + stats["mutex_losers"] + stats["threshold_losers"] + stats["all_losers_set"]
     logger.info(
-        "Current-probability winner backfill: %d winners, %d losers, %d errors",
-        stats["winners_set"], stats["losers_set"], len(stats["errors"]),
+        "Current-probability winner backfill: %d winners (clean=%d, mutex=%d, threshold=%d), "
+        "%d losers (clean=%d, mutex=%d, threshold=%d, all_losers=%d), %d errors",
+        total_w, stats["clean_winners"], stats["mutex_winners"], stats["threshold_winners"],
+        total_l, stats["clean_losers"], stats["mutex_losers"], stats["threshold_losers"],
+        stats["all_losers_set"], len(stats["errors"]),
     )
     return stats
 

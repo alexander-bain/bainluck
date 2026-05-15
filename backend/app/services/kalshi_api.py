@@ -126,6 +126,23 @@ class KalshiAPIService(BaseAPIClient):
 
         return events, next_cursor
 
+    async def get_event(
+        self,
+        event_ticker: str,
+        with_nested_markets: bool = True,
+    ) -> Optional[dict]:
+        """Get a single event by ticker."""
+        params = {"with_nested_markets": str(with_nested_markets).lower()}
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/events/{event_ticker}",
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json().get("event")
+        except Exception:
+            return None
+
     async def get_series(
         self,
         category: Optional[str] = None,
