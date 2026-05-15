@@ -24,20 +24,24 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/scripts/audit_event_matching.py`, `Manus/prompts/event_matching_ground_truth.md`
 
-### Kalshi Linking Failure — Soccer, Basketball, Hockey (MOSTLY FIXED)
+### Kalshi Linking Failure — Soccer, Basketball, Hockey (FIXED for current games)
 
-**Problem (discovered May 14):** Kalshi game markets for soccer, basketball, and hockey had low link rates (soccer 18.6%, basketball 44.6%, hockey 68.4%) well below the 93.9% headline.
+**Problem (discovered May 14):** Kalshi game markets for soccer, basketball, and hockey had low link rates well below headline.
 
-**Root causes found & fixed (May 14):**
+**Root causes found & fixed (May 14-15):**
 1. ✅ Zero team abbreviation mappings for soccer/WNBA — added ~130 soccer + 25 WNBA abbreviations
 2. ✅ Soccer game tickers miscategorized as futures — moved to correct map
-3. ✅ Date-only ticker time window too narrow (±18h) — US evening games at 7-11 PM ET = next UTC day, fell outside window. Fixed to asymmetric -6h/+30h
-4. ✅ Unsupported leagues (Ecuadorian, Venezuelan, Dominican soccer, Colombian Dimayor, Chinese CBA, Japanese B.League, Argentine LNB) inflating denominator — added to `_UNSUPPORTED_LEAGUE_PREFIXES`
-5. ✅ `kxdimayorgame` misclassified as esports (was Dota 2 DPC) — corrected to soccer_other
+3. ✅ Date-only ticker time window too narrow (±18h) — fixed to asymmetric -6h/+30h for UTC/US timezone offset
+4. ✅ Unsupported leagues inflating denominator — 7 leagues added to `_UNSUPPORTED_LEAGUE_PREFIXES`
+5. ✅ `kxdimayorgame` misclassified as esports — corrected to soccer_other
+6. ✅ Playoff series wrong-game linkage — Phase 2 unlinks game markets >30h from event (scoped to traditional sports, not esports)
+7. ✅ Pass 1 processing order — sorted by `updated_at DESC` so current games are processed first
+8. ✅ Force-link admin endpoint — `POST /api/admin/prediction-markets/force-link` for manual linking
+9. ✅ Match-trace diagnostic — `GET /api/admin/prediction-markets/match-trace` traces full pipeline
 
-**Remaining work:**
-1. **Verify link rate after matching cycles** — Check that NBA/NHL playoff games link correctly with the wider window
-2. **Audit remaining unlinked EPL/MLS/WNBA markets** — Sample unlinked markets from supported leagues to find any remaining gaps
+**Verified:** Tonight's Game 6 SAS-MIN market linked successfully (score 29.625, guard passed). Tier-1 gaps are all PAST games — current/upcoming games link correctly.
+
+**Remaining:** Tier-1 gaps endpoint denominator should exclude markets for closed games (these are open on Kalshi for settlement but the game has ended).
 
 **Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
