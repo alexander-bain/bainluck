@@ -131,11 +131,11 @@ export default function BookmakerTable({
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
               <div>{shortHomeTeam}</div>
-              {hasAnyProjectedScores && <div className="text-xs font-normal text-gray-400">(proj. score)</div>}
+              {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
               <div>{shortAwayTeam}</div>
-              {hasAnyProjectedScores && <div className="text-xs font-normal text-gray-400">(proj. score)</div>}
+              {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
             <th className="text-right py-3 px-4 font-semibold text-slate">
               Status
@@ -173,7 +173,7 @@ export default function BookmakerTable({
                     {homeProb !== null ? `${(homeProb * 100).toFixed(1)}%` : "-"}
                   </div>
                   {hasProjectedScore && (
-                    <div className="text-xs text-gray-400 mt-0.5" title="Projected score">
+                    <div className="text-xs text-text-muted mt-0.5" title="Projected score">
                       {Math.round(odds.projected_home_score!)}
                     </div>
                   )}
@@ -183,7 +183,7 @@ export default function BookmakerTable({
                     {awayProb !== null ? `${(awayProb * 100).toFixed(1)}%` : "-"}
                   </div>
                   {hasProjectedScore && (
-                    <div className="text-xs text-gray-400 mt-0.5" title="Projected score">
+                    <div className="text-xs text-text-muted mt-0.5" title="Projected score">
                       {Math.round(odds.projected_away_score!)}
                     </div>
                   )}
@@ -201,7 +201,7 @@ export default function BookmakerTable({
                       Open
                     </span>
                   )}
-                  <div className="text-xs text-gray-400 mt-1">
+                  <div className="text-xs text-text-muted mt-1">
                     {odds.captured_at ? formatRelativeTime(odds.captured_at) : "-"}
                   </div>
                 </td>
@@ -225,7 +225,7 @@ export default function BookmakerTable({
                   {(avgHomeProb * 100).toFixed(1)}%
                 </div>
                 {avgProjectedHomeScore !== null && (
-                  <div className="text-xs text-gray-400 font-normal mt-0.5" title="Projected score">
+                  <div className="text-xs text-text-muted font-normal mt-0.5" title="Projected score">
                     {Math.round(avgProjectedHomeScore)}
                   </div>
                 )}
@@ -235,7 +235,7 @@ export default function BookmakerTable({
                   {((1 - avgHomeProb) * 100).toFixed(1)}%
                 </div>
                 {avgProjectedAwayScore !== null && (
-                  <div className="text-xs text-gray-400 font-normal mt-0.5" title="Projected score">
+                  <div className="text-xs text-text-muted font-normal mt-0.5" title="Projected score">
                     {Math.round(avgProjectedAwayScore)}
                   </div>
                 )}

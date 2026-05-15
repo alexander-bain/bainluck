@@ -369,7 +369,7 @@ function H2HMatchupsCard({ matchups }: { matchups: GolfH2HMatchup[] }) {
                     style={{ width: `${aPct}%` }}
                   />
                   <div
-                    className="bg-gray-300"
+                    className="bg-text-muted"
                     style={{ width: `${bPct}%` }}
                   />
                 </div>

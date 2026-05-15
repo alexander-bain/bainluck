@@ -1218,7 +1218,7 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
 function SectionDivider({ level, label, count }: { level: number; label: string; count?: number }) {
   return (
     <div className="flex items-center gap-2 mt-5 mb-3">
-      <span className="text-[9px] font-bold text-white bg-gray-400 px-1.5 py-0.5 rounded text-center min-w-[18px]">
+      <span className="text-[9px] font-bold text-white bg-text-muted px-1.5 py-0.5 rounded text-center min-w-[18px]">
         {level}
       </span>
       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-muted">
@@ -1327,7 +1327,7 @@ function PlayoffPathPair({
                 className="flex items-center gap-1.5 py-1 group"
               >
                 <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${
-                  stage.isDone ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-gray-300"
+                  stage.isDone ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-text-muted"
                 }`} />
                 <span className="text-[11px] text-text-secondary flex-1">{stage.name}</span>
                 <span
@@ -1423,7 +1423,7 @@ function GridPlayoffPathPair({
                 className="flex items-center gap-1.5 py-1"
               >
                 <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${
-                  pct >= 95 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-gray-300"
+                  pct >= 95 ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-text-muted"
                 }`} />
                 <span className="text-[11px] text-text-secondary flex-1">{stage.label}</span>
                 <span
@@ -1452,7 +1452,7 @@ function GridPlayoffPathPair({
               <div key={i} className={`w-1.5 h-1.5 rounded-full ${
                 s.source === "odds_api" ? "bg-emerald-500" :
                 s.source === "kalshi" ? "bg-blue-500" :
-                s.source === "polymarket" ? "bg-amber-500" : "bg-gray-400"
+                s.source === "polymarket" ? "bg-amber-500" : "bg-text-muted"
               }`} />
             ))}
             <span className="text-[8px] text-text-muted ml-0.5">

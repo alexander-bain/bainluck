@@ -1052,7 +1052,7 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Fullscreen Chart Modal */}
       {chartFullscreen && (
-        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+        <div className="fixed inset-0 z-50 bg-surface-card flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>

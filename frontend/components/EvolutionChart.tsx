@@ -203,7 +203,7 @@ export function EvolutionChart({
 
   if (data.length === 0) {
     return (
-      <div className={`flex items-center justify-center h-48 text-gray-400 text-sm ${className || ""}`}>
+      <div className={`flex items-center justify-center h-48 text-text-muted text-sm ${className || ""}`}>
         No history data available
       </div>
     );
@@ -262,8 +262,8 @@ export function EvolutionChart({
                   (a, b) => ((b.value as number) ?? 0) - ((a.value as number) ?? 0)
                 );
               return (
-                <div className="bg-white border border-gray-200 rounded-lg p-3 text-sm shadow-lg">
-                  <div className="text-gray-400 mb-2 text-xs">
+                <div className="bg-surface-card border border-surface-border rounded-lg p-3 text-sm shadow-lg">
+                  <div className="text-text-muted mb-2 text-xs">
                     {(() => {
                       try {
                         return format(parseISO(label as string), "MMM d, h:mm a");
@@ -283,12 +283,12 @@ export function EvolutionChart({
                       >
                         <div
                           className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                          style={{ backgroundColor: info?.color ?? "#9ca3af" }}
+                          style={{ backgroundColor: info?.color ?? "var(--text-muted)" }}
                         />
-                        <span className="text-gray-700 truncate max-w-[140px] text-xs font-medium">
+                        <span className="text-text-secondary truncate max-w-[140px] text-xs font-medium">
                           {info?.name ?? "Unknown"}
                         </span>
-                        <span className="text-gray-900 font-mono text-xs font-semibold ml-auto tabular-nums">
+                        <span className="text-text-primary font-mono text-xs font-semibold ml-auto tabular-nums">
                           {((entry.value as number) * 100).toFixed(1)}%
                         </span>
                       </div>

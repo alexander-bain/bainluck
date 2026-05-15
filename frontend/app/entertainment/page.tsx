@@ -353,7 +353,7 @@ function HeroCardContent({
               fontWeight: 600,
               lineHeight: 1.25,
               letterSpacing: "-0.01em",
-              color: "#111827",
+              color: "var(--text-primary)",
             }}
           >
             {market.q}
@@ -362,7 +362,7 @@ function HeroCardContent({
             <div
               style={{
                 fontSize: isLead ? 13 : 12,
-                color: "#6B7280",
+                color: "var(--text-secondary)",
                 marginTop: 4,
                 lineHeight: 1.4,
               }}
@@ -428,7 +428,7 @@ function CardBodyByKind({
             marginTop: 8,
           }}
         >
-          <div style={{ fontSize: 11, color: "#6B7280" }}>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
             {outcomes[1].name}
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
@@ -513,7 +513,7 @@ function CardBodyByKind({
               alignItems: "center",
             }}
           >
-            <span style={{ fontSize: 12, color: "#6B7280", minWidth: 0 }}>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", minWidth: 0 }}>
               {o.name}
             </span>
             <EntProbBar value={o.prob} height={4} />
@@ -535,7 +535,7 @@ function CardBodyByKind({
       }}
     >
       <ProbPct value={market.prob} size={isLead ? 28 : 20} />
-      <span style={{ fontSize: 11, color: "#9CA3AF" }}>
+      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
         {market.prob >= 50 ? "Yes" : "No"} likely
       </span>
     </div>
@@ -631,7 +631,7 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
                 <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>
                 <CoverTile title={c.name} size={36} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {c.name}
                   </div>
                   <div style={{ marginTop: 5 }}>
@@ -666,7 +666,7 @@ function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>{m.q}</div>
                 {m.hook && (
-                  <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
                     {m.hook}
                   </div>
                 )}
@@ -681,7 +681,7 @@ function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
               />
             ) : (
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12, color: "#6B7280" }}>{m.top_outcomes[0]?.name || "Yes"}</span>
+                <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{m.top_outcomes[0]?.name || "Yes"}</span>
                 <ProbPct value={m.prob} size={20} />
               </div>
             )}
@@ -701,7 +701,7 @@ function StreamingGrid({ markets }: { markets: EntMarketRow[] }) {
       <div style={{ padding: "14px 18px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Streaming & chart markets</div>
-          <div style={{ fontSize: 11, color: "#9CA3AF" }}>Weekly stream predictions</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Weekly stream predictions</div>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
@@ -720,7 +720,7 @@ function StreamingGrid({ markets }: { markets: EntMarketRow[] }) {
                   <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {m.top_outcomes[0]?.name || m.q}
                   </div>
-                  {m.hook && <div style={{ fontSize: 10, color: "#9CA3AF", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.hook}</div>}
+                  {m.hook && <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.hook}</div>}
                 </div>
                 <span className={s.probNum} style={{ fontSize: 13, color: dirColor }}>
                   {direction === "up" ? "↑" : direction === "down" ? "↓" : ""} {Math.round(m.prob)}%
@@ -804,7 +804,7 @@ function BillboardHeatmap({ markets }: { markets: EntMarketRow[] }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {best.top_outcomes.map((o, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "#6B7280", minWidth: 0 }}>{o.name}</span>
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", minWidth: 0 }}>{o.name}</span>
               <EntProbBar value={o.prob} height={4} />
               <ProbPct value={o.prob} size={12} />
             </div>
@@ -903,7 +903,7 @@ function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{m.q}</div>
                   {m.hook && (
-                    <div style={{ fontSize: 11, color: "#9CA3AF" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                       {m.hook}
                     </div>
                   )}
@@ -1002,7 +1002,7 @@ function RealityCards({ markets }: { markets: EntMarketRow[] }) {
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: 12, color: "#111827" }}>
+                        <div style={{ fontSize: 12, color: "var(--text-primary)" }}>
                           {o.name}
                         </div>
                         <EntProbBar value={o.prob} height={4} />
@@ -1076,7 +1076,7 @@ function MomentCard({ market }: { market: EntMarketRow }) {
           />
           {market.resolution_date && (
             <div
-              style={{ marginLeft: "auto", fontSize: 10, color: "#9CA3AF" }}
+              style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)" }}
             >
               Resolves {formatDate(market.resolution_date)}
             </div>
@@ -1089,7 +1089,7 @@ function MomentCard({ market }: { market: EntMarketRow }) {
             lineHeight: 1.3,
             letterSpacing: "-0.01em",
             marginBottom: 4,
-            color: "#111827",
+            color: "var(--text-primary)",
           }}
         >
           {market.q}
@@ -1098,7 +1098,7 @@ function MomentCard({ market }: { market: EntMarketRow }) {
           <div
             style={{
               fontSize: 12,
-              color: "#6B7280",
+              color: "var(--text-secondary)",
               marginBottom: 12,
               lineHeight: 1.45,
             }}
@@ -1120,7 +1120,7 @@ function MomentCard({ market }: { market: EntMarketRow }) {
                   alignItems: "center",
                 }}
               >
-                <span style={{ fontSize: 12, color: "#6B7280" }}>
+                <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                   {o.name}
                 </span>
                 <EntProbBar value={o.prob} height={4} />
@@ -1165,7 +1165,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
           <span
             style={{
               fontSize: 10,
-              color: "#9CA3AF",
+              color: "var(--text-muted)",
               letterSpacing: "0.04em",
               textTransform: "uppercase",
               fontWeight: 600,
@@ -1186,7 +1186,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
               {m.q}
             </div>
             {m.hook && (
-              <div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 8 }}>
                 {m.hook}
               </div>
             )}
@@ -1214,7 +1214,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
                       <div
                         style={{
                           fontSize: 11,
-                          color: "#111827",
+                          color: "var(--text-primary)",
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
@@ -1246,7 +1246,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
 function MarketList({ markets }: { markets: EntMarketRow[] }) {
   if (!markets || markets.length === 0)
     return (
-      <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+      <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
         No markets in this category yet
       </div>
     );
@@ -1262,7 +1262,7 @@ function MarketList({ markets }: { markets: EntMarketRow[] }) {
 function MarketFallback({ markets }: { markets: EntMarketRow[] }) {
   if (!markets || markets.length === 0)
     return (
-      <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+      <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
         No markets in this category yet
       </div>
     );
@@ -1279,7 +1279,7 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
             alignItems: "center",
             gap: 6,
             fontSize: 11,
-            color: "#9CA3AF",
+            color: "var(--text-muted)",
           }}
         >
           <EntSourceChip source={market.src} />
@@ -1301,7 +1301,7 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
             fontSize: 14,
             fontWeight: 500,
             lineHeight: 1.35,
-            color: "#111827",
+            color: "var(--text-primary)",
           }}
         >
           {market.q}
@@ -1314,7 +1314,7 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
             marginTop: "auto",
           }}
         >
-          <span style={{ fontSize: 12, color: "#6B7280" }}>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
             {market.top_outcomes[0]?.name || "Yes"}
           </span>
           <ProbPct value={market.prob} size={20} />
@@ -1352,7 +1352,7 @@ export default function EntertainmentPage() {
   if (error) {
     return (
       <div className={s.page}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "#9CA3AF", fontSize: 14 }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
           Failed to load entertainment data
         </div>
       </div>
@@ -1362,7 +1362,7 @@ export default function EntertainmentPage() {
   if (!data) {
     return (
       <div className={s.page}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "#9CA3AF", fontSize: 14 }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "80px 20px", textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
           <div style={{ animation: "pulse 2s ease-in-out infinite" }}>
             Loading entertainment markets...
           </div>

@@ -13,7 +13,7 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
   return (
     <div
       style={{
-        backgroundColor: "#fff",
+        backgroundColor: "var(--surface-card)",
         borderRadius: 16,
         padding: 22,
       }}
@@ -39,14 +39,14 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
             style={{
               fontSize: 18,
               fontWeight: 600,
-              color: "#111827",
+              color: "var(--text-primary)",
               margin: 0,
               lineHeight: 1.2,
             }}
           >
             {title}
           </h3>
-          <span style={{ fontSize: 12.5, color: "#6B7280" }}>{sub}</span>
+          <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{sub}</span>
         </div>
       </div>
 
@@ -56,20 +56,20 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
           <div
             key={i}
             style={{
-              borderTop: i > 0 ? "1px solid #F3F4F6" : undefined,
+              borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined,
               padding: "10px 0",
             }}
           >
             <div className="flex items-center justify-between" style={{ gap: 10 }}>
               <div className="flex-1" style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: "#111827", marginBottom: 4 }}>
+                <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 4 }}>
                   {item.q}
                 </div>
                 <div className="flex items-center" style={{ gap: 6 }}>
                   <SourceBadge src={item.src} />
                   <span
                     className="font-mono"
-                    style={{ fontSize: 11, color: "#9CA3AF" }}
+                    style={{ fontSize: 11, color: "var(--text-muted)" }}
                   >
                     {item.closes}
                   </span>
@@ -81,7 +81,7 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                   style={{
                     width: 56,
                     height: 4,
-                    backgroundColor: "#F3F4F6",
+                    backgroundColor: "var(--surface-elevated)",
                     borderRadius: 2,
                     overflow: "hidden",
                   }}

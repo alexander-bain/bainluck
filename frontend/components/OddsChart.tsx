@@ -1413,7 +1413,7 @@ export default function OddsChart({
                   strokeOpacity={isMultiSource ? 0.6 : 1}
                 />
               </svg>
-              <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-gray-500 hover:text-gray-700"}`}>
+              <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}>
                 {source.displayName}
                 <span className="text-text-muted ml-0.5">({source.type})</span>
               </span>

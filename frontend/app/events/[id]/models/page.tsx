@@ -147,10 +147,10 @@ export default function ModelsPage({ params }: ModelsPageProps) {
         >
           &larr; Back to {event.home_team} vs {event.away_team}
         </Link>
-        <h1 className="text-xl font-bold text-gray-900">
+        <h1 className="text-xl font-bold text-text-primary">
           Win Probability Sources
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-text-secondary mt-1">
           {event.home_team} vs {event.away_team} &mdash; How each source
           calculates who will win
         </p>
@@ -160,20 +160,20 @@ export default function ModelsPage({ params }: ModelsPageProps) {
       {displaySources.map(({ key, meta, currentValue }) => (
         <div
           key={key}
-          className="bg-surface-card rounded-lg shadow-card border border-gray-200 overflow-hidden"
+          className="bg-surface-card rounded-lg shadow-card border border-surface-border overflow-hidden"
         >
           {/* Source header with color accent */}
-          <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-surface-border">
             <div
               className="w-3 h-3 rounded-full shrink-0"
               style={{ backgroundColor: meta.color }}
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-gray-900">
+                <h2 className="text-base font-semibold text-text-primary">
                   {meta.display_name}
                 </h2>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-surface-elevated text-gray-500">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-surface-elevated text-text-secondary">
                   {meta.type}
                 </span>
               </div>
@@ -190,7 +190,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
             </div>
             {currentValue !== null && (
               <div className="text-right shrink-0">
-                <p className="text-lg font-bold text-gray-900">
+                <p className="text-lg font-bold text-text-primary">
                   {(currentValue * 100).toFixed(1)}%
                 </p>
                 <p className="text-xs text-text-muted">{event.home_team}</p>
@@ -208,7 +208,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
                 <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
                   Methodology
                 </h3>
-                <p className="text-sm text-gray-500">{meta.methodology}</p>
+                <p className="text-sm text-text-secondary">{meta.methodology}</p>
               </div>
             )}
             {meta.snapshot_count > 0 && (
@@ -219,7 +219,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
           </div>
 
           {/* Chart line preview */}
-          <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center gap-2">
+          <div className="px-5 py-3 bg-surface-secondary border-t border-surface-border flex items-center gap-2">
             <svg width="30" height="4" className="shrink-0">
               <line
                 x1="0"

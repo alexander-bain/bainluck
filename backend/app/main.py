@@ -92,6 +92,14 @@ app.add_middleware(
 )
 
 
+# ---------------------------------------------------------------------------
+# Rate limiting (limits library + Redis)
+# ---------------------------------------------------------------------------
+from app.utils.rate_limit import RateLimitMiddleware
+
+app.add_middleware(RateLimitMiddleware)
+
+
 CACHE_RULES: list[tuple[str, int]] = [
     ("/api/feed", 10),
     ("/api/playoffs/", 300),

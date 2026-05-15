@@ -358,6 +358,59 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
+## Rage Shake Triage #5 (May 15) — Bugs #32-40
+
+9 bug reports from May 14-15 TestFlight users. Consolidated into 6 distinct issues + 1 recurring tool bug.
+
+### BR38/33/35/34. Feed API Failures — Discover, Sports, and Challenges All Down (P1)
+
+**Problem:** Four separate reports from two devices (iPhone18,1 anonymous, iPhone18,2 Alex) all showing the same symptom: feed endpoints returning errors.
+- BR38 (Alex, Discover): "Couldn't load Discover. Pull to retry."
+- BR33 (anonymous, Discover): Same — "Couldn't load Discover. Pull to retry." with onboarding tooltip still showing
+- BR35 (anonymous, Sports): "Couldn't Load Feed — Server error (500). Try again in a moment."
+- BR34 (anonymous, Discover challenge): "No challenge cards right now" — Today's Challenge shows "Question 1 of 1" but has no cards. Challenge card selection depends on the feed working, so this is downstream of the feed failure.
+
+**Root cause (investigate):** The Discover feed (`GET /api/feed`) and Sports feed are both failing. Could be:
+1. A database query timeout or connection pool exhaustion (check Heroku pg:info connections)
+2. A crash in `routes/feed.py` from a bad market/outcome causing an unhandled exception (check Sentry)
+3. A Celery task holding DB connections and starving the web dyno
+4. Transient — all 4 reports are from a ~20 minute window (May 14 6:47-7:00 PM ET). Could have been a brief outage that self-resolved.
+
+**Investigation steps:**
+1. Check Sentry for 500 errors on `/api/feed` and `/api/sports-feed` around May 14 6:45-7:05 PM ET
+2. Check Heroku logs for that time window: `heroku logs --since 2026-05-15T01:45:00Z --until 2026-05-15T02:00:00Z -a bainluck`
+3. Check current feed health: `curl -s https://api.bainluck.com/api/feed | head -c 200`
+4. If transient, add better error context to the iOS error states (show the actual error message from the API, not just "Couldn't load")
+
+**Files:** `backend/app/routes/feed.py`, `ios/.../Views/DiscoverView.swift`, `ios/.../Views/FeedView.swift`
+**Parallel Safety:** **RED — collides with Discover thread.** Do not fix in parallel with feed.py work.
+
+### ~~BR40. iOS Sign-In Rejected (401)~~ — FIXED (May 15)
+
+Root cause: Apple Sign-In audience mismatch. Backend validated JWT against `APPLE_SERVICES_ID` (`com.bainluck.web`) but iOS sends `aud = "com.bainluck.Bain-Luck"` (bundle ID). Apple Sign-In from iOS had never worked. Fix: accept both web Services ID and iOS bundle ID as valid audiences via `valid_audiences` list in `auth.py`. Google Sign-In unaffected (uses access token verification, not JWT audience).
+
+### ~~BR39. Preferences Pill Buttons Text Wrapping~~ — FIXED (May 15)
+
+Added `.lineLimit(1)` + `.fixedSize()` to pill button Text in `PreferencesView.swift`. Category name truncates instead of pills wrapping.
+
+### ~~BR37. Economics Page Parse Error — iOS~~ — FIXED (May 15)
+
+Three Decodable mismatches: `EconomicsMarket.prob` Int→Double, `CPIRelease.peakIs` String?→Int?, added missing `sideMarkets` field for recession/markets/energy themes.
+
+### ~~BR36. Politics Probabilities Don't Sum to 100%~~ — FIXED (May 15)
+
+Added `_normalize_outcome_probs()` to `politics.py` (same >105% threshold as feed). Applied to `_market_row()` (all theme sections) and `_build_presidential()` (nominee merging with per-source normalization). 14 new tests.
+
+### ~~BR32. My Stuff Shows Irrelevant "Top Markets"~~ — FIXED (May 15)
+
+Root cause: My Stuff fetched generic futures from feed endpoint. Even with team filtering, card displayed global top-3 outcomes instead of user's team. Fix: set `includeFutures: false` (matching web behavior), team futures shown only via dedicated "Your Teams' Odds" section. Added `MyTeamFuturesCard` for personalized display.
+
+### ~~BR-MARKUP. Rage Shake Annotation Coordinate Offset~~ — FIXED (May 15)
+
+Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width constraint, so canvas was wider than rendered image. Three fixes: explicit frame sizing matching screenshot aspect ratio, PKCanvasView scroll/inset lockdown, independent scaleX/scaleY with retina-aware rendering.
+
+---
+
 ## Email Infrastructure: Compliance + Provider Migration (PREREQUISITE for any user-facing email)
 
 **Problem:** We're sending emails (bug fix notifications, daily digest) via Gmail API with OAuth. This works for sending to Alex only, but before sending to ANY other user we need proper compliance.
@@ -907,7 +960,7 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 ### Post-Audit Priority Stack (May 14)
 
 **P0 — Security & Reliability:**
-- [ ] Gate 24 unprotected admin GET endpoints with `_check_admin_secret` (read-only diagnostics but shouldn't be public)
+- [x] ~~Gate 24 unprotected admin GET endpoints with `_check_admin_secret`~~ — DONE May 15. 20 GET endpoints gated.
 - [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
 
 **P0 — Product (Growth):**
@@ -916,7 +969,7 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 - [ ] **Redesign first 30 seconds** — Hero headline for first visit ("What does the world think will happen?"), first card is always a guess card (force interaction in 5 seconds), progressive disclosure toward sign-up.
 
 **P1 — Engineering:**
-- [ ] **Add API rate limiting** — Zero rate limiting on public endpoints. Add `slowapi` or Redis-backed: 60 req/min anonymous, 120 authenticated. Must not impact admin/developer access.
+- [x] ~~**Add API rate limiting**~~ — DONE May 15. ASGI middleware: 60/min anonymous, 120/min authenticated, admin exempt. Redis storage in prod, in-memory fallback for dev. Graceful degradation if Redis down. 23 tests.
 - [ ] **Split `admin.py`** (11K lines, 174 handlers) — Needs robust plan before starting. Split into `admin_celery.py`, `admin_matching.py`, `admin_taxonomy.py`, `admin_engagement.py`, `admin_data_quality.py`.
 
 **P1 — DS (Calibration Integrity):**
@@ -925,8 +978,8 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 - [ ] **Confidence tiers on Discover cards** — Signal bars (high/medium/low) based on data-driven thresholds from trading activity analysis. Plan approved.
 
 **P1 — Design:**
-- [ ] **Eliminate hardcoded colors** — 50+ raw Tailwind/hex colors bypass design tokens. Mechanical search-and-replace, zero visual change.
-- [ ] **Decompose DiscoverCard.tsx** (1,042 lines) — Extract into `components/discover/` directory. 6-7 files at 100-200 lines each.
+- [x] ~~**Eliminate hardcoded colors**~~ — DONE May 15. ~200 replacements across 35 files mapped to design tokens. Skipped intentional brand colors (Oscars gold, Masters green, chart/viz colors).
+- [x] ~~**Decompose DiscoverCard.tsx**~~ — DONE May 15. 1,041→12 files under `components/discover/`. Main file is 91-line thin dispatcher. Public API unchanged.
 - [ ] **Remove max-width constraint** — Let pages go full-width; constrain card widths via grid, not page-level max-width.
 - [ ] **Define formal button system** — 3 variants: Primary, Ghost, Text. Replace 6+ ad-hoc button styles.
 
@@ -964,21 +1017,13 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 
 **Status:** Audit running. Checking what free features we're leaving on the table across GitHub, Sentry, GA4, Vercel, Heroku, and all external APIs (StatPal, ESPN, TMDB, Odds API, Kalshi, Polymarket, DataGolf).
 
-### BUG: Alcaraz Shows as "ATP Indian Wells" Team in Search (May 14)
+### ~~BUG: Alcaraz Shows as "ATP Indian Wells" Team in Search~~ — FIXED (May 15)
 
-**Problem:** Searching "alcaraz" returns a team card "Carlos Alcaraz — ATP INDIAN WELLS". Alcaraz is a player, not a team. The Indian Wells tournament association is leaking into the team identity. The Odds API creates "team" entries for individual tennis players, and the league/tournament context sticks as the team's league label.
+Added `_INDIVIDUAL_SPORT_PREFIXES` (tennis, MMA, boxing, golf) and filtered individual-sport "teams" from search/typeahead results. Athletes still appear via event and futures results. All search tests pass.
 
-**Files:** `backend/app/routes/events.py` (search endpoint), `backend/app/models/models.py` (Team), team identity pipeline
-**Parallel Safety:** Yellow
+### ~~BUG: French Open / US Open Futures Show "Player B 100%" Placeholder Names~~ — FIXED (May 15)
 
-### BUG: French Open / US Open Futures Show "Player B 100%" Placeholder Names (May 14)
-
-**Problem:** "2026 Men's French Open Winner" and "2026 Men's US Open Winner" futures in search show anonymized placeholder names ("Player B", "Player S", "Player N") all at 100%. Looks completely broken.
-
-**Root cause (likely):** Polymarket outcome names are anonymized or the name parsing failed. The 100% probabilities on all outcomes suggest a rendering or data issue — these are open markets, not resolved.
-
-**Files:** `backend/app/tasks/polymarket.py` (outcome name parsing), `backend/app/routes/events.py` (futures in search)
-**Parallel Safety:** Yellow
+Polymarket creates placeholder sub-markets with "Player B/S/N" names and `outcomePrices=["1","0"]` before real candidates are announced. Three-layer fix: (1) ingestion prevention via `_is_placeholder_outcome()` in polymarket.py, (2) search display filtering in events.py, (3) `_GARBAGE_OUTCOME_RE` applied to 5 additional futures.py code paths. 9 new tests.
 
 ### About Page: Visual "Why Probability?" Storytelling (May 14)
 

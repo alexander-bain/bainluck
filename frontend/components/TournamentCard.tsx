@@ -43,7 +43,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
 
   return (
     <Link href={href} className="block">
-      <div className="bg-white border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-gray-300 transition-all cursor-pointer">
+      <div className="bg-surface-card border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-text-muted transition-all cursor-pointer">
         <div className="p-3.5 px-4">
           {/* Header row */}
           <div className="flex justify-between items-start mb-2">
@@ -73,7 +73,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
 
           {/* Hero probability — leader */}
           {leader && (
-            <div className="flex items-center gap-3 py-2.5 px-3 bg-gray-50 rounded-lg mb-2.5">
+            <div className="flex items-center gap-3 py-2.5 px-3 bg-surface-secondary rounded-lg mb-2.5">
               <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
                 {leader.winProb.toFixed(1)}
                 <span className="text-base font-semibold">%</span>
@@ -165,13 +165,13 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
     "international": { bg: "bg-emerald-50", text: "text-emerald-800", bar: "bg-emerald-500" },
     "great britain & ireland": { bg: "bg-red-50", text: "text-red-800", bar: "bg-red-500" },
   };
-  const defaultColor = { bg: "bg-gray-50", text: "text-gray-800", bar: "bg-gray-500" };
+  const defaultColor = { bg: "bg-surface-secondary", text: "text-text-primary", bar: "bg-text-secondary" };
   const colorA = teamColors[teamA.name.toLowerCase()] || defaultColor;
   const colorB = teamColors[teamB.name.toLowerCase()] || defaultColor;
 
   return (
     <Link href={href} className="block">
-      <div className="bg-white border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-gray-300 transition-all cursor-pointer">
+      <div className="bg-surface-card border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-text-muted transition-all cursor-pointer">
         <div className="p-3.5 px-4">
           {/* Header */}
           <div className="mb-3">

@@ -308,8 +308,8 @@ function ChallengeModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-[#fafbfc] shadow-2xl border border-surface-border">
-        <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-surface-border px-4 py-3">
+      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-surface-deep shadow-2xl border border-surface-border">
+        <div className="sticky top-0 z-10 bg-surface-card/90 backdrop-blur border-b border-surface-border px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-black text-text-primary">Today’s Challenge</div>
@@ -345,7 +345,7 @@ function ChallengeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="mt-5 w-full rounded-xl bg-[#111827] py-3 text-sm font-bold text-white hover:bg-black transition-colors"
+                className="mt-5 w-full rounded-xl bg-text-primary py-3 text-sm font-bold text-white hover:bg-text-primary transition-colors"
               >
                 Back to Discover
               </button>
@@ -365,7 +365,7 @@ function ChallengeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="mt-5 w-full rounded-xl bg-[#111827] py-3 text-sm font-bold text-white hover:bg-black transition-colors"
+                className="mt-5 w-full rounded-xl bg-text-primary py-3 text-sm font-bold text-white hover:bg-text-primary transition-colors"
               >
                 Back to Discover
               </button>
@@ -592,9 +592,9 @@ export default function DiscoverPage() {
   }, [data, dismissed]);
 
   return (
-    <div className="min-h-screen bg-[#fafbfc]">
+    <div className="min-h-screen bg-surface-deep">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-lg border-b border-surface-border">
+      <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
@@ -619,7 +619,7 @@ export default function DiscoverPage() {
                   onClick={() => { setCategoryFilter(cf.key); setVisibleCount(PAGE_SIZE); }}
                   className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                     active
-                      ? "bg-[#111827] text-white"
+                      ? "bg-text-primary text-white"
                       : "bg-surface-elevated text-text-secondary hover:text-text-primary"
                   }`}
                 >
@@ -796,7 +796,7 @@ function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: strin
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl">
+      <div className="bg-surface-card rounded-3xl max-w-md w-full p-6 shadow-2xl">
         <div className="text-center mb-6">
           <div className="text-3xl mb-2">🎯</div>
           <h2 className="text-xl font-black">Build Your Feed</h2>
@@ -822,7 +822,7 @@ function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: strin
 
         <button
           onClick={() => onComplete([...selected])}
-          className="w-full py-3 rounded-xl bg-[#111827] text-white font-bold text-sm hover:bg-[#1f2937] transition-colors"
+          className="w-full py-3 rounded-xl bg-text-primary text-white font-bold text-sm hover:bg-text-primary transition-colors"
         >
           {selected.size === 0 ? "Show me everything" : `Start with ${selected.size} topic${selected.size > 1 ? "s" : ""}`}
         </button>

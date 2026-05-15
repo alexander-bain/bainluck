@@ -274,7 +274,7 @@ function PresHero({ data }: { data: PoliticsThemePresidential }) {
       {/* Related markets */}
       {data.side_markets && data.side_markets.length > 0 && (
         <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid #E5E7EB" }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 8 }}>
             Related markets
           </div>
           <div className={s.sideGrid}>
@@ -366,7 +366,7 @@ function PresEvolution({ candidates, sourceMode }: {
 
   const withHistory = candidates.filter((c) => c.history && c.history.length >= 2);
   if (withHistory.length === 0) {
-    return <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No historical data available yet</div>;
+    return <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No historical data available yet</div>;
   }
 
   const now = Date.now();
@@ -427,7 +427,7 @@ function PresEvolution({ candidates, sourceMode }: {
           {series.map((sr) => (
             <span key={sr.name} className={s.evoLegendItem}>
               <span className={s.evoSwatch} style={{ background: sr.color }} />
-              <span style={{ color: "#6B7280" }}>{sr.name}</span>
+              <span style={{ color: "var(--text-secondary)" }}>{sr.name}</span>
               <span className={s.probNum} style={{ fontSize: 11 }}>{getCandidateProb(sr, sourceMode).toFixed(0)}%</span>
             </span>
           ))}
@@ -446,10 +446,10 @@ function SideMarketCard({ market }: { market: PoliticsMarketRow }) {
       <div className={s.sideCard}>
         <div className={s.sideQ}>{market.q}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <span style={{ fontSize: 13, fontWeight: 500, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {isBinary ? (market.prob >= 50 ? "Yes" : "No") : (leader?.name || "—")}
           </span>
-          <span className={s.probNum} style={{ fontSize: 16, color: "#111827" }}>
+          <span className={s.probNum} style={{ fontSize: 16, color: "var(--text-primary)" }}>
             {Math.round(market.prob)}%
           </span>
         </div>
@@ -495,7 +495,7 @@ function ChamberControlCard({
             style={{
               fontSize: 11,
               fontWeight: 600,
-              color: "#9CA3AF",
+              color: "var(--text-muted)",
               letterSpacing: "0.04em",
               textTransform: "uppercase",
             }}
@@ -516,9 +516,9 @@ function ChamberControlCard({
             >
               {Math.round(probs.gop)}%
             </span>
-            <span style={{ fontSize: 12, color: "#6B7280" }}>R</span>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>R</span>
           </div>
-          <span style={{ color: "#9CA3AF", fontSize: 12 }}>vs</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>vs</span>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
             <span
               className={s.probNum}
@@ -529,7 +529,7 @@ function ChamberControlCard({
             >
               {Math.round(probs.dem)}%
             </span>
-            <span style={{ fontSize: 12, color: "#6B7280" }}>D</span>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>D</span>
           </div>
         </div>
 
@@ -576,8 +576,8 @@ function SenateMap({ map }: { map: Record<string, number> | null }) {
   return (
     <div className={s.card} style={{ padding: 16, marginBottom: 16, cursor: "default" }}>
       <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#111827" }}>Senate races by state</h3>
-        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#9CA3AF" }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Senate races by state</h3>
+        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--text-muted)" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: "rgba(220,38,38,0.85)" }} /> R likely
           </span>
@@ -610,10 +610,10 @@ function SenateMap({ map }: { map: Record<string, number> | null }) {
           })
         )}
       </div>
-      <div style={{ marginTop: 10, fontSize: 11, color: "#9CA3AF", display: "flex", justifyContent: "space-between" }}>
+      <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
         <span>{Object.keys(map).length} states with Senate race data · Hover for detail</span>
         {hover && (
-          <span style={{ color: "#111827", fontFamily: "var(--font-mono, monospace)" }}>
+          <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono, monospace)" }}>
             <b>{hover.st}</b> — Dem prob <b className={s.probNum}>{hover.p.toFixed(0)}%</b>
           </span>
         )}
@@ -664,7 +664,7 @@ function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
           alignItems: "center",
           gap: 6,
           fontSize: 11,
-          color: "#9CA3AF",
+          color: "var(--text-muted)",
         }}
       >
         <SourceBadge source="both" />
@@ -679,7 +679,7 @@ function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
           fontSize: 14,
           fontWeight: 500,
           lineHeight: 1.35,
-          color: "#111827",
+          color: "var(--text-primary)",
         }}
       >
         {market.q}
@@ -744,13 +744,13 @@ function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
           display: "flex",
           justifyContent: "space-between",
           fontSize: 11,
-          color: "#9CA3AF",
+          color: "var(--text-muted)",
           marginTop: 2,
         }}
       >
         <span>
           Merged:{" "}
-          <b className={s.probNum} style={{ color: "#111827" }}>
+          <b className={s.probNum} style={{ color: "var(--text-primary)" }}>
             {merged.toFixed(1)}%
           </b>
         </span>
@@ -808,7 +808,7 @@ function BinaryCard({
               alignItems: "center",
               gap: 6,
               fontSize: 11,
-              color: "#9CA3AF",
+              color: "var(--text-muted)",
             }}
           >
             <SourceBadge source={market.src} />
@@ -820,7 +820,7 @@ function BinaryCard({
               fontSize: 14,
               fontWeight: 500,
               lineHeight: 1.35,
-              color: "#111827",
+              color: "var(--text-primary)",
             }}
           >
             {market.q}
@@ -833,14 +833,14 @@ function BinaryCard({
             >
               {Math.round(yesProb)}%
             </span>
-            <span style={{ fontSize: 12, color: "#6B7280" }}>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
               {market.top_outcomes?.[0]?.name || "Yes"}
             </span>
             <span
               style={{
                 marginLeft: "auto",
                 fontSize: 11,
-                color: "#9CA3AF",
+                color: "var(--text-muted)",
               }}
             >
               vs{" "}
@@ -879,7 +879,7 @@ function MultiCard({
               alignItems: "center",
               gap: 6,
               fontSize: 11,
-              color: "#9CA3AF",
+              color: "var(--text-muted)",
             }}
           >
             <SourceBadge source={market.src} />
@@ -902,7 +902,7 @@ function MultiCard({
               fontSize: 14,
               fontWeight: 500,
               lineHeight: 1.35,
-              color: "#111827",
+              color: "var(--text-primary)",
             }}
           >
             {market.q}
@@ -919,7 +919,7 @@ function MultiCard({
               <span
                 style={{
                   fontSize: 11,
-                  color: "#9CA3AF",
+                  color: "var(--text-muted)",
                   fontWeight: 600,
                   letterSpacing: "0.04em",
                   textTransform: "uppercase",
@@ -931,14 +931,14 @@ function MultiCard({
                 style={{
                   fontSize: 14,
                   fontWeight: 600,
-                  color: "#111827",
+                  color: "var(--text-primary)",
                   marginTop: 2,
                 }}
               >
                 {leader.name}
               </span>
             </div>
-            <span className={s.probNum} style={{ fontSize: 28, color: "#111827" }}>
+            <span className={s.probNum} style={{ fontSize: 28, color: "var(--text-primary)" }}>
               {Math.round(leader.prob)}%
             </span>
           </div>
@@ -974,8 +974,8 @@ function MultiCard({
                     fontSize: 12,
                   }}
                 >
-                  <span style={{ color: "#6B7280" }}>{o.name}</span>
-                  <span className={s.probNum} style={{ color: "#9CA3AF", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-secondary)" }}>{o.name}</span>
+                  <span className={s.probNum} style={{ color: "var(--text-muted)", fontSize: 12 }}>
                     {Math.round(o.prob)}%
                   </span>
                 </div>
@@ -1067,7 +1067,7 @@ export default function PoliticsPage() {
             margin: "0 auto",
             padding: "80px 20px",
             textAlign: "center",
-            color: "#9CA3AF",
+            color: "var(--text-muted)",
             fontSize: 14,
           }}
         >
@@ -1086,7 +1086,7 @@ export default function PoliticsPage() {
             margin: "0 auto",
             padding: "80px 20px",
             textAlign: "center",
-            color: "#9CA3AF",
+            color: "var(--text-muted)",
             fontSize: 14,
           }}
         >

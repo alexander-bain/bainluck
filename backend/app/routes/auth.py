@@ -293,8 +293,12 @@ async def apple_sign_in(
             detail="Apple Sign-In not configured",
         )
 
+    # Accept both web Services ID and iOS bundle ID as valid audiences
+    apple_bundle_id = os.getenv("APPLE_BUNDLE_ID", "com.bainluck.Bain-Luck")
+    valid_audiences = [apple_services_id, apple_bundle_id]
+
     # Verify the Apple id_token JWT
-    claims = verify_apple_id_token(body.id_token, apple_services_id)
+    claims = verify_apple_id_token(body.id_token, valid_audiences)
     if not claims:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

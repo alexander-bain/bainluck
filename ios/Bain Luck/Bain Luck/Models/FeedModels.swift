@@ -149,6 +149,17 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let canonicalMarketKey: String?
     let imageUrl: String?
     let hookDescription: String?
+    let matchedOutcomes: [MatchedOutcome]?
+}
+
+/// Outcome matched to the user's followed team (from my_teams_only feed).
+nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
+    let name: String
+    let probability: Double?
+    let rank: Int?
+    let movement: Double?
+
+    var id: String { name }
 }
 
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {

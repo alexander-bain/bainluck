@@ -1010,6 +1010,45 @@ async def _backfill_polymarket_price_history(
     return stats
 
 
+def _is_placeholder_outcome(market) -> bool:
+    """
+    Detect Polymarket placeholder/reserved-slot markets.
+
+    Polymarket pre-creates empty sub-markets for multi-outcome events before
+    the real candidates are announced. These have names like "Player B",
+    "Player S", "Player N" and typically:
+      - outcomePrices = ["1", "0"] or [] (no real pricing)
+      - bestBid = 0 or None (nobody is buying)
+      - lastTradePrice = 0 or None (never traded)
+
+    Without this filter, the "1.0" price makes them show up as 100% favorites.
+    """
+    import re
+
+    # Check question or groupItemTitle for placeholder patterns
+    name = market.group_item_title or market.question or ""
+
+    # "Player X" where X is a single letter — Polymarket placeholder pattern
+    if re.match(r"^Player\s+[A-Z]$", name.strip()):
+        return True
+
+    # "Will Player X win/be/..." in the question
+    if re.search(r"\bPlayer\s+[A-Z]\b", market.question or ""):
+        return True
+
+    # Additional heuristic: no trading activity AND price is exactly 1.0
+    # (real 100% favorites still have lastTradePrice > 0)
+    if market.outcome_prices and market.outcome_prices[0] >= 0.995:
+        has_trading = (
+            (market.best_bid is not None and market.best_bid > 0)
+            or (market.last_trade_price is not None and market.last_trade_price > 0)
+        )
+        if not has_trading:
+            return True
+
+    return False
+
+
 def _resolve_market_probability(market) -> float | None:
     """
     Resolve the Yes-side probability for a Polymarket market.
@@ -1018,12 +1057,17 @@ def _resolve_market_probability(market) -> float | None:
 
     Skips placeholder markets that Polymarket creates as reserved slots
     (e.g., "Player B", "Player S"). These have:
-      - empty outcomePrices ([])
+      - empty outcomePrices ([]) or ["1", "0"]
       - bestBid = 0 or None
       - bestAsk = 1 (max spread, no real market-making)
       - lastTradePrice = 0 or None
-    Without this filter, the ask-only fallback would set prob = 1.0 (100%).
+    Without this filter, the ask-only fallback or the raw 1.0 price would
+    set prob = 1.0 (100%), making placeholders look like favorites.
     """
+    # Reject known placeholder markets before examining prices
+    if _is_placeholder_outcome(market):
+        return None
+
     prob = market.outcome_prices[0] if market.outcome_prices else None
 
     if prob is not None and prob > 0:

@@ -57,7 +57,7 @@ function sourceColor(source: string): string {
     case "odds_api":
       return "text-slate-300";
     default:
-      return "text-gray-400";
+      return "text-text-muted";
   }
 }
 
@@ -70,7 +70,7 @@ function sourceDot(source: string): string {
     case "odds_api":
       return "bg-slate-400";
     default:
-      return "bg-gray-500";
+      return "bg-text-secondary";
   }
 }
 

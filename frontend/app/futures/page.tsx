@@ -417,7 +417,7 @@ function sourceStyle(source: string): string {
     case "odds_api":
       return "bg-slate-500/15 text-slate-300";
     default:
-      return "bg-gray-500/15 text-gray-400";
+      return "bg-text-secondary/15 text-text-muted";
   }
 }
 

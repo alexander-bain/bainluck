@@ -142,24 +142,47 @@ def _clean_outcomes(outcomes: list) -> list:
     return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
 
 
+def _normalize_outcome_probs(outcomes: list[dict], key: str = "prob") -> None:
+    """Normalize probabilities in-place when independent binary markets sum > 105%.
+
+    Kalshi/Polymarket create separate "Will X win?" binary markets for each
+    candidate.  Raw probabilities can sum well over 100%.  When displayed as a
+    ranked list, divide each by the sum so they total ~100%.
+
+    See also: feed.py BR27 fix for the same class of bug on the Discover feed.
+    """
+    prob_sum = sum(o.get(key, 0) or 0 for o in outcomes)
+    if prob_sum > 105:  # 105% threshold (same as feed.py's 1.05 on 0-1 scale)
+        for o in outcomes:
+            if o.get(key):
+                o[key] = round(o[key] / prob_sum * 100, 1)
+
+
 def _market_row(market: FuturesMarket) -> dict | None:
     outcomes = _clean_outcomes(market.outcomes)
     outcomes = sorted(outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
     if not outcomes:
         return None
     top = outcomes[:3]
+    top_outcomes = [
+        {
+            "name": o.name,
+            "prob": round(float(o.current_probability or 0) * 100, 1),
+        }
+        for o in top
+    ]
+
+    # Normalize independent binary market probabilities (BR36 fix)
+    # When markets like "Will X win?" are displayed as a ranked list,
+    # probabilities from independent contracts can sum well over 100%.
+    _normalize_outcome_probs(top_outcomes)
+
     return {
         "q": market.name,
-        "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
+        "prob": top_outcomes[0]["prob"] if top_outcomes else 0,
         "src": _source(market),
         "market_id": market.id,
-        "top_outcomes": [
-            {
-                "name": o.name,
-                "prob": round(float(o.current_probability or 0) * 100, 1),
-            }
-            for o in top
-        ],
+        "top_outcomes": top_outcomes,
         "outcome_count": len(outcomes),
     }
 
@@ -262,6 +285,23 @@ def _build_presidential(
         c["change_7d"] = None
         c["history"] = []
         candidates.append(c)
+
+    candidates.sort(key=lambda c: -c["merged"])
+
+    # Normalize candidate probabilities when independent binary markets
+    # cause the sum to exceed 105%.  Same pattern as feed.py BR27 fix.
+    # Normalize each source independently, then recompute merged.
+    for src_key in ("kalshi", "poly"):
+        src_sum = sum(c.get(src_key) or 0 for c in candidates)
+        if src_sum > 105:
+            for c in candidates:
+                if c.get(src_key) is not None:
+                    c[src_key] = round(c[src_key] / src_sum * 100, 1)
+
+    # Recompute merged from normalized per-source values
+    for c in candidates:
+        probs = [p for p in [c["kalshi"], c["poly"]] if p is not None]
+        c["merged"] = round(sum(probs) / len(probs), 1) if probs else 0
 
     candidates.sort(key=lambda c: -c["merged"])
 

@@ -297,6 +297,7 @@ async def get_futures_movers(
                 "rank_change_24h": o.rank_change_24h,
             }
             for o in outcomes
+            if not _GARBAGE_OUTCOME_RE.match(o.name or "")
         ],
         "timeframe_hours": hours,
     }
@@ -373,6 +374,8 @@ async def compare_futures_sources(
 
     for market in markets:
         for outcome in market.outcomes:
+            if _GARBAGE_OUTCOME_RE.match(outcome.name or ""):
+                continue
             merge_key = _outcome_merge_key(outcome)
             if merge_key not in outcome_groups:
                 outcome_groups[merge_key] = {
@@ -528,8 +531,12 @@ async def browse_futures(
 
     items = []
     for market in markets:
+        real_outcomes = [
+            o for o in market.outcomes
+            if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+        ]
         sorted_outcomes = sorted(
-            market.outcomes,
+            real_outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
@@ -549,7 +556,7 @@ async def browse_futures(
             "source": market.source,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "top_outcomes": top3,
-            "outcome_count": len(market.outcomes),
+            "outcome_count": len(real_outcomes),
         })
 
     return {
@@ -684,8 +691,12 @@ async def faceted_futures_search(
 
     formatted = []
     for market in markets:
+        real_outcomes = [
+            o for o in market.outcomes
+            if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+        ]
         sorted_outcomes = sorted(
-            market.outcomes,
+            real_outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
@@ -706,7 +717,7 @@ async def faceted_futures_search(
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "market_tags": market.market_tags or [],
             "top_outcomes": top3,
-            "outcome_count": len(market.outcomes),
+            "outcome_count": len(real_outcomes),
         })
 
     # Facet counts
@@ -2545,9 +2556,15 @@ async def get_futures_history(
 
 def _format_market_summary(market: FuturesMarket, source_count_map: dict = None) -> dict:
     """Format a market for list view with top outcomes."""
+    # Filter out placeholder outcomes before sorting/display
+    real_outcomes = [
+        o for o in market.outcomes
+        if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+    ]
+
     # Sort outcomes by probability
     sorted_outcomes = sorted(
-        market.outcomes,
+        real_outcomes,
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
@@ -2580,7 +2597,7 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
-        "outcome_count": len(market.outcomes),
+        "outcome_count": len(real_outcomes),
         "category_tags": market.category_tags or [],
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }

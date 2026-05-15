@@ -1978,7 +1978,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   infrastructure: "bg-blue-500",
   data: "bg-emerald-500",
   ai: "bg-purple-500",
-  services: "bg-gray-400",
+  services: "bg-text-muted",
 };
 
 function ProjectCosts() {

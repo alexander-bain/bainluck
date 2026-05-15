@@ -35,7 +35,7 @@ function sourceLabel(source: string): string {
 }
 
 function sourceColors(source: string) {
-  return SOURCE_COLORS[source] || { dot: "bg-gray-500", text: "text-gray-400" };
+  return SOURCE_COLORS[source] || { dot: "bg-text-secondary", text: "text-text-muted" };
 }
 
 // ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ export default function SportPage({ params }: SportPageProps) {
       {/* Back link */}
       <Link
         href="/"
-        className="inline-flex items-center text-sm text-text-secondary hover:text-gray-900 transition-colors"
+        className="inline-flex items-center text-sm text-text-secondary hover:text-text-primary transition-colors"
       >
         <svg
           className="w-4 h-4 mr-1"
@@ -68,7 +68,7 @@ export default function SportPage({ params }: SportPageProps) {
 
       {/* Page Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+        <h1 className="text-3xl font-bold text-text-primary mb-2">
           {sport?.name || sportKey.replace(/_/g, " ").toUpperCase()}
         </h1>
         <p className="text-text-secondary">
@@ -96,7 +96,7 @@ export default function SportPage({ params }: SportPageProps) {
       {!eventsLoading && !eventsError && (
         <>
           {events.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
+            <div className="text-center py-12 text-text-secondary">
               <p className="text-lg mb-2">No upcoming events</p>
               <p className="text-sm">Check back later for more games</p>
             </div>
@@ -110,7 +110,7 @@ export default function SportPage({ params }: SportPageProps) {
 
           {/* Event count */}
           {events.length > 0 && (
-            <p className="text-center text-sm text-gray-500 pt-4">
+            <p className="text-center text-sm text-text-secondary pt-4">
               Showing {events.length} event{events.length !== 1 ? "s" : ""}
             </p>
           )}

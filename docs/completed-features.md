@@ -1,5 +1,30 @@
 # Completed Features (Shipped)
 
+## May 15, 2026 — Rage Shake Triage #5 + Backlog Blitz (12 items)
+
+### Rage Shake Triage #5 — Bugs #32-40 (6 fixed, 4 transient)
+- ✅ **BR40: Apple Sign-In audience mismatch** — iOS Apple Sign-In had NEVER worked. Backend validated JWT audience against web Services ID (`com.bainluck.web`) but iOS sends bundle ID (`com.bainluck.Bain-Luck`). Fix: accept both as valid audiences. (`auth.py`)
+- ✅ **BR39: Preferences pill text wrapping** — Love/Big/Wild/Nah pills wrapped text ("Wil\nd") on wider screens. Added `.lineLimit(1)` + `.fixedSize()`. (`PreferencesView.swift`)
+- ✅ **BR37: Economics page parse error** — Three iOS Decodable mismatches: `prob` Int→Double, `peakIs` String→Int, added missing `sideMarkets` field. (`WeatherModels.swift`, `EconomicsView.swift`)
+- ✅ **BR36: Politics probabilities >100%** — Independent binary markets showed raw probabilities (Fujimori 98.8% + Newsom 24.5%...). Added `_normalize_outcome_probs()` to politics route with same >105% threshold as feed. 14 tests. (`politics.py`)
+- ✅ **BR32: My Stuff irrelevant markets** — "Top Markets" showed generic NBA markets unrelated to user. Set `includeFutures: false` (matching web), team futures via dedicated section only. (`MyStuffView.swift`)
+- ✅ **BR-MARKUP: Rage shake annotation offset (recurring)** — PKCanvasView overlay was wider than rendered image. Fixed frame sizing, scroll lockdown, retina-aware scale factors. (`BugReportView.swift`)
+- BR38/33/35/34: Feed API failures — confirmed transient (20-min window May 14 evening). Feeds healthy now.
+
+### P0 Security
+- ✅ **Gate 20 admin GET endpoints** — Celery health, odds API usage, taxonomy debug, matching review, schedule accuracy, and 15 more diagnostic endpoints now require `_check_admin_secret`. (`admin.py`)
+
+### P1 Engineering
+- ✅ **API rate limiting** — ASGI middleware: 60 req/min anonymous, 120 req/min authenticated, admin/docs exempt. Redis storage in prod (reuses Celery REDIS_URL), in-memory fallback. Graceful degradation. 23 tests. (`main.py`, `utils/rate_limit.py`)
+
+### P1 Design
+- ✅ **Eliminate hardcoded colors** — ~200 replacements across 35 frontend files mapped to design tokens (text-primary, text-secondary, text-muted, surface-card, surface-secondary, surface-border). Skipped intentional brand colors. Zero visual change. (35 frontend files)
+- ✅ **Decompose DiscoverCard.tsx** — 1,041-line monolith → 12 focused files under `components/discover/`. Main file is 91-line thin dispatcher. Public API unchanged. (`DiscoverCard.tsx`, `discover/`)
+
+### Data Quality Bugs
+- ✅ **Alcaraz "ATP Indian Wells" team card** — Individual-sport athletes (tennis/MMA/boxing/golf) no longer show misleading "Team" cards in search. Still appear via event/futures results. (`events.py`)
+- ✅ **French Open "Player B 100%" placeholders** — Polymarket placeholder sub-markets detected and filtered at 3 layers: ingestion (`_is_placeholder_outcome()`), search display, and 5 futures endpoint code paths. 9 tests. (`polymarket.py`, `events.py`, `futures.py`)
+
 ## May 14, 2026 — Calibration Deep Dive: MCE 4.5pp → 2.65pp
 
 ### Golf commence_time Fix — Root Cause Found
@@ -943,6 +968,7 @@ Systematic pass through the backlog, clearing quick wins then medium-effort item
 - ✅ Discover aggregate feedback review loop: `/api/admin/discover-engagement` now emits a card-level human review queue segmented by web/native and signed-in/anonymous, with promote/downrank/investigate candidates based on dismiss/open/share/context-expand rates, average rank, category, archetype, and market family. `/admin/discover-quality` renders the queue for low-friction ranking review. Feed ranking now suppresses recently seen cards per user/session, respects longer-lived dismisses, tightens stale no-movement futures filtering, and downranks/caps regional US election primaries plus niche low-signal sports families. Native Discover tuning inspector is DEBUG-only so TestFlight users do not see category-score internals.
 - ✅ TestFlight Discover feedback loop: `/api/admin/discover-engagement` now reports repeat-card rate, stale-impression rate, runtime Discover suppression config, top repeated/stale cards, recent human review decisions, and a persisted review-decision API/table. `/admin/discover-quality` renders launch-health metrics and one-click review decisions. Native Discover bypasses the short API cache for fresh suppression, and rage-shake bug reports include visible Discover cards, current card, and recent Discover interactions so screenshots are actionable.
 - ✅ Discover launch-health hill-climb console: repeat rate and stale impression rate are now the primary admin scoreboard before broader TestFlight distribution. Top stale/repeated cards link to detail pages, human review decisions are idempotent, reviewed cards leave the queue, and promote/downrank decisions apply bounded feed score nudges instead of only logging review rows.
+- ✅ Daily habit loop + friend challenge frontend: `/daily` now provides five curated Higher/Lower calls with progress, streak/local completion tracking, countdown, replay, prediction submission, and shareable text summary. `/challenge/[id]` now loads existing challenge codes, handles friend Higher/Lower acceptance, shows participants/results, and supports share/copy. Discover sports futures staleness also tightened to suppress 90%+ effectively resolved sports markets unless the leader had a real underdog/surprise journey; deterministic futures copy now uses probability points and better leader-aware snippets.
 - ✅ Market grouping system: Source hierarchy recovery (canonical_market_key set during Kalshi/Polymarket polling) + threshold variant detection (regex-based numeric threshold extraction). Three frontend components (`CombinedMarketCard`, `ProgressionTable`, `ThresholdGrid`). Admin + API endpoints. 315 tests.
 </details>
 

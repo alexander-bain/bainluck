@@ -447,6 +447,8 @@ struct PreferencesView: View {
                     } label: {
                         Text(level.shortLabel)
                             .font(.system(size: 11, weight: selected ? .bold : .medium))
+                            .lineLimit(1)
+                            .fixedSize()
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .foregroundStyle(selected ? .white : color.opacity(0.7))

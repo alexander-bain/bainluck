@@ -88,19 +88,20 @@ nonisolated struct CPIRelease: Decodable, Identifiable, Sendable {
     let mo: String
     let brackets: [[WeatherAnyCodable]]?
     let upcoming: Bool?
-    let peakIs: String?
+    let peakIs: Int?
     let marketId: Int?
 }
 
 nonisolated struct EconomicsGenericTheme: Decodable, Sendable {
     let count: Int
     let markets: [EconomicsMarket]?
+    let sideMarkets: [EconomicsMarket]?
 }
 
 nonisolated struct EconomicsMarket: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
-    let prob: Int
+    let prob: Double
     let src: String
     let delta: Double?
     let marketId: Int?

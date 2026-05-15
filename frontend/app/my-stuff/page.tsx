@@ -948,7 +948,7 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
           {isMultiSource && (
             <div className="flex items-center gap-1 flex-shrink-0">
               {sources.map((s) => {
-                const colors = SOURCE_COLORS[s.source] || { dot: "bg-gray-500", text: "text-gray-400" };
+                const colors = SOURCE_COLORS[s.source] || { dot: "bg-text-secondary", text: "text-text-muted" };
                 return (
                   <div
                     key={s.source}
@@ -982,7 +982,7 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
             {/* Per-source probabilities */}
             <div className="flex items-center gap-1.5">
               {sources.map((s) => {
-                const colors = SOURCE_COLORS[s.source] || { dot: "bg-gray-500", text: "text-gray-400" };
+                const colors = SOURCE_COLORS[s.source] || { dot: "bg-text-secondary", text: "text-text-muted" };
                 const p = s.probability !== null ? Math.round(s.probability * 100) : null;
                 return (
                   <span

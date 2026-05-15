@@ -558,6 +558,98 @@ class TestFeedQualityDebug:
         assert trace["blockers"] == []
         assert trace["checks"]["commence_time_staleness_applied"] is False
 
+    def test_sports_futures_resolve_at_lower_probability_threshold(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "No",
+                    "probability": 0.92,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.75,
+                },
+                {
+                    "name": "Yes",
+                    "probability": 0.08,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.25,
+                },
+            ],
+            "No",
+            0.92,
+            now,
+            sport_category="basketball",
+        )
+
+        assert trace["eligible"] is False
+        assert "effectively_resolved" in trace["blockers"]
+        assert trace["checks"]["effective_resolution_threshold"] == 0.90
+
+    def test_non_sports_futures_keep_generic_resolved_threshold(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "No",
+                    "probability": 0.92,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.75,
+                },
+                {
+                    "name": "Yes",
+                    "probability": 0.08,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.25,
+                },
+            ],
+            "No",
+            0.92,
+            now,
+            sport_category="politics",
+        )
+
+        assert trace["eligible"] is True
+        assert "effectively_resolved" not in trace["blockers"]
+        assert trace["checks"]["effective_resolution_threshold"] == 0.95
+
+    def test_sports_futures_with_real_surprise_can_still_surface(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 0.91,
+                    "probability_change_24h": 0.12,
+                    "opening_probability": 0.18,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.09,
+                    "probability_change_24h": -0.12,
+                    "opening_probability": 0.82,
+                },
+            ],
+            "Yes",
+            0.91,
+            now,
+            sport_category="hockey",
+        )
+
+        assert trace["eligible"] is True
+        assert "effectively_resolved" not in trace["blockers"]
+
     def test_canonical_dedupe_does_not_collapse_unrelated_yes_no_markets(self):
         china_invade = {
             "data": {

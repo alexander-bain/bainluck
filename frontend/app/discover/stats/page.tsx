@@ -52,7 +52,7 @@ export default function PredictionStatsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fafbfc] flex items-center justify-center">
+      <div className="min-h-screen bg-surface-deep flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
       </div>
     );
@@ -60,8 +60,8 @@ export default function PredictionStatsPage() {
 
   if (!stats || stats.total === 0) {
     return (
-      <div className="min-h-screen bg-[#fafbfc]">
-        <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-lg border-b border-surface-border">
+      <div className="min-h-screen bg-surface-deep">
+        <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
           <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
             <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
             <h1 className="text-lg font-black tracking-tight">Your Stats</h1>
@@ -79,8 +79,8 @@ export default function PredictionStatsPage() {
   const categories = Object.entries(stats.by_category).sort((a, b) => b[1].total - a[1].total);
 
   return (
-    <div className="min-h-screen bg-[#fafbfc]">
-      <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-lg border-b border-surface-border">
+    <div className="min-h-screen bg-surface-deep">
+      <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
           <h1 className="text-lg font-black tracking-tight">Your Stats</h1>

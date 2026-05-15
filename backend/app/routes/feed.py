@@ -814,6 +814,26 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float, float]:
+    """Return leader/current and opening thresholds for stale-feed suppression."""
+    category = (sport_category or "").lower()
+    sports_category = category in {
+        "sports",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "golf",
+        "tennis",
+        "mma",
+        "racing",
+    }
+    if sports_category:
+        return 0.90, 0.70
+    return 0.95, 0.85
+
+
 def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
     blockers: list[str] = []
     if market.status != "open":
@@ -876,6 +896,7 @@ def _market_runtime_filter_trace(
     leader_name: str | None,
     leader_prob: float | None,
     now: datetime,
+    sport_category: str | None = None,
 ) -> dict:
     blockers: list[str] = []
     probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
@@ -892,8 +913,16 @@ def _market_runtime_filter_trace(
             if outcome["name"] == leader_name:
                 leader_opening = outcome.get("opening_probability")
                 break
-    is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
-    if is_effectively_resolved and (leader_opening is None or leader_opening >= 0.85):
+
+    resolved_threshold, opening_threshold = _effective_resolution_thresholds(
+        sport_category
+    )
+    is_effectively_resolved = (
+        leader_prob is not None and leader_prob >= resolved_threshold
+    )
+    if is_effectively_resolved and (
+        leader_opening is None or leader_opening >= opening_threshold
+    ):
         blockers.append("effectively_resolved")
 
     has_any_movement = any(
@@ -918,6 +947,8 @@ def _market_runtime_filter_trace(
             "all_outcomes_settled": all_settled,
             "leader_probability": leader_prob,
             "leader_opening_probability": leader_opening,
+            "effective_resolution_threshold": resolved_threshold,
+            "effective_resolution_opening_threshold": opening_threshold,
             "has_any_movement": has_any_movement,
             "days_stale": round(days_stale, 2) if days_stale is not None else None,
             "commence_time": commence_time.isoformat() if commence_time else None,
@@ -1061,6 +1092,7 @@ def _score_market_trace(
         leader_name,
         leader_prob,
         now,
+        sport_category=market.llm_sport_category,
     )
 
     highlight_result = compute_futures_highlight(
@@ -2359,15 +2391,21 @@ async def _score_futures(
         if all_settled:
             continue
 
-        # 2) Leader at ≥95% with no interesting journey
-        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.95
+        # 2) Leader near settled with no interesting journey. Sports futures
+        # stale fastest after elimination/advancement, so use a lower threshold.
+        resolved_threshold, opening_threshold = _effective_resolution_thresholds(
+            market.llm_sport_category
+        )
+        is_effectively_resolved = (
+            leader_prob is not None and leader_prob >= resolved_threshold
+        )
         if is_effectively_resolved:
             leader_opening = None
             for o in outcomes_data:
                 if o["name"] == leader_name:
                     leader_opening = o.get("opening_probability")
                     break
-            if leader_opening is None or leader_opening >= 0.85:
+            if leader_opening is None or leader_opening >= opening_threshold:
                 continue
 
         # 3) Stale market: no price updates for 7+ days and zero movement

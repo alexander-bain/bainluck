@@ -209,14 +209,14 @@ export function EvolutionView({
     positionOptions?.find((p) => p.key === selectedPosition)?.label || "Win";
 
   const cardClasses = isFullscreen
-    ? "fixed inset-0 z-[9999] bg-white flex flex-col"
-    : "bg-white border border-gray-200 rounded-[10px] overflow-hidden";
+    ? "fixed inset-0 z-[9999] bg-surface-card flex flex-col"
+    : "bg-surface-card border border-surface-border rounded-[10px] overflow-hidden";
 
   // Show the card shell immediately with a loading chart area inside,
   // so controls are visible and the layout doesn't jump.
   const chartContent = isLoading ? (
     <div className="flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center justify-center" style={{ minHeight: isFullscreen ? 600 : 300 }}>
-      <div className="flex flex-col items-center gap-2 text-gray-400">
+      <div className="flex flex-col items-center gap-2 text-text-muted">
         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -226,7 +226,7 @@ export function EvolutionView({
     </div>
   ) : (!data || error || data.outcomes.length === 0) ? (
     <div className="flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center justify-center" style={{ minHeight: 200 }}>
-      <span className="text-sm text-gray-400">No history data available</span>
+      <span className="text-sm text-text-muted">No history data available</span>
     </div>
   ) : (
     <>
@@ -243,7 +243,7 @@ export function EvolutionView({
           tournamentStart={tournamentStart ?? null}
         />
       </div>
-      <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-gray-100 px-3 py-2 sm:overflow-y-auto">
+      <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-surface-border px-3 py-2 sm:overflow-y-auto">
         <EvolutionLeaderboard
           historyData={data.outcomes}
           selectedOutcomeIds={effectiveSelectedIds}
@@ -262,13 +262,13 @@ export function EvolutionView({
     <div className={className}>
       <div className={cardClasses}>
         {/* ── Header: controls + expand ── */}
-        <div className="px-3 sm:px-4 py-2.5 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+        <div className="px-3 sm:px-4 py-2.5 border-b border-surface-border flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3 flex-wrap">
             {/* Time Range control group */}
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
               Time Range
             </span>
-            <div className="flex border border-gray-200 rounded-md overflow-hidden">
+            <div className="flex border border-surface-border rounded-md overflow-hidden">
               {(() => {
                 // Tournament mode: once started, show "Tournament" instead of "7 Days".
                 // For completed tournaments, drop 24h/Today (they'd show nothing useful).
@@ -284,10 +284,10 @@ export function EvolutionView({
                   <button
                     key={range}
                     onClick={() => setTimeRange(range)}
-                    className={`px-3 py-1 text-[11.5px] font-medium border-r border-gray-100 last:border-r-0 transition-colors ${
+                    className={`px-3 py-1 text-[11.5px] font-medium border-r border-surface-border last:border-r-0 transition-colors ${
                       timeRange === range
-                        ? "bg-gray-900 text-white font-semibold"
-                        : "text-gray-500 hover:bg-gray-50"
+                        ? "bg-text-primary text-white font-semibold"
+                        : "text-text-secondary hover:bg-surface-secondary"
                     }`}
                   >
                     {range === "full"
@@ -307,18 +307,18 @@ export function EvolutionView({
             {/* Position control group — only when multiple markets available */}
             {positionOptions && positionOptions.length > 1 && (
               <>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                   Stage
                 </span>
-                <div className="flex border border-gray-200 rounded-md overflow-hidden">
+                <div className="flex border border-surface-border rounded-md overflow-hidden">
                   {positionOptions.map((pos) => (
                     <button
                       key={pos.key}
                       onClick={() => setSelectedPosition(pos.key)}
-                      className={`px-3 py-1 text-[11.5px] font-medium border-r border-gray-100 last:border-r-0 transition-colors ${
+                      className={`px-3 py-1 text-[11.5px] font-medium border-r border-surface-border last:border-r-0 transition-colors ${
                         selectedPosition === pos.key
-                          ? "bg-gray-900 text-white font-semibold"
-                          : "text-gray-500 hover:bg-gray-50"
+                          ? "bg-text-primary text-white font-semibold"
+                          : "text-text-secondary hover:bg-surface-secondary"
                       }`}
                     >
                       {pos.label}
@@ -332,15 +332,15 @@ export function EvolutionView({
           {/* Expand/collapse button */}
           <button
             onClick={() => setIsFullscreen((f) => !f)}
-            className="w-8 h-8 rounded-md border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 flex items-center justify-center transition-colors flex-shrink-0"
+            className="w-8 h-8 rounded-md border border-surface-border bg-surface-card hover:bg-surface-secondary hover:border-text-muted flex items-center justify-center transition-colors flex-shrink-0"
             title={isFullscreen ? "Exit fullscreen" : "Expand"}
           >
             {isFullscreen ? (
-              <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M4 14h6v6m10-10h-6V4m0 16l6-6M14 4l-6 6" />
               </svg>
             ) : (
-              <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
               </svg>
             )}
@@ -353,14 +353,14 @@ export function EvolutionView({
         </div>
 
         {/* ── Footer ── */}
-        <div className="px-3 sm:px-4 py-1.5 border-t border-gray-100 bg-gray-50/80 flex justify-between text-[11px] text-gray-400">
+        <div className="px-3 sm:px-4 py-1.5 border-t border-surface-border bg-surface-secondary/80 flex justify-between text-[11px] text-text-muted">
           <span>{marketName || "Win Probability"} — {activePositionLabel}</span>
           <span>
             {effectiveSelectedIds.size} of {data?.outcomes.length ?? 0}
             {selectedOutcomeIds !== null && (
               <button
                 onClick={() => setSelectedOutcomeIds(null)}
-                className="ml-2 text-gray-400 hover:text-blue-600 transition-colors"
+                className="ml-2 text-text-muted hover:text-blue-600 transition-colors"
               >
                 Reset
               </button>

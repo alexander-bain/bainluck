@@ -154,11 +154,11 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
               gridTemplateColumns: "1fr auto auto",
               gap: 10,
               padding: "10px 0",
-              borderTop: i > 0 ? "1px solid #F3F4F6" : undefined,
+              borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined,
             }}
           >
             <div className="flex items-center" style={{ gap: 8 }}>
-              <span style={{ fontSize: 13, color: "#374151" }}>{item.q}</span>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{item.q}</span>
               <SourceBadge src={item.src} />
             </div>
 

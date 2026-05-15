@@ -29,13 +29,13 @@ export function SectionHeader({ kicker, title, meta, count }: {
         <span className="text-[11px] font-bold tracking-[0.12em] uppercase" style={{ color: "#059669" }}>
           {kicker}
         </span>
-        <h2 className="text-[28px] font-semibold text-[#111827] leading-tight mt-1 tracking-tight">
+        <h2 className="text-[28px] font-semibold text-text-primary leading-tight mt-1 tracking-tight">
           {title}
         </h2>
-        {meta && <div className="font-mono text-xs text-[#9CA3AF] mt-1.5">{meta}</div>}
+        {meta && <div className="font-mono text-xs text-text-muted mt-1.5">{meta}</div>}
       </div>
       {count != null && (
-        <span className="text-[11px] font-semibold text-[#6B7280] bg-[#F3F4F6] px-2.5 py-1 rounded-full">
+        <span className="text-[11px] font-semibold text-text-secondary bg-surface-secondary px-2.5 py-1 rounded-full">
           {count} active
         </span>
       )}
@@ -45,7 +45,7 @@ export function SectionHeader({ kicker, title, meta, count }: {
 
 export function Card({ children, className = "", style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return (
-    <div className={`bg-white border border-[#E5E7EB] rounded-2xl p-5 ${className}`} style={style}>
+    <div className={`bg-surface-card border border-surface-border rounded-2xl p-5 ${className}`} style={style}>
       {children}
     </div>
   );
@@ -55,7 +55,7 @@ export function SourceChip({ src }: { src: string }) {
   const s = SOURCES[src] || SOURCES.kalshi;
   if (src === "cross") {
     return (
-      <span className="inline-flex items-center gap-1.5 border border-[#E5E7EB] rounded-full text-[10px] font-semibold tracking-wide px-2 py-0.5 text-[#374151]"
+      <span className="inline-flex items-center gap-1.5 border border-surface-border rounded-full text-[10px] font-semibold tracking-wide px-2 py-0.5 text-text-secondary"
         style={{ background: `linear-gradient(90deg, ${SOURCES.kalshi.bg} 50%, ${SOURCES.polymarket.bg} 50%)` }}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: SOURCES.kalshi.color }} />
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: SOURCES.polymarket.color }} />
@@ -73,7 +73,7 @@ export function SourceChip({ src }: { src: string }) {
 }
 
 export function Delta({ v, unit = "pp" }: { v: number | null | undefined; unit?: string }) {
-  if (v === 0 || v == null) return <span className="font-mono text-[10.5px] text-[#9CA3AF]">—</span>;
+  if (v === 0 || v == null) return <span className="font-mono text-[10.5px] text-text-muted">—</span>;
   const col = deltaColor(v);
   const arrow = v > 0 ? "▲" : "▼";
   return (
@@ -87,7 +87,7 @@ export function ProbBar({ value, height = 6, color }: { value: number; height?: 
   const c = color || probColor(value);
   const w = Math.max(1, value);
   return (
-    <div className="flex-1 bg-[#F3F4F6] rounded-full overflow-hidden" style={{ height }}>
+    <div className="flex-1 bg-surface-secondary rounded-full overflow-hidden" style={{ height }}>
       <div className="h-full rounded-full transition-all duration-500" style={{ width: `${w}%`, background: c }} />
     </div>
   );
@@ -105,15 +105,15 @@ export function Histogram({ buckets, color }: {
         const isPeak = i === peak;
         return (
           <div key={i} className="flex items-center gap-1.5 h-[22px]">
-            <span className="font-mono text-[10px] text-[#6B7280] w-[56px] text-right shrink-0 truncate">{b[1]}</span>
-            <div className="flex-1 h-[16px] bg-[#F3F4F6] rounded-sm overflow-hidden">
+            <span className="font-mono text-[10px] text-text-secondary w-[56px] text-right shrink-0 truncate">{b[1]}</span>
+            <div className="flex-1 h-[16px] bg-surface-secondary rounded-sm overflow-hidden">
               <div className="h-full rounded-sm" style={{
                 width: `${Math.max(w, 1.5)}%`,
                 background: color,
                 opacity: isPeak ? 1 : 0.35 + (b[0] / max) * 0.45,
               }} />
             </div>
-            <span className="font-mono text-[10px] font-semibold w-[32px] text-right shrink-0" style={{ color: isPeak ? "#111827" : "#9CA3AF" }}>
+            <span className="font-mono text-[10px] font-semibold w-[32px] text-right shrink-0" style={{ color: isPeak ? "var(--text-primary)" : "var(--text-muted)" }}>
               {b[0]}%
             </span>
           </div>
@@ -128,11 +128,11 @@ export function MarketRow({ q, prob, src, delta }: {
 }) {
   const col = probColor(prob);
   return (
-    <div className="py-2.5 border-t border-[#F3F4F6]">
+    <div className="py-2.5 border-t border-surface-secondary">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex-1 text-[13px] text-[#374151] leading-snug min-w-0">{q}</div>
+        <div className="flex-1 text-[13px] text-text-secondary leading-snug min-w-0">{q}</div>
         <div className="flex items-center gap-2 shrink-0">
-          <div className="w-[80px] h-[4px] bg-[#F3F4F6] rounded-full overflow-hidden">
+          <div className="w-[80px] h-[4px] bg-surface-secondary rounded-full overflow-hidden">
             <div className="h-full rounded-full" style={{ width: `${Math.max(prob, 3)}%`, background: col }} />
           </div>
           <span className="font-mono text-[18px] font-semibold w-[48px] text-right" style={{ color: col }}>
@@ -149,7 +149,7 @@ export function MarketRow({ q, prob, src, delta }: {
 
 export function FooterNote({ left, right }: { left: string; right?: string }) {
   return (
-    <div className="mt-3.5 pt-2.5 border-t border-dashed border-[#E5E7EB] flex justify-between items-center text-[11px] text-[#9CA3AF]">
+    <div className="mt-3.5 pt-2.5 border-t border-dashed border-surface-border flex justify-between items-center text-[11px] text-text-muted">
       <span>{left}</span>
       {right && <span className="font-mono">{right}</span>}
     </div>

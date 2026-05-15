@@ -32,7 +32,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
   return (
     <div
-      className="bg-white flex flex-col border border-surface-border"
+      className="bg-surface-card flex flex-col border border-surface-border"
       style={{ borderRadius: 16, padding: 22, minHeight: 460 }}
     >
       {/* Header */}
@@ -40,18 +40,18 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         <div>
           <div
             className="font-mono"
-            style={{ fontSize: 11, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}
+            style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}
           >
             {city.region}
           </div>
-          <div style={{ fontSize: 24, fontWeight: 600, color: "#111827" }}>
+          <div style={{ fontSize: 24, fontWeight: 600, color: "var(--text-primary)" }}>
             {city.name}
           </div>
         </div>
         {isCrossSource ? <CrossSourceBadge /> : <SourceBadge src={city.srcs[0]} />}
       </div>
 
-      <div className="font-mono" style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>
+      <div className="font-mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
         Tomorrow&apos;s high temperature &middot; Apr 20, 2026
       </div>
 
@@ -64,13 +64,13 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
       </div>
 
       <div className="flex items-baseline" style={{ marginTop: 8, gap: 8 }}>
-        <span className="font-mono" style={{ fontSize: 20, fontWeight: 600, color: "#374151" }}>
+        <span className="font-mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--text-secondary)" }}>
           {peak.prob}%
         </span>
-        <span style={{ fontSize: 12, color: "#9CA3AF" }}>most likely bucket</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>most likely bucket</span>
       </div>
 
-      <div style={{ fontSize: 13, color: "#6B7280", marginTop: 6, marginBottom: 16 }}>
+      <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6, marginBottom: 16 }}>
         {peak.label} is the modal outcome
       </div>
 
@@ -85,7 +85,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
       {/* Legend */}
       {isCrossSource && (
-        <div className="flex items-center justify-center gap-5" style={{ marginTop: 12, fontSize: 11, color: "#6B7280" }}>
+        <div className="flex items-center justify-center gap-5" style={{ marginTop: 12, fontSize: 11, color: "var(--text-secondary)" }}>
           <span className="flex items-center gap-1.5">
             <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: SOURCES.polymarket.color }} />
             Polymarket
@@ -99,7 +99,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
       <div
         className="font-mono"
-        style={{ fontSize: 11, color: "#9CA3AF", marginTop: isCrossSource ? 6 : 16, textAlign: "center" }}
+        style={{ fontSize: 11, color: "var(--text-muted)", marginTop: isCrossSource ? 6 : 16, textAlign: "center" }}
       >
         {city.marketId ? (
           <Link
@@ -159,7 +159,7 @@ function SingleSourceHistogram({
               )}
               {/* Always-visible label on peak */}
               {isPeak && (
-                <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+                <div className="font-mono" style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4 }}>
                   {bucket.prob}%
                 </div>
               )}
@@ -180,7 +180,7 @@ function SingleSourceHistogram({
       </div>
       <div className="flex" style={{ gap: 2, marginTop: 4 }}>
         {dist.map((bucket, i) => (
-          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 9, color: "#9CA3AF" }}>
+          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 9, color: "var(--text-muted)" }}>
             {bucket.label}
           </div>
         ))}
@@ -233,7 +233,7 @@ function GroupedBarHistogram({
                 style={{ fontSize: 10, fontWeight: 600 }}
               >
                 <span style={{ color: "#93C5FD" }}>{bucket.prob}%</span>
-                <span style={{ color: "#6B7280" }}>/</span>
+                <span style={{ color: "var(--text-secondary)" }}>/</span>
                 <span style={{ color: "#86EFAC" }}>{kalshi.prob}%</span>
               </div>
 
@@ -278,7 +278,7 @@ function GroupedBarHistogram({
       {/* X-axis labels — show every other to reduce clutter */}
       <div className="flex" style={{ gap: 1, marginTop: 4 }}>
         {polyDist.map((bucket, i) => (
-          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 8, color: "#9CA3AF" }}>
+          <div key={i} className="flex-1 text-center font-mono" style={{ fontSize: 8, color: "var(--text-muted)" }}>
             {i % 2 === 0 || i === polyDist.length - 1 ? bucket.label : ""}
           </div>
         ))}

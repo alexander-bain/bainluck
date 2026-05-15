@@ -88,7 +88,7 @@ export default function WeatherHero() {
         {/* Right — featured card */}
         <div
           key={idx}
-          className="relative bg-white rounded-[18px] border border-surface-border overflow-hidden"
+          className="relative bg-surface-card rounded-[18px] border border-surface-border overflow-hidden"
           style={{
             padding: 28,
             minHeight: 260,

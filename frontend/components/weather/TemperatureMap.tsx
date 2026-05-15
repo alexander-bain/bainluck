@@ -37,7 +37,7 @@ export default function TemperatureMap() {
             value={citySearch}
             onChange={e => setCitySearch(e.target.value)}
             placeholder="Search cities..."
-            className="w-full max-w-xs px-3 py-2 text-sm border border-surface-border rounded-lg bg-white text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30 focus:border-accent-brand"
+            className="w-full max-w-xs px-3 py-2 text-sm border border-surface-border rounded-lg bg-surface-card text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30 focus:border-accent-brand"
           />
           {citySearch.trim() && (
             <span className="ml-2 text-xs text-text-muted">

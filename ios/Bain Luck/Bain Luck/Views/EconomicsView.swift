@@ -329,9 +329,9 @@ struct EconomicsView: View {
         var result: [ThemeInfo] = []
         if let t = themes.jobs { result.append(ThemeInfo(id: "jobs", label: "Jobs & Employment", emoji: "💼", count: t.count, markets: t.markets ?? [])) }
         if let t = themes.inflation { result.append(ThemeInfo(id: "inflation", label: "Inflation / CPI", emoji: "📊", count: t.count, markets: t.sideMarkets ?? [])) }
-        if let t = themes.recession { result.append(ThemeInfo(id: "recession", label: "GDP & Recession", emoji: "📉", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.markets { result.append(ThemeInfo(id: "markets", label: "Markets & Indices", emoji: "📈", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.energy { result.append(ThemeInfo(id: "energy", label: "Energy", emoji: "⛽", count: t.count, markets: t.markets ?? [])) }
+        if let t = themes.recession { result.append(ThemeInfo(id: "recession", label: "GDP & Recession", emoji: "📉", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
+        if let t = themes.markets { result.append(ThemeInfo(id: "markets", label: "Markets & Indices", emoji: "📈", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
+        if let t = themes.energy { result.append(ThemeInfo(id: "energy", label: "Energy", emoji: "⛽", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
         if let t = themes.housing { result.append(ThemeInfo(id: "housing", label: "Housing", emoji: "🏠", count: t.count, markets: t.markets ?? [])) }
         if let t = themes.trade { result.append(ThemeInfo(id: "trade", label: "Trade & Tariffs", emoji: "🚢", count: t.count, markets: t.markets ?? [])) }
         if let t = themes.government { result.append(ThemeInfo(id: "government", label: "Government & Fiscal", emoji: "🏛", count: t.count, markets: t.markets ?? [])) }
@@ -387,12 +387,12 @@ struct EconomicsView: View {
                                     endPoint: .trailing
                                 )
                             )
-                            .frame(width: max(4, geo.size.width * Double(market.prob) / 100))
+                            .frame(width: max(4, geo.size.width * market.prob / 100))
                     }
                 }
                 .frame(height: 6)
 
-                Text("\(market.prob)%")
+                Text(market.prob.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(market.prob))%" : String(format: "%.1f%%", market.prob))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(market.prob > 50 ? .primary : .secondary)

@@ -75,7 +75,7 @@ export default function RainForecast() {
 
         <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3.5">
           {/* Left card — 7-day rain */}
-          <div className="bg-white rounded-2xl border border-surface-border p-6">
+          <div className="bg-surface-card rounded-2xl border border-surface-border p-6">
             <div className="flex items-start justify-between mb-1">
               <div>
                 <h3
@@ -158,7 +158,7 @@ export default function RainForecast() {
           </div>
 
           {/* Right card — Monthly rainfall */}
-          <div className="bg-white rounded-2xl border border-surface-border p-6">
+          <div className="bg-surface-card rounded-2xl border border-surface-border p-6">
             <div className="flex items-start justify-between mb-1">
               <h3
                 className="text-text-primary"

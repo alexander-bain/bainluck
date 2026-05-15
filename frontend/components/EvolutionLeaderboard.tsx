@@ -77,7 +77,7 @@ export function EvolutionLeaderboard({
   return (
     <div className={`flex flex-col ${className || ""}`}>
       {/* Title */}
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted mb-1.5">
         {entityLabel}
       </div>
 
@@ -98,7 +98,7 @@ export function EvolutionLeaderboard({
             <div
               key={row.outcomeId}
               className={`flex items-center gap-1.5 px-1 py-[4px] rounded text-xs cursor-default transition-colors ${
-                isHighlighted ? "bg-gray-100" : "hover:bg-gray-50"
+                isHighlighted ? "bg-surface-secondary" : "hover:bg-surface-secondary"
               }`}
               onMouseEnter={() => onHoverOutcome?.(row.outcomeId)}
               onMouseLeave={() => onHoverOutcome?.(null)}
@@ -111,13 +111,13 @@ export function EvolutionLeaderboard({
 
               {/* Name */}
               <span className={`flex-1 min-w-0 font-medium truncate ${
-                row.eliminated ? "text-gray-400 line-through" : "text-gray-900"
+                row.eliminated ? "text-text-muted line-through" : "text-text-primary"
               }`}>
                 {row.name}
               </span>
 
               {/* Probability */}
-              <span className="text-[11px] text-gray-600 tabular-nums flex-shrink-0">
+              <span className="text-[11px] text-text-secondary tabular-nums flex-shrink-0">
                 {(row.currentProbability * 100).toFixed(1)}%
               </span>
 
@@ -127,7 +127,7 @@ export function EvolutionLeaderboard({
                   e.stopPropagation();
                   onToggleOutcome(row.outcomeId);
                 }}
-                className="text-gray-300 hover:text-red-500 hover:bg-red-50 rounded px-0.5 text-xs leading-none transition-colors flex-shrink-0"
+                className="text-text-muted hover:text-red-500 hover:bg-red-50 rounded px-0.5 text-xs leading-none transition-colors flex-shrink-0"
                 title="Remove"
               >
                 &times;
@@ -178,10 +178,10 @@ function PlayerSearch({
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         placeholder={placeholder}
-        className="w-full px-2 py-1.5 border border-gray-200 rounded-[5px] text-[11.5px] text-gray-700 bg-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
+        className="w-full px-2 py-1.5 border border-surface-border rounded-[5px] text-[11.5px] text-text-secondary bg-surface-card outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
       />
       {open && filtered.length > 0 && (
-        <div className="absolute z-50 w-full mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+        <div className="absolute z-50 w-full mt-0.5 bg-surface-card border border-surface-border rounded-md shadow-lg max-h-48 overflow-y-auto">
           {filtered.map((o) => (
             <button
               key={o.outcome_id}
@@ -190,10 +190,10 @@ function PlayerSearch({
                 setQuery("");
                 setOpen(false);
               }}
-              className="w-full text-left px-2 py-1.5 text-[11.5px] text-gray-700 hover:bg-gray-50 flex justify-between"
+              className="w-full text-left px-2 py-1.5 text-[11.5px] text-text-secondary hover:bg-surface-secondary flex justify-between"
             >
               <span className="truncate">{shortName(o.name)}</span>
-              <span className="text-gray-400 tabular-nums ml-1 flex-shrink-0">
+              <span className="text-text-muted tabular-nums ml-1 flex-shrink-0">
                 {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
               </span>
             </button>

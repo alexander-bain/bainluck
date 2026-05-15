@@ -13,6 +13,7 @@ import pytest
 from app.services.polymarket_api import PolymarketAPIService
 from app.tasks.polymarket import (
     _extract_outcome_name,
+    _is_placeholder_outcome,
     _resolve_market_probability,
     _tags_to_category,
 )
@@ -620,3 +621,111 @@ class TestResolveMarketProbability:
             outcome_prices=[0.01, 0.99],
         )
         assert _resolve_market_probability(m) == 0.01
+
+    def test_placeholder_with_outcome_price_100pct(self):
+        """Placeholder with outcomePrices=[1.0, 0.0] and Player name is rejected.
+
+        This is the bug that caused French Open / US Open tennis futures to
+        show 'Player B 100%'. Polymarket sets outcomePrices to ["1", "0"]
+        for reserved placeholder slots, which the old code accepted as valid.
+        """
+        m = self._make_market(
+            question="Will Player B win the 2026 Men's French Open?",
+            outcome_prices=[1.0, 0.0],
+            best_bid=None,
+            best_ask=1.0,
+            last_trade_price=None,
+        )
+        assert _resolve_market_probability(m) is None
+
+    def test_placeholder_with_group_item_title(self):
+        """Placeholder detected via groupItemTitle field."""
+        m = self._make_market(
+            question="Will Player S win something?",
+            outcome_prices=[1.0, 0.0],
+            best_bid=None,
+            best_ask=None,
+            last_trade_price=None,
+        )
+        m.group_item_title = "Player S"
+        assert _resolve_market_probability(m) is None
+
+    def test_real_100pct_with_trading_not_rejected(self):
+        """A real market that reached 100% with trading activity passes."""
+        m = self._make_market(
+            question="Will Team A win?",
+            outcome_prices=[1.0, 0.0],
+            best_bid=0.99,
+            best_ask=1.0,
+            last_trade_price=0.99,
+        )
+        assert _resolve_market_probability(m) == 1.0
+
+
+class TestIsPlaceholderOutcome:
+    """Test _is_placeholder_outcome detection."""
+
+    def _make_market(self, **kwargs):
+        from app.services.polymarket_api import PolymarketMarket
+        defaults = {
+            "condition_id": "0xtest",
+            "question": "Test?",
+            "outcomes": ["Yes", "No"],
+            "outcome_prices": [],
+            "best_bid": None,
+            "best_ask": None,
+            "last_trade_price": None,
+        }
+        defaults.update(kwargs)
+        return PolymarketMarket(**defaults)
+
+    def test_player_single_letter_in_title(self):
+        m = self._make_market(question="Will Player B win?")
+        m.group_item_title = "Player B"
+        assert _is_placeholder_outcome(m) is True
+
+    def test_player_single_letter_in_question_only(self):
+        m = self._make_market(question="Will Player S win the French Open?")
+        assert _is_placeholder_outcome(m) is True
+
+    def test_real_player_name_not_detected(self):
+        m = self._make_market(
+            question="Will Jannik Sinner win?",
+            outcome_prices=[0.7, 0.3],
+            best_bid=0.69,
+            last_trade_price=0.7,
+        )
+        m.group_item_title = "Jannik Sinner"
+        assert _is_placeholder_outcome(m) is False
+
+    def test_untraded_100pct_is_placeholder(self):
+        """No trading + 100% price = placeholder slot."""
+        m = self._make_market(
+            question="Will Unknown win?",
+            outcome_prices=[1.0, 0.0],
+            best_bid=None,
+            best_ask=None,
+            last_trade_price=None,
+        )
+        assert _is_placeholder_outcome(m) is True
+
+    def test_traded_100pct_is_not_placeholder(self):
+        """Has last_trade_price > 0, so it's a real market even at 100%."""
+        m = self._make_market(
+            question="Will Real Team win?",
+            outcome_prices=[1.0, 0.0],
+            best_bid=0.99,
+            last_trade_price=0.99,
+        )
+        assert _is_placeholder_outcome(m) is False
+
+    def test_other_outcome_not_placeholder(self):
+        """'Other' outcome with valid pricing is not a placeholder."""
+        m = self._make_market(
+            question="Other",
+            outcome_prices=[0.05, 0.95],
+            best_bid=0.04,
+            last_trade_price=0.05,
+        )
+        m.group_item_title = "Other"
+        assert _is_placeholder_outcome(m) is False

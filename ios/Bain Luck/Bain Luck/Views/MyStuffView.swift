@@ -47,7 +47,7 @@ final class MyStuffViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            async let feedTask = APIClient.shared.fetchFeed(myTeamsOnly: true)
+            async let feedTask = APIClient.shared.fetchFeed(myTeamsOnly: true, includeFutures: false)
             async let futuresTask = APIClient.shared.fetchMyTeamFutures(limit: 100)
 
             let feed = try await feedTask
@@ -419,7 +419,7 @@ struct MyStuffView: View {
                 feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming)
             }
             if !vm.topMarkets.isEmpty {
-                feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
+                feedSection(title: "Your Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
             }
             if let futures = vm.teamFutures, !futures.items.isEmpty {
                 TeamFuturesSection(futures: futures, path: $path)
@@ -505,7 +505,11 @@ struct MyStuffView: View {
             Button {
                 path.append(Route.futuresDetail(id: futures.id))
             } label: {
-                FuturesCardView(futures: futures)
+                if let matched = futures.matchedOutcomes, !matched.isEmpty {
+                    MyTeamFuturesCard(futures: futures, matchedOutcomes: matched)
+                } else {
+                    FuturesCardView(futures: futures)
+                }
             }
             .buttonStyle(.plain)
         }
@@ -1140,5 +1144,109 @@ private struct TeamFuturesSection: View {
             result.removeSubrange(range)
         }
         return result.trimmingCharacters(in: .whitespaces)
+    }
+}
+
+// MARK: - My Team Futures Card
+
+/// Futures card for My Stuff that highlights the user's team outcomes instead
+/// of showing the global top 3 leaders. Shows the user's team probability,
+/// rank, and movement in the context of the broader market.
+private struct MyTeamFuturesCard: View {
+    let futures: FeedFuturesData
+    let matchedOutcomes: [MatchedOutcome]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
+            HStack {
+                Text(futures.llmSportCategory?.capitalized ?? "Futures")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                PinButton(type: "future", id: futures.id, compact: true)
+                if let count = futures.sourceCount, count > 1 {
+                    Text("\(count) sources")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else if let source = futures.source {
+                    Text(source.capitalized)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            // Market name
+            Text(futures.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .lineLimit(2)
+
+            // User's matched team outcomes — shown prominently
+            ForEach(matchedOutcomes) { outcome in
+                HStack(spacing: 8) {
+                    if let rank = outcome.rank {
+                        Text("#\(rank)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.blue)
+                            .frame(width: 24, alignment: .trailing)
+                    }
+                    Text(outcome.name)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    if let m = outcome.movement, abs(m) >= 0.005 {
+                        HStack(spacing: 1) {
+                            Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 8))
+                            Text(formatProbability(abs(m)))
+                                .font(.system(size: 9))
+                        }
+                        .foregroundStyle(m > 0 ? .green : .red)
+                    }
+                    if let prob = outcome.probability {
+                        Text(formatProbability(prob))
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(Color.blue.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            // Show the market leader for context (if different from matched)
+            if let leader = futures.topOutcomes?.first,
+               !matchedOutcomes.contains(where: { $0.name == leader.name }) {
+                HStack(spacing: 8) {
+                    Text("Leader:")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(leader.name)
+                        .font(.caption)
+                        .lineLimit(1)
+                    Spacer()
+                    if let prob = leader.probability {
+                        Text(formatProbability(prob))
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            // Remaining count
+            if let total = futures.outcomeCount, total > matchedOutcomes.count + 1 {
+                Text("+\(total - matchedOutcomes.count) other outcomes")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }

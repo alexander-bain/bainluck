@@ -87,6 +87,25 @@ _INDIVIDUAL_SPORT_BASE_KEYS: dict[str, str] = {
     "boxing_": "boxing_boxing",
 }
 
+# Sport key prefixes where "teams" are actually individual athletes (tennis
+# players, MMA fighters, golfers, boxers).  The Odds API models these 1v1
+# sports as team-vs-team, so every player gets a row in the ``teams`` table.
+# We suppress these from team search results so users don't see
+# "Carlos Alcaraz — ATP" as a Team card.
+_INDIVIDUAL_SPORT_PREFIXES: tuple[str, ...] = (
+    "tennis_",
+    "mma_",
+    "boxing_",
+    "golf_",
+)
+
+
+def _is_individual_sport(sport_key: str | None) -> bool:
+    """Return True if *sport_key* belongs to a 1-on-1 / individual sport."""
+    if not sport_key:
+        return False
+    return sport_key.startswith(_INDIVIDUAL_SPORT_PREFIXES)
+
 
 def _normalize_team_sport_key(sport_key: str | None) -> str | None:
     """Collapse tournament-specific sport keys to their base league.
@@ -999,6 +1018,12 @@ async def search_events(
     teams_seen: set[str] = set()
     matched_teams = []
     for row in team_search_result.all():
+        # Suppress individual-sport "teams" (tennis players, MMA fighters,
+        # golfers, boxers) — they are artifacts of the Odds API modelling
+        # 1v1 sports as team-vs-team.  Users will still find these athletes
+        # via event and futures results.
+        if _is_individual_sport(row.sport_key):
+            continue
         if row.name not in teams_seen:
             teams_seen.add(row.name)
             matched_teams.append({
@@ -1108,6 +1133,9 @@ async def typeahead_search(
     team_pool = []
     teams_seen = set()
     for row in team_result.all():
+        # Skip individual-sport "teams" (tennis/MMA/golf/boxing players)
+        if _is_individual_sport(row.sport_key):
+            continue
         if row.name not in teams_seen:
             teams_seen.add(row.name)
             team_pool.append({
@@ -1216,6 +1244,8 @@ async def typeahead_search(
                 .limit(3)
             )
             for row in fuzzy_teams.all():
+                if _is_individual_sport(row.sport_key):
+                    continue
                 if row.name not in teams_seen:
                     teams_seen.add(row.name)
                     team_pool.append({
@@ -5868,11 +5898,23 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     return response
 
 
+def _is_placeholder_outcome_name(name: str) -> bool:
+    """Detect Polymarket placeholder outcome names (e.g., 'Player B', 'Player S')."""
+    return bool(re.match(r"^Player\s+[A-Z]$", (name or "").strip()))
+
+
 def _format_futures_for_search(market: FuturesMarket) -> dict:
     """Format a futures market for search results."""
+    # Filter out Polymarket placeholder outcomes before sorting/display.
+    # These are reserved slots with names like "Player B" and fake 100% probs.
+    real_outcomes = [
+        o for o in market.outcomes
+        if not _is_placeholder_outcome_name(o.name)
+    ]
+
     # Sort outcomes by probability to get top outcomes
     sorted_outcomes = sorted(
-        market.outcomes,
+        real_outcomes,
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
@@ -5903,6 +5945,6 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
-        "outcome_count": len(market.outcomes),
+        "outcome_count": len(real_outcomes),
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }

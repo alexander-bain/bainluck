@@ -33,10 +33,19 @@ struct BugReportView: View {
                 VStack(spacing: 16) {
                     // Screenshot with markup
                     if let screenshot {
+                        // Compute explicit display size so the overlay canvas
+                        // exactly matches the rendered image (no dead space).
+                        // Without this, .frame(maxHeight:) inherits the parent
+                        // width, making the canvas wider than the image and
+                        // causing annotation coordinate offsets.
+                        let imgAspect = screenshot.size.width / screenshot.size.height
+                        let displayHeight: CGFloat = min(300, screenshot.size.height)
+                        let displayWidth = displayHeight * imgAspect
+
                         Image(platformImage: screenshot)
                             .resizable()
                             .scaledToFit()
-                            .frame(maxHeight: 300)
+                            .frame(width: displayWidth, height: displayHeight)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay {
                                 #if os(iOS)
@@ -108,7 +117,7 @@ struct BugReportView: View {
                         Text("What went wrong?")
                             .font(.subheadline.weight(.semibold))
 
-                        TextField("Describe the bug...", text: $description, axis: .vertical)
+                        TextField("Optional — the screenshot may be enough!", text: $description, axis: .vertical)
                             .lineLimit(3...6)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -167,7 +176,7 @@ struct BugReportView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Submit") { submitReport() }
-                        .disabled(submitting || submitted || description.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(submitting || submitted)
                         .fontWeight(.semibold)
                 }
             }
@@ -254,12 +263,19 @@ struct BugReportView: View {
 
         #if os(iOS)
         let drawing = canvasView.drawing
+        let canvasBounds = canvasView.bounds
         let renderer = UIGraphicsImageRenderer(size: screenshot.size)
         let flattened = renderer.image { ctx in
             screenshot.draw(at: .zero)
-            let scale = screenshot.size.width / canvasView.bounds.width
-            ctx.cgContext.scaleBy(x: scale, y: scale)
-            drawing.image(from: canvasView.bounds, scale: 1.0).draw(at: .zero)
+            // Map canvas points to image points. Use bounds.size (not
+            // bounds, which includes contentOffset origin for scroll views).
+            let scaleX = screenshot.size.width / canvasBounds.size.width
+            let scaleY = screenshot.size.height / canvasBounds.size.height
+            ctx.cgContext.scaleBy(x: scaleX, y: scaleY)
+            // Render the drawing from a zero-origin rect sized to the
+            // visible canvas area, at screen scale for crisp annotations.
+            let drawRect = CGRect(origin: .zero, size: canvasBounds.size)
+            drawing.image(from: drawRect, scale: UIScreen.main.scale).draw(at: .zero)
         }
         return flattened.jpegData(compressionQuality: 0.7)
         #else
@@ -333,6 +349,13 @@ struct CanvasOverlay: UIViewRepresentable {
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
         canvasView.tool = PKInkingTool(.marker, color: .systemRed, width: 8)
+        // Prevent scroll/zoom from shifting the drawing coordinate space
+        canvasView.isScrollEnabled = false
+        canvasView.minimumZoomScale = 1.0
+        canvasView.maximumZoomScale = 1.0
+        canvasView.contentInsetAdjustmentBehavior = .never
+        canvasView.showsVerticalScrollIndicator = false
+        canvasView.showsHorizontalScrollIndicator = false
         return canvasView
     }
 

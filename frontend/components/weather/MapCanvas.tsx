@@ -67,7 +67,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
   return (
     <div
       ref={containerRef}
-      className="bg-white border border-surface-border overflow-hidden"
+      className="bg-surface-card border border-surface-border overflow-hidden"
       style={{ borderRadius: 16 }}
     >
       {/* Toolbar */}
@@ -76,7 +76,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
         style={{ padding: "14px 18px", borderBottom: "1px solid var(--surface-border)" }}
       >
         <TempLegend />
-        <span className="font-mono" style={{ fontSize: 11, color: "#9CA3AF" }}>
+        <span className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
           HIGH &middot; APR 20, 2026
         </span>
       </div>
@@ -186,7 +186,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
           <span
             key={r.label}
             className="absolute font-mono pointer-events-none select-none"
-            style={{ left: r.left, top: 16, fontSize: 10, color: "#D1D5DB", letterSpacing: "0.08em" }}
+            style={{ left: r.left, top: 16, fontSize: 10, color: "var(--surface-border)", letterSpacing: "0.08em" }}
           >
             {r.label}
           </span>
@@ -260,7 +260,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
                     padding: "2px 8px",
                     boxShadow: "0 1px 6px rgba(0,0,0,0.12)",
                     fontSize: 10,
-                    color: "#374151",
+                    color: "var(--text-secondary)",
                     zIndex: 40,
                   }}
                 >
@@ -278,7 +278,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
       {/* Footer */}
       <div
         className="flex items-center justify-between font-mono"
-        style={{ padding: "10px 18px", borderTop: "1px solid #F3F4F6", fontSize: 11, color: "#9CA3AF" }}
+        style={{ padding: "10px 18px", borderTop: "1px solid var(--surface-border)", fontSize: 11, color: "var(--text-muted)" }}
       >
         <span>{cities.length} cities shown &middot; tap a pin for distribution</span>
         <span>{crossSourceCount} cross-source</span>
@@ -299,7 +299,7 @@ function TempLegend() {
           background: `linear-gradient(90deg, ${stops.join(",")})`,
         }}
       />
-      <span className="font-mono" style={{ fontSize: 11, color: "#6B7280" }}>
+      <span className="font-mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
         23°F &nbsp;→&nbsp; 104°F
       </span>
     </div>

@@ -117,7 +117,7 @@ export default function MarketMap({
   return (
     <section
       ref={cardRef}
-      className="relative border border-[#dbe4ef] rounded-[22px] bg-surface-card transition-shadow hover:shadow-lg hover:border-[#cbd5e1] cursor-pointer group"
+      className="relative border border-surface-border rounded-[22px] bg-surface-card transition-shadow hover:shadow-lg hover:border-text-muted cursor-pointer group"
       style={{ padding: 14, overflow: "visible" }}
       onClick={() => setPopOpen((p) => !p)}
       onMouseLeave={() => setPopOpen(false)}
@@ -145,9 +145,9 @@ export default function MarketMap({
           <div style={{ fontSize: 15, fontWeight: 950, letterSpacing: "-0.035em", lineHeight: 1.1 }}>
             {title}
           </div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>{subtitle}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>{subtitle}</div>
         </div>
-        <div style={{ fontSize: 14, fontWeight: 950, color: "#334155", whiteSpace: "nowrap" }}>
+        <div style={{ fontSize: 14, fontWeight: 950, color: "var(--text-primary)", whiteSpace: "nowrap" }}>
           {headline}
         </div>
       </div>
@@ -293,7 +293,7 @@ export default function MarketMap({
                 {isProj && m.logoUrl ? (
                   <img src={m.logoUrl} alt="" style={{ width: 16, height: 16, objectFit: "contain" }} />
                 ) : isProj ? (
-                  <span style={{ fontSize: 8, fontWeight: 950, color: "#0f172a" }}>
+                  <span style={{ fontSize: 8, fontWeight: 950, color: "var(--text-primary)" }}>
                     {m.logoFallback || ""}
                   </span>
                 ) : null}
@@ -372,7 +372,7 @@ export default function MarketMap({
                   margin: "5px 0",
                 }}
               >
-                <div style={{ fontSize: 10, color: "#475569", fontWeight: 850 }}>{row.label}</div>
+                <div style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 850 }}>{row.label}</div>
                 <div
                   style={{
                     height: 16,

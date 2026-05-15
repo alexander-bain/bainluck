@@ -580,7 +580,7 @@ function PairwiseTable({ pairs, sportFilter, onSportChange }: {
                     <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                       aWin ? "bg-emerald-50 text-emerald-700" :
                       bWin ? "bg-red-50 text-red-700" :
-                      "bg-gray-50 text-gray-600"
+                      "bg-surface-secondary text-text-secondary"
                     }`}>
                       {(pw.a_closer_pct * 100).toFixed(1)}%
                     </span>

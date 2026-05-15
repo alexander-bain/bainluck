@@ -338,9 +338,9 @@ export default function CalibrationPage() {
                     {row.n ? ` (${row.n.toLocaleString()} outcomes)` : ""}
                   </span>
                 </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-2 bg-surface-secondary rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full ${row.highlight ? "bg-blue-500" : "bg-gray-300"}`}
+                    className={`h-full rounded-full ${row.highlight ? "bg-blue-500" : "bg-text-muted"}`}
                     style={{ width: `${barWidth}%` }}
                   />
                 </div>

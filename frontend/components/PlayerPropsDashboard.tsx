@@ -569,7 +569,7 @@ export default function PlayerPropsDashboard({
                 key={f}
                 onClick={() => setTeamFilter(f)}
                 className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                  teamFilter === f ? "bg-[#111827] text-white" : "text-text-secondary hover:text-text-primary"
+                  teamFilter === f ? "bg-text-primary text-white" : "text-text-secondary hover:text-text-primary"
                 }`}
               >
                 {f === "all" ? "All" : f === "home" ? homeShortCode : awayShortCode}

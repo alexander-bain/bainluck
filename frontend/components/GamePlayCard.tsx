@@ -61,11 +61,11 @@ export default function GamePlayCard({
   const timeDisplay = [periodDisplay, clockDisplay].filter(Boolean).join(" · ");
 
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className="mt-3 border-t border-surface-border pt-3">
       <div className="flex items-start gap-3">
         {/* Time/Period badge */}
         {timeDisplay && (
-          <div className="shrink-0 text-xs text-text-muted font-medium bg-gray-50 px-2 py-1 rounded">
+          <div className="shrink-0 text-xs text-text-muted font-medium bg-surface-secondary px-2 py-1 rounded">
             {timeDisplay}
           </div>
         )}
@@ -77,13 +77,13 @@ export default function GamePlayCard({
               {homeTeamLogo && (
                 <img src={homeTeamLogo} alt="" width={14} height={14} className="w-3.5 h-3.5 object-contain" />
               )}
-              <span style={{ color: homeTeamColor || "#374151" }}>
+              <span style={{ color: homeTeamColor || "var(--text-secondary)" }}>
                 {point.homeScore}
               </span>
             </span>
             <span className="text-text-muted text-xs">-</span>
             <span className="flex items-center gap-1">
-              <span style={{ color: awayTeamColor || "#374151" }}>
+              <span style={{ color: awayTeamColor || "var(--text-secondary)" }}>
                 {point.awayScore}
               </span>
               {awayTeamLogo && (
@@ -112,12 +112,12 @@ export default function GamePlayCard({
           ) : (
             <p className="text-xs text-text-muted">
               {homeShort}{" "}
-              <span className="font-semibold" style={{ color: homeTeamColor || "#374151" }}>
+              <span className="font-semibold" style={{ color: homeTeamColor || "var(--text-secondary)" }}>
                 {homeProb}%
               </span>
               {" — "}
               {awayShort}{" "}
-              <span className="font-semibold" style={{ color: awayTeamColor || "#374151" }}>
+              <span className="font-semibold" style={{ color: awayTeamColor || "var(--text-secondary)" }}>
                 {awayProb}%
               </span>
             </p>

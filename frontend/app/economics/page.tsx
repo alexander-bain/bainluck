@@ -33,7 +33,7 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
 
   return (
     <div>
-      <div className="text-[11px] text-[#6B7280] mb-2.5 font-mono">
+      <div className="text-[11px] text-text-secondary mb-2.5 font-mono">
         Probability heatmap · Darker = more likely
       </div>
       <div className="overflow-x-auto">
@@ -46,13 +46,13 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
           <div />
           {meetings.map((m: any, i: number) => (
             <div key={i} className="text-center pb-1.5">
-              <div className="text-[11px] font-semibold text-[#374151]">{m.mo || m.date}</div>
-              <div className="font-mono text-[9px] text-[#9CA3AF]">{m.date}</div>
+              <div className="text-[11px] font-semibold text-text-secondary">{m.mo || m.date}</div>
+              <div className="font-mono text-[9px] text-text-muted">{m.date}</div>
             </div>
           ))}
           {rates.map(r => (
             <div key={r} className="contents">
-              <div className="font-mono text-[10px] text-[#6B7280] text-right pr-2 flex items-center justify-end" style={{ height: 38 }}>
+              <div className="font-mono text-[10px] text-text-secondary text-right pr-2 flex items-center justify-end" style={{ height: 38 }}>
                 {r}
               </div>
               {meetings.map((m: any, mi: number) => {
@@ -65,8 +65,8 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
                     style={{
                       height: 38,
                       background: cellColor(prob),
-                      border: isModal ? "1.5px solid #10B981" : "1px solid #F3F4F6",
-                      color: prob >= 30 ? "#064E3B" : prob >= 10 ? "#374151" : "#9CA3AF",
+                      border: isModal ? "1.5px solid var(--accent-brand)" : "1px solid var(--surface-border)",
+                      color: prob >= 30 ? "#064E3B" : prob >= 10 ? "var(--text-secondary)" : "var(--text-muted)",
                     }}>
                     {prob > 0 ? prob : ""}
                   </div>
@@ -91,10 +91,10 @@ function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
         const isModal = prob === max;
         return (
           <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "60px 1fr 40px" }}>
-            <span className={`text-xs ${isModal ? "font-semibold text-[#111827]" : "font-medium text-[#6B7280]"}`}>
+            <span className={`text-xs ${isModal ? "font-semibold text-text-primary" : "font-medium text-text-secondary"}`}>
               {label}
             </span>
-            <div className="h-2 bg-[#F3F4F6] rounded-full overflow-hidden">
+            <div className="h-2 bg-surface-secondary rounded-full overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${w}%`, background: col }} />
             </div>
             <span className="font-mono text-xs font-semibold text-right" style={{ color: col }}>
@@ -133,7 +133,7 @@ export default function EconomicsPage() {
   const t = data.themes;
 
   return (
-    <div className="-mx-3 md:-mx-6 -mt-4" style={{ background: "#FAFBFC" }}>
+    <div className="-mx-3 md:-mx-6 -mt-4 bg-surface-deep">
       {/* Hero */}
       <div className="px-4 md:px-6 pt-10 pb-8" style={{ maxWidth: 1440, margin: "0 auto" }}>
         <div className="flex items-center gap-3 mb-4">
@@ -141,15 +141,15 @@ export default function EconomicsPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
             Economics markets · Live
           </span>
-          <span className="font-mono text-xs text-[#9CA3AF]">
+          <span className="font-mono text-xs text-text-muted">
             {data.total_markets.toLocaleString()} active · Kalshi {data.by_source.kalshi.toLocaleString()} · Polymarket {data.by_source.polymarket.toLocaleString()}
           </span>
         </div>
-        <h1 className="text-[42px] md:text-[56px] font-semibold text-[#111827] leading-[1.1] tracking-tight">
+        <h1 className="text-[42px] md:text-[56px] font-semibold text-text-primary leading-[1.1] tracking-tight">
           What do markets think about{" "}
-          <span className="italic text-[#10B981]" style={{ fontFamily: "'Georgia', serif" }}>the economy</span>?
+          <span className="italic text-accent-brand" style={{ fontFamily: "'Georgia', serif" }}>the economy</span>?
         </h1>
-        <p className="text-base text-[#6B7280] mt-4 max-w-[640px]">
+        <p className="text-base text-text-secondary mt-4 max-w-[640px]">
           {data.total_markets.toLocaleString()} economic prediction markets from Kalshi and Polymarket translated into
           plain probabilities. Rates, inflation, jobs, GDP — no odds, just percentages.
         </p>
@@ -170,8 +170,8 @@ export default function EconomicsPage() {
               <Card>
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="text-xl font-semibold text-[#111827]">2026 rate path</h3>
-                    <p className="text-[13px] text-[#6B7280] mt-1">
+                    <h3 className="text-xl font-semibold text-text-primary">2026 rate path</h3>
+                    <p className="text-[13px] text-text-secondary mt-1">
                       Market-implied probability of each Fed funds bracket
                     </p>
                   </div>
@@ -183,7 +183,7 @@ export default function EconomicsPage() {
               <div className="flex flex-col gap-3.5">
                 {t.fed.rate_cuts && t.fed.rate_cuts.length > 0 && (
                   <Card>
-                    <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-1.5">
+                    <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-1.5">
                       How many cuts in 2026?
                     </div>
                     <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
@@ -192,7 +192,7 @@ export default function EconomicsPage() {
                 )}
                 {t.fed.side_markets && t.fed.side_markets.length > 0 && (
                   <Card>
-                    <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                    <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                       Side markets
                     </div>
                     {t.fed.side_markets.map((m: any, i: number) => (
@@ -216,9 +216,9 @@ export default function EconomicsPage() {
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
               <Card>
                 {t.inflation.cpi_releases?.map((cpi: any, i: number) => (
-                  <div key={i} className="py-3 border-b border-[#F3F4F6] last:border-0">
+                  <div key={i} className="py-3 border-b border-surface-secondary last:border-0">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-[#374151]">{cpi.mo}</span>
+                      <span className="text-sm font-medium text-text-secondary">{cpi.mo}</span>
                       {cpi.upcoming && (
                         <span className="text-[9px] font-bold tracking-wide bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
                           NEXT
@@ -233,7 +233,7 @@ export default function EconomicsPage() {
               </Card>
               {t.inflation.side_markets && t.inflation.side_markets.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                     Related markets
                   </div>
                   {t.inflation.side_markets.map((m: any, i: number) => (
@@ -273,7 +273,7 @@ export default function EconomicsPage() {
             />
             <div className="grid md:grid-cols-[1fr_1.4fr] gap-3.5">
               <Card>
-                <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
+                <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
                   Recession by end of 2026
                 </div>
                 <div className="mb-4">
@@ -285,13 +285,13 @@ export default function EconomicsPage() {
               </Card>
               {t.recession.gdp_quarters && t.recession.gdp_quarters.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
                     Quarterly GDP growth expectations
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     {t.recession.gdp_quarters.map((gdp: any, i: number) => (
-                      <div key={i} className="border border-[#E5E7EB] rounded-xl p-3">
-                        <div className="text-xs font-semibold text-[#374151] mb-2">{gdp.q}</div>
+                      <div key={i} className="border border-surface-border rounded-xl p-3">
+                        <div className="text-xs font-semibold text-text-secondary mb-2">{gdp.q}</div>
                         <Histogram buckets={(gdp.dist || []).slice(0, 6)} color="#10B981" />
                       </div>
                     ))}
@@ -314,14 +314,14 @@ export default function EconomicsPage() {
               {t.markets.today && t.markets.today.length > 0 && (
                 <Card>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase">Today&apos;s close</span>
+                    <span className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase">Today&apos;s close</span>
                     <span className="text-[10px] font-mono text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                       ● LIVE
                     </span>
                   </div>
                   {t.markets.today.map((idx: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between py-2 border-t border-[#F3F4F6]">
-                      <span className="text-[13px] text-[#374151]">{idx.sym}</span>
+                    <div key={i} className="flex items-center justify-between py-2 border-t border-surface-secondary">
+                      <span className="text-[13px] text-text-secondary">{idx.sym}</span>
                       <span className="font-mono text-[13px] font-semibold" style={{ color: probColor(idx.prob) }}>
                         {idx.prob}% {idx.dir}
                       </span>
@@ -331,13 +331,13 @@ export default function EconomicsPage() {
               )}
               {t.markets.stocks && t.markets.stocks.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
                     Single stocks — up today?
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {t.markets.stocks.map((s: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#F3F4F6]">
-                        <span className="font-mono text-[11px] text-[#374151] font-medium">{s.sym}</span>
+                      <div key={i} className="flex items-center justify-between py-1.5 border-b border-surface-secondary">
+                        <span className="font-mono text-[11px] text-text-secondary font-medium">{s.sym}</span>
                         <span className="font-mono text-sm font-semibold" style={{ color: probColor(s.prob) }}>
                           {s.prob}%
                         </span>
@@ -348,7 +348,7 @@ export default function EconomicsPage() {
               )}
               {t.markets.side_markets && t.markets.side_markets.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                     More markets
                   </div>
                   {t.markets.side_markets.slice(0, 5).map((m: any, i: number) => (
@@ -371,18 +371,18 @@ export default function EconomicsPage() {
             <div className="grid md:grid-cols-3 gap-3.5">
               {t.energy.gas?.map((g: any, i: number) => (
                 <Card key={i}>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                     {g.label?.slice(0, 40) || "Gas price"}
                   </div>
                   <ProbNum value={g.val || "?"} size={32} color="#10B981" suffix="" />
-                  <div className="text-xs text-[#6B7280] mt-1 mb-3">Modal bracket · {g.prob}%</div>
+                  <div className="text-xs text-text-secondary mt-1 mb-3">Modal bracket · {g.prob}%</div>
                   <Histogram buckets={g.brackets || []} color="#10B981" height={70} />
                   <FooterNote left={`${g.brackets?.length || 0} brackets`} right={g.src} />
                 </Card>
               ))}
               {t.energy.oil && t.energy.oil.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                     Crude oil
                   </div>
                   {t.energy.oil.map((o: any, i: number) => (
@@ -401,7 +401,7 @@ export default function EconomicsPage() {
             <div className="grid md:grid-cols-[1.2fr_1fr] gap-3.5">
               {t.housing.mortgage_brackets && t.housing.mortgage_brackets.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-3">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
                     30-year mortgage rate by end of 2026
                   </div>
                   <Histogram buckets={t.housing.mortgage_brackets as [number, string][]} color="#8B5CF6" height={90} />
@@ -409,7 +409,7 @@ export default function EconomicsPage() {
               )}
               {t.housing.markets && t.housing.markets.length > 0 && (
                 <Card>
-                  <div className="text-[11px] font-bold tracking-[0.12em] text-[#9CA3AF] uppercase mb-2">
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
                     Housing markets
                   </div>
                   {t.housing.markets.map((m: any, i: number) => (
@@ -451,8 +451,8 @@ export default function EconomicsPage() {
       </div>
 
       {/* Footer */}
-      <footer className="border-t border-[#E5E7EB]" style={{ background: "#fff" }}>
-        <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-[#9CA3AF]">
+      <footer className="border-t border-surface-border bg-surface-card">
+        <div className="max-w-[1440px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
           <span>Data from Kalshi &amp; Polymarket prediction markets · Not financial advice.</span>
           <span className="font-mono">
             bainluck.com/economics · {data.total_markets.toLocaleString()} active
