@@ -17,6 +17,51 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/outcome-timeline")
+async def calibration_outcome_timeline(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+    market_ext_id: str = Query(...),
+    source: str = Query("kalshi"),
+):
+    """Show snapshot timeline for all outcomes in a market."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fo.name AS outcome, fo.opening_probability, fo.calibration_probability,
+            fo.current_probability, fm.commence_time,
+            fos.probability, fos.captured_at
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        LEFT JOIN futures_odds_snapshots fos ON fos.outcome_id = fo.id
+        WHERE fm.source = :source AND fm.external_id = :ext_id
+        ORDER BY fo.name, fos.captured_at
+    """), {"source": source, "ext_id": market_ext_id})
+
+    by_outcome: dict = {}
+    for r in result:
+        name = r.outcome
+        if name not in by_outcome:
+            by_outcome[name] = {
+                "outcome": name,
+                "opening": float(r.opening_probability) if r.opening_probability else None,
+                "calibration": float(r.calibration_probability) if r.calibration_probability else None,
+                "current": float(r.current_probability) if r.current_probability else None,
+                "commence_time": str(r.commence_time) if r.commence_time else None,
+                "snapshots": [],
+            }
+        if r.probability is not None:
+            by_outcome[name]["snapshots"].append({
+                "t": str(r.captured_at),
+                "p": round(float(r.probability), 4),
+            })
+
+    return {"market": market_ext_id, "outcomes": list(by_outcome.values())}
+
+
 @router.get("/calibration/bucket-debug")
 async def calibration_bucket_debug(
     db: AsyncSession = Depends(get_db),
