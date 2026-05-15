@@ -20,7 +20,7 @@ redis>=5.0.1
 limits>=5.0.0
 
 # Validation
-pydantic>=2.5.3
+pydantic>=2.13.4
 pydantic-settings>=2.1.0
 
 # Auth (optional)
