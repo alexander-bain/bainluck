@@ -303,24 +303,30 @@ class TestBeatScheduleTiming:
 
     def test_statpal_before_discovery(self):
         """StatPal schedule sync should run before event discovery.
-        StatPal: hourly at :00, Discovery: every 30 min at :05/:35.
-        StatPal always runs before the first discovery of each hour."""
+        The invariant is: StatPal's earliest minute < discovery's earliest
+        minute in every hour, so StatPal data is fresh when discovery runs.
+        Don't hardcode exact crontab strings — the discovery frequency may
+        change (e.g., 5,35 → 5,20,35,50) without breaking the invariant."""
         from celery.schedules import crontab
         from app.tasks import celery_app
 
         beat = celery_app.conf.beat_schedule
 
-        # StatPal schedules are now per-sport (e.g., sync-statpal-schedules-nba)
         statpal_schedule = beat["sync-statpal-schedules-nba"]["schedule"]
         discovery_schedule = beat["discover-new-events"]["schedule"]
 
-        # Both should be crontab instances
         assert isinstance(statpal_schedule, crontab)
         assert isinstance(discovery_schedule, crontab)
 
-        # StatPal runs hourly at :00 (NBA), discovery at :05/:35
-        assert str(statpal_schedule) == str(crontab(minute=0))
-        assert str(discovery_schedule) == str(crontab(minute="5,35"))
+        # Extract earliest minute from each schedule
+        statpal_minutes = sorted(statpal_schedule.minute)
+        discovery_minutes = sorted(discovery_schedule.minute)
+
+        # StatPal must run before discovery's first run each hour
+        assert statpal_minutes[0] < discovery_minutes[0], (
+            f"StatPal first minute ({statpal_minutes[0]}) must be before "
+            f"discovery first minute ({discovery_minutes[0]})"
+        )
 
 
 # =============================================================================
