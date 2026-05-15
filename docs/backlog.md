@@ -192,7 +192,7 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
 **Problem:** The worst Discover feed quality failures are now fixed, but the product should keep improving toward a world-class personalized prediction feed across web and native.
 
-**Current production state (May 13):**
+**Current production state (May 14):**
 - ✅ Audit quality is clean: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`, `explanation-coverage@20=20/20`, `positive-archetypes@20=6/6`, `strict-variety@20=5/5`.
 - ✅ Deterministic explanations are first-class and do not depend on LLM hooks for first-page comprehension.
 - ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
@@ -212,20 +212,36 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Anonymous and signed-in Discover requests use session/user interaction history to suppress recently seen cards and longer-lived dismisses, reducing repeated cards across visits.
 - ✅ Low-signal regional US election/primary markets and niche sports families are downranked and story-capped so they cannot dominate Discover just because they are liquid or timely.
 - ✅ TestFlight feedback loop is instrumented: `/admin/discover-quality` shows repeat-card rate, stale-impression rate, runtime suppression config, top repeated/stale cards, and persisted review decisions. Native rage-shake reports include visible Discover cards, current card, and recent Discover interactions.
+- ✅ Discover launch-health admin is now a hill-climb console: stale impression rate and repeat rate are the primary launch blockers, top stale/repeated cards link to their detail pages, review decisions are idempotent, reviewed cards leave the queue, and promote/downrank decisions apply bounded feed score nudges.
 
 **Next phases:**
 1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
-2. Automate the Polymarket email-highlight ground truth pipeline:
+2. Hill-climb Discover launch health to zero before distributing TestFlight broadly:
+   - Target `stale_impression_rate=0%`. Any currently stale card shown in Discover is a launch blocker.
+   - Target `repeat_rate≈0%` for normal browsing sessions. Repeats after long windows are acceptable; repeated cards in short sessions are not.
+   - Run focused hill-climb sessions before inviting friends/family: generate Discover sessions, capture the current repeat/stale rates, fix the biggest offender bucket, refresh/re-measure, and repeat until the launch-health scoreboard is clean.
+   - Record each session's before/after rates and the fix category (`staleness rule`, `suppression window`, `data cleanup`, `family cap`, `card ranking`) so patterns become automatable.
+   - Review the top stale/repeated cards from `/admin/discover-quality`, open detail links, then either fix the data source/staleness rule or tighten runtime guardrails.
+   - Re-run the page after each change and keep a simple before/after note in this backlog item until both metrics are clean.
+3. Make launch-health remediation more automatic:
+   - Add one-click "hide this stale card now" / "suppress this repeat family" actions with explicit expiry.
+   - Add root-cause labels for stale cards: closed market still open, past resolution date, no recent odds movement, completed event still ranked, missing resolved outcome.
+   - Add a small trend panel for repeat/stale rates over the last 1h/24h/7d so we can tell whether fixes are working.
+4. Automate ranking progress after manual hill-climb sessions:
+   - Convert repeated manual fixes into durable rules: auto-hide stale root-cause classes, auto-cap repeat families, and auto-promote/downrank only when a reviewed pattern has enough impressions and confidence.
+   - Add a background job that writes daily Discover ranking deltas: repeat/stale rates, cards fixed, cards newly offending, top root causes, and whether automated rules improved or regressed the launch-health metrics.
+   - Add guardrails before automation can affect ranking globally: minimum impression counts, max score delta, expiry windows, and an admin rollback path for any automated rule.
+5. Automate the Polymarket email-highlight ground truth pipeline:
    - Keep the Apps Script as the Gmail parser, with a clean `Audit Export` tab using stable columns.
    - Configure production with `POLYMARKET_EMAIL_GROUND_TRUTH_SPREADSHEET_ID` and `POLYMARKET_EMAIL_GROUND_TRUTH_SHEET_NAME=Audit Export` so backend jobs read the restricted sheet through the shared Firebase service account.
    - Add a scheduled backend/admin import path that fetches the export and persists a snapshot, so audit/admin metrics do not depend on fetching Google Sheets during the request.
    - Alert or surface an admin warning when the export is stale for more than 48 hours, row count drops sharply, or parse coverage changes unexpectedly.
-3. Add persisted matching diagnostics for email-highlight rows: matched `futures_markets.id`, current Discover rank, score bucket, missing reason, category/story family, and whether the card had usable image/context/explanation treatment.
-4. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
-5. Use the aggregate feedback review queue daily during TestFlight: accept only human-reviewed ranking changes at first, prioritizing high-dismiss/high-rank downrank candidates, high-open/share/context-expand low-rank promote candidates, and rage-shake reports where Discover context identifies repeated or stale cards.
-6. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-7. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
-8. Use engagement opportunity signals, repeat/stale launch-health signals, rage-shake context, and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
+6. Add persisted matching diagnostics for email-highlight rows: matched `futures_markets.id`, current Discover rank, score bucket, missing reason, category/story family, and whether the card had usable image/context/explanation treatment.
+7. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
+8. Use the aggregate feedback review queue daily during TestFlight: accept only human-reviewed ranking changes at first, prioritizing high-dismiss/high-rank downrank candidates, high-open/share/context-expand low-rank promote candidates, and rage-shake reports where Discover context identifies repeated or stale cards.
+9. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
+10. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+11. Use engagement opportunity signals, repeat/stale launch-health signals, rage-shake context, and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/routes/admin.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/BugReportView.swift`
 **Parallel Safety:** Yellow

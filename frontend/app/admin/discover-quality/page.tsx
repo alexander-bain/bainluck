@@ -7,6 +7,7 @@ import {
   BarChart3,
   ChevronDown,
   CheckCircle2,
+  ExternalLink,
   Filter,
   Play,
   RefreshCw,
@@ -634,6 +635,13 @@ function rankText(value: number | null) {
   return value === null ? "out" : `#${value}`;
 }
 
+function itemHref(itemType: string, itemId: string | number | null | undefined) {
+  if (itemId === null || itemId === undefined || itemId === "") return null;
+  if (itemType === "futures") return `/futures/${itemId}`;
+  if (itemType === "event") return `/events/${itemId}`;
+  return null;
+}
+
 function PersonalizationPanel({ rollup }: { rollup: PersonalizationRollup }) {
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
@@ -897,6 +905,7 @@ function EngagementPanel({
   engagementDays: number;
 }) {
   const [savingConfig, setSavingConfig] = useState<string | null>(null);
+  const [reviewingKey, setReviewingKey] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const applyRuntimeConfig = async (
@@ -932,6 +941,9 @@ function EngagementPanel({
     .filter((row) => row.impressions >= 5)
     .sort((a, b) => (b.context_expand_rate ?? 0) - (a.context_expand_rate ?? 0))
     .slice(0, 5);
+
+  const reviewKey = (item: DiscoverEngagementReviewItem, decision: string) =>
+    `${item.surface}:${item.auth_segment}:${item.item_type}:${item.item_id}:${decision}`;
 
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-4">
@@ -1118,6 +1130,19 @@ function EngagementPanel({
                   <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
                   <StatusPill tone="muted">{formatTargetName(item.family_key)}</StatusPill>
                 </div>
+                {itemHref(item.item_type, item.item_id) && (
+                  <div className="mt-2">
+                    <a
+                      href={itemHref(item.item_type, item.item_id) || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-accent-brand hover:underline"
+                    >
+                      Open card detail
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-3 text-xs">
                   <div>
                     <div className="text-text-muted">Impressions</div>
@@ -1156,12 +1181,23 @@ function EngagementPanel({
                       key={decision}
                       type="button"
                       onClick={async () => {
-                        await submitDiscoverReviewDecision(secret, item, decision);
-                        await mutate(["discover-engagement", secret, engagementDays]);
+                        const key = reviewKey(item, decision);
+                        setReviewingKey(key);
+                        setActionMessage(null);
+                        try {
+                          await submitDiscoverReviewDecision(secret, item, decision);
+                          await mutate(["discover-engagement", secret, engagementDays]);
+                          setActionMessage(`${label} saved`);
+                        } catch (error) {
+                          setActionMessage(error instanceof Error ? error.message : "Review decision failed");
+                        } finally {
+                          setReviewingKey(null);
+                        }
                       }}
-                      className="px-2 py-1 rounded-md border border-surface-border bg-surface-card text-[11px] text-text-secondary hover:text-text-primary"
+                      disabled={reviewingKey !== null}
+                      className="px-2 py-1 rounded-md border border-surface-border bg-surface-card text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-60"
                     >
-                      {label}
+                      {reviewingKey === reviewKey(item, decision) ? "Saving..." : label}
                     </button>
                   ))}
                 </div>
@@ -1312,6 +1348,17 @@ function LaunchHealthList({
                 <StatusPill tone="muted">{row.category || "other"}</StatusPill>
                 {row.reason && <StatusPill tone="warn">{formatTargetName(row.reason)}</StatusPill>}
               </div>
+              {itemHref(row.item_type, row.item_id) && (
+                <a
+                  href={itemHref(row.item_type, row.item_id) || "#"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-accent-brand hover:underline"
+                >
+                  Open detail
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
             </div>
           ))}
         </div>

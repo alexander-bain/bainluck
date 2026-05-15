@@ -6645,8 +6645,33 @@ async def create_discover_review_decision(
     if payload.decision not in valid:
         raise HTTPException(status_code=400, detail=f"decision must be one of: {sorted(valid)}")
 
-    row = DiscoverReviewDecision(**payload.model_dump())
-    db.add(row)
+    clauses = [
+        DiscoverReviewDecision.item_type == payload.item_type,
+        DiscoverReviewDecision.item_id == payload.item_id,
+    ]
+    if payload.surface is None:
+        clauses.append(DiscoverReviewDecision.surface.is_(None))
+    else:
+        clauses.append(DiscoverReviewDecision.surface == payload.surface)
+    if payload.auth_segment is None:
+        clauses.append(DiscoverReviewDecision.auth_segment.is_(None))
+    else:
+        clauses.append(DiscoverReviewDecision.auth_segment == payload.auth_segment)
+
+    existing_result = await db.execute(
+        select(DiscoverReviewDecision)
+        .where(and_(*clauses))
+        .order_by(DiscoverReviewDecision.created_at.desc())
+        .limit(1)
+    )
+    row = existing_result.scalars().first()
+    if row:
+        for key, value in payload.model_dump().items():
+            setattr(row, key, value)
+        row.created_at = datetime.now(timezone.utc)
+    else:
+        row = DiscoverReviewDecision(**payload.model_dump())
+        db.add(row)
     await db.commit()
     await db.refresh(row)
     return {"status": "ok", "id": row.id}
@@ -6665,7 +6690,14 @@ async def list_discover_review_decisions(
         .order_by(DiscoverReviewDecision.created_at.desc())
         .limit(limit)
     )
-    rows = result.scalars().all()
+    rows = []
+    seen_keys = set()
+    for row in result.scalars().all():
+        key = (row.item_type, row.item_id, row.surface, row.auth_segment)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        rows.append(row)
     return {
         "decisions": [
             {
@@ -6959,8 +6991,38 @@ async def discover_engagement_summary(
         elif action == "context_expand":
             bucket["context_expands"] += n
 
+    review_decisions_result = await db.execute(
+        select(DiscoverReviewDecision)
+        .order_by(DiscoverReviewDecision.created_at.desc())
+        .limit(500)
+    )
+    all_review_decisions = []
+    seen_review_decision_keys = set()
+    for row in review_decisions_result.scalars().all():
+        key = (row.item_type, row.item_id, row.surface, row.auth_segment)
+        if key in seen_review_decision_keys:
+            continue
+        seen_review_decision_keys.add(key)
+        all_review_decisions.append(row)
+    reviewed_keys = {
+        (
+            row.item_type,
+            row.item_id,
+            row.surface or "unknown",
+            row.auth_segment or "anonymous",
+        )
+        for row in all_review_decisions
+    }
+
     review_queue = []
     for bucket in review_buckets.values():
+        if (
+            bucket["item_type"],
+            bucket["item_id"],
+            bucket["surface"],
+            bucket["auth_segment"],
+        ) in reviewed_keys:
+            continue
         impressions = bucket["impressions"]
         if impressions < 5:
             continue
@@ -7156,13 +7218,11 @@ async def discover_engagement_summary(
             )
     stale_items.sort(key=lambda row: row["impressions"], reverse=True)
 
-    recent_decisions_result = await db.execute(
-        select(DiscoverReviewDecision)
-        .where(DiscoverReviewDecision.created_at >= cutoff)
-        .order_by(DiscoverReviewDecision.created_at.desc())
-        .limit(20)
-    )
-    recent_decisions = recent_decisions_result.scalars().all()
+    recent_decisions = [
+        row
+        for row in all_review_decisions
+        if row.created_at and row.created_at.replace(tzinfo=row.created_at.tzinfo or timezone.utc) >= cutoff
+    ][:20]
 
     top_items_result = await db.execute(
         select(

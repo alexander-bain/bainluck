@@ -285,7 +285,7 @@ class TestDiscoverInteractions:
         impression_items.all.return_value = []
         decisions = MagicMock()
         decisions.scalars.return_value.all.return_value = []
-        mock_db.execute.side_effect = [grouped, review, repeat, impression_items, decisions, top_items]
+        mock_db.execute.side_effect = [grouped, review, decisions, repeat, impression_items, top_items]
 
         resp = await client.get("/api/admin/discover-engagement?secret=test-admin&days=7")
         body = resp.json()
