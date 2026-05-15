@@ -4287,6 +4287,8 @@ async def prediction_market_match_trace(
     from app.utils.prediction_market_matching import (
         extract_matchup_with_ticker_fallback,
         extract_game_date_from_ticker,
+    )
+    from app.tasks.prediction_market_matching import (
         _expand_team_search_terms,
         _escape_like,
     )
