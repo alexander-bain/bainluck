@@ -521,9 +521,44 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 **Files:** `docs/PRD.md`
 **Parallel Safety:** Green
 
-### Calibration Page — User-Facing `/calibration` or `/about/calibration`
+### Workstream: is_winner Backfill (ACTIVE — monitor every session)
 
-**Current state (May 14, late):** MCE **2.65pp** (target ≤3.0pp ✓), ECE **2.36pp**, **61K outcomes** across 3 sources. All 10 buckets within 5pp except 10-20% at 5.9pp (small N, noisy). Per-source: Odds API 1.3pp, Kalshi 3.5pp ECE, Polymarket 4.3pp ECE. Golf commence_time fix deployed — awaiting backfill recompute.
+**Goal:** Every resolved outcome has correct `is_winner`. Without this, the calibration curve is built on a biased subset.
+
+**Monitor:** `GET /api/admin/backfill-winners/status?secret=$ADMIN_TOKEN` → check `sources` array + `stuck_diagnosis`.
+
+**Current state (May 15, 2026):**
+| Source | Resolved | has_winner | Coverage | Target |
+|--------|----------|------------|----------|--------|
+| Kalshi | 68,845 | 9,014 | **13%** | 95%+ |
+| Polymarket | 71,225 | 46,032 | **65%** | 95%+ |
+| DataGolf | 80 | 0 | **0%** | 95%+ |
+
+**Root cause (diagnosed May 15):** `_backfill_from_current_probability()` requires ALL outcomes at ≥0.95 or ≤0.05. But 99% of stuck Kalshi (55,414) and 82% of stuck Polymarket (20,760) are threshold ladders, weather brackets, or spread markets where probabilities settle at midrange values (e.g., "Over 165.5 pts = 0.805"). The Kalshi API scanner can set `is_winner` from settlement data but caps at 2000 events/run.
+
+**Fix plan (ordered):**
+1. **[P0] Relax probability-based winner detection** — For resolved markets with midrange probs: highest-probability outcome = winner. Handle "all losers" markets (5,101 total) where the winning outcome isn't in our DB.
+2. **[P0] Kalshi API targeted lookup** — Query `GET /events/{ticker}` for specific tickers needing backfill instead of paginating all settled events.
+3. **[P1] DataGolf winners** — 71/80 have null probabilities. Need settlement from DataGolf results data.
+4. **[MONITOR] Re-check** — After fixes deploy and backfill_winners runs (every 6h at :45), coverage should climb. Track in this table.
+
+**Guard rails against 3 failure states:**
+- **Dropped/forgotten:** Check the status endpoint at session start. Coverage < 95% = P0.
+- **Worker fails silently:** `stuck_diagnosis` section shows exactly what's stuck. If stuck_markets not decreasing between runs, investigate.
+- **Backfill harms live tasks:** Background queue, soft_time_limit=600s, per-batch commits, DB connection monitoring.
+
+**Files:** `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py` (status endpoint)
+**Parallel Safety:** Green
+
+---
+
+### Workstream: Calibration Accuracy (ACTIVE — monitor every session)
+
+**Goal:** MCE ≤3.0pp overall and per-category with N>100.
+
+**Monitor:** `GET /api/calibration` → overall MCE. Frontend `/calibration` for per-category.
+
+**Current state (May 15, 2026):** MCE **2.65pp** (target ≤3.0pp ✓), ECE **2.36pp**, **61K outcomes**. Per-source: Odds API 1.3pp, Kalshi 3.5pp, Polymarket 4.3pp. Golf MCE 17.8pp (commence_time fix deployed, awaiting recompute).
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
@@ -548,23 +583,22 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 5. **Weather/Economics commence_time** — Different pattern: these resolve at specific clock times (e.g., "S&P price at 4pm on March 25"). The `close_time` IS roughly correct for these — prediction closes right before the answer is known. Investigate whether these actually need a fix or if the calibration error comes from other sources (placeholder pricing, thin trading). Weather MCE 10.1pp, Economics 10.1pp.
 
-**Remaining calibration work:**
+**Remaining calibration accuracy work:**
 
-6. **Kalshi API settlement backfill** — 59K Kalshi markets still need `is_winner`.
+6. **Confidence intervals on calibration metrics** — Wilson score intervals per bucket, bootstrap CI on MCE. VP of DS P0 recommendation.
+7. **Separate closing-line vs opening-price cohorts** — VP of DS recommendation.
+8. **Source "fair fight" comparison** — Methodology for comparing accuracy controlling for market difficulty.
+9. **Confidence tiers on Discover cards** — Signal bars (high/medium/low). Data-driven thresholds TBD.
+10. **Volume field DQ on Polymarket sub-markets** — `volume = NULL` on decomposed sub-markets.
 
-7. **Confidence tiers on Discover cards** — Signal bars (high/medium/low). Data-driven thresholds TBD. Plan approved, Phase 3.
-
-8. **Confidence intervals on calibration metrics** — Wilson score intervals per bucket, bootstrap CI on MCE. VP of DS P0 recommendation.
-
-9. **Separate closing-line vs opening-price cohorts in headline MCE** — VP of DS recommendation.
-
-10. **Source "fair fight" comparison** — Methodology for comparing source accuracy controlling for market difficulty.
-
-11. **Volume field DQ on Polymarket sub-markets** — `volume = NULL` on decomposed sub-markets. Use snapshot count or `price_moved` instead.
+**Guard rails against 3 failure states:**
+- **Dropped/forgotten:** Check per-category MCE at session start. Any N>100 category above 10pp = P1.
+- **Regression:** If overall MCE drifts above 3.0pp, something changed. Check is_winner coverage + snapshot health.
+- **is_winner blocks accuracy:** These workstreams are coupled. Low is_winner coverage → biased calibration sample.
 
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
-**Files:** `backend/app/routes/admin.py`, `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `backend/scripts/build_calibration_report_svg.py`
+**Files:** `backend/app/routes/admin.py`, `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`
 **Parallel Safety:** Green
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
