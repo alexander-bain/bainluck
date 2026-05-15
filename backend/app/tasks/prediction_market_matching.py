@@ -1161,19 +1161,26 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     # When the ticker date includes HHMM (non-midnight), use a tight ±3h
     # window. This correctly distinguishes double-header games (same teams,
     # same day, ~5h apart — e.g., 1:40 PM and 7:10 PM). Without HHMM,
-    # fall back to ±18h (date-only), or wider windows for Kalshi/Polymarket
-    # markets without ticker dates.
+    # use an asymmetric window: -6h to +30h. Ticker dates are US calendar
+    # dates stored as UTC midnight, but US evening games (7-11 PM ET) fall
+    # on the NEXT UTC day (00:00-04:00 UTC). A symmetric ±18h missed these.
     reference_time = game_date_override or market.commence_time or now
     if game_date_override:
-        # Tight window when HHMM is available (non-midnight), wider for date-only
         has_time = game_date_override.hour != 0 or game_date_override.minute != 0
-        time_delta = timedelta(hours=3) if has_time else timedelta(hours=18)
+        if has_time:
+            time_start = reference_time - timedelta(hours=3)
+            time_end = reference_time + timedelta(hours=3)
+        else:
+            time_start = reference_time - timedelta(hours=6)
+            time_end = reference_time + timedelta(hours=30)
     elif market.source == "kalshi":
         time_delta = timedelta(days=7)
+        time_start = reference_time - time_delta
+        time_end = reference_time + time_delta
     else:
         time_delta = MAX_TIME_DELTA
-    time_start = reference_time - time_delta
-    time_end = reference_time + time_delta
+        time_start = reference_time - time_delta
+        time_end = reference_time + time_delta
 
     event_result = await session.execute(
         select(Event)

@@ -470,7 +470,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxcs2totalmaps": "esports",                # CS2 total maps
     "kxvalorantgame": "esports",
     "kxvalorantmap": "esports",                 # Valorant map winner
-    "kxdimayorgame": "esports",                  # Dota 2 DPC
+    "kxdimayorgame": "soccer_other",             # Colombian Dimayor (NOT Dota 2)
     # Soccer
     "kxsoccergame": "soccer",
     "kxeculpgame": "soccer_other",            # Ecuadorian league
@@ -499,6 +499,8 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
 _UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
     "kxahlgame", "kxkhlgame", "kxdelgame",
     "kxshlgame", "kxliigagame",
+    "kxeculpgame", "kxvenfutvegame", "kxapfddhgame", "kxdimayorgame",
+    "kxcbagame", "kxjbleaguegame", "kxarglnbgame",
 })
 
 KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
@@ -1192,7 +1194,7 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxcs2totalmaps": "CS2",
     "kxvalorantgame": "Valorant",
     "kxvalorantmap": "Valorant",
-    "kxdimayorgame": "Dota 2",
+    "kxdimayorgame": "Colombian Dimayor",
 }
 
 
