@@ -623,7 +623,7 @@ The live matching task (`match_prediction_markets`, every 15 min) intentionally 
    - **Same team fuzzy matching + sport validation**
 3. If linked → done (market.event_id set via Core SQL, not ORM)
 4. If no match → sets `market_metadata->>'backfill_link_failed' = true` so the next run skips it
-5. Processes 100 markets per run, 2x/day at 5:30 and 17:30, background queue
+5. Processes 500 markets per run, 8x/day (every 3h), background queue — drains ~28K in ~7 days
 
 **Idempotency:** The `backfill_link_failed` flag in `market_metadata` JSONB means each market is attempted exactly once. Already-linked markets are excluded by `event_id IS NULL`. To re-try failed markets (e.g., after adding new team abbreviations), clear the flag:
 ```sql

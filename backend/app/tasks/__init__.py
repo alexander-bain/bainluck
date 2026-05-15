@@ -994,8 +994,8 @@ celery_app.conf.beat_schedule = {
     },
     "backfill-historical-links": {
         "task": "app.tasks.backfill_historical_links",
-        "schedule": crontab(minute=30, hour="5,17"),  # 2x/day, background queue
-        "kwargs": {"batch_size": 100},
+        "schedule": crontab(minute=30, hour="2,5,8,11,14,17,20,23"),  # 8x/day
+        "kwargs": {"batch_size": 500},
         "options": {"queue": "background"},
     },
     "backfill-polymarket-price-history": {
