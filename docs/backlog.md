@@ -8,7 +8,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + `GET /api/admin/prediction-markets/tier1-compliance`
 
-**Current state (May 11, 2026):** Overall Kalshi open link rate: **93.9%**. Link-rate denominator fixed (removed season futures pollution). NHL `tb_nhl`/`uta_nhl` abbreviation fixes deployed. StatPal playoff parser bug fixed — all NBA/NHL playoff games now flowing from `tournament.week`. Tier 1 event coverage monitoring task added (hourly). Event merge task fixed for duplicate-with-data cases (43K backlog draining).
+**Current state (May 14, 2026):** Overall Kalshi open link rate: **82.3%** (denominator now excludes unsupported leagues). Sawtooth oscillation fixed: 32 markets unlinked, 16,477 bad snapshots deleted. Date-only ticker window widened (-6h/+30h) to fix 49 tier-1 gaps from UTC/US timezone mismatch. Soccer/WNBA abbreviations added. Unsupported leagues excluded from link rate. StatPal playoff parser bug fixed. Event merge task fixed.
 
 **Target: 100%** Tier 1 compliance — every MLB/NBA/NHL/NFL/PGA event with all sources linked.
 
@@ -24,46 +24,41 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/scripts/audit_event_matching.py`, `Manus/prompts/event_matching_ground_truth.md`
 
-### Kalshi Linking Failure — Soccer 81%, Basketball 55% Unlinked (HIGH PRI, PARTIALLY FIXED)
+### Kalshi Linking Failure — Soccer, Basketball, Hockey (MOSTLY FIXED)
 
-**Problem (discovered May 14):** Kalshi game markets for soccer and basketball are overwhelmingly unlinked to events. Soccer link rate: **18.6%** (52 of 280 open markets). Basketball: **44.6%**. Hockey: **68.4%**. These are way below the 93.9% headline link rate.
+**Problem (discovered May 14):** Kalshi game markets for soccer, basketball, and hockey had low link rates (soccer 18.6%, basketball 44.6%, hockey 68.4%) well below the 93.9% headline.
 
-**Root cause found:** Two issues:
-1. Zero team abbreviation mappings existed for 6 soccer leagues and 25 WNBA teams in `sport_keys.py`. When Kalshi markets have generic names like "Professional Soccer Game," the ticker parser extracts team abbreviations (e.g., `KXSOCCERGAME-26MAY14ARSLIV` → ARS + LIV). Without mappings, this returned `None` every time.
-2. Soccer game tickers (`kxsoccergame`) were miscategorized as futures instead of game-level markets, so Pass 1 (ticker scan) never even looked at them.
-
-**Fix applied (May 14, other thread):** Added ~130 soccer abbreviations (6 leagues), 25 WNBA abbreviations, moved soccer ticker prefixes to the correct map.
-
-**Remaining work:**
-1. **Verify link rate improved** — Check `GET /api/admin/prediction-markets/link-rate` to see if soccer/basketball rates improved after the abbreviation fix. The fix was pushed but the matching task (every 15 min) needs to run.
-2. **Investigate remaining unlinked markets** — After the abbreviation fix, some markets will still be unlinked (new leagues, unusual team names). Need to audit and add more mappings.
-3. **Fix historically affected events** — Events that had Kalshi in `win_probability_sources` but all values None because the market was never linked. Need to identify and re-match these.
-
-**Files:** `backend/app/utils/sport_keys.py` (abbreviation maps), `backend/app/tasks/prediction_market_matching.py` (Pass 1 ticker scan)
-
-### Kalshi Sawtooth Oscillation — ROOT CAUSE: Wrong Event Linkage (HIGH PRI, PARTIALLY FIXED)
-
-**Problem:** Kalshi game-winner probability oscillates between two stable values (e.g., 40%↔60%) across every poll cycle. 52 events affected, 26,521 sawtooth snapshots, 23,968 with 99% jump rates.
-
-**Root cause found (May 14, other thread):** NOT a vig problem — 99% jump rate means full inversion (60%↔40%), not vig noise (~2pp). The real cause: multiple Kalshi markets are cross-linked to the WRONG events. Example: "Washington vs Loyola Marymount" had 5 duplicate events on the same day (college baseball tournament). Different Kalshi markets for different games were all linked to the same event, causing alternating home_prob writes.
-
-**What was done:**
-- ✅ Sawtooth detector endpoint: `GET /api/admin/sawtooth-audit` — window function SQL to count affected events, affected snapshots, and flag >30% jump rates
-- ✅ Devig fix deployed for NEW snapshots — averages both sides of Kalshi dual markets instead of picking one (commit `a2f128c`)
-- ✅ Historical damage quantified: 52 events, 26,521 snapshots, mostly college baseball/basketball
+**Root causes found & fixed (May 14):**
+1. ✅ Zero team abbreviation mappings for soccer/WNBA — added ~130 soccer + 25 WNBA abbreviations
+2. ✅ Soccer game tickers miscategorized as futures — moved to correct map
+3. ✅ Date-only ticker time window too narrow (±18h) — US evening games at 7-11 PM ET = next UTC day, fell outside window. Fixed to asymmetric -6h/+30h
+4. ✅ Unsupported leagues (Ecuadorian, Venezuelan, Dominican soccer, Colombian Dimayor, Chinese CBA, Japanese B.League, Argentine LNB) inflating denominator — added to `_UNSUPPORTED_LEAGUE_PREFIXES`
+5. ✅ `kxdimayorgame` misclassified as esports (was Dota 2 DPC) — corrected to soccer_other
 
 **Remaining work:**
-1. **Fix the wrong event linkages** — The 52 affected events have Kalshi markets linked to the wrong event. Need to unlink and re-match them. The matching task's ±3h time window (from the double-header fix) should prevent future cross-linkage, but existing bad links need cleanup.
-2. **Clean historical sawtooth data** — 26,521 bad snapshots are permanently baked into charts. Options: (a) delete alternating bad snapshots (risky — which ones are "bad"?), (b) smooth by averaging consecutive pairs (loses temporal resolution), (c) accept it for old games. Recommend option (c) for now — old games' charts will have sawtooth but new games won't.
-3. **Verify devig fix on new live games** — Check a live MLB/NBA game chart tonight or tomorrow to confirm the sawtooth is gone for new data.
+1. **Verify link rate after matching cycles** — Check that NBA/NHL playoff games link correctly with the wider window
+2. **Audit remaining unlinked EPL/MLS/WNBA markets** — Sample unlinked markets from supported leagues to find any remaining gaps
 
-**Files:** `backend/app/tasks/prediction_market_matching.py` (Phase 2), `backend/app/routes/admin.py` (sawtooth-audit endpoint)
+**Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
-### Double-Header Date Matching (HIGH PRI)
+### ~~Kalshi Sawtooth Oscillation~~ — FIXED (May 14)
 
-**Problem:** `extract_game_date_from_ticker` strips the time component and returns midnight UTC. For double-headers (two games between the same teams on the same day), both games' Kalshi markets parse to the same date, so the 18h threshold can't distinguish them. The HHMM portion of the ticker (e.g., `1340` vs `1910` for a 1:40 PM and 7:10 PM double-header) is available but not used.
+**Problem:** Kalshi game-winner probability oscillated between two stable values across every poll cycle. 55 events affected, ~16K+ bad snapshots.
 
-**Fix approach:** Parse the full datetime from the ticker (including HHMM) and compare to the event's `commence_time` with a tighter window (±3h instead of ±18h). Fall back to date-only when HHMM isn't parseable.
+**Root cause:** Multiple Kalshi markets from different games (e.g., tournament Game 1 + Game 2 between same teams) cross-linked to the same event, causing alternating home_prob writes.
+
+**All fixed:**
+- ✅ Prevention guard: `_check_duplicate_kalshi_linkage` blocks linking when a different game's market is already linked
+- ✅ Phase 2 multi-game detection: scans and unlinks wrong markets spanning multiple dates
+- ✅ Historical cleanup: `POST /api/admin/sawtooth-fix` unlinked 32 markets and deleted 16,477 bad snapshots
+- ✅ Diagnosis endpoints: `GET /api/admin/sawtooth-diagnosis` + `GET /api/admin/sawtooth-audit`
+- ✅ Devig averaging for future snapshots
+
+**Remaining:** Verify on live games that new data is clean.
+
+### ~~Double-Header Date Matching~~ — FIXED (May 14)
+
+HHMM-aware tickers now use tight ±3h window. Date-only tickers use asymmetric -6h/+30h window (accounts for UTC vs US timezone offset). Both prevent cross-linkage of doubleheader games.
 
 **Files:** `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker` ~line 893), `backend/app/tasks/prediction_market_matching.py` (Phase 2 date validation)
 
@@ -235,6 +230,10 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Low-signal regional US election/primary markets and niche sports families are downranked and story-capped so they cannot dominate Discover just because they are liquid or timely.
 - ✅ TestFlight feedback loop is instrumented: `/admin/discover-quality` shows repeat-card rate, stale-impression rate, runtime suppression config, top repeated/stale cards, and persisted review decisions. Native rage-shake reports include visible Discover cards, current card, and recent Discover interactions.
 - ✅ Discover launch-health admin is now a hill-climb console: stale impression rate and repeat rate are the primary launch blockers, top stale/repeated cards link to their detail pages, review decisions are idempotent, reviewed cards leave the queue, and promote/downrank decisions apply bounded feed score nudges.
+- ✅ Sports futures staleness guard tightened: Discover now treats sports futures at 90%+ leader probability as effectively resolved unless the leader had a real underdog/surprise journey.
+- ✅ Deterministic futures copy polish shipped: movement is described in probability points, source-disagreement and monthly-resolution snippets name the leader when available, and stale past-resolution cards suppress generated copy.
+- ✅ Dedicated `/daily` page shipped: five curated Higher/Lower calls, progress, streak/local completion tracking, countdown, replay, prediction submission, and shareable text summary.
+- ✅ Friend challenge landing page shipped at `/challenge/[id]`: loads existing challenge codes, handles Higher/Lower acceptance, participants/results states, and share/copy affordances.
 
 **Next phases:**
 1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
@@ -348,11 +347,11 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 3. **No game-result cross-reference** — the feed doesn't check whether the teams in a futures market have been eliminated from the playoffs. It only checks the probability level and market status.
 
 **Fix options (ordered by complexity):**
-1. **Lower staleness threshold further** — drop from 95% to 90% leader probability for sports futures. Risk: some interesting markets between 90-95% get hidden.
+1. ~~**Lower staleness threshold further** — drop from 95% to 90% leader probability for sports futures. Risk: some interesting markets between 90-95% get hidden.~~ ✅ Shipped May 14 with an opening-probability guard so real underdog/surprise journeys can still surface.
 2. **Add an "effectively settled" heuristic** — for sports futures, if the leader has been ≥90% for >24h with no movement, treat as settled regardless of exact probability.
 3. **Cross-reference game results** — when a team is eliminated (completed playoff series), mark all their "will they advance" markets as stale. Most robust but requires connecting futures markets to series outcomes.
 
-**Recommended:** Start with option 2 (time-at-high-probability heuristic). Option 1 is too blunt. Option 3 is ideal but complex.
+**Current status:** Initial hardening shipped via option 1 plus underdog-journey guard. Next best improvement remains option 2, then option 3 for playoff-series truth.
 
 **Files:** `backend/app/routes/feed.py` (staleness filters ~line 2131), `backend/app/utils/feed_market_quality.py`
 **Parallel Safety:** Yellow
@@ -800,7 +799,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | D-6 | Push notifications for moves | Foundation shipped (May 13): iOS token capture + backend endpoint. Actual push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
 | D-7 | Live game companion mode | NEEDS DESIGN. On iPhone, companion mode is basically just the chart full-screen (what else fits?). On iPad/Mac, the current event detail page IS already a great second screen — so what's really different? Key features: aggressive auto-refresh (10s), screen stays awake (scoped idle timer), simplified layout hiding below-the-fold. Design brief needed before building. | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
 | ~~D-8~~ | ~~Daily digest email~~ | ✅ SHIPPED (May 13) — Celery beat scheduled at 8am ET. | `tasks/daily_digest.py`, email templates | |
-| D-9 | Friend challenges | Backend scaffold shipped (May 13): table, model, 3 API endpoints. Frontend UI not yet built. | `routes/challenges.py`, `app/challenge/[id]/page.tsx` (new) | Green |
+| ~~D-9~~ | ~~Friend challenges~~ | ✅ SHIPPED May 14 — backend scaffold plus `/challenge/[id]` frontend landing page for loading, accepting, viewing participants/results, and sharing challenge links. | `routes/challenges.py`, `app/challenge/[id]/page.tsx` | |
 
 ---
 
@@ -839,7 +838,7 @@ Discover feed already has LLM blurbs (`hook_description`), Pexels images (`image
 
 ### 23. Prediction Market Game / Social Picks
 
-Higher/Lower game is live in Discover. Daily challenge card shipped. Remaining: (2) Wordle-style daily picks page, (3) head-to-head challenges, (4) ambient screensaver, (5) portfolio mode.
+Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `/daily` page and basic friend challenge landing page shipped May 14. Remaining: generated image scorecards, richer head-to-head challenge creation/discovery, ambient screensaver, and portfolio mode.
 
 **Depends on:** Auth (shipped), preferences (shipped).
 **Parallel Safety:** Green
@@ -878,8 +877,8 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 - [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
 
 **P0 — Product (Growth):**
-- [ ] **Dedicated `/daily` page** — Wordle for predictions. 5 curated questions/day, same for all users, shareable scorecard, streak counter, countdown timer. This is the daily habit loop and the front door to the product. The daily challenge card already exists in the Discover feed; this promotes it to a standalone experience.
-- [ ] **Shareable prediction scorecards** — After completing daily challenge, generate image card: "I got 4/5 — can you beat me?" with unique daily URL. Wordle playbook.
+- [x] **Dedicated `/daily` page** — Shipped May 14: 5 curated questions/day, progress, streak/local completion tracking, countdown timer, replay, and shareable text summary. Remaining scorecard-image work stays below.
+- [ ] **Shareable prediction scorecards** — After completing daily challenge, generate image card: "I got 4/5 — can you beat me?" with unique daily URL. Text summary shipped May 14; image card remains.
 - [ ] **Redesign first 30 seconds** — Hero headline for first visit ("What does the world think will happen?"), first card is always a guess card (force interaction in 5 seconds), progressive disclosure toward sign-up.
 
 **P1 — Engineering:**
