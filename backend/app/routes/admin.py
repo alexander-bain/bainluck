@@ -4490,6 +4490,7 @@ async def prediction_market_match_trace(
         ]
 
     if candidates and matchup:
+        from sqlalchemy.orm import joinedload as _jl
         from app.tasks.prediction_market_matching import (
             _score_candidates as score_fn,
             _check_duplicate_kalshi_linkage,
@@ -4500,7 +4501,7 @@ async def prediction_market_match_trace(
         for c in candidates:
             ev = await db.execute(
                 select(EventModel).options(
-                    joinedload(EventModel.sport)
+                    _jl(EventModel.sport)
                 ).where(EventModel.id == c.id)
             )
             e = ev.scalars().first()
