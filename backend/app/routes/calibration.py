@@ -17,6 +17,55 @@ _cache: dict = {"data": None, "timestamp": 0}
 CACHE_TTL = 3600
 
 
+@router.get("/calibration/bucket-debug")
+async def calibration_bucket_debug(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(""),
+    category: str = Query("golf"),
+    source: str = Query("kalshi"),
+    bucket: int = Query(1),
+):
+    """Show specific outcomes in a calibration bucket for debugging."""
+    import os
+
+    if secret != os.environ.get("ADMIN_TOKEN", ""):
+        return {"error": "invalid secret"}
+
+    result = await db.execute(text("""
+        SELECT fo.name AS outcome_name, fm.name AS market_name,
+            fo.opening_probability, fo.calibration_probability,
+            fo.current_probability,
+            fm.external_id AS market_ext_id,
+            fm.group_id, fm.commence_time,
+            (SELECT COUNT(*) FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id) AS snap_count,
+            COALESCE(fo.calibration_probability, fo.opening_probability) AS used_prob
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.source = :source
+          AND fm.status = 'resolved'
+          AND COALESCE(fm.llm_sport_category, 'uncategorized') = :category
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND fo.current_probability IS NOT NULL
+          AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+          AND LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) = :bucket
+        ORDER BY RANDOM()
+        LIMIT 25
+    """), {"source": source, "category": category, "bucket": bucket})
+
+    return [
+        {"outcome": r.outcome_name, "market": r.market_name[:80],
+         "opening": float(r.opening_probability),
+         "calibration": float(r.calibration_probability) if r.calibration_probability else None,
+         "used_prob": float(r.used_prob),
+         "resolved": "winner" if r.current_probability >= 0.95 else "loser",
+         "market_ext_id": r.market_ext_id, "group_id": r.group_id,
+         "snap_count": r.snap_count,
+         "commence_time": str(r.commence_time) if r.commence_time else None}
+        for r in result
+    ]
+
+
 @router.get("/calibration/snapshot-health")
 async def calibration_snapshot_health(
     db: AsyncSession = Depends(get_db),
