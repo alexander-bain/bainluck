@@ -579,20 +579,22 @@ Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map
 
 **Monitor:** `GET /api/admin/backfill-winners/status?secret=$ADMIN_TOKEN` → check `sources` array + `stuck_diagnosis`.
 
-**Current state (May 15, 2026):**
+**Current state (May 15, 2026 evening):**
 | Source | Resolved | has_winner | Coverage | Target |
 |--------|----------|------------|----------|--------|
-| Kalshi | 68,845 | 9,014 | **13%** | 95%+ |
-| Polymarket | 71,225 | 46,032 | **65%** | 95%+ |
-| DataGolf | 80 | 0 | **0%** | 95%+ |
+| Kalshi | 69,011 | 58,728 | **85%** | 95%+ |
+| Polymarket | 79,854 | 68,167 | **85%** | 95%+ |
+| DataGolf | 80 | 76 | **95%** | ✅ |
 
-**Root cause (diagnosed May 15):** `_backfill_from_current_probability()` requires ALL outcomes at ≥0.95 or ≤0.05. But 99% of stuck Kalshi (55,414) and 82% of stuck Polymarket (20,760) are threshold ladders, weather brackets, or spread markets where probabilities settle at midrange values (e.g., "Over 165.5 pts = 0.805"). The Kalshi API scanner can set `is_winner` from settlement data but caps at 2000 events/run.
+**What shipped (May 15):**
+- ✅ 3-pass probability detection: mutually-exclusive (prob sum ~1.0, max wins), independent thresholds (prob sum >1.5, each >0.50 wins), all-losers (max ≤0.10). Resolved ~75K outcomes in one call.
+- ✅ Kalshi API targeted lookup via `GET /events/{ticker}` (coded, not yet run to completion — deploys keep killing it)
+- ✅ Synchronous endpoint: `POST /api/admin/backfill-winners/probability-only` bypasses Celery
 
-**Fix plan (ordered):**
-1. **[P0] Relax probability-based winner detection** — For resolved markets with midrange probs: highest-probability outcome = winner. Handle "all losers" markets (5,101 total) where the winning outcome isn't in our DB.
-2. **[P0] Kalshi API targeted lookup** — Query `GET /events/{ticker}` for specific tickers needing backfill instead of paginating all settled events.
-3. **[P1] DataGolf winners** — 71/80 have null probabilities. Need settlement from DataGolf results data.
-4. **[MONITOR] Re-check** — After fixes deploy and backfill_winners runs (every 6h at :45), coverage should climb. Track in this table.
+**Remaining (ordered):**
+1. **[P1] Run Kalshi API targeted lookup to completion** — The full `backfill_winners` task includes this as Phase 2. Needs a clean 10-minute window without deploys. Will resolve the 5,860 Kalshi markets at exactly 0.500. Trigger: `POST /api/admin/backfill-winners` (Celery) or wait for scheduled run (every 6h at :45).
+2. **[P2] Investigate 4,450 Polymarket all-losers** — Winning outcome not in our DB. Sample some to understand: are these decomposed sub-markets where we only have part of the event? Or markets where Polymarket added the winner after we stopped polling? Low MCE impact since they're already marked `is_winner=false`.
+3. **[P2] DataGolf last 4** — 4 markets with midrange probs. Likely need settlement from DataGolf tournament results. Low priority (N=4).
 
 **Guard rails against 3 failure states:**
 - **Dropped/forgotten:** Check the status endpoint at session start. Coverage < 95% = P0.
@@ -652,7 +654,7 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 
 **Monitor:** `GET /api/calibration` → overall MCE. Frontend `/calibration` for per-category.
 
-**Current state (May 15, 2026):** MCE **2.65pp** (target ≤3.0pp ✓), ECE **2.36pp**, **61K outcomes**. Per-source: Odds API 1.3pp, Kalshi 3.5pp, Polymarket 4.3pp. Golf MCE 17.8pp (commence_time fix deployed, awaiting recompute).
+**Current state (May 15, 2026 evening):** MCE CI [1.6pp, 4.3pp] (target ≤3.0pp — likely met). 45,755 outcomes, 20,673 winners. Wilson CIs per bucket shipped. Per-source: Odds API 1.3pp, Kalshi 3.5pp, Polymarket 4.3pp. Golf MCE 17.8pp (commence_time fix deployed, awaiting recompute).
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
@@ -663,19 +665,42 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 - ✅ Golf commence_time fix via DataGolf schedule (reuses `_normalize_tournament()`)
 - ✅ `is_multi` fix, `status IN ('completed', 'closed')`, Part C rescue, 8 diagnostic endpoints
 
-**IMMEDIATE: Check back on these (next session):**
+**Subproject A: Snapshot health** — ✅ EFFECTIVELY DONE
+Zero-snap: 23K → 702 (0.2%). Remaining 702 are Polymarket esports/tennis with no CLOB history. No further action unless zero-snap regresses above 1K.
 
-1. **Check price history backfill progress** — `GET /api/calibration/snapshot-health`. Zero-snap was 23K→17.7K after first runs. Polymarket and Kalshi backfills running every 6h. Monitor until zero-snap count stabilizes. Trigger manual runs via `POST /api/admin/backfill-polymarket-history` and `POST /api/admin/backfill-kalshi-history` to accelerate.
+**Subproject B: Golf calibration (MCE 17.8pp)** — VERIFY
+The commence_time fix deployed May 14. Verification steps:
+1. `curl "https://api.bainluck.com/api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26"` — DeChambeau should show `calibration_probability` ~44% (pre-tournament) not 13% (in-play)
+2. If still 13%: the backfill_winners task hasn't recomputed calibration_probability yet. Trigger manually: `POST /api/admin/backfill-winners` and wait for Phase 0e.
+3. After recompute: check golf MCE at `/calibration`. Should drop from 17.8pp to <5pp.
 
-2. **Check golf calibration after commence_time fix** — The fix deployed but needs: (a) Kalshi poll to run (every 2h, triggers `_fix_golf_commence_times()`), (b) backfill-winners to recompute calibration_probability with corrected commence_time. Verify via `GET /api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26` — DeChambeau should show calibration_probability ~44% (pre-tournament) instead of 13% (in-play). Golf MCE should drop from 17.8pp dramatically.
+**Subproject C: Hockey commence_time (MCE 11.3pp)** — NEXT UP
+Same root cause as golf: Kalshi uses `close_time` (resolution date) not game time.
+1. For markets WITH `event_id`: copy `commence_time` from the linked Event. One SQL update:
+   ```sql
+   UPDATE futures_markets fm SET commence_time = e.commence_time
+   FROM events e WHERE fm.event_id = e.id AND fm.source = 'kalshi'
+   AND fm.commence_time != e.commence_time AND e.commence_time IS NOT NULL;
+   ```
+2. For markets WITHOUT `event_id`: use `extract_game_date_from_ticker()` (already works for hockey tickers). Add to `_fix_golf_commence_times()` or create `_fix_hockey_commence_times()` in `tasks/kalshi.py`.
+3. Re-run calibration price backfill to recompute `calibration_probability` with corrected commence_time.
+4. Verify: hockey MCE should drop from 11.3pp. Check at `/calibration`.
 
-3. **Re-measure per-category calibration** — After golf fix + continued backfill draining, check all category MCEs. Target: every category with N>100 at ECE<10pp.
+**Files:** `backend/app/tasks/kalshi.py` (`_fix_golf_commence_times`), `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker`)
 
-**Remaining commence_time fixes (same root cause: Kalshi uses close_time):**
+**Subproject D: Weather/Economics commence_time (MCE 10.1pp each)** — INVESTIGATE
+Different pattern from golf/hockey. These markets resolve at specific clock times (e.g., "S&P price at 4pm"). The `close_time` might actually be correct.
+1. Sample 10 weather + 10 economics outcomes: compare `commence_time`, `calibration_probability`, `opening_probability`, and snapshot timeline. Use `GET /api/calibration/outcome-timeline?outcome_id=<id>`.
+2. If `calibration_probability = opening_probability` on most: the problem is price-stuck (no real price discovery), not commence_time. See Subproject E.
+3. If `calibration_probability` is an in-play price: commence_time is wrong. Fix depends on the pattern — weather resolves at midnight UTC, economics at market close.
+4. Check the snapshot-health data: Kalshi economics has 27.6% price-stuck rate. That alone could explain the 10.1pp MCE.
 
-4. **Hockey commence_time** — Kalshi hockey futures use `close_time` (resolution date). For game markets with `event_id`, the linked Event has the correct `commence_time`. For unlinked markets, `extract_game_date_from_ticker()` can derive the game date. Apply same pattern as golf fix but using event linkage / ticker parsing instead of DataGolf. Hockey MCE currently 11.3pp.
-
-5. **Weather/Economics commence_time** — Different pattern: these resolve at specific clock times (e.g., "S&P price at 4pm on March 25"). The `close_time` IS roughly correct for these — prediction closes right before the answer is known. Investigate whether these actually need a fix or if the calibration error comes from other sources (placeholder pricing, thin trading). Weather MCE 10.1pp, Economics 10.1pp.
+**Subproject E: Price-stuck outcomes** — INVESTIGATE
+19,020 outcomes (6.5% of resolved) have `calibration_probability = opening_probability`. Worst categories: Kalshi crypto (31%), Kalshi economics (27.6%), Kalshi motorsports (26.4%), Kalshi wrestling (22.8%), Kalshi entertainment (20.4%), Kalshi geopolitics (20.2%).
+1. These are outcomes where the price never moved from opening — no real price discovery happened.
+2. Options: (a) exclude from calibration (same logic as `_null_untradeable_openings` but for stuck, not zero-snap), (b) accept as valid data points (opening price IS a prediction), (c) separate into cohort in the calibration report.
+3. Decision needed: are these degrading MCE? Compare MCE with vs without price-stuck outcomes. If MCE improves >1pp by excluding, consider filtering.
+4. Check: `mce_closing_line: 7.96pp` vs `mce_opening_price: 6.94pp` from the calibration API. Closing line being WORSE suggests our closing-line identification is pulling in-play prices for some categories (hockey, golf) which are noisy.
 
 **Remaining calibration accuracy work:**
 
@@ -693,6 +718,31 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
 **Files:** `backend/app/routes/admin.py`, `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`
+**Parallel Safety:** Green
+
+---
+
+### Workstream: Celery Queue Health (FIXED May 15 — monitor at session start)
+
+**Goal:** Background queue depth stays < 50. Tasks drain faster than they accumulate.
+
+**Monitor:** `GET /api/admin/celery-debug?secret=$ADMIN_TOKEN` → `queue_lengths.background`. Also in session startup health check.
+
+**What happened (May 15):** Background queue backed up to 400+ tasks. Root cause: 35 tasks/hour at concurrency=2, with long-running tasks (match_prediction_markets 14.5 min, poll_kalshi 11 min) consuming both slots. Backfill tasks sat in queue for hours and never ran.
+
+**What shipped:**
+- ✅ Reduced discover_events, compute_gei_batch, merge_duplicate_events from 10-15 min to 30 min intervals (~35 → ~23 tasks/hour)
+- ✅ `POST /api/admin/celery-purge-background` — emergency queue purge (365 tasks cleared)
+- ✅ `GET /api/admin/celery-debug` — worker ping, active tasks, queue depths, task name distribution
+- ✅ Added to session startup health check in CLAUDE.md
+
+**If queue > 50 again:**
+1. Check `celery-debug` → `active` to see what's blocking (which tasks, how long running)
+2. If a single task is stuck: check its `time_start` vs time_limit. If past time_limit, the worker may be zombie — restart: `heroku ps:restart worker-background -a bainluck`
+3. Purge: `POST /api/admin/celery-purge-background` (safe — all tasks are periodic and will re-fire)
+4. If chronic: consider upgrading background dyno to Standard-2X ($25/mo more) for concurrency=4
+
+**Files:** `backend/app/tasks/__init__.py` (beat schedule), `backend/app/routes/admin.py` (debug + purge endpoints)
 **Parallel Safety:** Green
 
 ### Production Observability — Latency, Crash Rate, Quality Indicators
