@@ -185,6 +185,7 @@ async def recalculate_ei(
 
 @router.get("/ei/diagnosis")
 async def ei_diagnosis(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -193,6 +194,9 @@ async def ei_diagnosis(
     Breaks down completed/closed events with raw_ei=NULL by root cause,
     including sport breakdown for zero-snapshot events.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func, text
 
     # Count completed/closed events with no EI, grouped by snapshot count
@@ -274,6 +278,7 @@ async def ei_diagnosis(
 @router.get("/pulse/status")
 @router.get("/ei/status")
 async def ei_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -281,6 +286,9 @@ async def ei_status(
 
     Returns counts of events with and without EI scores.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
 
     # Count events by EI status
@@ -788,6 +796,7 @@ async def regenerate_tags(
 
 @router.get("/futures/categorization-status")
 async def futures_categorization_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -795,6 +804,9 @@ async def futures_categorization_status(
 
     Returns counts of categorized vs uncategorized markets.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
     from app.models import FuturesMarket
     from app.services import llm
@@ -829,6 +841,7 @@ async def futures_categorization_status(
 
 @router.get("/futures/uncategorized")
 async def list_uncategorized_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to return"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -836,8 +849,10 @@ async def list_uncategorized_futures(
     List uncategorized futures markets.
 
     Shows market names to help identify patterns that should be added.
-    No auth required - this is diagnostic info only.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.models import FuturesMarket
     from app.utils.futures_categorization import categorize_by_rules
 
@@ -1031,6 +1046,7 @@ async def enrich_events_metadata(
 
 @router.get("/events/metadata-status")
 async def events_metadata_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1038,6 +1054,9 @@ async def events_metadata_status(
 
     Returns counts of enriched vs un-enriched events.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
     from app.services import llm
 
@@ -1157,6 +1176,7 @@ async def enrich_futures_metadata(
 
 @router.get("/futures/metadata-status")
 async def futures_metadata_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1164,6 +1184,9 @@ async def futures_metadata_status(
 
     Returns counts of enriched vs un-enriched markets.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
     from app.models import FuturesMarket
     from app.services import llm
@@ -1203,6 +1226,7 @@ async def futures_metadata_status(
 @router.get("/pulse/distributions")
 @router.get("/ei/distributions")
 async def ei_distributions(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1210,8 +1234,10 @@ async def ei_distributions(
 
     Returns histograms and statistics for the overall score and EI metadata
     (raw_ei, lead_changes, comeback_factor).
-    No auth required - diagnostic/read-only.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     import json
     from sqlalchemy import func
 
@@ -1485,6 +1511,7 @@ async def sync_espn_teams(
 
 @router.get("/espn/teams-status")
 async def espn_teams_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1492,6 +1519,9 @@ async def espn_teams_status(
 
     Shows how many teams have ESPN data (colors, logos).
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
     from app.models import Team
 
@@ -1518,10 +1548,14 @@ async def espn_teams_status(
 
 @router.get("/rosters/teams-debug")
 async def rosters_teams_debug(
+    secret: str = Query(..., description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key (e.g., 'americanfootball_nfl')"),
     db: AsyncSession = Depends(get_db),
 ):
     """Debug: show team names, abbreviations, and roster status for a sport."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.models import Team, Sport
 
     sport_result = await db.execute(
@@ -1761,6 +1795,7 @@ async def sync_espn_live_events(
 
 @router.get("/espn/events-status")
 async def espn_events_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1768,6 +1803,9 @@ async def espn_events_status(
 
     Shows how many events have ESPN data (clock, period, venue, win prob).
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func
 
     result = await db.execute(
@@ -2174,8 +2212,13 @@ async def get_event_task_status(
 
 
 @router.get("/celery/health")
-async def celery_health():
+async def celery_health(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Check Celery worker health via heartbeat timestamp in Redis."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks.redis_state import get_redis_client
 
     try:
@@ -2205,7 +2248,9 @@ async def celery_health():
 
 
 @router.get("/celery/dashboard")
-async def celery_dashboard():
+async def celery_dashboard(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """
     Task-level success metrics dashboard.
 
@@ -2214,6 +2259,9 @@ async def celery_dashboard():
     crashes) — e.g., ESPN sync matching 0 events, odds polling returning
     empty results.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks.redis_state import get_all_task_metrics, get_redis_client
 
     # Get per-task metrics
@@ -2266,15 +2314,26 @@ async def celery_dashboard():
 
 
 @router.get("/celery/task-metrics/{task_name}")
-async def get_task_metrics_endpoint(task_name: str):
+async def get_task_metrics_endpoint(
+    task_name: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Get detailed metrics for a specific task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks.redis_state import get_task_metrics
     return get_task_metrics(task_name)
 
 
 @router.get("/celery/inspect")
-async def celery_inspect():
+async def celery_inspect(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks import celery_app
     i = celery_app.control.inspect(timeout=5)
     registered = i.registered() or {}
@@ -2302,8 +2361,13 @@ async def celery_inspect():
 
 
 @router.get("/taxonomy/debug-redis")
-async def taxonomy_debug_redis():
+async def taxonomy_debug_redis(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Check Redis markers set by taxonomy piggybacking code."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     import redis
     import os
     r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
@@ -2318,8 +2382,13 @@ async def taxonomy_debug_redis():
 # ---------------------------------------------------------------------------
 
 @router.get("/odds-api/usage")
-async def odds_api_usage():
+async def odds_api_usage(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Current Odds API quota status and hourly history."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks.redis_state import get_odds_api_quota, get_odds_api_quota_history
 
     quota = get_odds_api_quota()
@@ -2350,8 +2419,13 @@ async def odds_api_usage():
 
 
 @router.get("/statpal/usage")
-async def statpal_usage():
+async def statpal_usage(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
     """Current StatPal API usage and daily history."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from app.tasks.redis_state import get_statpal_usage, get_statpal_usage_history
 
     daily_limit = 300_000
@@ -2374,6 +2448,7 @@ async def statpal_usage():
 
 @router.get("/odds-api/daily-activity")
 async def odds_api_daily_activity(
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
     month: int = Query(2, description="Month (1-12)"),
     year: int = Query(2026, description="Year"),
@@ -2384,6 +2459,9 @@ async def odds_api_daily_activity(
     Query one table at a time (table=odds|futures|winprob) to stay within
     Heroku's 30-second timeout, or table=all to try all three.
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import text
     from datetime import date
 
@@ -7881,11 +7959,14 @@ async def datagolf_status(
 
 @router.get("/schedule/accuracy")
 async def schedule_accuracy(
-    secret: str = Query("", description="Admin secret"),
+    secret: str = Query(..., description="Admin secret for authorization"),
     days: int = Query(30, description="Look back period in days"),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-sport breakdown of commence_time_source to audit date accuracy."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     from sqlalchemy import func as sqlfunc, text
     from app.models import Sport
 
@@ -8505,7 +8586,7 @@ async def save_eval_decision(
 @router.get("/matching-review/{league_slug}/playoffstatus")
 async def get_playoffstatus_comparison(
     league_slug: str,
-    secret: str = Query(default=""),
+    secret: str = Query(..., description="Admin secret for authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Compare our grid against playoffstatus.com reference data.
@@ -8516,6 +8597,9 @@ async def get_playoffstatus_comparison(
     - Teams in our grid but not on playoffstatus
     - Probability divergences between our data and theirs
     """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
     # For now, return the stored reference data if available
     # (populated by the scraper task)
     from app.config.league_configs import get_league_config
@@ -10845,6 +10929,18 @@ async def trigger_backfill_winners(
     from app.tasks import backfill_winners as task
     result = task.delay(dry_run=dry_run, limit=limit)
     return {"status": "queued", "task_id": result.id, "dry_run": dry_run, "limit": limit}
+
+
+@router.post("/backfill-winners/probability-only")
+async def trigger_probability_backfill(
+    secret: str = Query(...),
+):
+    """Run ONLY the probability-based is_winner passes synchronously (no Celery)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.backfill_winners import _backfill_from_current_probability
+    stats = await _backfill_from_current_probability()
+    return {"status": "completed", "stats": stats}
 
 
 @router.post("/backfill-polymarket-history")
