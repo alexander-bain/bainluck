@@ -850,60 +850,37 @@ async def _match_prediction_markets(limit: int = 500):
                 all_per_event_source[key] = []
             all_per_event_source[key].append((market, event))
 
-        # ── Multi-game detection: unlink Kalshi game markets from different
-        # games that were incorrectly linked to the same event (sawtooth fix).
-        # For each (event_id, "kalshi") group with 3+ game markets, compare
-        # ticker dates. If they span multiple dates, unlink the ones that are
-        # furthest from the event's commence_time.
+        # ── Wrong-game detection: unlink Kalshi game markets whose ticker
+        # date is far from the event's commence_time. Handles both multi-game
+        # groups (3+ game markets on one event) and single wrong-game markets
+        # (e.g., a Game 5 market linked to a Game 6 event in a playoff series).
         stats["funnel"].setdefault("phase2_multi_game_unlinked", 0)
         for key, group in list(all_per_event_source.items()):
-            if key[1] != "kalshi" or len(group) < 3:
-                continue
-            # Collect game markets with their ticker dates
-            game_markets_with_dates = []
-            for m, ev in group:
-                ext = (m.external_id or "").lower()
-                prefix = ext.split("-")[0] if "-" in ext else ext
-                if prefix.endswith("game"):
-                    td = extract_game_date_from_ticker(m.external_id)
-                    game_markets_with_dates.append((m, ev, td))
-
-            if len(game_markets_with_dates) < 3:
-                continue  # Dual market (2 game markets) is expected
-
-            # Check if ticker dates span multiple days
-            dated_markets = [(m, ev, td) for m, ev, td in game_markets_with_dates if td]
-            if len(dated_markets) < 2:
+            if key[1] != "kalshi" or not group:
                 continue
 
-            dates = set()
-            for _, _, td in dated_markets:
-                d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
-                dates.add(d.date())
-
-            if len(dates) <= 1:
-                continue  # All same date — likely dual market, not multi-game
-
-            # Multiple dates detected — keep markets closest to event commence_time
-            ev_ref = group[0][1]  # Event from first market in group
+            ev_ref = group[0][1]
             if not ev_ref.commence_time:
                 continue
-
             ec = ev_ref.commence_time if ev_ref.commence_time.tzinfo else ev_ref.commence_time.replace(tzinfo=timezone.utc)
 
-            for m, ev, td in game_markets_with_dates:
+            for m, ev in list(group):
+                ext = (m.external_id or "").lower()
+                prefix = ext.split("-")[0] if "-" in ext else ext
+                if not prefix.endswith("game"):
+                    continue
+                td = extract_game_date_from_ticker(m.external_id)
                 if not td:
                     continue
                 d = td if td.tzinfo else td.replace(tzinfo=timezone.utc)
                 diff_hours = abs((d - ec).total_seconds()) / 3600
-                if diff_hours > 18:  # More than 18h from event — wrong game
+                if diff_hours > 30:
                     logger.warning(
-                        "Phase 2 multi-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
+                        "Phase 2 wrong-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
                         m.external_id, d.date(), diff_hours, ev_ref.id, ec.date(),
                     )
                     m.event_id = None
                     stats["funnel"]["phase2_multi_game_unlinked"] += 1
-                    # Remove from the group so it doesn't participate in dedup
                     group[:] = [(gm, ge) for gm, ge in group if gm.id != m.id]
 
             await session.commit()
