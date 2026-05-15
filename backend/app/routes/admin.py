@@ -4489,6 +4489,39 @@ async def prediction_market_match_trace(
             for c in no_filter_result.all()
         ]
 
+    if candidates and matchup:
+        from app.tasks.prediction_market_matching import (
+            _score_candidates as score_fn,
+            _check_duplicate_kalshi_linkage,
+        )
+        from app.models.models import Event as EventModel, Sport
+
+        full_events = []
+        for c in candidates:
+            ev = await db.execute(
+                select(EventModel).options(
+                    joinedload(EventModel.sport)
+                ).where(EventModel.id == c.id)
+            )
+            e = ev.scalars().first()
+            if e:
+                full_events.append(e)
+
+        scored = score_fn(full_events, matchup, market, now, ticker_date)
+        trace["scoring"] = {
+            "result": scored,
+            "best_event_id": scored["event_id"] if scored else None,
+            "score": scored["score"] if scored else None,
+        }
+
+        if scored:
+            guard_ok = await _check_duplicate_kalshi_linkage(
+                db, scored["event_id"], market, ticker_date,
+            )
+            trace["duplicate_guard"] = {
+                "passed": guard_ok,
+            }
+
     trace["result"] = f"found {len(candidates)} candidates"
     return trace
 
