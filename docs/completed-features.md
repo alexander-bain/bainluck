@@ -1,6 +1,25 @@
 # Completed Features (Shipped)
 
-## May 14, 2026 — Calibration Deep Dive: MCE 4.5pp → 2.7pp
+## May 14, 2026 — Calibration Deep Dive: MCE 4.5pp → 2.65pp
+
+### Golf commence_time Fix — Root Cause Found
+- ✅ **Kalshi sets `commence_time = close_time` (resolution date)** — For Masters Top 10, commence_time was Sunday night (tournament end). Calibration grabbed in-play Round 3-4 prices instead of pre-tournament closing line. Also caused stale golf cards in Discover/Sports (feed thinks tournament hasn't started).
+- ✅ **Fix via DataGolf schedule** — `_fix_golf_commence_times()` runs after Kalshi poll, matches each golf market to DataGolf schedule using existing `_normalize_tournament()` from the golf route (no new matching system). Sets commence_time to tournament `start_date`. Resets calibration_probability to NULL for recomputation.
+- ✅ **Outcome timeline debug endpoint** — `/api/calibration/outcome-timeline` shows full snapshot history for any market's outcomes. Used to prove DeChambeau Masters Top 10 had opening=99% (garbage), calibration=13% (in-play), real pre-tournament price=44% (stable for 10 days pre-event).
+
+### Price History Backfills — Polymarket Rewrite + Kalshi New
+- ✅ **Polymarket backfill rewritten** — Targets resolved zero-snapshot outcomes (was: all <24 snaps). NOT EXISTS query instead of expensive GROUP BY. Sleep reduced 0.3s→0.1s. Limit raised 50→500.
+- ✅ **Kalshi price history backfill (NEW)** — Uses `GET /markets/{ticker}/candlesticks` for hourly price data. Same pattern: resolved zero-snapshot outcomes. Scheduled every 6h, admin trigger available.
+- ✅ **Both APIs serve resolved market history** — Confirmed Polymarket CLOB and Kalshi candlestick APIs return data for resolved/settled markets.
+- ✅ **First run recovered 5,432 zero-snapshot outcomes** — Reduced zero-snap from 23K to 17.7K, price-stuck from 63K to 49K.
+
+### Source Intelligence Preserved
+- ✅ **Moved to admin page** — `/source-intelligence` → `/admin/source-intelligence`. Dramatic Disagreements section preserved for data quality monitoring. Backend API unchanged.
+
+### VP-Level Audits Completed (4 parallel)
+- ✅ **Engineering, DS, Product, Design** — Full audit results integrated into backlog priority stack. Key findings: build `/daily` Wordle-style page, add calibration CIs, eliminate hardcoded design tokens, split admin.py.
+
+## May 14, 2026 (earlier) — Calibration Deep Dive: MCE 4.5pp → 2.7pp
 
 ### Calibration Probability Rescue — 18,947 Outcomes Fixed
 - ✅ **Part C rescue** — Polymarket outcomes all had `commence_time` set before any snapshots existed, so the closing-line backfill found nothing and fell back to opening prices. Part C uses the last non-extreme snapshot regardless of commence_time. Rescued 18,947 outcomes with real closing prices.

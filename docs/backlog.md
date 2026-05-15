@@ -24,18 +24,40 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Files:** `backend/scripts/audit_event_matching.py`, `Manus/prompts/event_matching_ground_truth.md`
 
-### Kalshi Outcome Alternation — Sawtooth Oscillation (HIGH PRI, ACTIVE)
+### Kalshi Linking Failure — Soccer 81%, Basketball 55% Unlinked (HIGH PRI, PARTIALLY FIXED)
 
-**Problem:** Kalshi game-winner probability oscillates between two stable values (e.g., 40%↔60%) across every poll cycle. Visible in Rockies @ Reds (284 snapshots, 66 big jumps), Nationals @ Phillies (115 snaps, 33 jumps), Nationals @ Pirates (116 snaps, 21 jumps). Pattern is a clean sawtooth, NOT random noise — two different probabilities are being written alternately.
+**Problem (discovered May 14):** Kalshi game markets for soccer and basketball are overwhelmingly unlinked to events. Soccer link rate: **18.6%** (52 of 280 open markets). Basketball: **44.6%**. Hockey: **68.4%**. These are way below the 93.9% headline link rate.
 
-**Hypothesis:** Phase 2 (every 15 min) and the live poller (every 2 min) both write snapshots for the same Kalshi game market, but `find_moneyline_outcome` selects a different outcome in each path. A Kalshi game market has two outcomes ("Colorado" and "Cincinnati"). If one path picks "Colorado" (`yes_is_home=True`, writes `home_prob = colorado_prob`) and the other picks "Cincinnati" (`yes_is_home=False`, writes `home_prob = 1 - cincinnati_prob`), they'd write complementary values that don't quite match (different bid/ask, rounding).
+**Root cause found:** Two issues:
+1. Zero team abbreviation mappings existed for 6 soccer leagues and 25 WNBA teams in `sport_keys.py`. When Kalshi markets have generic names like "Professional Soccer Game," the ticker parser extracts team abbreviations (e.g., `KXSOCCERGAME-26MAY14ARSLIV` → ARS + LIV). Without mappings, this returned `None` every time.
+2. Soccer game tickers (`kxsoccergame`) were miscategorized as futures instead of game-level markets, so Pass 1 (ticker scan) never even looked at them.
 
-**Investigation needed:**
-1. Compare what `find_moneyline_outcome` returns for the same market in Phase 2 vs live poller — do they use the same outcome selection logic? Both call the same function, but the outcome data may differ (Phase 2 reads from `FuturesOutcome.current_probability` written by the regular poller; live poller fetches fresh from Kalshi API).
-2. Check if the Kalshi game market's two outcomes ("Colorado" and "Cincinnati") have probabilities that sum to exactly 1.0. If not, the inversion (`1 - yes_prob`) produces a different value than the complementary outcome's price.
-3. Add logging to snapshot writes: log the outcome_name and yes_is_home for every Kalshi snapshot so we can trace which outcome is being selected.
+**Fix applied (May 14, other thread):** Added ~130 soccer abbreviations (6 leagues), 25 WNBA abbreviations, moved soccer ticker prefixes to the correct map.
 
-**Files:** `backend/app/tasks/prediction_market_matching.py` (Phase 2 ~line 800, live poller ~line 1670), `backend/app/utils/prediction_market_matching.py` (`find_moneyline_outcome` ~line 645)
+**Remaining work:**
+1. **Verify link rate improved** — Check `GET /api/admin/prediction-markets/link-rate` to see if soccer/basketball rates improved after the abbreviation fix. The fix was pushed but the matching task (every 15 min) needs to run.
+2. **Investigate remaining unlinked markets** — After the abbreviation fix, some markets will still be unlinked (new leagues, unusual team names). Need to audit and add more mappings.
+3. **Fix historically affected events** — Events that had Kalshi in `win_probability_sources` but all values None because the market was never linked. Need to identify and re-match these.
+
+**Files:** `backend/app/utils/sport_keys.py` (abbreviation maps), `backend/app/tasks/prediction_market_matching.py` (Pass 1 ticker scan)
+
+### Kalshi Sawtooth Oscillation — ROOT CAUSE: Wrong Event Linkage (HIGH PRI, PARTIALLY FIXED)
+
+**Problem:** Kalshi game-winner probability oscillates between two stable values (e.g., 40%↔60%) across every poll cycle. 52 events affected, 26,521 sawtooth snapshots, 23,968 with 99% jump rates.
+
+**Root cause found (May 14, other thread):** NOT a vig problem — 99% jump rate means full inversion (60%↔40%), not vig noise (~2pp). The real cause: multiple Kalshi markets are cross-linked to the WRONG events. Example: "Washington vs Loyola Marymount" had 5 duplicate events on the same day (college baseball tournament). Different Kalshi markets for different games were all linked to the same event, causing alternating home_prob writes.
+
+**What was done:**
+- ✅ Sawtooth detector endpoint: `GET /api/admin/sawtooth-audit` — window function SQL to count affected events, affected snapshots, and flag >30% jump rates
+- ✅ Devig fix deployed for NEW snapshots — averages both sides of Kalshi dual markets instead of picking one (commit `a2f128c`)
+- ✅ Historical damage quantified: 52 events, 26,521 snapshots, mostly college baseball/basketball
+
+**Remaining work:**
+1. **Fix the wrong event linkages** — The 52 affected events have Kalshi markets linked to the wrong event. Need to unlink and re-match them. The matching task's ±3h time window (from the double-header fix) should prevent future cross-linkage, but existing bad links need cleanup.
+2. **Clean historical sawtooth data** — 26,521 bad snapshots are permanently baked into charts. Options: (a) delete alternating bad snapshots (risky — which ones are "bad"?), (b) smooth by averaging consecutive pairs (loses temporal resolution), (c) accept it for old games. Recommend option (c) for now — old games' charts will have sawtooth but new games won't.
+3. **Verify devig fix on new live games** — Check a live MLB/NBA game chart tonight or tomorrow to confirm the sawtooth is gone for new data.
+
+**Files:** `backend/app/tasks/prediction_market_matching.py` (Phase 2), `backend/app/routes/admin.py` (sawtooth-audit endpoint)
 
 ### Double-Header Date Matching (HIGH PRI)
 
@@ -502,35 +524,44 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 ### Calibration Page — User-Facing `/calibration` or `/about/calibration`
 
-**Current state (May 14, evening):** MCE **2.7pp** (target ≤3.0pp ✓), ECE **2.4pp**, **69K outcomes** across 3 sources. All 10 buckets within 5pp. Per-source: Odds API 1.3pp, Kalshi 3.5pp ECE, Polymarket 4.3pp ECE. Calibration page live at `/calibration` with ECE metric, source comparison, category breakdowns, and "Does Trading Activity Matter?" section. Polymarket price history backfill now running automatically (was missing from beat schedule — root cause of 23K zero-snapshot outcomes).
+**Current state (May 14, late):** MCE **2.65pp** (target ≤3.0pp ✓), ECE **2.36pp**, **61K outcomes** across 3 sources. All 10 buckets within 5pp except 10-20% at 5.9pp (small N, noisy). Per-source: Odds API 1.3pp, Kalshi 3.5pp ECE, Polymarket 4.3pp ECE. Golf commence_time fix deployed — awaiting backfill recompute.
 
 **Data pipeline shipped:**
-- ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension, virtual market reconstruction, default-price filter
-- ✅ Odds API ground-truth integration (18,568 outcomes from completed+closed games with scores)
-- ✅ `backfill_winners` task (every 6h) — sets `is_winner`, computes `calibration_probability` (closing line), nulls untradeable outcomes (≤2 snapshots)
-- ✅ `backfill_polymarket_history` task (every 6h) — fetches historical prices from Polymarket CLOB API for outcomes with <24 snapshots. Draining 23K zero-snapshot backlog.
-- ✅ Part C rescue — updates outcomes where `calibration_probability = opening_probability` with last non-extreme snapshot
-- ✅ `is_multi` fix — `(cv.is_grouped OR cv.eligible >= 3)`. MCE 5.2pp → 3.8pp.
-- ✅ `status IN ('completed', 'closed')` — doubled MLB sample
-- ✅ 6 diagnostic admin endpoints for calibration debugging
+- ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
+- ✅ Odds API ground-truth (18,568 outcomes from completed+closed games)
+- ✅ `backfill_winners` (every 6h) — is_winner, calibration_probability, null untradeable (≤2 snaps)
+- ✅ `backfill_polymarket_history` (every 6h) — CLOB API price history for zero-snap outcomes
+- ✅ `backfill_kalshi_history` (every 6h) — candlesticks API price history for zero-snap outcomes
+- ✅ Golf commence_time fix via DataGolf schedule (reuses `_normalize_tournament()`)
+- ✅ `is_multi` fix, `status IN ('completed', 'closed')`, Part C rescue, 8 diagnostic endpoints
 
-**Remaining work:**
+**IMMEDIATE: Check back on these (next session):**
 
-1. ~~**Live Next.js page polish**~~ — ✅ DONE. Full page with stat cards (MCE + ECE), source comparison table, category breakdowns, category mini-charts, "Does Trading Activity Matter?" section, methodology, external studies.
+1. **Check price history backfill progress** — `GET /api/calibration/snapshot-health`. Zero-snap was 23K→17.7K after first runs. Polymarket and Kalshi backfills running every 6h. Monitor until zero-snap count stabilizes. Trigger manual runs via `POST /api/admin/backfill-polymarket-history` and `POST /api/admin/backfill-kalshi-history` to accelerate.
 
-2. ~~**Closing line capture**~~ — ✅ DONE. `calibration_probability` at 100% coverage + Part C rescue.
+2. **Check golf calibration after commence_time fix** — The fix deployed but needs: (a) Kalshi poll to run (every 2h, triggers `_fix_golf_commence_times()`), (b) backfill-winners to recompute calibration_probability with corrected commence_time. Verify via `GET /api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26` — DeChambeau should show calibration_probability ~44% (pre-tournament) instead of 13% (in-play). Golf MCE should drop from 17.8pp dramatically.
 
-3. **Kalshi API settlement backfill** — 59K Kalshi markets still need `is_winner`. API paginates by recency, our DB has older events.
+3. **Re-measure per-category calibration** — After golf fix + continued backfill draining, check all category MCEs. Target: every category with N>100 at ECE<10pp.
 
-4. ~~**Fix 40-50% bucket**~~ — ✅ DONE (within 5pp). Root cause was zero-snapshot outcomes using placeholder prices. Fixed by: strengthened null function + wiring up Polymarket price history backfill. Continues improving automatically.
+**Remaining commence_time fixes (same root cause: Kalshi uses close_time):**
 
-5. **Confidence tiers on Discover cards** — Signal-strength bars (high/medium/low) based on trading activity. Thresholds TBD from data analysis. Backend: `compute_confidence_tier()` pure function. Frontend: 14×12px SVG bars in FuturesCard header. Plan approved, Phase 3 of calibration project.
+4. **Hockey commence_time** — Kalshi hockey futures use `close_time` (resolution date). For game markets with `event_id`, the linked Event has the correct `commence_time`. For unlinked markets, `extract_game_date_from_ticker()` can derive the game date. Apply same pattern as golf fix but using event linkage / ticker parsing instead of DataGolf. Hockey MCE currently 11.3pp.
 
-6. **Source "fair fight" comparison** — Methodology for comparing source accuracy when controlling for market difficulty and volume. Needed to answer "is Kalshi or Polymarket more accurate?"
+5. **Weather/Economics commence_time** — Different pattern: these resolve at specific clock times (e.g., "S&P price at 4pm on March 25"). The `close_time` IS roughly correct for these — prediction closes right before the answer is known. Investigate whether these actually need a fix or if the calibration error comes from other sources (placeholder pricing, thin trading). Weather MCE 10.1pp, Economics 10.1pp.
 
-7. **Default-price filter tightening** — S&P/Nasdaq ladders with varied-but-still-placeholder pricing slip through the `mode_prices` filter.
+**Remaining calibration work:**
 
-8. **Volume field DQ on Polymarket sub-markets** — Decomposed sub-markets (player props, spreads) have `volume = NULL` because volume is stored at the event level, not propagated to child markets. Makes volume unreliable as a filter; use snapshot count or `price_moved` instead.
+6. **Kalshi API settlement backfill** — 59K Kalshi markets still need `is_winner`.
+
+7. **Confidence tiers on Discover cards** — Signal bars (high/medium/low). Data-driven thresholds TBD. Plan approved, Phase 3.
+
+8. **Confidence intervals on calibration metrics** — Wilson score intervals per bucket, bootstrap CI on MCE. VP of DS P0 recommendation.
+
+9. **Separate closing-line vs opening-price cohorts in headline MCE** — VP of DS recommendation.
+
+10. **Source "fair fight" comparison** — Methodology for comparing source accuracy controlling for market difficulty.
+
+11. **Volume field DQ on Polymarket sub-markets** — `volume = NULL` on decomposed sub-markets. Use snapshot count or `price_moved` instead.
 
 **External studies:** Arrow et al. (2008, Science), Berg/Nelson/Rietz (2008), Tetlock/Gardner (2015), Wolfers/Zitzewitz (2004, JEP), Metaculus track record.
 
