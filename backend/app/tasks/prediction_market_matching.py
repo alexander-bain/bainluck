@@ -2205,8 +2205,9 @@ async def _backfill_historical_links(batch_size: int = 100):
                     FuturesMarket.market_metadata.is_(None),
                     ~FuturesMarket.market_metadata.has_key("backfill_link_failed"),
                 ),
+                FuturesMarket.commence_time < cutoff,
             )
-            .order_by(FuturesMarket.updated_at.desc())
+            .order_by(FuturesMarket.commence_time.asc())
             .limit(batch_size)
         )
         markets = result.scalars().all()
@@ -2216,11 +2217,11 @@ async def _backfill_historical_links(batch_size: int = 100):
             try:
                 ticker_date = extract_game_date_from_ticker(market.external_id)
                 if not ticker_date:
+                    await _mark_backfill_failed(session, market)
+                    stats["no_match"] += 1
                     continue
                 if ticker_date.tzinfo is None:
                     ticker_date = ticker_date.replace(tzinfo=timezone.utc)
-                if ticker_date > cutoff:
-                    continue
 
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
