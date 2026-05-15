@@ -10976,15 +10976,35 @@ async def celery_debug(secret: str = Query(...)):
     except Exception as e:
         result["inspect_error"] = str(e)
 
-    # Queue lengths from Redis
+    # Queue lengths and task name distribution from Redis
     try:
         redis_url = celery_app.conf.broker_url
-        r = redis_lib.from_url(redis_url, ssl_cert_reqs=None if redis_url.startswith("rediss") else None)
+        import ssl as _ssl
+        r = redis_lib.from_url(
+            redis_url,
+            ssl_cert_reqs=_ssl.CERT_NONE if redis_url.startswith("rediss") else None,
+        )
+        bg_len = r.llen("background")
         result["queue_lengths"] = {
-            "background": r.llen("background"),
+            "background": bg_len,
             "realtime": r.llen("realtime"),
             "celery": r.llen("celery"),
         }
+        # Sample first 20 tasks from background queue to see what's piled up
+        if bg_len > 0:
+            import json as _json
+            sample = []
+            for raw in r.lrange("background", 0, min(19, bg_len - 1)):
+                try:
+                    body = _json.loads(raw)
+                    headers = body.get("headers", {})
+                    sample.append(headers.get("task", "unknown"))
+                except Exception:
+                    sample.append("parse_error")
+            # Count by task name
+            from collections import Counter
+            result["queue_sample"] = dict(Counter(sample).most_common(10))
+
         result["redis_info"] = {
             "used_memory_human": r.info("memory").get("used_memory_human"),
             "connected_clients": r.info("clients").get("connected_clients"),
