@@ -10967,12 +10967,133 @@ async def trigger_backfill_winners(
 @router.post("/backfill-winners/probability-only")
 async def trigger_probability_backfill(
     secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Run ONLY the probability-based is_winner passes synchronously (no Celery)."""
+    """Run the probability-based is_winner passes using the request DB session."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    from app.tasks.backfill_winners import _backfill_from_current_probability
-    stats = await _backfill_from_current_probability()
+
+    stats = {"clean_w": 0, "clean_l": 0, "mutex_w": 0, "mutex_l": 0,
+             "thresh_w": 0, "thresh_l": 0, "all_losers": 0, "errors": []}
+
+    try:
+        # Pass 1: Clean resolution (all at 0 or 1)
+        r1 = await db.execute(text("""
+            WITH cleanly_resolved AS (
+                SELECT fm.id AS market_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND COUNT(*) FILTER (
+                       WHERE fo.current_probability >= 0.95
+                          OR fo.current_probability <= 0.05
+                   ) = COUNT(*)
+                   AND COUNT(*) >= 1
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = (fo.current_probability >= 0.95)
+            FROM cleanly_resolved cr
+            WHERE fo.market_id = cr.market_id
+              AND fo.current_probability IS NOT NULL
+            RETURNING fo.is_winner
+        """))
+        rows1 = r1.all()
+        stats["clean_w"] = sum(1 for r in rows1 if r[0])
+        stats["clean_l"] = sum(1 for r in rows1 if not r[0])
+        await db.commit()
+
+        # Pass 2: Mutually exclusive (prob sum 0.5-1.5), max wins
+        r2 = await db.execute(text("""
+            WITH stuck_markets AS (
+                SELECT fm.id AS market_id,
+                       MAX(fo.current_probability) AS max_prob
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND SUM(fo.current_probability) BETWEEN 0.5 AND 1.5
+                   AND MAX(fo.current_probability) > 0.05
+                   AND COUNT(*) >= 2
+                LIMIT 50000
+            ),
+            ranked AS (
+                SELECT fo.id AS outcome_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY fo.market_id
+                           ORDER BY fo.current_probability DESC
+                       ) AS rn
+                FROM futures_outcomes fo
+                JOIN stuck_markets sm ON sm.market_id = fo.market_id
+                WHERE fo.current_probability IS NOT NULL
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = (r.rn = 1)
+            FROM ranked r
+            WHERE fo.id = r.outcome_id
+            RETURNING fo.is_winner
+        """))
+        rows2 = r2.all()
+        stats["mutex_w"] = sum(1 for r in rows2 if r[0])
+        stats["mutex_l"] = sum(1 for r in rows2 if not r[0])
+        await db.commit()
+
+        # Pass 3: Threshold markets (prob sum > 1.5), each > 0.50 wins
+        r3 = await db.execute(text("""
+            WITH threshold_markets AS (
+                SELECT fm.id AS market_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND SUM(fo.current_probability) > 1.5
+                   AND COUNT(*) >= 2
+                LIMIT 50000
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = (fo.current_probability > 0.50)
+            FROM threshold_markets tm
+            WHERE fo.market_id = tm.market_id
+              AND fo.current_probability IS NOT NULL
+              AND fo.current_probability != 0.50
+            RETURNING fo.is_winner
+        """))
+        rows3 = r3.all()
+        stats["thresh_w"] = sum(1 for r in rows3 if r[0])
+        stats["thresh_l"] = sum(1 for r in rows3 if not r[0])
+        await db.commit()
+
+        # Pass 4: All-losers (max prob <= 0.10)
+        r4 = await db.execute(text("""
+            WITH all_loser_markets AS (
+                SELECT fm.id AS market_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND MAX(fo.current_probability) <= 0.10
+                   AND COUNT(*) >= 1
+                LIMIT 50000
+            )
+            UPDATE futures_outcomes fo
+            SET is_winner = false
+            FROM all_loser_markets al
+            WHERE fo.market_id = al.market_id
+            RETURNING 1
+        """))
+        stats["all_losers"] = r4.rowcount
+        await db.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+
     return {"status": "completed", "stats": stats}
 
 
