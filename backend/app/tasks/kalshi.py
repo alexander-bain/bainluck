@@ -615,6 +615,16 @@ async def _poll_kalshi_markets():
 
             await session.commit()
 
+        # Post-commit: fix commence_time for golf markets using DataGolf schedule.
+        # Kalshi sets commence_time = market close_time (resolution date), but
+        # calibration and feed need the actual tournament start date.
+        try:
+            golf_fixed = await _fix_golf_commence_times()
+            stats["golf_commence_fixed"] = golf_fixed
+        except Exception as e:
+            logger.warning("Golf commence_time fix failed: %s", e)
+            stats["golf_commence_fixed"] = 0
+
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
 
@@ -628,6 +638,76 @@ async def _poll_kalshi_markets():
         len(stats["errors"]), stats["by_category"],
     )
     return stats
+
+
+async def _fix_golf_commence_times() -> int:
+    """Fix commence_time on Kalshi golf markets using DataGolf schedule.
+
+    Kalshi sets commence_time = market close_time (resolution date).
+    For golf tournaments, the correct commence_time is the tournament
+    start date from DataGolf. This affects calibration (closing line is
+    "last snapshot before commence_time") and feed freshness.
+    """
+    from app.routes.golf import _get_golf_schedule, _normalize_tournament
+
+    schedule = await _get_golf_schedule()
+    if not schedule:
+        return 0
+
+    schedule_by_key: dict[str, str] = {}
+    for s in schedule:
+        if s.get("key") and s.get("start_date"):
+            schedule_by_key[s["key"]] = s["start_date"]
+
+    async with get_task_session() as session:
+        result = await session.execute(
+            text("""
+                SELECT id, name, commence_time
+                FROM futures_markets
+                WHERE source = 'kalshi'
+                  AND llm_sport_category = 'golf'
+                  AND commence_time IS NOT NULL
+            """)
+        )
+        markets = result.fetchall()
+
+        fixed = 0
+        for m in markets:
+            tourn_key = _normalize_tournament(m.name, schedule)
+            if tourn_key == "other" or tourn_key not in schedule_by_key:
+                continue
+
+            start_str = schedule_by_key[tourn_key]
+            try:
+                start_dt = datetime.fromisoformat(start_str)
+            except (ValueError, TypeError):
+                continue
+
+            if m.commence_time and abs((m.commence_time - start_dt).total_seconds()) > 86400:
+                await session.execute(
+                    text("UPDATE futures_markets SET commence_time = :start WHERE id = :id"),
+                    {"start": start_dt, "id": m.id},
+                )
+                fixed += 1
+
+        if fixed:
+            # Reset calibration_probability on affected outcomes so the
+            # backfill recomputes using the corrected commence_time.
+            await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.llm_sport_category = 'golf'
+                      AND fo.calibration_probability IS NOT NULL
+                """)
+            )
+            await session.commit()
+            logger.info("Fixed commence_time for %d Kalshi golf markets (reset calibration_probability)", fixed)
+
+        return fixed
 
 
 async def _backfill_kalshi_price_history(limit: int = 500):
