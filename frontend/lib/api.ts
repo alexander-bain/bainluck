@@ -45,6 +45,7 @@ import type {
 import { getDiscoverSessionId } from "./discoverInteractions";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const AUTH_TOKEN_TIMEOUT_MS = 2500;
 
 /**
  * Auth token getter — set by AuthProvider when user signs in.
@@ -56,6 +57,25 @@ export function setAuthTokenGetter(getter: (() => Promise<string | null>) | null
   _getAuthToken = getter;
 }
 
+async function getAuthTokenWithTimeout(): Promise<string | null> {
+  if (!_getAuthToken) return null;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      _getAuthToken(),
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), AUTH_TOKEN_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn("[API] Auth token unavailable; continuing without auth", error);
+    return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 /**
  * Base fetch wrapper with error handling and optional auth
  */
@@ -65,11 +85,9 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit & { timeoutMs
   };
 
   // Attach auth token if available
-  if (_getAuthToken) {
-    const token = await _getAuthToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+  const token = await getAuthTokenWithTimeout();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const timeoutMs = options?.timeoutMs ?? 20000;
