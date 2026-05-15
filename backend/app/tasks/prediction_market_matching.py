@@ -309,7 +309,10 @@ async def _match_prediction_markets(limit: int = 500):
         #   using name-based pattern matching to detect Polymarket game
         #   markets and any Kalshi markets with non-standard tickers.
 
-        # ── Pass 1: Targeted Kalshi game ticker scan (no limit) ──────────
+        # ── Pass 1: Targeted Kalshi game ticker scan ────────────────────
+        # Order by most recently updated so new/active markets are processed
+        # first (critical when there are thousands of unlinked markets and
+        # the task has a 780s time budget).
         ticker_conditions = [
             func.lower(FuturesMarket.external_id).like(pattern)
             for pattern in _KALSHI_TICKER_LIKE_PATTERNS
@@ -321,6 +324,7 @@ async def _match_prediction_markets(limit: int = 500):
                 FuturesMarket.event_id.is_(None),
                 or_(*ticker_conditions),
             )
+            .order_by(FuturesMarket.updated_at.desc())
         )
         ticker_markets = ticker_result.scalars().all()
         stats["funnel"]["ticker_scan_count"] = len(ticker_markets)
