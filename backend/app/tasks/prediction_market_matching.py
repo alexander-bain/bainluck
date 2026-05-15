@@ -2173,29 +2173,34 @@ async def _backfill_polymarket_win_prob_history(
 
 
 async def _backfill_historical_links(batch_size: int = 100):
-    """Link past-game Kalshi markets to their (now closed) events.
+    """Link past-game Kalshi AND Polymarket markets to their (now closed) events.
 
     The live matching task skips closed/completed events (past_cutoff filter).
     This backfill removes that filter to link markets for games that already
     happened. Idempotent: marks failed attempts in market_metadata so we
     don't re-check the same markets every run.
 
-    Designed to run slowly on the background queue (every 6h, small batches).
+    Handles both sources:
+    - Kalshi: ticker-based game detection + ticker date for time window
+    - Polymarket: name-based game detection + commence_time for time window
     """
     from app.models.models import FuturesMarket, Event
-    from sqlalchemy import text as _text, update
+    from sqlalchemy import text as _text, update as _update
 
-    stats = {"scanned": 0, "linked": 0, "no_match": 0, "already_marked": 0, "errors": []}
+    stats = {
+        "scanned": 0, "linked": 0, "no_match": 0, "errors": [],
+        "by_source": {"kalshi": {"scanned": 0, "linked": 0}, "polymarket": {"scanned": 0, "linked": 0}},
+    }
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=48)
 
     async with get_task_session() as session:
+        # ── Kalshi: ticker-prefix detection ──
         ticker_conditions = [
             func.lower(FuturesMarket.external_id).like(f"{p}%")
             for p in _KALSHI_GAME_TICKER_PREFIXES
         ]
-
-        result = await session.execute(
+        kalshi_result = await session.execute(
             select(FuturesMarket)
             .where(
                 FuturesMarket.source == "kalshi",
@@ -2210,40 +2215,82 @@ async def _backfill_historical_links(batch_size: int = 100):
             .order_by(FuturesMarket.commence_time.asc())
             .limit(batch_size)
         )
-        markets = result.scalars().all()
+        kalshi_markets = kalshi_result.scalars().all()
 
-        for market in markets:
+        # ── Polymarket: fetch candidates, filter through is_game_level_market() in Python ──
+        _SUPPORTED_SPORT_CATS = [
+            "basketball", "baseball", "hockey", "soccer", "football",
+            "tennis", "mma", "rugby", "lacrosse", "cricket",
+        ]
+        poly_result = await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.llm_sport_category.in_(_SUPPORTED_SPORT_CATS),
+                or_(
+                    FuturesMarket.market_metadata.is_(None),
+                    ~FuturesMarket.market_metadata.has_key("backfill_link_failed"),
+                ),
+                FuturesMarket.commence_time < cutoff,
+            )
+            .order_by(FuturesMarket.commence_time.asc())
+            .limit(batch_size * 3)
+        )
+        poly_candidates = poly_result.scalars().all()
+        poly_markets = [
+            m for m in poly_candidates
+            if is_game_level_market(m.name, m.category, external_id=m.external_id)
+        ][:batch_size]
+
+        all_markets = kalshi_markets + poly_markets
+
+        for market in all_markets:
             stats["scanned"] += 1
+            src = market.source
+            stats["by_source"][src]["scanned"] += 1
             try:
-                ticker_date = extract_game_date_from_ticker(market.external_id)
-                if not ticker_date:
-                    await _mark_backfill_failed(session, market)
-                    stats["no_match"] += 1
-                    continue
-                if ticker_date.tzinfo is None:
-                    ticker_date = ticker_date.replace(tzinfo=timezone.utc)
-
                 matchup = extract_matchup_with_ticker_fallback(
                     market.name, external_id=market.external_id,
                 )
-                if not matchup:
+                if not matchup or not matchup.team_b:
                     await _mark_backfill_failed(session, market)
                     stats["no_match"] += 1
                     continue
 
+                # Determine time reference: Kalshi uses ticker date, Polymarket uses commence_time
+                if src == "kalshi":
+                    ref_time = extract_game_date_from_ticker(market.external_id)
+                    if not ref_time:
+                        await _mark_backfill_failed(session, market)
+                        stats["no_match"] += 1
+                        continue
+                    if ref_time.tzinfo is None:
+                        ref_time = ref_time.replace(tzinfo=timezone.utc)
+                else:
+                    ref_time = market.commence_time
+                    if not ref_time:
+                        await _mark_backfill_failed(session, market)
+                        stats["no_match"] += 1
+                        continue
+                    if ref_time.tzinfo is None:
+                        ref_time = ref_time.replace(tzinfo=timezone.utc)
+
                 matched = await _find_historical_event(
-                    session, matchup, market, ticker_date,
+                    session, matchup, market, ref_time,
                 )
                 if matched:
                     await session.execute(
-                        update(FuturesMarket)
+                        _update(FuturesMarket)
                         .where(FuturesMarket.id == market.id)
                         .values(event_id=matched["event_id"])
                     )
                     stats["linked"] += 1
+                    stats["by_source"][src]["linked"] += 1
                     logger.info(
-                        "Backfill linked %s → event %d (%s vs %s)",
-                        market.external_id, matched["event_id"],
+                        "Backfill linked %s %s → event %d (%s vs %s)",
+                        src, market.external_id or market.name[:40],
+                        matched["event_id"],
                         matched["home_team"], matched["away_team"],
                     )
                 else:
@@ -2254,7 +2301,7 @@ async def _backfill_historical_links(batch_size: int = 100):
                     await session.commit()
 
             except Exception as e:
-                logger.error("Backfill error for %s: %s", market.external_id, e)
+                logger.error("Backfill error for %s: %s", market.external_id or market.id, e)
                 stats["errors"].append(str(e))
 
         await session.commit()
@@ -2280,8 +2327,13 @@ async def _mark_backfill_failed(session, market):
     )
 
 
-async def _find_historical_event(session, matchup, market, ticker_date):
-    """Like _find_matching_event but without status/past_cutoff filters."""
+async def _find_historical_event(session, matchup, market, ref_time):
+    """Like _find_matching_event but without status/past_cutoff filters.
+
+    Args:
+        ref_time: For Kalshi = ticker-extracted game date (precise).
+                  For Polymarket = commence_time (approximate, wider window).
+    """
     from app.models.models import Event
 
     teams_to_search = [matchup.team_a]
@@ -2295,8 +2347,12 @@ async def _find_historical_event(session, matchup, market, ticker_date):
             ilike_conditions.append(Event.home_team_name.ilike(pattern))
             ilike_conditions.append(Event.away_team_name.ilike(pattern))
 
-    time_start = ticker_date - timedelta(hours=6)
-    time_end = ticker_date + timedelta(hours=30)
+    if market.source == "kalshi":
+        time_start = ref_time - timedelta(hours=6)
+        time_end = ref_time + timedelta(hours=30)
+    else:
+        time_start = ref_time - timedelta(hours=48)
+        time_end = ref_time + timedelta(hours=48)
 
     event_result = await session.execute(
         select(Event)
