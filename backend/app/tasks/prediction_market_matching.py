@@ -2170,3 +2170,143 @@ async def _backfill_polymarket_win_prob_history(
         market_id, event_id, stats["snapshots_created"], len(stats["errors"]),
     )
     return stats
+
+
+async def _backfill_historical_links(batch_size: int = 100):
+    """Link past-game Kalshi markets to their (now closed) events.
+
+    The live matching task skips closed/completed events (past_cutoff filter).
+    This backfill removes that filter to link markets for games that already
+    happened. Idempotent: marks failed attempts in market_metadata so we
+    don't re-check the same markets every run.
+
+    Designed to run slowly on the background queue (every 6h, small batches).
+    """
+    from app.models.models import FuturesMarket, Event
+    from sqlalchemy import text as _text, update
+
+    stats = {"scanned": 0, "linked": 0, "no_match": 0, "already_marked": 0, "errors": []}
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=48)
+
+    async with get_task_session() as session:
+        ticker_conditions = [
+            func.lower(FuturesMarket.external_id).like(f"{p}%")
+            for p in _KALSHI_GAME_TICKER_PREFIXES
+        ]
+
+        result = await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.event_id.is_(None),
+                or_(*ticker_conditions),
+                or_(
+                    FuturesMarket.market_metadata.is_(None),
+                    ~FuturesMarket.market_metadata.has_key("backfill_link_failed"),
+                ),
+            )
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(batch_size)
+        )
+        markets = result.scalars().all()
+
+        for market in markets:
+            stats["scanned"] += 1
+            try:
+                ticker_date = extract_game_date_from_ticker(market.external_id)
+                if not ticker_date:
+                    continue
+                if ticker_date.tzinfo is None:
+                    ticker_date = ticker_date.replace(tzinfo=timezone.utc)
+                if ticker_date > cutoff:
+                    continue
+
+                matchup = extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                )
+                if not matchup:
+                    await _mark_backfill_failed(session, market)
+                    stats["no_match"] += 1
+                    continue
+
+                matched = await _find_historical_event(
+                    session, matchup, market, ticker_date,
+                )
+                if matched:
+                    await session.execute(
+                        update(FuturesMarket)
+                        .where(FuturesMarket.id == market.id)
+                        .values(event_id=matched["event_id"])
+                    )
+                    stats["linked"] += 1
+                    logger.info(
+                        "Backfill linked %s → event %d (%s vs %s)",
+                        market.external_id, matched["event_id"],
+                        matched["home_team"], matched["away_team"],
+                    )
+                else:
+                    await _mark_backfill_failed(session, market)
+                    stats["no_match"] += 1
+
+                if stats["scanned"] % 20 == 0:
+                    await session.commit()
+
+            except Exception as e:
+                logger.error("Backfill error for %s: %s", market.external_id, e)
+                stats["errors"].append(str(e))
+
+        await session.commit()
+
+    logger.info(
+        "Historical link backfill: scanned=%d linked=%d no_match=%d errors=%d",
+        stats["scanned"], stats["linked"], stats["no_match"], len(stats["errors"]),
+    )
+    return stats
+
+
+async def _mark_backfill_failed(session, market):
+    """Mark a market as attempted-and-failed so we skip it next run."""
+    from app.models.models import FuturesMarket
+    from sqlalchemy import update
+
+    meta = dict(market.market_metadata) if market.market_metadata else {}
+    meta["backfill_link_failed"] = True
+    await session.execute(
+        update(FuturesMarket)
+        .where(FuturesMarket.id == market.id)
+        .values(market_metadata=meta)
+    )
+
+
+async def _find_historical_event(session, matchup, market, ticker_date):
+    """Like _find_matching_event but without status/past_cutoff filters."""
+    from app.models.models import Event
+
+    teams_to_search = [matchup.team_a]
+    if matchup.team_b:
+        teams_to_search.append(matchup.team_b)
+
+    ilike_conditions = []
+    for team in teams_to_search:
+        for search_term in _expand_team_search_terms(team):
+            pattern = f"%{_escape_like(search_term)}%"
+            ilike_conditions.append(Event.home_team_name.ilike(pattern))
+            ilike_conditions.append(Event.away_team_name.ilike(pattern))
+
+    time_start = ticker_date - timedelta(hours=6)
+    time_end = ticker_date + timedelta(hours=30)
+
+    event_result = await session.execute(
+        select(Event)
+        .options(joinedload(Event.sport))
+        .where(
+            or_(*ilike_conditions),
+            Event.commence_time.between(time_start, time_end),
+        )
+        .order_by(Event.commence_time)
+        .limit(20)
+    )
+    candidates = event_result.scalars().unique().all()
+
+    return _score_candidates(candidates, matchup, market, ticker_date, ticker_date)

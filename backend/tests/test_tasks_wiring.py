@@ -205,6 +205,7 @@ class TestBeatScheduleCompleteness:
         "daily-digest",
         "backfill-polymarket-price-history",
         "backfill-kalshi-price-history",
+        "backfill-historical-links",
     }
 
     def test_no_missing_entries(self):

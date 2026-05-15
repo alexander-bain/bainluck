@@ -362,6 +362,13 @@ def backfill_winners(self, dry_run: bool = False, limit: int = 2000):
     return run_async(_backfill_all_winners(dry_run=dry_run, limit=limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_historical_links", soft_time_limit=300, time_limit=360)
+def backfill_historical_links(self, batch_size: int = 100):
+    """Link past-game Kalshi markets to their closed/completed events."""
+    from app.tasks.prediction_market_matching import _backfill_historical_links
+    return run_async(_backfill_historical_links(batch_size=batch_size))
+
+
 @celery_app.task(bind=True, name="app.tasks.fix_outcome_names")
 def fix_outcome_names(self):
     """Fix Polymarket outcome names using groupItemTitle from Gamma API."""
@@ -984,6 +991,12 @@ celery_app.conf.beat_schedule = {
     "backfill-winners": {
         "task": "app.tasks.backfill_winners",
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6 hours, offset from mark-resolved
+    },
+    "backfill-historical-links": {
+        "task": "app.tasks.backfill_historical_links",
+        "schedule": crontab(minute=30, hour="5,17"),  # 2x/day, background queue
+        "kwargs": {"batch_size": 100},
+        "options": {"queue": "background"},
     },
     "backfill-polymarket-price-history": {
         "task": "app.tasks.backfill_polymarket_history",

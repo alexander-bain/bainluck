@@ -602,6 +602,48 @@ Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map
 **Files:** `backend/app/tasks/backfill_winners.py`, `backend/app/routes/admin.py` (status endpoint)
 **Parallel Safety:** Green
 
+### Workstream: Historical Event Linking Backfill (ACTIVE — runs automatically)
+
+**Goal:** Every past-game Kalshi market linked to its event, so event detail pages show complete Kalshi data even for historical games.
+
+**Monitor:** `GET /api/admin/prediction-markets/backfill-link-status?secret=$ADMIN_TOKEN`
+- `remaining_to_try` = markets the backfill hasn't attempted yet. Should shrink to 0.
+- `marked_no_match` = markets that genuinely have no matching event (obscure leagues, etc.)
+- When `remaining_to_try == 0`, the backfill is complete.
+
+**How it works (shipped May 15, 2026):**
+
+The live matching task (`match_prediction_markets`, every 15 min) intentionally skips closed/completed events via a `past_cutoff` filter — it only cares about linkable games happening NOW. Past games' Kalshi markets stay unlinked. This backfill task fills that gap:
+
+1. Queries unlinked Kalshi game markets with ticker dates >48h in the past
+2. Runs `_find_historical_event()` — same scoring as live matching BUT:
+   - **No status filter** — allows closed/completed events
+   - **No past_cutoff** — doesn't care when the game ended
+   - **Same -6h/+30h time window** around the ticker date
+   - **Same team fuzzy matching + sport validation**
+3. If linked → done (market.event_id set via Core SQL, not ORM)
+4. If no match → sets `market_metadata->>'backfill_link_failed' = true` so the next run skips it
+5. Processes 100 markets per run, 2x/day at 5:30 and 17:30, background queue
+
+**Idempotency:** The `backfill_link_failed` flag in `market_metadata` JSONB means each market is attempted exactly once. Already-linked markets are excluded by `event_id IS NULL`. To re-try failed markets (e.g., after adding new team abbreviations), clear the flag:
+```sql
+UPDATE futures_markets SET market_metadata = market_metadata - 'backfill_link_failed'
+WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_link_failed';
+```
+
+**What NOT to waste time on (lessons from May 14-15 investigation):**
+- **Don't touch the live matching task's filters** — the `past_cutoff` and status filters are correct for live matching. Relaxing them causes cross-contamination with closed events.
+- **Don't try to fix the tier1-gaps endpoint** — those 49 "gaps" are past-game markets. The endpoint's denominator includes them because they're status="open" on Kalshi (for settlement). The endpoint measures CURRENT linking, not historical. Leave it alone.
+- **Don't try to link ALL past markets at once** — there are thousands. The batch approach (100/run, 2x/day) drains in ~2 weeks without impacting live operations.
+- **Don't retry failed markets automatically** — if `_find_historical_event` returned None, the event doesn't exist (obscure leagues, cancelled games, etc.). The `backfill_link_failed` flag prevents wasted queries on every run.
+- **ORM attribute assignment for event_id works** but the backfill uses Core SQL `update()` for safety (gotcha #8 / #22).
+- **The duplicate linkage guard is NOT applied** in the backfill — it's only relevant for same-series playoff games, which are handled by the live task's Phase 2 wrong-game detection.
+
+**Root cause recap (May 14-15):** The live matching task had 5 issues preventing linkage. All 5 were fixed for current games. The 6th issue — past games can't link because their events are closed — is what this backfill addresses. Full investigation trace in git history (commits `028d5f9` through `bb4c883`).
+
+**Files:** `backend/app/tasks/prediction_market_matching.py` (`_backfill_historical_links`, `_find_historical_event`), `backend/app/tasks/__init__.py` (task registration + beat schedule), `backend/app/routes/admin.py` (status endpoint)
+**Parallel Safety:** Green
+
 ---
 
 ### Workstream: Calibration Accuracy (ACTIVE — monitor every session)

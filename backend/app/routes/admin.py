@@ -4527,6 +4527,46 @@ async def prediction_market_match_trace(
     return trace
 
 
+@router.get("/prediction-markets/backfill-link-status")
+async def backfill_link_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Status of the historical link backfill: how many left, how many done."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func as _func, text as _text
+    from app.models.models import FuturesMarket
+    from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
+
+    ticker_conditions = [
+        _func.lower(FuturesMarket.external_id).like(f"{p}%")
+        for p in KALSHI_GAME_TICKER_PREFIXES
+    ]
+
+    result = await db.execute(
+        select(
+            _func.count().label("total_unlinked"),
+            _func.count().filter(
+                FuturesMarket.market_metadata.has_key("backfill_link_failed")
+            ).label("marked_failed"),
+        )
+        .where(
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.event_id.is_(None),
+            or_(*ticker_conditions),
+        )
+    )
+    row = result.one()
+    return {
+        "total_unlinked_game_markets": row.total_unlinked,
+        "marked_no_match": row.marked_failed,
+        "remaining_to_try": row.total_unlinked - row.marked_failed,
+        "note": "remaining_to_try shrinks each run. When it hits 0, backfill is complete.",
+    }
+
+
 @router.post("/prediction-markets/force-link")
 async def prediction_market_force_link(
     secret: str = Query(..., description="Admin secret for authorization"),

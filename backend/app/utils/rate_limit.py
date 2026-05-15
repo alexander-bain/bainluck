@@ -175,6 +175,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
+        if _DISABLED:
+            return await call_next(request)
+
         path = request.url.path
 
         # Skip exempt paths
