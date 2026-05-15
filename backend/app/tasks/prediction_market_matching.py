@@ -2280,19 +2280,28 @@ async def _backfill_historical_links(batch_size: int = 100):
                     session, matchup, market, ref_time,
                 )
                 if matched:
+                    eid = matched["event_id"]
                     await session.execute(
                         _update(FuturesMarket)
                         .where(FuturesMarket.id == market.id)
-                        .values(event_id=matched["event_id"])
+                        .values(event_id=eid)
                     )
                     stats["linked"] += 1
                     stats["by_source"][src]["linked"] += 1
                     logger.info(
                         "Backfill linked %s %s → event %d (%s vs %s)",
                         src, market.external_id or market.name[:40],
-                        matched["event_id"],
-                        matched["home_team"], matched["away_team"],
+                        eid, matched["home_team"], matched["away_team"],
                     )
+                    if market.group_id and src == "polymarket":
+                        from sqlalchemy import text as _sql_text
+                        await session.execute(_sql_text("""
+                            UPDATE futures_markets
+                            SET event_id = :eid
+                            WHERE group_id = :gid
+                              AND group_type = 'polymarket_sub_market'
+                              AND (event_id IS NULL OR event_id != :eid)
+                        """), {"eid": eid, "gid": market.group_id})
                 else:
                     await _mark_backfill_failed(session, market)
                     stats["no_match"] += 1
@@ -2366,4 +2375,11 @@ async def _find_historical_event(session, matchup, market, ref_time):
     )
     candidates = event_result.scalars().unique().all()
 
-    return _score_candidates(candidates, matchup, market, ticker_date, ticker_date)
+    result = _score_candidates(candidates, matchup, market, ref_time, ref_time)
+    if result and result.get("score", 0) < 15:
+        logger.debug(
+            "Backfill rejecting low-confidence match (score=%d) for %s",
+            result["score"], market.external_id or market.name[:40],
+        )
+        return None
+    return result
