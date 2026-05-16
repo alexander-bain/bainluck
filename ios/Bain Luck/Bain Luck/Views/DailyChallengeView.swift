@@ -262,7 +262,7 @@ final class DailyChallengeViewModel: ObservableObject {
                     subject: name,
                     threshold: clamped,
                     actualProbability: p,
-                    category: item.category,
+                    category: item.event?.sport ?? item.futures?.llmSportCategory,
                     marketId: id
                 )
             }

@@ -98,10 +98,15 @@ struct CalibrationView: View {
 
             Chart {
                 // Perfect calibration diagonal
-                RuleMark(xStart: .value("", 0), xEnd: .value("", 100),
-                         yStart: .value("", 0), yEnd: .value("", 100))
+                ForEach([0, 100], id: \.self) { v in
+                    LineMark(
+                        x: .value("Ref", v),
+                        y: .value("Ref", v)
+                    )
+                    .foregroundStyle(.gray.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .foregroundStyle(.gray.opacity(0.5))
+                    .interpolationMethod(.linear)
+                }
 
                 // Confidence band (±5pp)
                 ForEach(0..<10, id: \.self) { i in

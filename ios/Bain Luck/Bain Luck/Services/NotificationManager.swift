@@ -11,6 +11,8 @@ import os
 import UserNotifications
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "notifications")
