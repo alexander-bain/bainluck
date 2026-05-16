@@ -214,6 +214,10 @@ struct BugReportView: View {
                     case .politics: currentPage = "Politics"
                     case .entertainment: currentPage = "Entertainment"
                     case .about: currentPage = "About"
+                    case .dailyChallenge: currentPage = "Daily Challenge"
+                    case .friendChallenge(let code): currentPage = "Challenge (\(code))"
+                    case .eventModels(let id): currentPage = "Event Models (\(id))"
+                    case .calibration: currentPage = "Calibration"
                     }
                 }
 
