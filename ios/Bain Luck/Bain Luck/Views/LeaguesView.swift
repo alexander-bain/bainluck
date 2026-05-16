@@ -55,6 +55,60 @@ struct LeaguesView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                Section("Explore") {
+                    NavigationLink(value: Route.futuresList) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.body)
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.purple, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("All Futures")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Browse all prediction markets")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    NavigationLink(value: Route.calibration) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "chart.dots.scatter")
+                                .font(.body)
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.teal, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Calibration")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Do markets predict?")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    NavigationLink(value: Route.dailyChallenge) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "flame.fill")
+                                .font(.body)
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.orange, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Daily Challenge")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("5 questions, track your streak")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
                 Section("Prediction Markets") {
                     ForEach(categoryLinks) { cat in
                         NavigationLink(value: cat.route) {

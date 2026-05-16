@@ -16,6 +16,7 @@ enum AppTab: Int, Hashable {
     case politics = 8
     case entertainment = 9
     case preferences = 10
+    case calibration = 11
 }
 
 /// Coordinates deep link and universal link URL handling with tab navigation.
@@ -107,6 +108,20 @@ final class NavigationCoordinator: ObservableObject {
                 navigate(to: .sportCategory(key: key, name: name), tab: .feed)
                 return true
             }
+
+        case "daily":
+            navigate(to: .dailyChallenge, tab: .discover)
+            return true
+
+        case "challenge":
+            if pathComponents.count >= 2 {
+                navigate(to: .friendChallenge(code: pathComponents[1]), tab: .discover)
+                return true
+            }
+
+        case "calibration":
+            navigate(to: .calibration, tab: .leagues)
+            return true
 
         default:
             break

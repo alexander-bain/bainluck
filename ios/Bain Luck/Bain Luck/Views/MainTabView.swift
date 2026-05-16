@@ -112,6 +112,8 @@ struct MainTabView: View {
                         .tag(AppTab.entertainment)
                     Label("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
+                    Label("Calibration", systemImage: "chart.dots.scatter")
+                        .tag(AppTab.calibration)
                 }
             }
             .navigationTitle("🍀 Bain Luck")
@@ -140,6 +142,8 @@ struct MainTabView: View {
                 NavigationStack { EntertainmentView() }
             case .preferences:
                 NavigationStack { PreferencesView() }
+            case .calibration:
+                NavigationStack { CalibrationView() }
             }
         }
     }

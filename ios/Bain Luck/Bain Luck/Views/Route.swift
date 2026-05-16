@@ -19,6 +19,10 @@ enum Route: Hashable {
     case politics
     case entertainment
     case about
+    case dailyChallenge
+    case friendChallenge(code: String)
+    case eventModels(id: Int)
+    case calibration
 }
 
 struct RouteDestination: View {
@@ -42,6 +46,10 @@ struct RouteDestination: View {
         case .politics: PoliticsView()
         case .entertainment: EntertainmentView()
         case .about: AboutView()
+        case .dailyChallenge: DailyChallengeView()
+        case .friendChallenge(let code): FriendChallengeView(challengeCode: code)
+        case .eventModels(let id): EventModelsView(eventId: id)
+        case .calibration: CalibrationView()
         }
     }
 }

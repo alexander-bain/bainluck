@@ -268,6 +268,21 @@ struct EventDetailView: View {
                         }
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
+
+                        NavigationLink(value: Route.eventModels(id: event.id)) {
+                            HStack {
+                                Spacer()
+                                HStack(spacing: 4) {
+                                    Image(systemName: "function")
+                                        .font(.caption2.weight(.bold))
+                                    Text("View Probability Models")
+                                        .font(.caption2.weight(.medium))
+                                }
+                                .foregroundStyle(.blue)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                        }
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))

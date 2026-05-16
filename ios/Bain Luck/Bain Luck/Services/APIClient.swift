@@ -585,6 +585,22 @@ actor APIClient {
         return try await postEncodable("/api/feedback/bug-report", body: body)
     }
 
+    // MARK: - Calibration
+
+    func fetchCalibration() async throws -> CalibrationData {
+        return try await fetch("/api/calibration", cacheTTL: 300)
+    }
+
+    // MARK: - Friend Challenges
+
+    func fetchChallenge(code: String) async throws -> ChallengeResponse {
+        return try await fetch("/api/challenges/\(code)")
+    }
+
+    func acceptChallenge(code: String, guess: String) async throws -> AcceptChallengeResponse {
+        return try await postEncodable("/api/challenges/\(code)/accept", body: AcceptChallengeRequest(guess: guess))
+    }
+
     // MARK: - Notifications
 
     func registerDeviceToken(deviceToken: String, platform: String, userId: Int?) async throws -> NotificationRegisterResponse {
