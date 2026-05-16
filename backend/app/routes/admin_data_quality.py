@@ -1869,6 +1869,17 @@ async def trigger_backfill_kalshi_history(
     return {"status": "queued", "task_id": result.id, "limit": limit}
 
 
+@router.post("/fix-commence-times")
+async def fix_commence_times(secret: str = Query(...)):
+    """Run golf + hockey commence_time fixes synchronously (no Celery)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
+    golf = await _fix_golf_commence_times()
+    hockey = await _fix_hockey_commence_times()
+    return {"golf_fixed": golf, "hockey_fixed": hockey}
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
