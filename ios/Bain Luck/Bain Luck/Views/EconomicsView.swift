@@ -433,14 +433,15 @@ struct EconomicsView: View {
                 .font(.title3).fontWeight(.bold)
             Spacer()
             if let count {
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                +
-                Text(" markets")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 2) {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text("markets")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.horizontal)

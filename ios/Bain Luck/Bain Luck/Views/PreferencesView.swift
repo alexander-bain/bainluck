@@ -559,14 +559,15 @@ struct PreferencesView: View {
                 .font(.title3).fontWeight(.bold)
             Spacer()
             if let count, count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                +
-                Text(count == 1 ? " item" : " items")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 2) {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(count == 1 ? "item" : "items")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.horizontal)

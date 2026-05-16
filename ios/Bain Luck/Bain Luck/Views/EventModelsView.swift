@@ -37,7 +37,7 @@ struct EventModelsView: View {
     private func content(_ event: EventDetail) -> some View {
         ScrollView {
             VStack(spacing: 16) {
-                Text("\(event.homeTeam ?? "Home") vs \(event.awayTeam ?? "Away")")
+                Text("\(event.homeTeam) vs \(event.awayTeam)")
                     .font(.headline)
                     .padding(.top)
 

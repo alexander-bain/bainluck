@@ -107,25 +107,40 @@ nonisolated struct EconomicsMarket: Decodable, Identifiable, Sendable {
     let marketId: Int?
 }
 
-nonisolated struct WeatherAnyCodable: Decodable, Sendable {
-    let value: Any
-
-    var doubleValue: Double? {
-        if let d = value as? Double { return d }
-        if let i = value as? Int { return Double(i) }
-        return nil
-    }
-
-    var stringValue: String? {
-        value as? String
-    }
+nonisolated enum WeatherValue: Decodable, Sendable {
+    case double(Double)
+    case string(String)
+    case bool(Bool)
+    case int(Int)
+    case empty
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let d = try? container.decode(Double.self) { value = d }
-        else if let s = try? container.decode(String.self) { value = s }
-        else if let b = try? container.decode(Bool.self) { value = b }
-        else if let i = try? container.decode(Int.self) { value = i }
-        else { value = "" }
+        if let d = try? container.decode(Double.self) { self = .double(d) }
+        else if let i = try? container.decode(Int.self) { self = .int(i) }
+        else if let s = try? container.decode(String.self) { self = .string(s) }
+        else if let b = try? container.decode(Bool.self) { self = .bool(b) }
+        else { self = .empty }
+    }
+}
+
+nonisolated struct WeatherAnyCodable: Decodable, Sendable {
+    let value: WeatherValue
+
+    var doubleValue: Double? {
+        switch value {
+        case .double(let d): return d
+        case .int(let i): return Double(i)
+        default: return nil
+        }
+    }
+
+    var stringValue: String? {
+        if case .string(let s) = value { return s }
+        return nil
+    }
+
+    init(from decoder: Decoder) throws {
+        value = try WeatherValue(from: decoder)
     }
 }
