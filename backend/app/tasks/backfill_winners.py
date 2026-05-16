@@ -544,12 +544,27 @@ async def _backfill_polymarket_group_ids_from_api():
     FuturesMarket rows. This catches multi-outcome events where each
     candidate is a separate Polymarket event that our DB-only backfill
     can't group.
+
+    Short-circuits if no null group_ids remain (fast DB check).
     """
     import asyncio
     from app.services.polymarket_api import PolymarketAPIService
 
     stats = {"events_fetched": 0, "events_with_markets": 0,
              "markets_updated": 0, "zero_update_pages": 0, "errors": []}
+
+    # Fast short-circuit: skip API pagination if no null group_ids
+    async with get_task_session() as session:
+        null_count = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM futures_markets
+                WHERE source = 'polymarket' AND status = 'resolved' AND group_id IS NULL
+            """)
+        )
+        if null_count.scalar() == 0:
+            logger.info("Polymarket API group_id backfill: skipped (0 null group_ids)")
+            stats["markets_updated"] = -1
+            return stats
 
     service = PolymarketAPIService()
     try:
