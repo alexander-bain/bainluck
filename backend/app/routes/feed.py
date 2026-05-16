@@ -1493,42 +1493,40 @@ async def _load_personalization_context(
         prefs_query = select(UserPreference).where(False)
         pins_query = select(UserPin).where(False)
 
-    favorites_result, prefs_result, pins_result, interactions_result, recent_items_result = await asyncio.gather(
-        db.execute(favorites_query),
-        db.execute(prefs_query),
-        db.execute(pins_query),
-        db.execute(
-            select(
-                DiscoverInteraction.category,
-                DiscoverInteraction.action,
-                func.count(DiscoverInteraction.id).label("count"),
-            )
-            .where(
-                interaction_identity_clause,
-                DiscoverInteraction.created_at >= interaction_cutoff,
-                DiscoverInteraction.category.isnot(None),
-            )
-            .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
-        ),
-        db.execute(
-            select(
-                DiscoverInteraction.item_type,
-                DiscoverInteraction.item_id,
-                DiscoverInteraction.action,
-                func.max(DiscoverInteraction.created_at).label("last_seen"),
-            )
-            .where(
-                interaction_identity_clause,
-                DiscoverInteraction.item_type.in_(("event", "futures")),
-                DiscoverInteraction.action.in_(("impression", "dismiss")),
-                DiscoverInteraction.created_at >= dismiss_cutoff,
-            )
-            .group_by(
-                DiscoverInteraction.item_type,
-                DiscoverInteraction.item_id,
-                DiscoverInteraction.action,
-            )
-        ),
+    favorites_result = await db.execute(favorites_query)
+    prefs_result = await db.execute(prefs_query)
+    pins_result = await db.execute(pins_query)
+    interactions_result = await db.execute(
+        select(
+            DiscoverInteraction.category,
+            DiscoverInteraction.action,
+            func.count(DiscoverInteraction.id).label("count"),
+        )
+        .where(
+            interaction_identity_clause,
+            DiscoverInteraction.created_at >= interaction_cutoff,
+            DiscoverInteraction.category.isnot(None),
+        )
+        .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
+    )
+    recent_items_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            DiscoverInteraction.action,
+            func.max(DiscoverInteraction.created_at).label("last_seen"),
+        )
+        .where(
+            interaction_identity_clause,
+            DiscoverInteraction.item_type.in_(("event", "futures")),
+            DiscoverInteraction.action.in_(("impression", "dismiss")),
+            DiscoverInteraction.created_at >= dismiss_cutoff,
+        )
+        .group_by(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            DiscoverInteraction.action,
+        )
     )
 
     favorites = favorites_result.scalars().all()
