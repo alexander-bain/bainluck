@@ -654,12 +654,12 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 
 **Monitor:** `GET /api/calibration` → overall MCE. Frontend `/calibration` for per-category.
 
-**Current state (May 15, 2026 evening):** MCE CI [1.6pp, 4.3pp] (target ≤3.0pp — likely met). 45,755 outcomes, 20,673 winners. Wilson CIs per bucket shipped. Per-source: Odds API 1.3pp, Kalshi 3.5pp, Polymarket 4.3pp. Golf MCE 17.8pp (commence_time fix deployed, awaiting recompute).
+**Current state (May 15, 2026 late):** MCE CI [1.9pp, 5.0pp]. 43,061 outcomes, 19,584 winners. Closing-line MCE 8.6pp, opening-price MCE 28.0pp (closing line is dramatically better, validating that approach). Golf MCE 27.6pp from bucket analysis (calibration_probability NULL — awaiting backfill recompute). Wilson CIs per bucket shipped.
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
 - ✅ Odds API ground-truth (18,568 outcomes from completed+closed games)
-- ✅ `backfill_winners` (every 6h) — is_winner, calibration_probability, null untradeable (≤2 snaps)
+- ✅ `backfill_winners` (every 6h) — is_winner, calibration_probability, null untradeable (≤5 snaps + <2pp spread)
 - ✅ `backfill_polymarket_history` (every 6h) — CLOB API price history for zero-snap outcomes
 - ✅ `backfill_kalshi_history` (every 6h) — candlesticks API price history for zero-snap outcomes
 - ✅ Golf commence_time fix via DataGolf schedule (reuses `_normalize_tournament()`)
@@ -668,44 +668,51 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 **Subproject A: Snapshot health** — ✅ EFFECTIVELY DONE
 Zero-snap: 23K → 702 (0.2%). Remaining 702 are Polymarket esports/tennis with no CLOB history. No further action unless zero-snap regresses above 1K.
 
-**Subproject B: Golf calibration (MCE 17.8pp)** — VERIFY
-The commence_time fix deployed May 14. Verification steps:
-1. `curl "https://api.bainluck.com/api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26"` — DeChambeau should show `calibration_probability` ~44% (pre-tournament) not 13% (in-play)
-2. If still 13%: the backfill_winners task hasn't recomputed calibration_probability yet. Trigger manually: `POST /api/admin/backfill-winners` and wait for Phase 0e.
-3. After recompute: check golf MCE at `/calibration`. Should drop from 17.8pp to <5pp.
+**Subproject B: Golf calibration (MCE 27.6pp)** — AWAITING BACKFILL
+Verified May 15 late: `calibration_probability` is NULL on golf outcomes — the commence_time fix correctly nulled them, but the backfill hasn't recomputed yet. Golf MCE is 27.6pp from bucket analysis (worse than the 17.8pp reported earlier because more golf data entered the calibration set).
+1. Need: `backfill_winners` to complete Phase 0e (`_compute_calibration_prices`). Trigger via `POST /api/admin/backfill-winners` or wait for next scheduled run.
+2. After recompute: check golf MCE at `/calibration`. Should drop dramatically.
+3. Verification: `curl "https://api.bainluck.com/api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26&secret=$ADMIN_TOKEN"` — DeChambeau should show `calibration_probability` ~44% (not NULL or 13%).
 
-**Subproject C: Hockey commence_time (MCE 11.3pp)** — NEXT UP
-Same root cause as golf: Kalshi uses `close_time` (resolution date) not game time.
-1. For markets WITH `event_id`: copy `commence_time` from the linked Event. One SQL update:
-   ```sql
-   UPDATE futures_markets fm SET commence_time = e.commence_time
-   FROM events e WHERE fm.event_id = e.id AND fm.source = 'kalshi'
-   AND fm.commence_time != e.commence_time AND e.commence_time IS NOT NULL;
-   ```
-2. For markets WITHOUT `event_id`: use `extract_game_date_from_ticker()` (already works for hockey tickers). Add to `_fix_golf_commence_times()` or create `_fix_hockey_commence_times()` in `tasks/kalshi.py`.
-3. Re-run calibration price backfill to recompute `calibration_probability` with corrected commence_time.
-4. Verify: hockey MCE should drop from 11.3pp. Check at `/calibration`.
+**Subproject C: Hockey commence_time (MCE 11.3pp)** — ✅ SHIPPED May 15
+`_fix_hockey_commence_times()` deployed. Two passes:
+1. Markets WITH `event_id`: copies commence_time from linked Event (one SQL update)
+2. Markets WITHOUT `event_id`: derives from ticker via `extract_game_date_from_ticker()`
+3. Resets calibration_probability on affected outcomes for recomputation
+4. Wired into `poll_kalshi_markets` post-commit (runs every 2h alongside golf fix)
+5. VERIFY after next backfill_winners run: hockey MCE should drop from 11.3pp.
 
-**Files:** `backend/app/tasks/kalshi.py` (`_fix_golf_commence_times`), `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker`)
+**Files:** `backend/app/tasks/kalshi.py` (`_fix_hockey_commence_times`)
 
-**Subproject D: Weather/Economics commence_time (MCE 10.1pp each)** — INVESTIGATE
-Different pattern from golf/hockey. These markets resolve at specific clock times (e.g., "S&P price at 4pm"). The `close_time` might actually be correct.
-1. Sample 10 weather + 10 economics outcomes: compare `commence_time`, `calibration_probability`, `opening_probability`, and snapshot timeline. Use `GET /api/calibration/outcome-timeline?outcome_id=<id>`.
-2. If `calibration_probability = opening_probability` on most: the problem is price-stuck (no real price discovery), not commence_time. See Subproject E.
-3. If `calibration_probability` is an in-play price: commence_time is wrong. Fix depends on the pattern — weather resolves at midnight UTC, economics at market close.
-4. Check the snapshot-health data: Kalshi economics has 27.6% price-stuck rate. That alone could explain the 10.1pp MCE.
+**Subproject D: Weather/Economics calibration (MCE 10.1pp each)** — INVESTIGATED May 15
+**Conclusion: price-stuck problem, NOT commence_time.** Key findings:
+- Kalshi economics has 27.6% price-stuck rate (price never moved from opening)
+- Economics 40-50% bucket: predicted 47%, actual 32% (−14.6pp error, n=1,311)
+- Economics 50-60% bucket: predicted 51%, actual 66% (+14.9pp error, n=2,233)
+- This is the classic price-stuck signature: opening prices near 50% never update
+- commence_time IS correct for weather/economics (close_time = when trading ends = right value)
+- Fix shipped: tightened `_null_untradeable_openings` Pass 3 (≤5 snaps + <2pp spread) to filter these out
 
-**Subproject E: Price-stuck outcomes** — INVESTIGATE
-19,020 outcomes (6.5% of resolved) have `calibration_probability = opening_probability`. Worst categories: Kalshi crypto (31%), Kalshi economics (27.6%), Kalshi motorsports (26.4%), Kalshi wrestling (22.8%), Kalshi entertainment (20.4%), Kalshi geopolitics (20.2%).
-1. These are outcomes where the price never moved from opening — no real price discovery happened.
-2. Options: (a) exclude from calibration (same logic as `_null_untradeable_openings` but for stuck, not zero-snap), (b) accept as valid data points (opening price IS a prediction), (c) separate into cohort in the calibration report.
-3. Decision needed: are these degrading MCE? Compare MCE with vs without price-stuck outcomes. If MCE improves >1pp by excluding, consider filtering.
-4. Check: `mce_closing_line: 7.96pp` vs `mce_opening_price: 6.94pp` from the calibration API. Closing line being WORSE suggests our closing-line identification is pulling in-play prices for some categories (hockey, golf) which are noisy.
+**Remaining:** Verify MCE improvement after next backfill run. If still >5pp, consider further tightening the spread threshold or increasing the snapshot count threshold.
+
+**Subproject E: Price-stuck outcomes** — INVESTIGATED May 15, PARTIALLY FIXED
+**Analysis results:**
+- Price-moved outcomes: MCE 16.3pp, N=22,115
+- Price-unmoved outcomes: MCE 28.3pp, N=2,134 (dramatically worse)
+- Worst unmoved categories: hockey 39.8pp, basketball 34.6pp, economics 33.3pp, entertainment 33.2pp
+- Closing-line MCE (8.6pp) is much better than opening-price MCE (28.0pp) — validates the closing-line approach
+- The high per-category MCEs in "moved" data (golf 30.5pp, esports 32.0pp) are from corrupted commence_time (golf/hockey fixes now deployed)
+
+**Fix shipped:** Tightened `_null_untradeable_openings` Pass 3 to filter outcomes with ≤5 snapshots and <2pp price spread. This removes the thinnest price-stuck outcomes from calibration.
+
+**Decision made:** Filter out (option a). Outcomes with no price discovery are noise, not signal. The opening price is a placeholder, not a prediction.
+
+**Remaining:** After next backfill run, verify unmoved MCE drops and overall MCE CI tightens. If still high, consider raising the snapshot threshold from 5 to 10.
 
 **Remaining calibration accuracy work:**
 
-6. ~~**Confidence intervals on calibration metrics**~~ — ✅ DONE May 15. Wilson CIs per bucket, bootstrap MCE CI (1000 resamples), error bars on chart, CI column in table.
-7. **Separate closing-line vs opening-price cohorts** — VP of DS recommendation.
+6. ~~**Confidence intervals on calibration metrics**~~ — ✅ DONE May 15.
+7. ~~**Separate closing-line vs opening-price cohorts**~~ — ✅ ALREADY DONE. Frontend has Closing Line / Opening Price / All tabs. Default is closing line. API returns `mce_closing_line` and `mce_opening_price`.
 8. **Source "fair fight" comparison** — Methodology for comparing accuracy controlling for market difficulty.
 9. **Confidence tiers on Discover cards** — Signal bars (high/medium/low). Data-driven thresholds TBD.
 10. **Volume field DQ on Polymarket sub-markets** — `volume = NULL` on decomposed sub-markets.
