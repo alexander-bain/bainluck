@@ -63,8 +63,25 @@ export default function TemperatureMap() {
   const [hover, setHover] = useState<string | null>(null);
   const [citySearch, setCitySearch] = useState("");
 
-  const { data: liveCities } = useSWR("weather-cities", fetchCities, { refreshInterval: 3600000 });
+  const { data: liveCities, error } = useSWR("weather-cities", fetchCities, { refreshInterval: 3600000 });
   const allCities = (liveCities as CityData[])?.length ? (liveCities as CityData[]) : null;
+
+  if (error && !allCities) {
+    return (
+      <section className="pt-10 px-4 md:px-6">
+        <div className="max-w-[1280px] mx-auto">
+          <SectionHeader
+            kicker="Global temperature map"
+            title="Tomorrow's high, as a probability distribution."
+            meta="Polymarket & Kalshi"
+          />
+          <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+            <p className="text-text-secondary text-sm">Failed to load temperature data</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   if (!allCities) return <TemperatureMapSkeleton />;
 

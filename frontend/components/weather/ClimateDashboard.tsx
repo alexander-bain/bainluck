@@ -152,8 +152,16 @@ function ClimateColumnSkeleton({ label, kicker }: { label: string; kicker: strin
 }
 
 export default function ClimateDashboard() {
-  const { data: liveClimate } = useSWR("weather-climate", fetchClimate, { refreshInterval: 21600000 });
+  const { data: liveClimate, error } = useSWR("weather-climate", fetchClimate, { refreshInterval: 21600000 });
   const climate = (liveClimate as ClimateMarket[])?.length ? (liveClimate as ClimateMarket[]) : null;
+
+  if (error && !climate) {
+    return (
+      <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+        <p className="text-text-secondary text-sm">Failed to load climate data</p>
+      </div>
+    );
+  }
 
   if (!climate) {
     return (

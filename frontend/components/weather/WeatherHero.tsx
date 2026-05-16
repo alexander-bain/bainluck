@@ -45,9 +45,9 @@ function HeroCardSkeleton() {
 
 export default function WeatherHero() {
   const [idx, setIdx] = useState(0);
-  const { data: liveItems } = useSWR("weather-featured", fetchWeatherFeatured, { refreshInterval: 300000 });
+  const { data: liveItems, error } = useSWR("weather-featured", fetchWeatherFeatured, { refreshInterval: 300000 });
   const items = (liveItems as FeaturedMarket[])?.length ? (liveItems as FeaturedMarket[]) : null;
-  const loading = !items;
+  const loading = !items && !error;
 
   const advance = useCallback(() => {
     if (!items) return;
@@ -116,8 +116,12 @@ export default function WeatherHero() {
           )}
         </div>
 
-        {/* Right — featured card or skeleton */}
-        {loading || !current || !src ? (
+        {/* Right — featured card, error, or skeleton */}
+        {error && !items ? (
+          <div className="flex items-center justify-center bg-surface-card rounded-[18px] border border-surface-border" style={{ minHeight: 260 }}>
+            <p className="text-text-secondary text-sm">Failed to load featured markets</p>
+          </div>
+        ) : loading || !current || !src ? (
           <HeroCardSkeleton />
         ) : (
           <div

@@ -6,6 +6,7 @@ import {
   SectionHeader, Card, SourceChip, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor,
 } from "@/components/economics/atoms";
+import ErrorState from "@/components/ErrorState";
 import { fetchEconomics } from "@/lib/api";
 import type { EconData } from "@/lib/api";
 
@@ -119,14 +120,16 @@ export default function EconomicsPage() {
   const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 
   if (error) return (
-    <div className="max-w-7xl mx-auto py-20 text-center text-text-muted text-sm">
-      Failed to load economics data
+    <div className="max-w-7xl mx-auto">
+      <ErrorState message="Failed to load economics data" />
     </div>
   );
 
   if (!data) return (
-    <div className="max-w-7xl mx-auto py-20 text-center text-text-muted text-sm animate-pulse">
-      Loading economics markets...
+    <div className="max-w-7xl mx-auto py-20 text-center">
+      <div className="animate-pulse text-text-muted text-sm">
+        Loading economics markets...
+      </div>
     </div>
   );
 

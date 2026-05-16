@@ -15,6 +15,7 @@ import type {
   ChamberControl,
   CrossSourceMatch,
 } from "@/lib/api";
+import ErrorState from "@/components/ErrorState";
 import s from "./politics.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1061,18 +1062,7 @@ export default function PoliticsPage() {
   if (error) {
     return (
       <div className={s.page}>
-        <div
-          style={{
-            maxWidth: 1200,
-            margin: "0 auto",
-            padding: "80px 20px",
-            textAlign: "center",
-            color: "var(--text-muted)",
-            fontSize: 14,
-          }}
-        >
-          Failed to load politics data
-        </div>
+        <ErrorState message="Failed to load politics data" />
       </div>
     );
   }
@@ -1080,17 +1070,8 @@ export default function PoliticsPage() {
   if (!data) {
     return (
       <div className={s.page}>
-        <div
-          style={{
-            maxWidth: 1200,
-            margin: "0 auto",
-            padding: "80px 20px",
-            textAlign: "center",
-            color: "var(--text-muted)",
-            fontSize: 14,
-          }}
-        >
-          <div style={{ animation: "pulse 2s ease-in-out infinite" }}>
+        <div className="max-w-[1200px] mx-auto py-20 text-center">
+          <div className="animate-pulse text-text-muted text-sm">
             Loading politics markets...
           </div>
         </div>

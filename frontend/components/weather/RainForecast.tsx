@@ -107,7 +107,7 @@ function MonthlySkeleton() {
 /* ── Main Component ──────────────────────────────────────────────────── */
 
 export default function RainForecast() {
-  const { data: liveRain } = useSWR("weather-rain", fetchRain, { refreshInterval: 3600000 });
+  const { data: liveRain, error } = useSWR("weather-rain", fetchRain, { refreshInterval: 3600000 });
   const rain: RainDay[] | null = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : null;
   const monthlyLive = (liveRain as { monthly: MonthlyRainType[] })?.monthly;
   const monthly: MonthlyRainType[] | null = monthlyLive?.length ? monthlyLive : null;
@@ -137,7 +137,11 @@ export default function RainForecast() {
               <SourceBadge src="kalshi" />
             </div>
 
-            {!rain ? (
+            {error && !rain ? (
+              <div className="py-12 text-center">
+                <p className="text-text-secondary text-sm">Failed to load rain data</p>
+              </div>
+            ) : !rain ? (
               <RainDaySkeleton />
             ) : (
               <>
@@ -224,7 +228,11 @@ export default function RainForecast() {
               &ldquo;Above 1 inch this month&rdquo; — 10 cities
             </p>
 
-            {!monthly ? (
+            {error && !monthly ? (
+              <div className="py-12 text-center">
+                <p className="text-text-secondary text-sm">Failed to load monthly data</p>
+              </div>
+            ) : !monthly ? (
               <MonthlySkeleton />
             ) : (
               <div className="flex flex-col gap-2.5">

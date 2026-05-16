@@ -4808,11 +4808,49 @@ async def get_event_odds_history(
     # approximate markers. Only for sports with fixed period durations.
     if not period_markers and event.commence_time and event.status in ("completed", "closed"):
         sport_key = event.sport.key if event.sport else ""
+        ct = event.commence_time
         if sport_key.startswith("soccer"):
-            ht = event.commence_time + timedelta(minutes=47)
             period_markers = [
-                {"timestamp": event.commence_time.isoformat(), "period": "1H"},
-                {"timestamp": ht.isoformat(), "period": "2H"},
+                {"timestamp": ct.isoformat(), "period": "1H"},
+                {"timestamp": (ct + timedelta(minutes=47)).isoformat(), "period": "2H"},
+            ]
+        elif sport_key.startswith("aussierules"):
+            # AFL: 4 quarters, ~20 min each + breaks (~6 min quarter, ~20 min half)
+            period_markers = [
+                {"timestamp": ct.isoformat(), "period": "1st Quarter"},
+                {"timestamp": (ct + timedelta(minutes=26)).isoformat(), "period": "2nd Quarter"},
+                {"timestamp": (ct + timedelta(minutes=72)).isoformat(), "period": "3rd Quarter"},
+                {"timestamp": (ct + timedelta(minutes=98)).isoformat(), "period": "4th Quarter"},
+            ]
+        elif sport_key.startswith("basketball"):
+            if "ncaab" in sport_key or "wncaab" in sport_key:
+                # NCAA basketball: 2 halves of 20 min each
+                period_markers = [
+                    {"timestamp": ct.isoformat(), "period": "1st Half"},
+                    {"timestamp": (ct + timedelta(minutes=55)).isoformat(), "period": "2nd Half"},
+                ]
+            else:
+                # NBA: 4 quarters of 12 min each (real-time ~30-35 min per quarter)
+                period_markers = [
+                    {"timestamp": ct.isoformat(), "period": "1st Quarter"},
+                    {"timestamp": (ct + timedelta(minutes=33)).isoformat(), "period": "2nd Quarter"},
+                    {"timestamp": (ct + timedelta(minutes=80)).isoformat(), "period": "3rd Quarter"},
+                    {"timestamp": (ct + timedelta(minutes=113)).isoformat(), "period": "4th Quarter"},
+                ]
+        elif sport_key.startswith("americanfootball"):
+            # NFL/NCAA football: 4 quarters of 15 min each (real-time ~45 min per quarter)
+            period_markers = [
+                {"timestamp": ct.isoformat(), "period": "1st Quarter"},
+                {"timestamp": (ct + timedelta(minutes=45)).isoformat(), "period": "2nd Quarter"},
+                {"timestamp": (ct + timedelta(minutes=110)).isoformat(), "period": "3rd Quarter"},
+                {"timestamp": (ct + timedelta(minutes=155)).isoformat(), "period": "4th Quarter"},
+            ]
+        elif sport_key.startswith("icehockey"):
+            # NHL: 3 periods of 20 min each (real-time ~40 min per period with intermissions)
+            period_markers = [
+                {"timestamp": ct.isoformat(), "period": "1st Period"},
+                {"timestamp": (ct + timedelta(minutes=40)).isoformat(), "period": "2nd Period"},
+                {"timestamp": (ct + timedelta(minutes=80)).isoformat(), "period": "3rd Period"},
             ]
 
     # ── Prediction market spread/total binary contracts ──

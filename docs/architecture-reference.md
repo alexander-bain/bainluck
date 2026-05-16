@@ -96,21 +96,39 @@ The system MUST work when any single source goes dark. This was validated during
 
 ## Celery Tasks Architecture
 
-All task names pinned with `name="app.tasks.*"`. Thin wrappers in `__init__.py` call `run_async()` on async implementations. Key tasks:
+### Dual-Queue System
+
+Two Heroku worker dynos process tasks on separate queues:
+
+| Queue | Dyno | Concurrency | Purpose |
+|-------|------|-------------|---------|
+| `realtime` | `realtime_worker` | 2 | Live data: odds polling, ESPN sync, live prediction markets |
+| `background` | `background_worker` | 2 | Batch work: backfills, enrichment, snapshots, calibration |
+
+**Capacity constraint:** At concurrency=2, the background queue can drain ~2 tasks/minute. Scheduling more than ~23 tasks/hr causes progressive backup (400+ tasks observed at 35/hr). Monitor via `GET /api/admin/celery-debug`. Emergency purge via `POST /api/admin/celery-purge-background`.
+
+### Task Inventory
+
+All task names pinned with `name="app.tasks.*"`. Thin wrappers in `__init__.py` call `run_async()` on async implementations.
+
+**Realtime queue:**
 - `poll_all_odds` (30-60s) — odds polling with per-sport Redis gating and quota guard
 - `sync_espn_live_events` (60s) — ESPN live data, team enrichment
+- `poll_live_prediction_markets` (2min) — live price updates for linked markets
+- `poll_datagolf_live` (5min, Redis-gated) — in-play golf probabilities
+- `update_event_tags` (2min) — taxonomy tag computation
+- `calculate_ei` — Excitement Index computation
+
+**Background queue:**
 - `discover_events` (15min beat, tiered per-sport) — event discovery
 - `poll_futures` / `poll_kalshi` / `poll_polymarket` — futures polling
 - `match_prediction_markets` (15min) — link game markets to events
-- `poll_live_prediction_markets` (2min) — live price updates
 - `poll_datagolf` (hourly) — golf predictions + pre-tournament odds
-- `poll_datagolf_live` (5min, Redis-gated) — in-play golf probabilities
-- `update_event_tags` (2min) — taxonomy tag computation
 - `sync_mm_bracket` — NCAA Tournament bracket data from ESPN
 - `collapse_snapshots` (daily) — pure SQL retention
-- `calculate_ei` — Excitement Index computation
-
-- `backfill_winners` (6h) — sets `is_winner` on `FuturesOutcome` from settlement data. Phase 1: source-agnostic from `current_probability` on cleanly-resolved markets. Phase 2: Kalshi API `result='yes'|'no'` for partially-resolved markets.
+- `backfill_winners` (6h) — calibration pipeline: group_id backfill, closing lines, calibration prices, `is_winner` from 3-pass resolution + Kalshi API settlement
+- `backfill_polymarket_history` (6h) — fetch historical prices from Polymarket CLOB API
+- `enrich_market_hooks` (6h) — GPT-4o-mini hook descriptions for feed-visible markets
 
 New tasks go in `tasks/` submodule with async impl + thin wrapper in `__init__.py`:
 ```python
@@ -144,9 +162,20 @@ Answers "Do prediction markets predict anything?" by comparing calibration-adjus
 2. Phase 0c: Null untradeable openings (≤2 snapshots)
 3. Phase 0d: Closing line backfill on events table
 4. Phase 0e: Calibration probability computation (Parts A/B/C)
-5. Phase 0f: Polymarket group_id from Gamma API
-6. Phase 1: Set `is_winner` from `current_probability`
-7. Phase 2: Kalshi API settlement data
+5. Phase 0f: Polymarket group_id from Gamma API (short-circuits when 0 null group_ids to avoid 10+ minute API scan)
+6. Phase 1: Set `is_winner` from `current_probability` — 3-pass approach:
+   - **Pass 1 (clean resolution):** All outcomes at 0 or 1 — winner is the outcome at 1.0
+   - **Pass 2 (mutually exclusive):** Probabilities sum to ~1.0 — highest probability wins
+   - **Pass 3 (independent thresholds):** Probabilities sum >1.5 (e.g., "over 2+", "over 3+") — each outcome with probability >0.50 wins independently. Also filters price-stuck outcomes where calibration_probability equals opening_probability on markets with no real price discovery.
+7. Phase 2: Kalshi API settlement data (`result='yes'|'no'`)
+
+### Commence-Time Fixes for Calibration
+
+Accurate `commence_time` is critical for calibration — it determines which snapshot counts as the "closing line" (last price before event start).
+
+- **Kalshi golf:** `commence_time` defaults to `close_time` (resolution date, Sunday). `_fix_golf_commence_times()` matches to DataGolf schedule and sets it to tournament start (Thursday). DB-only fallback: `close_time - 4.5 days`.
+- **Kalshi general:** `commence_time` is the market resolution date, not the game date. `extract_game_date_from_ticker()` parses the actual game date from tickers.
+- **Polymarket:** `commence_time` is the market creation date, predating all snapshots. Part C rescue uses the last snapshot regardless of commence_time.
 
 ### Price History Backfill (`backfill_polymarket_history`, every 6h)
 Fetches historical price data from Polymarket's CLOB API (`/prices-history`) for outcomes with <24 snapshots. This fills in price history for markets we started tracking late or decomposed sub-markets that weren't individually polled. Critical for calibration accuracy.

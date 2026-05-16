@@ -80,12 +80,29 @@ function HurricaneTrackerSkeleton() {
 }
 
 export default function NaturalEvents() {
-  const { data: liveEvents } = useSWR("weather-events", fetchNaturalEvents, { refreshInterval: 3600000 });
+  const { data: liveEvents, error } = useSWR("weather-events", fetchNaturalEvents, { refreshInterval: 3600000 });
   const events = liveEvents as { hurricane: EventMarket[]; earthquake: EventMarket[]; tornadoes: EventMarket[] } | undefined;
 
   const earthquake = events?.earthquake?.length ? events.earthquake : null;
   const tornadoes = events?.tornadoes?.length ? events.tornadoes : null;
   const hurricane = events?.hurricane?.length ? events.hurricane : null;
+
+  if (error && !events) {
+    return (
+      <section className="pt-14 px-4 md:px-6">
+        <div className="max-w-[1280px] mx-auto">
+          <SectionHeader
+            kicker="Natural events"
+            title="Bigger picture. Rarer events."
+            meta="Hurricanes · Earthquakes · Tornadoes"
+          />
+          <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+            <p className="text-text-secondary text-sm">Failed to load natural events data</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="pt-14 px-4 md:px-6">

@@ -445,6 +445,8 @@ export function computeSharedChartDomain(
   let end = new Date(Math.max(...timestamps));
 
   // For completed games, derive end from game-end sources only.
+  // If sportsbook data extends slightly beyond (within 10 min), include it
+  // to avoid premature chart cutoff when ESPN data is sparse.
   const isCompleted = eventStatus === "completed" || eventStatus === "closed";
   if (isCompleted) {
     const GAME_END_SOURCES = new Set([
@@ -470,9 +472,40 @@ export function computeSharedChartDomain(
     }
 
     if (gameEndTs.length > 0) {
-      const lastGameData = new Date(Math.max(...gameEndTs));
-      lastGameData.setMinutes(lastGameData.getMinutes() + 2);
-      end = lastGameData;
+      const lastGameEnd = Math.max(...gameEndTs);
+
+      // Check if sportsbook data extends slightly beyond game-end sources.
+      // This prevents premature cutoff when ESPN data is sparse (e.g.,
+      // baseball chart cutting off at 8th inning).
+      let endMs = lastGameEnd;
+      const MAX_EXTENSION_MS = 10 * 60 * 1000; // 10 min max extension
+      const bettingTs: number[] = [];
+      for (const pt of historyData.history ?? []) {
+        const t = new Date(pt.timestamp).getTime();
+        if (!isNaN(t)) bettingTs.push(t);
+      }
+      if (bettingTs.length > 0) {
+        const lastBetting = Math.max(...bettingTs);
+        if (lastBetting > lastGameEnd && lastBetting - lastGameEnd <= MAX_EXTENSION_MS) {
+          endMs = lastBetting;
+        }
+      }
+
+      const lastData = new Date(endMs);
+      lastData.setMinutes(lastData.getMinutes() + 5);
+      end = lastData;
+    } else if (historyData.history && historyData.history.length > 0) {
+      // No game-end sources — use sportsbook data with buffer
+      const bettingTs: number[] = [];
+      for (const pt of historyData.history) {
+        const t = new Date(pt.timestamp).getTime();
+        if (!isNaN(t)) bettingTs.push(t);
+      }
+      if (bettingTs.length > 0) {
+        const lastBetting = new Date(Math.max(...bettingTs));
+        lastBetting.setMinutes(lastBetting.getMinutes() + 5);
+        end = lastBetting;
+      }
     } else if (commenceTime) {
       const ct = new Date(commenceTime);
       if (!isNaN(ct.getTime())) {
@@ -503,7 +536,18 @@ export function computeSharedChartDomain(
   const liveStart =
     gameStart && !isNaN(gameStart.getTime()) ? gameStart : allStart;
 
-  const start = chartTimeRange === "live" ? liveStart : allStart;
+  // "All" mode: cap the start to at most 2 hours before commenceTime for
+  // completed/closed games. Prevents charts from showing many hours of
+  // flat pre-game odds data that makes the in-game chart unreadable.
+  let allModeStart = allStart;
+  if (isCompleted && gameStart && !isNaN(gameStart.getTime())) {
+    const twoHoursBefore = new Date(gameStart.getTime() - 2 * 60 * 60 * 1000);
+    if (allModeStart < twoHoursBefore) {
+      allModeStart = twoHoursBefore;
+    }
+  }
+
+  const start = chartTimeRange === "live" ? liveStart : allModeStart;
   start.setSeconds(0, 0);
   end.setSeconds(0, 0);
 

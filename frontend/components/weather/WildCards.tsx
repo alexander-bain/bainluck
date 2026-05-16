@@ -42,8 +42,16 @@ function WildCardSkeleton() {
 }
 
 export default function WildCards() {
-  const { data: liveCards } = useSWR("weather-wildcards", fetchWildCards, { refreshInterval: 21600000 });
+  const { data: liveCards, error } = useSWR("weather-wildcards", fetchWildCards, { refreshInterval: 21600000 });
   const cards = (liveCards as WildCard[])?.length ? (liveCards as WildCard[]) : null;
+
+  if (error && !cards) {
+    return (
+      <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+        <p className="text-text-secondary text-sm">Failed to load wild cards</p>
+      </div>
+    );
+  }
 
   if (!cards) {
     return (

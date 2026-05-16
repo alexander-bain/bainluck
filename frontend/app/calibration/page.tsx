@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration, CalibrationBucket } from "@/lib/api";
+import ErrorState from "@/components/ErrorState";
 import CalibrationChart from "@/components/CalibrationChart";
 
 const SPORT_KEY_MAP: Record<string, string> = {
@@ -217,8 +218,8 @@ export default function CalibrationPage() {
 
   if (error) {
     return (
-      <div className="max-w-6xl mx-auto py-20 text-center">
-        <p className="text-text-secondary">Failed to load calibration data.</p>
+      <div className="max-w-6xl mx-auto">
+        <ErrorState message="Failed to load calibration data" />
       </div>
     );
   }

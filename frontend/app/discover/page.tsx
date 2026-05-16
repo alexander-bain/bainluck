@@ -451,7 +451,7 @@ export default function DiscoverPage() {
     return () => observer.disconnect();
   }, []);
 
-  const { data, isLoading } = useSWR(
+  const { data, isLoading, error: feedError } = useSWR(
     "discover-feed",
     () => fetchFeed({ limit: 200, event_pct: 0.15 }),
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
@@ -672,7 +672,19 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        {!isLoading && visibleItems.length === 0 && (
+        {!isLoading && feedError && !data && (
+          <div className="text-center py-20 text-text-muted">
+            <p className="text-text-secondary text-sm">Failed to load feed</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-3 text-sm text-accent-brand hover:underline transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {!isLoading && !feedError && visibleItems.length === 0 && (
           <div className="text-center py-20 text-text-muted">
             <p className="text-lg font-medium">
               {categoryFilter !== "all" ? `No ${categoryFilter} markets right now` : "All caught up!"}

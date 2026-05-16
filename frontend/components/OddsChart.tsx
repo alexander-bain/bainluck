@@ -231,11 +231,11 @@ export default function OddsChart({
   const smartEndTime = useMemo(() => {
     if (!isClosed) return null;
 
-    const candidates: Date[] = [];
+    const gameEndCandidates: Date[] = [];
 
     // ESPN history — most reliable game-end signal
     if (espnHistory && espnHistory.length > 0) {
-      candidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
+      gameEndCandidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
     }
 
     // Game-end data sources only — sportsbooks/prediction markets poll late
@@ -243,19 +243,39 @@ export default function OddsChart({
     if (winProbHistory) {
       for (const [source, points] of Object.entries(winProbHistory)) {
         if (points.length > 0 && GAME_END_SOURCES.has(source)) {
-          candidates.push(parseISO(points[points.length - 1].timestamp));
+          gameEndCandidates.push(parseISO(points[points.length - 1].timestamp));
         }
       }
     }
 
-    if (candidates.length > 0) {
-      const latest = candidates.reduce((a, b) => (a > b ? a : b));
-      return new Date(latest.getTime() + 30 * 1000); // 30s buffer
+    if (gameEndCandidates.length > 0) {
+      const latestGameEnd = gameEndCandidates.reduce((a, b) => (a > b ? a : b));
+
+      // Also check sportsbook data — if it extends slightly beyond game-end
+      // sources, include it. This prevents premature cutoff when ESPN data
+      // is sparse (e.g., baseball chart cutting off at 8th inning while
+      // sportsbooks have data through the 9th).
+      let endTime = latestGameEnd;
+      const MAX_EXTENSION_MS = 10 * 60 * 1000; // 10 min max extension
+      if (history && history.length > 0) {
+        const lastBetting = parseISO(history[history.length - 1].timestamp);
+        if (lastBetting > latestGameEnd && lastBetting.getTime() - latestGameEnd.getTime() <= MAX_EXTENSION_MS) {
+          endTime = lastBetting;
+        }
+      }
+
+      return new Date(endTime.getTime() + 5 * 60 * 1000); // 5 min buffer
+    }
+
+    // No game-end sources — use sportsbook data with modest buffer
+    if (history && history.length > 0) {
+      const lastBetting = parseISO(history[history.length - 1].timestamp);
+      return new Date(lastBetting.getTime() + 5 * 60 * 1000);
     }
 
     // Last resort: completedAt (backend timestamp, not ideal)
     if (completedAt) {
-      return new Date(parseISO(completedAt).getTime() + 30 * 1000);
+      return new Date(parseISO(completedAt).getTime() + 5 * 60 * 1000);
     }
 
     return null;

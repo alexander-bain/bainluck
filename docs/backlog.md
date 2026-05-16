@@ -307,49 +307,39 @@ Polymarket group_id lookup in game-markets had no time window filter. In playoff
 
 Frontend monotonicity enforcement referenced original values instead of corrected ones. Backend dropped violating items instead of capping. Fixed both + added 0% threshold filtering.
 
-### MS15-3. Weather Data 26 Days Stale (HIGH) — INVESTIGATED, NOT A BUG
+### ~~MS15-3. Weather Data 26 Days Stale~~ — FIXED May 15
 
-**Root cause:** Hardcoded fallback data in `frontend/components/weather/data.ts` from April 20. The live API IS returning fresh data — SWR replaces the stale data after hydration. But the initial SSR render always shows April 20.
-
-**Fix needed (frontend only):**
-1. Replace hardcoded date in `DistributionPanel.tsx` line 55 with dynamic date
-2. Replace hardcoded "521 active" footer with dynamic values
-3. Replace hardcoded fallback data with loading skeletons
+Hardcoded fallback data replaced with loading skeletons. Dynamic date and market counts now pulled from live API response.
 
 ### ~~MS15-4. NBA Grid OKC 105.2% Conference Win~~ — FIXED May 15
 
 Normalization pushed OKC above 100%. Fixed: post-normalization cap at 100% in playoff_grid.py + defense-in-depth caps in playoffs.py. Regression test added.
 
-### MS15-5. Chart Timing Score 52/100 (WARNING)
+### MS15-5. Chart Timing Score 52/100 (WARNING) — IN PROGRESS
 
 **Problem:** Charts terminate prematurely (e.g., 8th inning cutoff in baseball). Missing game state markers for AFL. Charts start too early for some events.
 
+**Status:** Being fixed by another agent. Do not start parallel work on these files.
+
 **Files:** `frontend/components/OddsChart.tsx`, `backend/app/routes/events.py` (chart data)
-**Parallel Safety:** Yellow
+**Parallel Safety:** Red (active work)
 
-### MS15-6. MLS Page Infinite Loading (BUG) — NOT REPRODUCIBLE
+### ~~MS15-6. MLS Page Infinite Loading~~ — NOT REPRODUCIBLE, CLOSED
 
-Investigated May 15. APIs return correctly (200, valid data). Frontend has proper timeout/retry/finally. Likely transient issue during the Manus sweep (deploy-triggered outage or cold dyno).
+Investigated May 15. APIs return correctly (200, valid data). Frontend has proper timeout/retry/finally. Likely transient issue during the Manus sweep (deploy-triggered outage or cold dyno). Closing as not reproducible.
 
-### MS15-7. Inconsistent Error States Across Pages (WARNING)
+### MS15-7. Inconsistent Error States Across Pages (WARNING) — IN PROGRESS
 
 **Problem:** 3 different error handling patterns across league pages, category pages, and hub pages. No unified error component. MLS never errors, NBA shows "Failed to load", economics shows "Loading...".
 
+**Status:** Being fixed by another agent. Do not start parallel work on error state components.
+
 **Files:** Frontend components (various)
-**Parallel Safety:** Green
+**Parallel Safety:** Red (active work)
 
-### MS15-8. Deploy Crash — Rapid Pushes Kill Heroku Dyno (P0 INFRA)
+### ~~MS15-8. Deploy Crash — Rapid Pushes Kill Heroku Dyno~~ — FIXED May 15
 
-**Problem:** 4 commits pushed in 3 minutes each triggered a separate Heroku deploy. Overlapping release phases (import validation + Alembic) crashed the dyno. Site was down for ~30 minutes until manual restart.
-
-**Fix shipped:** CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. Multiple rapid pushes cancel earlier deploys.
-
-**Remaining to activate:**
-1. Run `heroku authorizations:create -d "GitHub Actions" -S` to get a deploy token
-2. Add as `HEROKU_API_KEY` in GitHub repo Settings > Secrets
-3. Disable auto-deploy in Heroku Dashboard > Deploy > GitHub
-
-**Files:** `.github/workflows/ci.yml`
+CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. CI-gated deploy is working.
 
 ---
 
