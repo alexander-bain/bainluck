@@ -651,10 +651,12 @@ async def _fix_golf_commence_times() -> int:
     """Fix commence_time on Kalshi golf markets using DataGolf schedule.
 
     Kalshi sets commence_time = market close_time (resolution date).
-    For golf tournaments, the correct commence_time is the tournament
-    start date from DataGolf. This affects calibration (closing line is
-    "last snapshot before commence_time") and feed freshness.
+    For calibration, we need commence_time to be the eve of the tournament
+    (18h before midnight UTC on start day), so the closing line captures the
+    last pre-tournament price — not in-play prices from practice rounds or
+    early Round 1 movement.
     """
+    from datetime import timedelta
     from app.routes.golf import _get_golf_schedule, _normalize_tournament
 
     schedule = await _get_golf_schedule()
@@ -686,11 +688,11 @@ async def _fix_golf_commence_times() -> int:
 
             start_str = schedule_by_key[tourn_key]
             try:
-                start_dt = datetime.fromisoformat(start_str)
+                start_dt = datetime.fromisoformat(start_str) - timedelta(hours=18)
             except (ValueError, TypeError):
                 continue
 
-            if m.commence_time and abs((m.commence_time - start_dt).total_seconds()) > 86400:
+            if m.commence_time and abs((m.commence_time - start_dt).total_seconds()) > 3600:
                 await session.execute(
                     text("UPDATE futures_markets SET commence_time = :start WHERE id = :id"),
                     {"start": start_dt, "id": m.id},
