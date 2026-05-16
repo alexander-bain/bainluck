@@ -49,25 +49,26 @@ jobs:
       - name: Build (includes TypeScript + ESLint)
         run: npm run build
 
-  deploy:
-    needs: [backend-tests, frontend-build]
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: heroku-deploy
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Deploy to Heroku
-        if: ${{ secrets.HEROKU_API_KEY != '' }}
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: |
-          git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git || true
-          git push heroku master --force
-        # To enable: (1) heroku authorizations:create -d "GitHub Actions" -S
-        # (2) Add the token as HEROKU_API_KEY in GitHub repo Settings > Secrets
-        # (3) Disable auto-deploy in Heroku Dashboard > Deploy > GitHub
+  # Deploy job temporarily disabled while debugging CI failures.
+  # Re-enable after CI passes. The deploy job needs:
+  # 1. heroku authorizations:create -d "GitHub Actions" -S
+  # 2. Add token as HEROKU_API_KEY in GitHub repo Settings > Secrets
+  # 3. Disable auto-deploy in Heroku Dashboard > Deploy > GitHub
+  #
+  # deploy:
+  #   needs: [backend-tests, frontend-build]
+  #   if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+  #   runs-on: ubuntu-latest
+  #   concurrency:
+  #     group: heroku-deploy
+  #     cancel-in-progress: true
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #     - name: Deploy to Heroku
+  #       env:
+  #         HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+  #       run: |
+  #         git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git || true
+  #         git push heroku master --force
