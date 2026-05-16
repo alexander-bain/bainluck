@@ -299,35 +299,26 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 10-module automated audit. Results in `Manus/audit_results/2026-05-15/`. Sweep ran during a deploy-triggered outage, so some findings are outage artifacts. Real findings below.
 
-### MS15-1. Cross-Game Market Contamination (CRITICAL)
+### ~~MS15-1. Cross-Game Market Contamination~~ — FIXED May 15
 
-**Problem:** Event detail page for 76ers vs Celtics Game 2 (Apr 24) showed a "1H O/U 110.5" market that doesn't exist on Kalshi for this game. The 110.5 threshold leaked from another game. Same class as the sawtooth/cross-linkage bugs.
+Polymarket group_id lookup in game-markets had no time window filter. In playoff series, Game 1's sub-markets leaked onto Game 2's page. Fixed: added ±12h commence_time filter to match the unlinked fallback query.
 
-**Files:** `backend/app/routes/events.py` (game-markets query), `backend/app/tasks/prediction_market_matching.py`
-**Parallel Safety:** Yellow
+### ~~MS15-2. O/U Monotonicity Violation~~ — FIXED May 15
 
-### MS15-2. O/U Monotonicity Violation (CRITICAL)
+Frontend monotonicity enforcement referenced original values instead of corrected ones. Backend dropped violating items instead of capping. Fixed both + added 0% threshold filtering.
 
-**Problem:** Projected Combined Scoring showed O/U 214.5=0%, 215.5=0%, 216.5=19%, 217.5=0%. The 19% at 216.5 violates monotonicity (higher threshold should = lower probability).
+### MS15-3. Weather Data 26 Days Stale (HIGH) — INVESTIGATED, NOT A BUG
 
-**Files:** `backend/app/routes/events.py` (game-markets), `frontend/components/MarketMapSection.tsx`
-**Parallel Safety:** Yellow
+**Root cause:** Hardcoded fallback data in `frontend/components/weather/data.ts` from April 20. The live API IS returning fresh data — SWR replaces the stale data after hydration. But the initial SSR render always shows April 20.
 
-### MS15-3. Weather Data 26 Days Stale (HIGH)
+**Fix needed (frontend only):**
+1. Replace hardcoded date in `DistributionPanel.tsx` line 55 with dynamic date
+2. Replace hardcoded "521 active" footer with dynamic values
+3. Replace hardcoded fallback data with loading skeletons
 
-**Problem:** Weather page data frozen at April 20, 2026. Featured markets, city forecasts, and temperature data are all ~26 days old. Weather polling task may have stopped or be failing silently.
+### ~~MS15-4. NBA Grid OKC 105.2% Conference Win~~ — FIXED May 15
 
-**Investigation:** Check `poll_weather_markets` Celery task status, last run time, and error logs.
-
-**Files:** `backend/app/tasks/weather.py` (if exists), `backend/app/routes/weather.py`
-**Parallel Safety:** Green
-
-### MS15-4. NBA Grid OKC 105.2% Conference Win (WARNING)
-
-**Problem:** Championship grid shows OKC at 105.2% for conference win probability — impossible value, likely a normalization or rounding error.
-
-**Files:** `backend/app/routes/playoffs.py`
-**Parallel Safety:** Yellow
+Normalization pushed OKC above 100%. Fixed: post-normalization cap at 100% in playoff_grid.py + defense-in-depth caps in playoffs.py. Regression test added.
 
 ### MS15-5. Chart Timing Score 52/100 (WARNING)
 
@@ -336,12 +327,9 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 **Files:** `frontend/components/OddsChart.tsx`, `backend/app/routes/events.py` (chart data)
 **Parallel Safety:** Yellow
 
-### MS15-6. MLS Page Infinite Loading (BUG)
+### MS15-6. MLS Page Infinite Loading (BUG) — NOT REPRODUCIBLE
 
-**Problem:** MLS league page stuck in permanent "Loading..." state — never shows an error message. All other league pages show "Failed to load" on error, but MLS silently hangs.
-
-**Files:** `frontend/app/sport/[sport]/[league]/page.tsx` (or sport-specific routing)
-**Parallel Safety:** Green
+Investigated May 15. APIs return correctly (200, valid data). Frontend has proper timeout/retry/finally. Likely transient issue during the Manus sweep (deploy-triggered outage or cold dyno).
 
 ### MS15-7. Inconsistent Error States Across Pages (WARNING)
 
