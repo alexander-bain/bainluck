@@ -387,6 +387,61 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ---
 
+## Rage Shake Triage #6 (May 16) — Bugs #41-48
+
+8 bug reports. BR41 dismissed (transient outage from May 15 deploy crash). 7 real issues consolidated into 5 distinct problems.
+
+### BR42/43. My Stuff Shows Low-Tier Junk Instead of Tier 1 Sports (P1)
+
+**Problem:** Signed-in user (Alex) sees My Stuff "Just Happened" full of NCAA hockey (Boston College, Harvard vs Princeton — shown twice), esports (Paris Gentle Mates vs Boston Breach), and minor soccer (Denver Summit FC, Boston River, Central Espanol). No scores or probabilities shown on the NCAA hockey cards. User says: "How did my My Stuff feed get so much worse? It used to show tier 1 sports with final scores and opening win probability."
+
+**Root cause (likely):** The BR32 fix (May 15) set `includeFutures: false` on the My Stuff feed, which removed the irrelevant "Top Markets" section. But the underlying `myTeamsOnly: true` feed is still returning low-tier events. The "my teams" matching appears to be catching any team with "Boston" in the name (Boston College, Boston Breach, Boston Legacy FC, Boston River, Boston University) because the user follows the Red Sox. The feed should filter to Tier 1/2 sports only for My Stuff, and completed events should show scores + opening probability.
+
+**Files:** `backend/app/routes/feed.py` (my_teams_only filtering), `ios/.../Views/MyStuffView.swift`
+**Parallel Safety:** RED — touches feed.py
+
+### BR44/46. Stale Celtics NBA Finals Card — Celtics Eliminated Over a Week Ago (P1)
+
+**Problem:** "Will Boston Celtics advance to the 2026 NBA Finals?" still shows at 69% No / 31% Yes in both Discover (BR46) and My Stuff (BR44). Celtics were eliminated over a week ago. This is the same class as BR31 but more severe — the staleness threshold isn't catching it because the "No" side is at 69%, well below the 90/95% leader thresholds.
+
+**Root cause:** Polymarket hasn't settled the market yet (still "open" with active trading at 69/31). Our staleness filters check leader probability (≥90/95%) but 69% is nowhere near those thresholds. Need either: (a) cross-reference with actual playoff results to force-hide eliminated teams, or (b) a market-specific override from admin.
+
+**This is the #1 user-facing quality issue.** Three separate rage shake reports (BR31, BR44, BR46) about stale NBA playoff data.
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** RED — touches feed.py
+
+### BR45. Sign-In Server Error 500 (P2)
+
+**Problem:** Anonymous user on iPhone 15,4 (iOS 26.0.0) sees "Server error (500). Please try again." on My Stuff sign-in page. Different from BR40 (which was 401 audience mismatch, now fixed). This is a 500 — backend crash during auth endpoint.
+
+**Root cause (investigate):** Could be the same iOS 26 user from BR40 retrying after we deployed the audience fix. The fix accepts both audiences now, so if the 500 is from the Apple auth path, something else is crashing (user creation, Firebase, PyJWT). Check Sentry for 500s on auth endpoints around May 16 9:21 AM ET.
+
+**Files:** `backend/app/routes/auth.py`, `backend/app/services/firebase_auth.py`
+**Parallel Safety:** Green
+
+### BR47. Netflix Show Outcomes All 33% — Suspicious Same Odds (P2)
+
+**Problem:** "Top Global Netflix Show this week?" card shows Hulk Hogan: Real American at 33%, Salish & Jordan at 33%, Should I Marry at 33%. All exactly the same probability. User flagged this as suspicious. The hero says "New favorite: Hulk Hogan: Real American: Limited Series (100%)" which contradicts the 33% displayed.
+
+**Root cause (likely):** The merged Kalshi+Polymarket display shows averaged probabilities that happen to round to 33% each. Or normalization is dividing raw probabilities that sum >100% into equal shares. The "100%" in the hook description may be from a different source's raw value before merging/normalization. Need to check what each source reports for these outcomes.
+
+**Files:** `backend/app/routes/feed.py` (outcome display), `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** RED — touches feed.py
+
+### BR48. US House Probabilities Don't Sum to 100% (76% + 26% = 102%) (P3)
+
+**Problem:** "Which party will win the U.S. House?" shows Democratic Party 76% + Republican Party 26% = 102%. Same class as BR27/BR36 normalization issue. The merged KALSHI + POLYMARKET badge is positive feedback ("Absolutely love that we merged sources here").
+
+**Root cause:** Feed normalization threshold is `sum > 1.05` (105%). At 102%, it's below the threshold so it passes through unnormalized. The 2pp overshoot is from cross-source averaging (Kalshi and Polymarket disagree slightly).
+
+**Fix options:** (a) Lower normalization threshold to 1.01 for 2-outcome markets, (b) Always normalize binary (2-outcome) markets, (c) Leave as-is (2pp is barely noticeable)
+
+**Files:** `backend/app/routes/feed.py`
+**Parallel Safety:** RED — touches feed.py
+
+---
+
 ## Rage Shake Triage #4 (May 13) — Bug #31
 
 ### BR31. Stale NBA Playoff Data in Discover Feed (P2)
