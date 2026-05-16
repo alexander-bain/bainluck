@@ -615,15 +615,22 @@ async def _poll_kalshi_markets():
 
             await session.commit()
 
-        # Post-commit: fix commence_time for golf markets using DataGolf schedule.
+        # Post-commit: fix commence_time for golf and hockey markets.
         # Kalshi sets commence_time = market close_time (resolution date), but
-        # calibration and feed need the actual tournament start date.
+        # calibration and feed need the actual event start date.
         try:
             golf_fixed = await _fix_golf_commence_times()
             stats["golf_commence_fixed"] = golf_fixed
         except Exception as e:
             logger.warning("Golf commence_time fix failed: %s", e)
             stats["golf_commence_fixed"] = 0
+
+        try:
+            hockey_fixed = await _fix_hockey_commence_times()
+            stats["hockey_commence_fixed"] = hockey_fixed
+        except Exception as e:
+            logger.warning("Hockey commence_time fix failed: %s", e)
+            stats["hockey_commence_fixed"] = 0
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
@@ -708,6 +715,82 @@ async def _fix_golf_commence_times() -> int:
             logger.info("Fixed commence_time for %d Kalshi golf markets (reset calibration_probability)", fixed)
 
         return fixed
+
+
+async def _fix_hockey_commence_times() -> int:
+    """Fix commence_time on Kalshi hockey markets using linked Event data.
+
+    For hockey game markets WITH event_id: copy commence_time from the Event.
+    For markets WITHOUT event_id: derive game date from ticker via
+    extract_game_date_from_ticker(). Resets calibration_probability on
+    affected outcomes so the backfill recomputes with correct closing lines.
+    """
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    async with get_task_session() as session:
+        # Pass 1: Markets linked to an Event — copy Event.commence_time
+        result1 = await session.execute(
+            text("""
+                UPDATE futures_markets fm
+                SET commence_time = e.commence_time
+                FROM events e
+                WHERE fm.event_id = e.id
+                  AND fm.source = 'kalshi'
+                  AND fm.llm_sport_category = 'hockey'
+                  AND e.commence_time IS NOT NULL
+                  AND (fm.commence_time IS NULL
+                       OR ABS(EXTRACT(EPOCH FROM fm.commence_time - e.commence_time)) > 86400)
+            """)
+        )
+        linked_fixed = result1.rowcount
+
+        # Pass 2: Unlinked markets — derive from ticker
+        result2 = await session.execute(
+            text("""
+                SELECT id, name, commence_time,
+                       market_metadata->>'ticker' AS ticker,
+                       external_id
+                FROM futures_markets
+                WHERE source = 'kalshi'
+                  AND llm_sport_category = 'hockey'
+                  AND event_id IS NULL
+                  AND commence_time IS NOT NULL
+            """)
+        )
+        unlinked = result2.fetchall()
+        ticker_fixed = 0
+        for m in unlinked:
+            ticker = m.ticker or m.external_id or ""
+            game_date = extract_game_date_from_ticker(ticker)
+            if game_date and m.commence_time:
+                if abs((m.commence_time - game_date).total_seconds()) > 86400:
+                    await session.execute(
+                        text("UPDATE futures_markets SET commence_time = :dt WHERE id = :id"),
+                        {"dt": game_date, "id": m.id},
+                    )
+                    ticker_fixed += 1
+
+        total_fixed = linked_fixed + ticker_fixed
+        if total_fixed:
+            await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.llm_sport_category = 'hockey'
+                      AND fo.calibration_probability IS NOT NULL
+                """)
+            )
+            await session.commit()
+            logger.info(
+                "Fixed commence_time for %d Kalshi hockey markets "
+                "(linked=%d, ticker=%d, reset calibration_probability)",
+                total_fixed, linked_fixed, ticker_fixed,
+            )
+
+        return total_fixed
 
 
 async def _backfill_kalshi_price_history(limit: int = 500):

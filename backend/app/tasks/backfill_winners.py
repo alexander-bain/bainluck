@@ -426,17 +426,20 @@ async def _null_untradeable_openings():
     """Null out opening_probability AND calibration_probability on outcomes
     with insufficient trading activity.
 
-    Two passes:
+    Three passes:
     - Pass 1: outcomes with ZERO snapshots (never tracked)
     - Pass 2: outcomes with ≤ 2 snapshots where calibration_probability
       still equals opening_probability (briefly polled but no real price
       discovery)
+    - Pass 3: outcomes with ≤ 5 snapshots where price never moved more
+      than 2pp from opening (polled but no meaningful price discovery —
+      catches Kalshi economics/weather with thin trading)
 
     Setting opening_probability to NULL excludes from calibration via the
     existing IS NOT NULL filter. Also nulls calibration_probability to
     prevent stale values from a prior backfill run.
     """
-    stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "errors": []}
+    stats = {"nulled_zero_snap": 0, "nulled_low_snap": 0, "nulled_no_movement": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
@@ -488,6 +491,38 @@ async def _null_untradeable_openings():
             )
             stats["nulled_low_snap"] = result2.rowcount
 
+            # Pass 3: outcomes with ≤5 snapshots where max-min spread < 2pp
+            result3 = await session.execute(
+                text("""
+                    WITH candidates AS (
+                        SELECT fo.id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo.opening_probability IS NOT NULL
+                          AND fo.calibration_probability IS NOT NULL
+                          AND fo.calibration_probability = fo.opening_probability
+                        LIMIT 50000
+                    ),
+                    snap_stats AS (
+                        SELECT c.id AS outcome_id,
+                               COUNT(*) AS snap_count,
+                               MAX(fos.probability) - MIN(fos.probability) AS price_spread
+                        FROM candidates c
+                        JOIN futures_odds_snapshots fos ON fos.outcome_id = c.id
+                        GROUP BY c.id
+                        HAVING COUNT(*) <= 5
+                           AND MAX(fos.probability) - MIN(fos.probability) < 0.02
+                    )
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = NULL,
+                        calibration_probability = NULL
+                    FROM snap_stats ss
+                    WHERE fo.id = ss.outcome_id
+                """)
+            )
+            stats["nulled_no_movement"] = result3.rowcount
+
             await session.commit()
 
     except Exception as e:
@@ -495,9 +530,9 @@ async def _null_untradeable_openings():
         logger.error("Null untradeable openings error: %s", e)
 
     logger.info(
-        "Null untradeable openings: %d zero-snap, %d low-snap, %d errors",
+        "Null untradeable openings: %d zero-snap, %d low-snap, %d no-movement, %d errors",
         stats["nulled_zero_snap"], stats["nulled_low_snap"],
-        len(stats["errors"]),
+        stats["nulled_no_movement"], len(stats["errors"]),
     )
     return stats
 
