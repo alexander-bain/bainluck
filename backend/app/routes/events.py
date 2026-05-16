@@ -2971,6 +2971,13 @@ async def get_game_markets(
                     FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
                     or_(*home_conditions),
                     or_(*away_conditions),
+                    or_(
+                        and_(
+                            FuturesMarket.commence_time >= time_lower,
+                            FuturesMarket.commence_time <= time_upper,
+                        ),
+                        FuturesMarket.commence_time.is_(None),
+                    ),
                 )
                 .limit(5)
             )
@@ -3210,15 +3217,22 @@ async def get_game_markets(
 
     # 7b. Enforce monotonicity on totals — P(Over X) must decrease as X increases.
     # Thinly traded Kalshi half-period markets often have non-monotonic prices
-    # (e.g., Over 98.5 at 68% but Over 101.5 at 75%). Drop violating points.
+    # (e.g., Over 98.5 at 68% but Over 101.5 at 75%). Cap violating points
+    # to the previous value instead of dropping them (preserves all thresholds).
+    # Also filter out resolved/stale thresholds with 0% probability.
     def _enforce_monotonicity(items: list[dict], prob_key: str = "over_probability") -> list[dict]:
+        # Filter out 0% (resolved/stale) thresholds
+        items = [i for i in items if i.get(prob_key) is not None and i.get(prob_key, 0) > 0]
         if len(items) < 2:
             return items
         result = [items[0]]
         for item in items[1:]:
-            if item.get(prob_key) is not None and result[-1].get(prob_key) is not None:
-                if item[prob_key] <= result[-1][prob_key]:
-                    result.append(item)
+            prev_prob = result[-1].get(prob_key)
+            cur_prob = item.get(prob_key)
+            if cur_prob is not None and prev_prob is not None and cur_prob > prev_prob:
+                capped = {**item}
+                capped[prob_key] = prev_prob
+                result.append(capped)
             else:
                 result.append(item)
         return result

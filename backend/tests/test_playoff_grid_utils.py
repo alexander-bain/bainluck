@@ -55,6 +55,41 @@ class TestNormalizeColumnSums:
             cell = t["cells"]["championship"]
             assert cell["merged_probability"] == cell["sources"][0]["probability"]
 
+    def test_caps_individual_cells_at_100_percent(self):
+        """Regression test for MS15-4: OKC 105.2% conference win.
+
+        When one team dominates a conference and the column undershoots,
+        normalization can push the dominant team above 100%. Individual
+        cells must be capped at 1.0 after normalization.
+        """
+        # Simulate: OKC at 69% conference, many teams at 1% each.
+        # Conference expected sum = 200%. Raw sum = 69% + 29*1% = 98%.
+        # Scale factor = 200/98 ≈ 2.04x → OKC would go to ~141%
+        teams_conf = []
+        okc = {"name": "Oklahoma City", "short_name": "OKC", "team_id": 1,
+               "cells": {"conference": {"merged_probability": 0.69,
+                                        "sources": [{"probability": 0.69, "source": "polymarket"}]}},
+               "logo_url": None, "primary_color": None}
+        teams_conf.append(okc)
+        for i in range(29):
+            t = {"name": f"Team{i}", "short_name": f"T{i}", "team_id": i + 100,
+                 "cells": {"conference": {"merged_probability": 0.01,
+                                          "sources": [{"probability": 0.01, "source": "kalshi"}]}},
+                 "logo_url": None, "primary_color": None}
+            teams_conf.append(t)
+
+        cols = [SimpleNamespace(key="conference")]
+        normalize_column_sums(teams_conf, cols, "nba")
+
+        # OKC must be capped at 100% (1.0), not 141%
+        okc_prob = okc["cells"]["conference"]["merged_probability"]
+        assert okc_prob <= 1.0, f"OKC conference probability {okc_prob} exceeds 1.0"
+        assert okc_prob == 1.0  # it was above 1.0 before cap, so it should be exactly 1.0
+
+        # Source probability should also be capped
+        okc_src = okc["cells"]["conference"]["sources"][0]["probability"]
+        assert okc_src <= 1.0, f"OKC source probability {okc_src} exceeds 1.0"
+
 
 class TestComputeMovers:
 

@@ -54,10 +54,26 @@ function ProjectionBar({
 export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSpectrumProps) {
   const { totals, pace } = data;
 
-  const thresholds = useMemo(
-    () => totals.filter((t) => t.market_type === "game_total").sort((a, b) => a.threshold - b.threshold),
-    [totals]
-  );
+  const thresholds = useMemo(() => {
+    const sorted = totals
+      .filter((t) => t.market_type === "game_total" && t.over_probability > 0)
+      .sort((a, b) => a.threshold - b.threshold);
+    // Enforce monotonicity: over probability must decrease as threshold increases
+    const result: typeof sorted = [];
+    for (const t of sorted) {
+      if (result.length === 0) {
+        result.push(t);
+      } else {
+        const prevProb = result[result.length - 1].over_probability;
+        if (t.over_probability > prevProb) {
+          result.push({ ...t, over_probability: prevProb });
+        } else {
+          result.push(t);
+        }
+      }
+    }
+    return result;
+  }, [totals]);
 
   // Pick 5 representative thresholds for the ladder (must be before any early return)
   const ladderThresholds = useMemo(() => {

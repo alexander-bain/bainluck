@@ -329,16 +329,28 @@ export default function MarketMapSection({
         byThresh.set(t.threshold, t);
       }
     }
-    const deduped = [...byThresh.values()].sort((a, b) => a.threshold - b.threshold);
-    // Over probability must decrease as threshold increases
-    const gameTotals = deduped.map((t, i) => {
-      if (i === 0) return t;
-      const prev = deduped[i - 1];
-      if (t.over_probability > prev.over_probability) {
-        return { ...t, over_probability: prev.over_probability };
+    // Filter out resolved/stale thresholds (0% over probability)
+    const deduped = [...byThresh.values()]
+      .filter((t) => t.over_probability > 0)
+      .sort((a, b) => a.threshold - b.threshold);
+    // Over probability must decrease as threshold increases.
+    // Use a loop so each item is compared against the *corrected* previous
+    // value, not the original.
+    const gameTotals: typeof deduped = [];
+    for (const t of deduped) {
+      if (gameTotals.length === 0) {
+        gameTotals.push(t);
+      } else {
+        const prevProb = gameTotals[gameTotals.length - 1].over_probability;
+        if (t.over_probability > prevProb) {
+          gameTotals.push({ ...t, over_probability: prevProb });
+        } else {
+          gameTotals.push(t);
+        }
       }
-      return t;
-    });
+    }
+
+    if (gameTotals.length === 0) return null;
 
     const ouLine = gameTotals.reduce((closest, t) =>
       Math.abs(t.over_probability - 0.5) < Math.abs(closest.over_probability - 0.5) ? t : closest

@@ -70,6 +70,20 @@ def normalize_column_sums(
                     for src in cell.get("sources", []):
                         src["probability"] = round(src["probability"] * scale, 4)
 
+        # After any normalization, cap individual cells at 100%.
+        # Column-sum normalization can push a dominant team above 1.0 when
+        # scaling up from an undershoot (e.g., OKC at 69% conference win
+        # scaled by 1.5x → 103%). Cap merged_probability and source
+        # probabilities to prevent impossible >100% display values.
+        for t in teams:
+            cell = t["cells"].get(col_key)
+            if cell and cell.get("merged_probability") is not None:
+                if cell["merged_probability"] > 1.0:
+                    cell["merged_probability"] = 1.0
+                for src in cell.get("sources", []):
+                    if src["probability"] > 1.0:
+                        src["probability"] = 1.0
+
 
 def compute_movers(
     teams: list[dict],

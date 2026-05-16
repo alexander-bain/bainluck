@@ -1672,7 +1672,7 @@ async def _build_golf_tour_grid(
 
                 probs = [e["probability"] for e in entries]
                 vols = [e.get("volume_24h") for e in entries]
-                merged = _merge_probabilities(probs, vols)
+                merged = min(_merge_probabilities(probs, vols), 1.0)
 
                 sources = []
                 for e in entries:
@@ -2052,7 +2052,7 @@ async def _build_upcoming_golf_event_grid(
 
             probs = [e["probability"] for e in entries]
             vols = [e.get("volume_24h") for e in entries]
-            merged = _merge_probabilities(probs, vols)
+            merged = min(_merge_probabilities(probs, vols), 1.0)
 
             sources = []
             for e in entries:
@@ -2873,13 +2873,13 @@ async def get_playoff_grid(
 
             probs = [e["probability"] for e in deduped_entries]
             corrected = _correct_inverted_probs(probs)
-            merged = _merge_probabilities(probs)
+            merged = min(_merge_probabilities(probs), 1.0)
 
             sources = []
             for e, corrected_p in zip(deduped_entries, corrected):
                 src = {
                     "source": e["source"],
-                    "probability": round(corrected_p, 4),
+                    "probability": round(min(corrected_p, 1.0), 4),
                 }
                 if e.get("market_name"):
                     src["market_name"] = e["market_name"]
@@ -3557,13 +3557,13 @@ async def get_team_progression_for_event(
             probs = [e["probability"] for e in entries]
             vols = [e.get("volume_24h") for e in entries]
             corrected = _correct_inverted_probs(probs)
-            merged = _merge_probabilities(probs, vols)
+            merged = min(_merge_probabilities(probs, vols), 1.0)
 
             sources = []
             for e, corrected_p in zip(entries, corrected):
                 src = {
                     "source": e["source"],
-                    "probability": round(corrected_p, 4),
+                    "probability": round(min(corrected_p, 1.0), 4),
                 }
                 if e.get("market_name"):
                     src["market_name"] = e["market_name"]
