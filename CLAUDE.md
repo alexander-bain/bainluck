@@ -285,6 +285,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 66. **Polymarket placeholder outcomes have `outcomePrices=["1","0"]`** — Polymarket creates reserved-slot sub-markets ("Player B", "Player S") before real candidates are announced. These have 100% probability and zero trading activity. Filter with `_is_placeholder_outcome()`: name matches "Player [A-Z]" single letter, OR price ≥0.995 with no bestBid and no lastTradePrice.
 67. **iOS Decodable models must use `Double` for probability fields** — Backend `round(prob * 100, 1)` returns floats like `72.5`, not integers. Using `Int` in the iOS Decodable model causes the entire response to fail to decode. Always use `Double` (or `Double?` for nullable fields) for any probability, percentage, or numeric score from the API.
 68. **PKCanvasView annotation coordinates require explicit frame sizing** — Using `.frame(maxHeight: 300)` without width constraint makes the canvas wider than the rendered image. Touch coordinates then include dead space, and flattening uses wrong scale factors. Always size the canvas to match the image's aspect ratio exactly, disable scroll, and use independent scaleX/scaleY with `UIScreen.main.scale` for retina.
+69. **Rapid git pushes crash Heroku** — Each push to master triggers a separate Heroku deploy. Overlapping release phases (import validation + Alembic) can exhaust resources and crash the dyno. Batch commits into single pushes, or use the CI deploy job (`concurrency: cancel-in-progress: true`) which serializes deploys. Caused a 30-minute outage May 15.
 
 ---
 

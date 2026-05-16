@@ -295,7 +295,77 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 ---
 
-## Manus Sweep Findings (May 11, 2026)
+## Manus Sweep Findings (May 15, 2026)
+
+10-module automated audit. Results in `Manus/audit_results/2026-05-15/`. Sweep ran during a deploy-triggered outage, so some findings are outage artifacts. Real findings below.
+
+### MS15-1. Cross-Game Market Contamination (CRITICAL)
+
+**Problem:** Event detail page for 76ers vs Celtics Game 2 (Apr 24) showed a "1H O/U 110.5" market that doesn't exist on Kalshi for this game. The 110.5 threshold leaked from another game. Same class as the sawtooth/cross-linkage bugs.
+
+**Files:** `backend/app/routes/events.py` (game-markets query), `backend/app/tasks/prediction_market_matching.py`
+**Parallel Safety:** Yellow
+
+### MS15-2. O/U Monotonicity Violation (CRITICAL)
+
+**Problem:** Projected Combined Scoring showed O/U 214.5=0%, 215.5=0%, 216.5=19%, 217.5=0%. The 19% at 216.5 violates monotonicity (higher threshold should = lower probability).
+
+**Files:** `backend/app/routes/events.py` (game-markets), `frontend/components/MarketMapSection.tsx`
+**Parallel Safety:** Yellow
+
+### MS15-3. Weather Data 26 Days Stale (HIGH)
+
+**Problem:** Weather page data frozen at April 20, 2026. Featured markets, city forecasts, and temperature data are all ~26 days old. Weather polling task may have stopped or be failing silently.
+
+**Investigation:** Check `poll_weather_markets` Celery task status, last run time, and error logs.
+
+**Files:** `backend/app/tasks/weather.py` (if exists), `backend/app/routes/weather.py`
+**Parallel Safety:** Green
+
+### MS15-4. NBA Grid OKC 105.2% Conference Win (WARNING)
+
+**Problem:** Championship grid shows OKC at 105.2% for conference win probability — impossible value, likely a normalization or rounding error.
+
+**Files:** `backend/app/routes/playoffs.py`
+**Parallel Safety:** Yellow
+
+### MS15-5. Chart Timing Score 52/100 (WARNING)
+
+**Problem:** Charts terminate prematurely (e.g., 8th inning cutoff in baseball). Missing game state markers for AFL. Charts start too early for some events.
+
+**Files:** `frontend/components/OddsChart.tsx`, `backend/app/routes/events.py` (chart data)
+**Parallel Safety:** Yellow
+
+### MS15-6. MLS Page Infinite Loading (BUG)
+
+**Problem:** MLS league page stuck in permanent "Loading..." state — never shows an error message. All other league pages show "Failed to load" on error, but MLS silently hangs.
+
+**Files:** `frontend/app/sport/[sport]/[league]/page.tsx` (or sport-specific routing)
+**Parallel Safety:** Green
+
+### MS15-7. Inconsistent Error States Across Pages (WARNING)
+
+**Problem:** 3 different error handling patterns across league pages, category pages, and hub pages. No unified error component. MLS never errors, NBA shows "Failed to load", economics shows "Loading...".
+
+**Files:** Frontend components (various)
+**Parallel Safety:** Green
+
+### MS15-8. Deploy Crash — Rapid Pushes Kill Heroku Dyno (P0 INFRA)
+
+**Problem:** 4 commits pushed in 3 minutes each triggered a separate Heroku deploy. Overlapping release phases (import validation + Alembic) crashed the dyno. Site was down for ~30 minutes until manual restart.
+
+**Fix shipped:** CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. Multiple rapid pushes cancel earlier deploys.
+
+**Remaining to activate:**
+1. Run `heroku authorizations:create -d "GitHub Actions" -S` to get a deploy token
+2. Add as `HEROKU_API_KEY` in GitHub repo Settings > Secrets
+3. Disable auto-deploy in Heroku Dashboard > Deploy > GitHub
+
+**Files:** `.github/workflows/ci.yml`
+
+---
+
+## Manus Sweep Findings (May 11, 2026) — MOSTLY RESOLVED
 
 10-module automated audit. Results in `Manus/audit_results/2026-05-11/`. 10 of 14 resolved, 4 open.
 
