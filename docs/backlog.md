@@ -1018,6 +1018,59 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 ---
 
+## App Store Submission (ACTIVE — target: this week)
+
+**Goal:** Get Bain Luck approved and live on the App Store.
+
+**Current state:** TestFlight Build 3 uploaded. 5 parity features shipped (May 15-16). macOS + iOS builds clean. No prior App Store submission attempted.
+
+### Must Do (submission blockers)
+
+| # | Item | Status | Effort | Where |
+|---|------|--------|--------|-------|
+| AS-1 | App Store Connect listing: name, subtitle, description, keywords | TODO | 30 min | [App Store Connect](https://appstoreconnect.apple.com) |
+| AS-2 | Screenshots: iPhone 6.7" (required), 6.1", iPad 13" | TODO | 1-2 hrs | Simulator or real device — Discover, event detail, calibration, championship grid |
+| AS-3 | Age rating questionnaire | TODO | 5 min | App Store Connect |
+| AS-4 | APS entitlement → production | ✅ DONE | 2 min | Changed in `Bain Luck.entitlements` |
+| AS-5 | Privacy policy URL in App Store Connect | TODO | 1 min | Enter `https://bainluck.com/privacy` |
+| AS-6 | Support URL in App Store Connect | TODO | 1 min | Enter `https://bainluck.com/about` or create a support page |
+| AS-7 | "What's New" release notes | TODO | 5 min | App Store Connect |
+| AS-8 | App Review notes | TODO | 5 min | Explain what the app does. Note: no demo account needed (Apple/Google Sign-In available). |
+
+### Should Do (rejection risk)
+
+| # | Item | Risk | Status | Notes |
+|---|------|------|--------|-------|
+| AS-9 | Gambling disclaimer in App Review notes + About page | Medium | ✅ DONE | Already in AboutView line 115: "Bain Luck is for informational and entertainment purposes only. We do not encourage or facilitate gambling." Copy into App Review notes. |
+| AS-10 | Verify IDFA/ATT not needed | Medium | ✅ DONE | No IDFA collection, no ATTrackingManager, no ad personalization. Privacy manifest correct. No ATT prompt needed. |
+| AS-11 | Launch screen check | Low | TODO | SwiftUI auto-generates one — verify it's not blank white on first launch. |
+
+### Nice to Have (post-launch)
+
+| # | Item | Notes |
+|---|------|-------|
+| AS-12 | App preview video (15-30s) | Helps conversion, not required |
+| AS-13 | Promotional text (170 chars) | Updatable without new build |
+| AS-14 | In-app review prompt | `SKStoreReviewController` after a few sessions |
+
+### Already Done
+
+- [x] App icon (1024x1024 + Mac sizes)
+- [x] Bundle ID (`com.bainluck.Bain-Luck`)
+- [x] Privacy manifest (`PrivacyInfo.xcprivacy`)
+- [x] Privacy policy page (`bainluck.com/privacy`)
+- [x] Sign in with Apple + Google
+- [x] Push notification entitlement
+- [x] Associated domains / universal links
+- [x] TestFlight builds uploading
+- [x] Web/native parity (5 features shipped May 15-16)
+- [x] All Xcode warnings resolved
+
+**Files:** `ios/Bain Luck/Bain Luck/Bain Luck.entitlements`, `ios/Bain Luck/Bain Luck/Views/AboutView.swift`
+**Parallel Safety:** Green
+
+---
+
 ## Discover Feed Enhancement
 
 ### Discover Feed Enhancement

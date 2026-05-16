@@ -641,9 +641,13 @@ struct DiscoverView: View {
         }
         .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
-            await vm.load()
-            if let r = try? await APIClient.shared.fetchResolutions() {
-                resolutions = r.resolutions
+            if vm.items.isEmpty {
+                await vm.load()
+            }
+            if resolutions.isEmpty {
+                if let r = try? await APIClient.shared.fetchResolutions() {
+                    resolutions = r.resolutions
+                }
             }
         }
         .refreshable {
@@ -841,9 +845,14 @@ final class DiscoverViewModel: ObservableObject {
         do {
             let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
             items = Self.interleave(response.items)
+        } catch is CancellationError {
+            return
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            return
         } catch {
+            print("DiscoverView load error: \(error)")
             if items.isEmpty {
-                self.error = "Couldn't load Discover. Pull to retry."
+                self.error = error.localizedDescription
             }
         }
         loading = false
