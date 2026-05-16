@@ -458,12 +458,16 @@ async def get_feed(
         }
 
     # Load personalization context (one DB query for all user data)
-    ctx = await _load_personalization_context(
-        db,
-        user,
-        session_id=session_id,
-        config=discover_config,
-    )
+    try:
+        ctx = await _load_personalization_context(
+            db,
+            user,
+            session_id=session_id,
+            config=discover_config,
+        )
+    except Exception:
+        logger.exception("Personalization context failed — falling back to anonymous")
+        ctx = PersonalizationContext()
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "personalization")
 
     # Build team name set once (used by both scoring functions + response).
