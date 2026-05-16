@@ -356,22 +356,6 @@ def _ei_label(score: int) -> str:
 _pulse_label = _ei_label
 
 
-@router.get("/debug-error")
-async def feed_debug_error(request: Request):
-    """Temporary: expose the actual error when x-session-id causes 500."""
-    import traceback as _tb
-    session_id = _session_id_from_request(request)
-    try:
-        from app.services import get_db
-        from app.dependencies.auth import get_optional_user
-        async for db in get_db():
-            config = await _load_discover_runtime_config()
-            ctx = await _load_personalization_context(db, None, session_id=session_id, config=config)
-            return {"status": "ok", "session_id": session_id, "has_context": bool(ctx)}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "traceback": _tb.format_exc()}
-
-
 @router.get("")
 async def get_feed(
     response: Response,
@@ -409,8 +393,6 @@ async def get_feed(
     _started_at = time.perf_counter()
     _previous_at = _started_at
     _timings: list[dict[str, float | str]] = []
-
-    logger.info("Feed request: limit=%d offset=%d session=%s user=%s", limit, offset, bool(_session_id_from_request(request)), bool(user))
 
     if debug and not _check_admin_secret(secret):
         _set_feed_timing_header(response, _started_at)
