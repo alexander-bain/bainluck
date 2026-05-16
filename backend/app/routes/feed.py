@@ -394,6 +394,8 @@ async def get_feed(
     _previous_at = _started_at
     _timings: list[dict[str, float | str]] = []
 
+    logger.info("Feed request: limit=%d offset=%d session=%s user=%s", limit, offset, bool(_session_id_from_request(request)), bool(user))
+
     if debug and not _check_admin_secret(secret):
         _set_feed_timing_header(response, _started_at)
         raise HTTPException(status_code=403, detail="Invalid admin secret")
