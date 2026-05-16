@@ -9,7 +9,7 @@ endpoints return 401 and the app works in anonymous-only mode.
 import json
 import logging
 import os
-from typing import Optional
+from typing import List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -223,13 +223,18 @@ def is_configured() -> bool:
 _apple_jwks_client = None
 
 
-def verify_apple_id_token(id_token: str, client_id: str) -> Optional[dict]:
+def verify_apple_id_token(id_token: str, client_id: Union[str, List[str]]) -> Optional[dict]:
     """
     Verify an Apple id_token JWT against Apple's JWKS endpoint.
 
     Apple Sign-In issues RS256-signed JWTs. We verify them by fetching
     Apple's public keys from their JWKS endpoint and validating the
-    signature, audience (our Services ID), and issuer.
+    signature, audience (our Services ID or iOS bundle ID), and issuer.
+
+    Args:
+        id_token: The Apple-issued JWT to verify.
+        client_id: A single audience string or list of valid audience strings.
+                   PyJWT accepts both forms for the ``audience`` parameter.
 
     Returns decoded claims dict (sub, email, etc.) or None on failure.
     """

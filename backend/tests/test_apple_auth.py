@@ -50,6 +50,42 @@ class TestVerifyAppleIdToken:
 
     @patch("app.services.firebase_auth._apple_jwks_client", None)
     @patch("jwt.PyJWKClient")
+    def test_valid_token_with_audience_list(self, mock_jwk_client_cls):
+        """Valid Apple id_token with a list of valid audiences (web + iOS bundle)."""
+        from app.services.firebase_auth import verify_apple_id_token
+
+        mock_client = MagicMock()
+        mock_jwk_client_cls.return_value = mock_client
+
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = "fake-rsa-key"
+        mock_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        expected_claims = {
+            "sub": "001234.abcdef.5678",
+            "email": "user@icloud.com",
+            "aud": "com.bainluck.Bain-Luck",  # iOS bundle ID
+        }
+
+        valid_audiences = ["com.bainluck.web", "com.bainluck.Bain-Luck"]
+
+        with patch("jwt.decode", return_value=expected_claims) as mock_decode:
+            result = verify_apple_id_token("fake.jwt.token", valid_audiences)
+
+            assert result == expected_claims
+            mock_decode.assert_called_once_with(
+                "fake.jwt.token",
+                "fake-rsa-key",
+                algorithms=["RS256"],
+                audience=valid_audiences,
+                issuer="https://appleid.apple.com",
+            )
+
+        import app.services.firebase_auth as fb_auth
+        fb_auth._apple_jwks_client = None
+
+    @patch("app.services.firebase_auth._apple_jwks_client", None)
+    @patch("jwt.PyJWKClient")
     def test_invalid_token_returns_none(self, mock_jwk_client_cls):
         """Invalid token returns None."""
         from app.services.firebase_auth import verify_apple_id_token

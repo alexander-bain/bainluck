@@ -131,6 +131,7 @@ async def google_sign_in(
         )
         db.add(user)
         await db.flush()  # Get the user.id
+        await db.refresh(user)  # Load server_default values (created_at)
 
         # Create empty preferences
         prefs = UserPreference(user_id=user.id)
@@ -232,6 +233,7 @@ async def google_access_token_sign_in(
         )
         db.add(user)
         await db.flush()
+        await db.refresh(user)  # Load server_default values (created_at)
 
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
@@ -358,6 +360,7 @@ async def apple_sign_in(
         )
         db.add(user)
         await db.flush()
+        await db.refresh(user)  # Load server_default values (created_at)
 
         prefs = UserPreference(user_id=user.id)
         db.add(prefs)
