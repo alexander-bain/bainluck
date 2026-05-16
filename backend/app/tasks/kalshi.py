@@ -648,25 +648,32 @@ async def _poll_kalshi_markets():
 
 
 async def _fix_golf_commence_times() -> int:
-    """Fix commence_time on Kalshi golf markets using DataGolf schedule.
+    """Fix commence_time on Kalshi golf markets — DB-only, no API calls.
 
-    Kalshi sets commence_time = market close_time (resolution date).
-    For calibration, we need commence_time to be the eve of the tournament
-    (18h before midnight UTC on start day), so the closing line captures the
-    last pre-tournament price — not in-play prices from practice rounds or
-    early Round 1 movement.
+    Kalshi sets commence_time = market close_time (= resolution date, typically
+    Sunday evening). For calibration, we need commence_time to be the eve of
+    Round 1 so the closing line captures pre-tournament prices.
+
+    Heuristic: set commence_time = close_time - 4.5 days (tournaments are 4 days,
+    minus 12h to land on the eve of Round 1). This is approximate but far better
+    than using the resolution date, which captures in-play prices.
+
+    Falls back to DataGolf schedule when available (more precise).
     """
     from datetime import timedelta
-    from app.routes.golf import _get_golf_schedule, _normalize_tournament
 
-    schedule = await _get_golf_schedule()
-    if not schedule:
-        return 0
+    # Try DataGolf schedule first (precise but requires API)
+    try:
+        from app.routes.golf import _get_golf_schedule, _normalize_tournament
+        schedule = await _get_golf_schedule()
+    except Exception:
+        schedule = None
 
     schedule_by_key: dict[str, str] = {}
-    for s in schedule:
-        if s.get("key") and s.get("start_date"):
-            schedule_by_key[s["key"]] = s["start_date"]
+    if schedule:
+        for s in schedule:
+            if s.get("key") and s.get("start_date"):
+                schedule_by_key[s["key"]] = s["start_date"]
 
     async with get_task_session() as session:
         result = await session.execute(
@@ -676,32 +683,41 @@ async def _fix_golf_commence_times() -> int:
                 WHERE source = 'kalshi'
                   AND llm_sport_category = 'golf'
                   AND commence_time IS NOT NULL
+                  AND status = 'resolved'
             """)
         )
         markets = result.fetchall()
 
         fixed = 0
         for m in markets:
-            tourn_key = _normalize_tournament(m.name, schedule)
-            if tourn_key == "other" or tourn_key not in schedule_by_key:
-                continue
+            target_dt = None
 
-            start_str = schedule_by_key[tourn_key]
-            try:
-                start_dt = datetime.fromisoformat(start_str) - timedelta(hours=18)
-            except (ValueError, TypeError):
-                continue
+            # Try DataGolf schedule (precise)
+            if schedule:
+                from app.routes.golf import _normalize_tournament
+                tourn_key = _normalize_tournament(m.name, schedule)
+                if tourn_key != "other" and tourn_key in schedule_by_key:
+                    try:
+                        target_dt = datetime.fromisoformat(
+                            schedule_by_key[tourn_key]
+                        ) - timedelta(hours=18)
+                    except (ValueError, TypeError):
+                        pass
 
-            if m.commence_time and abs((m.commence_time - start_dt).total_seconds()) > 3600:
+            # Fallback: close_time - 4.5 days
+            if target_dt is None and m.commence_time:
+                target_dt = m.commence_time - timedelta(days=4, hours=12)
+
+            if target_dt and m.commence_time and abs(
+                (m.commence_time - target_dt).total_seconds()
+            ) > 3600:
                 await session.execute(
                     text("UPDATE futures_markets SET commence_time = :start WHERE id = :id"),
-                    {"start": start_dt, "id": m.id},
+                    {"start": target_dt, "id": m.id},
                 )
                 fixed += 1
 
         if fixed:
-            # Reset calibration_probability on affected outcomes so the
-            # backfill recomputes using the corrected commence_time.
             await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
