@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { CLIMATE, probColor, type ClimateMarket } from "./data";
+import { probColor, type ClimateMarket } from "./data";
 import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
 
@@ -123,9 +123,47 @@ function ClimateColumn({
   );
 }
 
+function ClimateColumnSkeleton({ label, kicker }: { label: string; kicker: string }) {
+  return (
+    <div
+      className="border border-surface-border"
+      style={{ backgroundColor: "#fff", borderRadius: 16, padding: 22 }}
+    >
+      <div style={{ marginBottom: 16 }}>
+        <div className="font-mono" style={{ fontSize: 32, fontWeight: 600, color: "#111827", lineHeight: 1 }}>{label}</div>
+        <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: "0.5px", textTransform: "uppercase", color: "#9CA3AF" }}>{kicker}</span>
+      </div>
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i}>
+            <div className="h-3.5 bg-gray-200 rounded animate-pulse mb-2" style={{ width: `${85 - i * 10}%` }} />
+            <div className="flex items-center" style={{ gap: 8, marginBottom: 6 }}>
+              <div style={{ flex: 1, height: 6, backgroundColor: "#F3F4F6", borderRadius: 9999 }}>
+                <div className="h-full bg-gray-200 rounded-full animate-pulse" style={{ width: `${40 + i * 15}%` }} />
+              </div>
+              <div className="h-4 w-10 bg-gray-200 rounded animate-pulse" />
+            </div>
+            <div className="h-4 w-14 bg-gray-200 rounded-full animate-pulse" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ClimateDashboard() {
   const { data: liveClimate } = useSWR("weather-climate", fetchClimate, { refreshInterval: 21600000 });
-  const climate: ClimateMarket[] = (liveClimate as ClimateMarket[])?.length ? (liveClimate as ClimateMarket[]) : CLIMATE;
+  const climate = (liveClimate as ClimateMarket[])?.length ? (liveClimate as ClimateMarket[]) : null;
+
+  if (!climate) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        {COLUMNS.map((col) => (
+          <ClimateColumnSkeleton key={col.scale} label={col.label} kicker={col.kicker} />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">

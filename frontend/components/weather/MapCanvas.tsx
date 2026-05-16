@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
-import { SOURCES, tempColorC, toC } from "./data";
+import { SOURCES, tempColorC, toC, tomorrowDateStrUpper } from "./data";
 import type { CityData } from "./data";
 
 interface MapCanvasProps {
@@ -77,7 +77,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
       >
         <TempLegend />
         <span className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          HIGH &middot; APR 20, 2026
+          HIGH &middot; {tomorrowDateStrUpper()}
         </span>
       </div>
 

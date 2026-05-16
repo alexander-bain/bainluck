@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { NYC_RAIN, MONTHLY_RAIN, probColor } from "./data";
+import { probColor } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
@@ -58,14 +58,60 @@ function currentMonth(): string {
   return months[new Date().getMonth()];
 }
 
+/* ── Skeletons ───────────────────────────────────────────────────────── */
+
+function RainDaySkeleton() {
+  return (
+    <div
+      className="grid gap-2 mt-5"
+      style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
+    >
+      {Array.from({ length: 7 }).map((_, i) => (
+        <div
+          key={i}
+          className="flex flex-col items-center text-center border py-3 px-1 border-surface-border"
+          style={{ borderRadius: 12 }}
+        >
+          <div className="h-3 w-8 bg-gray-200 rounded animate-pulse" />
+          <div className="h-2 w-10 bg-gray-200 rounded animate-pulse mt-1" />
+          <div className="h-7 w-7 bg-gray-200 rounded-full animate-pulse mt-2 mb-2" />
+          <div className="h-5 w-10 bg-gray-200 rounded animate-pulse" />
+          <div className="w-full mt-2 px-1">
+            <div className="h-1 bg-gray-200 rounded-full animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MonthlySkeleton() {
+  return (
+    <div className="flex flex-col gap-2.5">
+      {Array.from({ length: 10 }).map((_, i) => (
+        <div
+          key={i}
+          className="grid items-center gap-2"
+          style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
+        >
+          <div className="h-4 bg-gray-200 rounded animate-pulse" />
+          <div className="h-[7px] bg-gray-200 rounded-full animate-pulse" />
+          <div className="h-4 w-10 bg-gray-200 rounded animate-pulse ml-auto" />
+          <div className="h-3 w-6 bg-gray-200 rounded animate-pulse ml-auto" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Main Component ──────────────────────────────────────────────────── */
 
 export default function RainForecast() {
   const { data: liveRain } = useSWR("weather-rain", fetchRain, { refreshInterval: 3600000 });
-  const rain: RainDay[] = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : NYC_RAIN;
+  const rain: RainDay[] | null = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : null;
   const monthlyLive = (liveRain as { monthly: MonthlyRainType[] })?.monthly;
-  const monthly: MonthlyRainType[] = monthlyLive?.length ? monthlyLive : MONTHLY_RAIN;
-  const maxMonthly = Math.max(...monthly.map((m) => m.prob));
+  const monthly: MonthlyRainType[] | null = monthlyLive?.length ? monthlyLive : null;
+  const maxMonthly = monthly ? Math.max(...monthly.map((m) => m.prob)) : 0;
   const month = currentMonth();
 
   return (
@@ -91,70 +137,76 @@ export default function RainForecast() {
               <SourceBadge src="kalshi" />
             </div>
 
-              <div
-                className="grid gap-2 mt-5 overflow-x-auto"
-                style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
-              >
-                {rain.map((d: RainDay, i: number) => {
-                  const isToday = i === 0;
-                  const barCol = rainBarColor(d.prob);
-                  const txtCol = rainTextColor(d.prob);
+            {!rain ? (
+              <RainDaySkeleton />
+            ) : (
+              <>
+                <div
+                  className="grid gap-2 mt-5 overflow-x-auto"
+                  style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
+                >
+                  {rain.map((d: RainDay, i: number) => {
+                    const isToday = i === 0;
+                    const barCol = rainBarColor(d.prob);
+                    const txtCol = rainTextColor(d.prob);
 
-                  return (
-                    <div
-                      key={d.date}
-                      className="flex flex-col items-center text-center border py-3 px-1"
-                      style={{
-                        borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
-                        backgroundColor: isToday ? "#F0F9FF" : "transparent",
-                        borderRadius: 12,
-                      }}
-                    >
-                      <span className="text-xs font-semibold text-text-secondary">
-                        {isToday ? "Today" : d.day}
-                      </span>
-                      <span className="text-[10px] font-mono text-text-muted mt-0.5">
-                        {d.date}
-                      </span>
-                      <span className="mt-2 mb-2" style={{ fontSize: 26 }}>
-                        {d.icon}
-                      </span>
-                      <span
-                        className="font-mono font-bold"
-                        style={{ fontSize: 20, color: txtCol }}
+                    return (
+                      <div
+                        key={d.date}
+                        className="flex flex-col items-center text-center border py-3 px-1"
+                        style={{
+                          borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
+                          backgroundColor: isToday ? "#F0F9FF" : "transparent",
+                          borderRadius: 12,
+                        }}
                       >
-                        {d.prob}%
-                      </span>
-                      <div className="w-full mt-2 px-1">
-                        <div
-                          className="rounded-full overflow-hidden"
-                          style={{
-                            height: 4,
-                            backgroundColor:
-                              d.prob >= 35
-                                ? `${barCol}20`
-                                : "var(--surface-elevated)",
-                          }}
+                        <span className="text-xs font-semibold text-text-secondary">
+                          {isToday ? "Today" : d.day}
+                        </span>
+                        <span className="text-[10px] font-mono text-text-muted mt-0.5">
+                          {d.date}
+                        </span>
+                        <span className="mt-2 mb-2" style={{ fontSize: 26 }}>
+                          {d.icon}
+                        </span>
+                        <span
+                          className="font-mono font-bold"
+                          style={{ fontSize: 20, color: txtCol }}
                         >
+                          {d.prob}%
+                        </span>
+                        <div className="w-full mt-2 px-1">
                           <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${d.prob}%`, backgroundColor: barCol }}
-                          />
+                            className="rounded-full overflow-hidden"
+                            style={{
+                              height: 4,
+                              backgroundColor:
+                                d.prob >= 35
+                                  ? `${barCol}20`
+                                  : "var(--surface-elevated)",
+                            }}
+                          >
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{ width: `${d.prob}%`, backgroundColor: barCol }}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
 
-              <div className="mt-4 pt-3 border-t border-dashed border-surface-border flex items-center justify-between">
-                <span className="text-xs text-text-muted">
-                  Resolves daily at midnight ET
-                </span>
-                <span className="text-xs text-text-muted font-mono">
-                  {rain[0].date} – {rain[rain.length - 1].date}
-                </span>
-              </div>
+                <div className="mt-4 pt-3 border-t border-dashed border-surface-border flex items-center justify-between">
+                  <span className="text-xs text-text-muted">
+                    Resolves daily at midnight ET
+                  </span>
+                  <span className="text-xs text-text-muted font-mono">
+                    {rain[0].date} – {rain[rain.length - 1].date}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Right card — Monthly rainfall */}
@@ -172,45 +224,49 @@ export default function RainForecast() {
               &ldquo;Above 1 inch this month&rdquo; — 10 cities
             </p>
 
-            <div className="flex flex-col gap-2.5">
-              {monthly.map((m: MonthlyRainType) => {
-                const col = probColor(m.prob);
-                const barWidth = Math.max(4, (m.prob / maxMonthly) * 100);
-                const delta = m.delta24h ?? 0;
+            {!monthly ? (
+              <MonthlySkeleton />
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {monthly.map((m: MonthlyRainType) => {
+                  const col = probColor(m.prob);
+                  const barWidth = Math.max(4, (m.prob / maxMonthly) * 100);
+                  const delta = m.delta24h ?? 0;
 
-                return (
-                  <div
-                    key={m.city}
-                    className="grid items-center gap-2"
-                    style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
-                  >
-                    <span className="text-sm text-text-primary font-medium truncate">
-                      {m.city}
-                    </span>
-                    <div className="h-[7px] rounded-full overflow-hidden bg-surface-elevated">
-                      <div
-                        className="h-full rounded-full transition-all duration-700 ease-out"
-                        style={{ width: `${barWidth}%`, backgroundColor: col }}
-                      />
+                  return (
+                    <div
+                      key={m.city}
+                      className="grid items-center gap-2"
+                      style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
+                    >
+                      <span className="text-sm text-text-primary font-medium truncate">
+                        {m.city}
+                      </span>
+                      <div className="h-[7px] rounded-full overflow-hidden bg-surface-elevated">
+                        <div
+                          className="h-full rounded-full transition-all duration-700 ease-out"
+                          style={{ width: `${barWidth}%`, backgroundColor: col }}
+                        />
+                      </div>
+                      <span
+                        className="text-right font-mono font-bold text-sm"
+                        style={{ color: col }}
+                      >
+                        {m.prob}%
+                      </span>
+                      <span
+                        className="text-right font-mono text-[10px]"
+                        style={{
+                          color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#9CA3AF",
+                        }}
+                      >
+                        {delta > 0 ? `+${delta}` : delta === 0 ? "—" : delta}
+                      </span>
                     </div>
-                    <span
-                      className="text-right font-mono font-bold text-sm"
-                      style={{ color: col }}
-                    >
-                      {m.prob}%
-                    </span>
-                    <span
-                      className="text-right font-mono text-[10px]"
-                      style={{
-                        color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#9CA3AF",
-                      }}
-                    >
-                      {delta > 0 ? `+${delta}` : delta === 0 ? "—" : delta}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
               <span>24h change shown at right</span>

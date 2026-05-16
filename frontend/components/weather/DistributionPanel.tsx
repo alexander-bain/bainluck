@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type CityData, tempColorC, toC, SOURCES } from "./data";
+import { type CityData, tempColorC, toC, SOURCES, tomorrowDateStr } from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
 
 interface DistributionPanelProps {
@@ -52,7 +52,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
       </div>
 
       <div className="font-mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
-        Tomorrow&apos;s high temperature &middot; Apr 20, 2026
+        Tomorrow&apos;s high temperature &middot; {tomorrowDateStr()}
       </div>
 
       {/* Peak display */}

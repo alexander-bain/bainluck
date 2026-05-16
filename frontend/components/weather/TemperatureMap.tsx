@@ -2,12 +2,61 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { CITIES } from "./data";
 import type { CityData } from "./data";
 import MapCanvas from "./MapCanvas";
 import DistributionPanel from "./DistributionPanel";
 import { SectionHeader } from "./RainForecast";
 import { fetchCities } from "@/lib/weatherApi";
+
+function TemperatureMapSkeleton() {
+  return (
+    <section className="pt-10 px-4 md:px-6">
+      <div className="max-w-[1280px] mx-auto">
+        <SectionHeader
+          kicker="Global temperature map"
+          title="Tomorrow's high, as a probability distribution."
+          meta="Polymarket & Kalshi"
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 items-stretch">
+          {/* Map skeleton */}
+          <div className="bg-surface-card border border-surface-border rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+              <div className="h-2 w-40 bg-gray-200 rounded animate-pulse" />
+              <div className="h-3 w-28 bg-gray-200 rounded animate-pulse" />
+            </div>
+            <div className="animate-pulse bg-gray-100" style={{ aspectRatio: "1.8 / 1", minHeight: 420 }} />
+            <div className="flex items-center justify-between px-4 py-2.5 border-t border-surface-border">
+              <div className="h-3 w-48 bg-gray-200 rounded animate-pulse" />
+              <div className="h-3 w-20 bg-gray-200 rounded animate-pulse" />
+            </div>
+          </div>
+          {/* Distribution panel skeleton */}
+          <div className="bg-surface-card border border-surface-border rounded-2xl p-5" style={{ minHeight: 460 }}>
+            <div className="h-3 w-16 bg-gray-200 rounded animate-pulse mb-2" />
+            <div className="h-6 w-32 bg-gray-200 rounded animate-pulse mb-4" />
+            <div className="h-3 w-48 bg-gray-200 rounded animate-pulse mb-5" />
+            <div className="h-16 w-24 bg-gray-200 rounded animate-pulse mb-3" />
+            <div className="h-4 w-20 bg-gray-200 rounded animate-pulse mb-4" />
+            <div className="flex-1 flex items-end gap-1 mt-6" style={{ height: 140 }}>
+              {Array.from({ length: 11 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex-1 bg-gray-200 rounded-t animate-pulse"
+                  style={{ height: `${15 + Math.sin(i * 0.8) * 50 + 40}%` }}
+                />
+              ))}
+            </div>
+            <div className="flex gap-1 mt-1">
+              {Array.from({ length: 11 }).map((_, i) => (
+                <div key={i} className="flex-1 h-2 bg-gray-200 rounded animate-pulse" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function TemperatureMap() {
   const [selected, setSelected] = useState("nyc");
@@ -15,7 +64,9 @@ export default function TemperatureMap() {
   const [citySearch, setCitySearch] = useState("");
 
   const { data: liveCities } = useSWR("weather-cities", fetchCities, { refreshInterval: 3600000 });
-  const allCities: CityData[] = (liveCities as CityData[])?.length ? (liveCities as CityData[]) : CITIES;
+  const allCities = (liveCities as CityData[])?.length ? (liveCities as CityData[]) : null;
+
+  if (!allCities) return <TemperatureMapSkeleton />;
 
   const cities = citySearch.trim()
     ? allCities.filter(c => c.name.toLowerCase().includes(citySearch.trim().toLowerCase()))

@@ -46,7 +46,7 @@ export default function WeatherPage() {
       <footer className="mt-[72px] border-t border-surface-border bg-white">
         <div className="max-w-[1280px] mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
           <span>Data from Kalshi &amp; Polymarket prediction markets · Not weather forecasts. Not financial advice.</span>
-          <span className="font-mono">bainluck.com/weather · 521 active · updated 2m ago</span>
+          <span className="font-mono">bainluck.com/weather</span>
         </div>
       </footer>
     </div>

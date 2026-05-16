@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { WILDCARDS, probColor, probLabel, sparkFrom, SOURCES, type WildCard } from "./data";
+import { probColor, probLabel, sparkFrom, type WildCard } from "./data";
 import { fetchWildCards } from "@/lib/weatherApi";
 import Sparkline from "./Sparkline";
 import { SourceBadge } from "./SourceBadge";
@@ -19,9 +19,41 @@ function pillFg(label: string): string {
   return "#B91C1C";
 }
 
+function WildCardSkeleton() {
+  return (
+    <div
+      className="border border-surface-border"
+      style={{ backgroundColor: "#fff", borderRadius: 14, padding: 20, minHeight: 180, display: "flex", flexDirection: "column" }}
+    >
+      <div className="h-2.5 w-20 bg-gray-200 rounded animate-pulse mb-2" />
+      <div className="h-4 bg-gray-200 rounded animate-pulse mb-1" style={{ width: "90%" }} />
+      <div className="h-4 bg-gray-200 rounded animate-pulse mb-3" style={{ width: "60%" }} />
+      <div className="flex-1" />
+      <div className="flex items-end justify-between mb-3">
+        <div className="h-10 w-16 bg-gray-200 rounded animate-pulse" />
+        <div className="h-6 w-20 bg-gray-100 rounded animate-pulse" />
+      </div>
+      <div className="flex items-center justify-between" style={{ borderTop: "1px dashed #E5E7EB", paddingTop: 10 }}>
+        <div className="h-4 w-14 bg-gray-200 rounded-full animate-pulse" />
+        <div className="h-4 w-14 bg-gray-200 rounded-full animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
 export default function WildCards() {
   const { data: liveCards } = useSWR("weather-wildcards", fetchWildCards, { refreshInterval: 21600000 });
-  const cards: WildCard[] = (liveCards as WildCard[])?.length ? (liveCards as WildCard[]) : WILDCARDS;
+  const cards = (liveCards as WildCard[])?.length ? (liveCards as WildCard[]) : null;
+
+  if (!cards) {
+    return (
+      <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <WildCardSkeleton key={i} />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div
