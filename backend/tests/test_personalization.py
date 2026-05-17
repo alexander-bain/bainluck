@@ -43,6 +43,7 @@ def _basic_ctx(
     pinned_futures_ids=None,
     roster_player_names=None,
     discover_category_affinities=None,
+    discover_feature_affinities=None,
 ) -> PersonalizationContext:
     """Authenticated context with optional overrides."""
     return PersonalizationContext(
@@ -53,6 +54,7 @@ def _basic_ctx(
         pinned_futures_ids=pinned_futures_ids or set(),
         roster_player_names=roster_player_names or set(),
         discover_category_affinities=discover_category_affinities or {},
+        discover_feature_affinities=discover_feature_affinities or {},
         is_authenticated=True,
     )
 
@@ -748,3 +750,25 @@ class TestDiscoverCategoryAffinity:
         ctx = _basic_ctx(discover_category_affinities={"football": 0.08})
         result = compute_event_multiplier(ctx, home_team_id=None, away_team_id=None, sport_key="americanfootball_nfl")
         assert result.multiplier == pytest.approx(1.08)
+
+    def test_futures_feature_interest_boost(self):
+        ctx = _basic_ctx(discover_feature_affinities={"archetype:culture_moment": 0.11})
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="entertainment",
+            outcome_team_ids=[],
+            feature_tokens=["archetype:culture_moment"],
+        )
+        assert result.multiplier == pytest.approx(1.11)
+        assert any("discover_feature_interest" in r for r in result.reasons)
+
+    def test_futures_feature_dislike_penalty(self):
+        ctx = _basic_ctx(discover_feature_affinities={"format:matchup": -0.08})
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="soccer",
+            outcome_team_ids=[],
+            feature_tokens=["format:matchup"],
+        )
+        assert result.multiplier == pytest.approx(0.92)
+        assert any("discover_feature_dislike" in r for r in result.reasons)

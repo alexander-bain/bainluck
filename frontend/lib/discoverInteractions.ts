@@ -132,7 +132,7 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
     if (action === "impression") bucket.impressions += 1;
     if (action === "detail_click") bucket.clicks += 1;
     if (action === "like") bucket.likes += 1;
-    if (action === "dismiss") bucket.dismisses += 1;
+    if (action === "dismiss" || action === "unlike") bucket.dismisses += 1;
     if (action === "share") bucket.shares += 1;
 
     profile.categories[key] = bucket;

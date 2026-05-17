@@ -47,6 +47,8 @@ MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
 ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
 CATEGORY_INTEREST_MAX_BONUS = 0.18  # Recent Discover opens/shares by category
 CATEGORY_DISMISS_MAX_PENALTY = -0.15  # Recent Discover dismisses by category
+FEATURE_INTEREST_MAX_BONUS = 0.12  # Recent Discover swipes by story/entity feature
+FEATURE_DISLIKE_MAX_PENALTY = -0.12  # Soft "less like this" by story/entity feature
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -81,6 +83,9 @@ class PersonalizationContext:
     roster_player_names: set[str] = field(default_factory=set)
     # category → bounded multiplier delta from recent Discover interactions
     discover_category_affinities: dict[str, float] = field(default_factory=dict)
+    # feature token → bounded multiplier delta from recent Discover interactions
+    # Examples: "archetype:culture_moment", "entity:noah_kahan".
+    discover_feature_affinities: dict[str, float] = field(default_factory=dict)
     # Exact Discover cards recently shown/dismissed. Used for feed hygiene, not
     # broad ranking: avoid showing the same stale card repeatedly.
     recent_seen_event_ids: set[int] = field(default_factory=set)
@@ -107,6 +112,7 @@ def compute_event_multiplier(
     event_id: Optional[int] = None,
     home_score: Optional[int] = None,
     away_score: Optional[int] = None,
+    feature_tokens: Optional[list[str]] = None,
 ) -> PersonalizationResult:
     """Compute personalization multiplier for a game event.
 
@@ -122,7 +128,11 @@ def compute_event_multiplier(
     Returns:
         PersonalizationResult with multiplier and explanation reasons
     """
-    if not ctx.is_authenticated:
+    if (
+        not ctx.is_authenticated
+        and not ctx.discover_category_affinities
+        and not ctx.discover_feature_affinities
+    ):
         return PersonalizationResult()
 
     bonus = 0.0
@@ -189,6 +199,11 @@ def compute_event_multiplier(
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
 
+    feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
+    if feature_bonus:
+        bonus += feature_bonus
+        reasons.append(feature_reason)
+
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
     # the user has no team or sport affinity match, suppress it.
@@ -220,6 +235,7 @@ def compute_futures_multiplier(
     futures_market_id: Optional[int] = None,
     sport_key: Optional[str] = None,
     outcome_names: Optional[list[str]] = None,
+    feature_tokens: Optional[list[str]] = None,
 ) -> PersonalizationResult:
     """Compute personalization multiplier for a futures market.
 
@@ -240,7 +256,11 @@ def compute_futures_multiplier(
     Returns:
         PersonalizationResult with multiplier and explanation reasons
     """
-    if not ctx.is_authenticated:
+    if (
+        not ctx.is_authenticated
+        and not ctx.discover_category_affinities
+        and not ctx.discover_feature_affinities
+    ):
         return PersonalizationResult()
 
     bonus = 0.0
@@ -311,6 +331,11 @@ def compute_futures_multiplier(
     if category_bonus:
         bonus += category_bonus
         reasons.append(_category_affinity_reason(category_bonus))
+
+    feature_bonus, feature_reason = _feature_affinity_bonus(ctx, feature_tokens)
+    if feature_bonus:
+        bonus += feature_bonus
+        reasons.append(feature_reason)
 
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:
@@ -408,6 +433,32 @@ def _category_affinity_reason(value: float) -> str:
     if value > 0:
         return f"discover_interest:{value:.2f}"
     return f"discover_dismiss:{value:.2f}"
+
+
+def _feature_affinity_bonus(
+    ctx: PersonalizationContext,
+    feature_tokens: Optional[list[str]],
+) -> tuple[float, str]:
+    """Return a small bounded adjustment from recent swipe-derived features."""
+    if not feature_tokens or not ctx.discover_feature_affinities:
+        return 0.0, ""
+
+    matches = [
+        (token, ctx.discover_feature_affinities.get(token, 0.0))
+        for token in feature_tokens
+    ]
+    matches = [(token, value) for token, value in matches if abs(value) >= 0.01]
+    if not matches:
+        return 0.0, ""
+
+    total = max(
+        FEATURE_DISLIKE_MAX_PENALTY,
+        min(FEATURE_INTEREST_MAX_BONUS, sum(value for _, value in matches)),
+    )
+    strongest_token, _ = max(matches, key=lambda pair: abs(pair[1]))
+    if total > 0:
+        return total, f"discover_feature_interest:{strongest_token}:{total:.2f}"
+    return total, f"discover_feature_dislike:{strongest_token}:{total:.2f}"
 
 
 def _lookup_sport_affinity(

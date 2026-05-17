@@ -60,7 +60,11 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   }, [trackAction]);
 
   const handleLike = useCallback(() => setLikedWithTracking(true), [setLikedWithTracking]);
-  const swipe = useSwipe(onDismiss, handleLike);
+  const handleLessLike = useCallback(() => {
+    trackAction("unlike");
+    onDismiss?.();
+  }, [onDismiss, trackAction]);
+  const swipe = useSwipe(handleLessLike, handleLike);
 
   const cardStyle = {
     transform: `translateX(${swipe.offset}px) rotate(${swipe.offset * 0.02}deg)`,
@@ -71,20 +75,20 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
     <div className="relative" {...swipe.handlers}>
       {/* Swipe hint overlays */}
       {swipe.swipeAction === "like" && (
-        <div className="absolute inset-0 z-20 flex items-center justify-start pl-6 pointer-events-none">
-          <span className="text-4xl">❤️</span>
+        <div className="absolute inset-0 z-20 flex items-center justify-start pl-5 pointer-events-none">
+          <span className="rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm">More like this</span>
         </div>
       )}
       {swipe.swipeAction === "dismiss" && (
-        <div className="absolute inset-0 z-20 flex items-center justify-end pr-6 pointer-events-none">
-          <span className="text-4xl">✕</span>
+        <div className="absolute inset-0 z-20 flex items-center justify-end pr-5 pointer-events-none">
+          <span className="rounded-full bg-rose-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm">Less like this</span>
         </div>
       )}
 
       <div style={cardStyle}>
-        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
-        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
-        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={onDismiss} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
+        {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
+        {item.type === "futures" && <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
+        {item.type === "tournament" && <TournamentCard data={item.data as FeedTournamentData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
       </div>
     </div>
   );

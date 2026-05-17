@@ -15,7 +15,8 @@ private enum DiscoverGroupedItem: Identifiable {
 
 private enum NativeDiscoverAction {
     case detailOpen
-    case dismiss
+    case like
+    case unlike
     case share
     case contextExpand
     case contextCollapse
@@ -35,7 +36,8 @@ private struct NativeDiscoverProfile {
         let weight: Double
         switch action {
         case .detailOpen: weight = 1.5
-        case .dismiss: weight = -2.0
+        case .like: weight = 2.0
+        case .unlike: weight = -1.0
         case .share: weight = 3.0
         case .contextExpand: weight = 0.35
         case .contextCollapse: weight = 0.0
@@ -269,7 +271,8 @@ struct DiscoverView: View {
         let actionName: String
         switch action {
         case .detailOpen: actionName = "open"
-        case .dismiss: actionName = "dismiss"
+        case .like: actionName = "like"
+        case .unlike: actionName = "unlike"
         case .share: actionName = "share"
         case .contextExpand: actionName = "context_expand"
         case .contextCollapse: actionName = "context_collapse"
@@ -501,9 +504,9 @@ struct DiscoverView: View {
                             .font(.title3)
                             .foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Swipe cards to dismiss")
+                            Text("Swipe to tune Discover")
                                 .font(.caption.weight(.semibold))
-                            Text("Tap any card to explore the full market")
+                            Text("Right = more like this. Left = less like this.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -540,25 +543,40 @@ struct DiscoverView: View {
                                     if isGuessSlot, item.type == "futures", let f = item.futures,
                                        f.status != "closed", f.status != "resolved",
                                        (f.topOutcomes?.first?.probability ?? 0) < 0.95 {
-                                        SwipeToDismiss {
-                                            recordInteraction(for: item, action: .dismiss)
-                                            dismiss(itemId(item))
-                                        } content: {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                            }
+                                        ) {
                                             NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                                         }
                                     } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
                                               e.status != "completed", e.status != "closed" {
-                                        SwipeToDismiss {
-                                            recordInteraction(for: item, action: .dismiss)
-                                            dismiss(itemId(item))
-                                        } content: {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                            }
+                                        ) {
                                             NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                                         }
                                     } else if item.type == "event", let e = item.event {
-                                        SwipeToDismiss {
-                                            recordInteraction(for: item, action: .dismiss)
-                                            dismiss(itemId(item))
-                                        } content: {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                            }
+                                        ) {
                                             NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             }, onContextExpand: {
@@ -569,10 +587,15 @@ struct DiscoverView: View {
                                         }
                                         .contextMenu { discoverCardMenu(item) }
                                     } else if item.type == "futures", let f = item.futures {
-                                        SwipeToDismiss {
-                                            recordInteraction(for: item, action: .dismiss)
-                                            dismiss(itemId(item))
-                                        } content: {
+                                        SwipeToDismiss(
+                                            onSwipeLeft: {
+                                                recordInteraction(for: item, action: .unlike, source: "swipe")
+                                                hideForSession(itemId(item))
+                                            },
+                                            onSwipeRight: {
+                                                recordInteraction(for: item, action: .like, source: "swipe")
+                                            }
+                                        ) {
                                             NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                             }, onContextExpand: {
@@ -697,9 +720,8 @@ struct DiscoverView: View {
         }
     }
 
-    private func dismiss(_ id: String) {
+    private func hideForSession(_ id: String) {
         dismissed.insert(id)
-        Self.saveDismissed(dismissed)
         if showSwipeHint {
             withAnimation { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
@@ -809,11 +831,11 @@ struct DiscoverView: View {
             }
         }
         Divider()
-        Button(role: .destructive) {
-            recordInteraction(for: item, action: .dismiss, source: "context_menu")
-            dismiss(itemId(item))
+        Button {
+            recordInteraction(for: item, action: .unlike, source: "context_menu")
+            hideForSession(itemId(item))
         } label: {
-            Label("Dismiss", systemImage: "xmark")
+            Label("Less Like This", systemImage: "hand.thumbsdown")
         }
     }
 
@@ -2139,7 +2161,8 @@ private struct NativeEventGuessCard: View {
 // MARK: - Swipe to Dismiss
 
 private struct SwipeToDismiss<Content: View>: View {
-    let onDismiss: () -> Void
+    let onSwipeLeft: () -> Void
+    let onSwipeRight: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var offset: CGFloat = 0
     @State private var removing = false
@@ -2156,11 +2179,11 @@ private struct SwipeToDismiss<Content: View>: View {
             .overlay(alignment: offset > 0 ? .leading : .trailing) {
                 if isHorizontalDrag && abs(offset) > 20 {
                     ZStack {
-                        Circle()
+                        Capsule()
                             .fill(offset > 0 ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
-                            .frame(width: 64, height: 64)
-                        Image(systemName: offset > 0 ? "checkmark" : "xmark")
-                            .font(.title.weight(.bold))
+                            .frame(width: offset > 0 ? 122 : 116, height: 44)
+                        Text(offset > 0 ? "More like this" : "Less like this")
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(offset > 0 ? .green : .red)
                     }
                     .opacity(overlayOpacity)
@@ -2179,12 +2202,17 @@ private struct SwipeToDismiss<Content: View>: View {
                     }
                     .onEnded { v in
                         if isHorizontalDrag && abs(v.translation.width) > 120 {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                offset = v.translation.width > 0 ? 400 : -400
-                                removing = true
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                onDismiss()
+                            if v.translation.width > 0 {
+                                onSwipeRight()
+                                withAnimation(.spring(response: 0.3)) { offset = 0 }
+                            } else {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    offset = -400
+                                    removing = true
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    onSwipeLeft()
+                                }
                             }
                         } else {
                             withAnimation(.spring(response: 0.3)) { offset = 0 }

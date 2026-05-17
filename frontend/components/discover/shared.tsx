@@ -93,7 +93,12 @@ export function ExpandableContextText({ text, expandedText, className, onExpand,
 export function DismissBtn({ onDismiss }: { onDismiss?: () => void }) {
   if (!onDismiss) return null;
   return (
-    <button onClick={onDismiss} className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors">
+    <button
+      onClick={onDismiss}
+      title="Less like this"
+      aria-label="Less like this"
+      className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors"
+    >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
     </button>
   );

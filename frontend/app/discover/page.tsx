@@ -33,12 +33,6 @@ function getDismissed(): Set<string> {
   }
 }
 
-function addDismissed(id: string) {
-  const set = getDismissed();
-  set.add(id);
-  localStorage.setItem(DISMISSED_KEY, JSON.stringify([...set]));
-}
-
 function getItemId(item: FeedItem): string {
   if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
   if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
@@ -468,7 +462,8 @@ export default function DiscoverPage() {
   );
 
   const handleDismiss = useCallback((itemId: string) => {
-    addDismissed(itemId);
+    // Hide from the current browsing session only. The server receives
+    // "unlike" from the card component, which is a soft downrank signal.
     setDismissed((prev) => new Set([...prev, itemId]));
   }, []);
 
@@ -749,19 +744,8 @@ export default function DiscoverPage() {
               ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
               : undefined;
 
-            const handleTrackedDismiss = gi.type === "single"
+            const handleLessLike = gi.type === "single"
               ? () => {
-                  if (analytics) {
-                    trackEvent("feed_card_action", {
-                      action: "dismiss",
-                      ...analytics,
-                      position: idx,
-                      surface: "discover",
-                    });
-                    recordDiscoverInteraction(analytics.category, "dismiss");
-                    sendDiscoverInteraction(analytics, "dismiss", idx, "swipe");
-                    setInteractionProfile(readDiscoverInteractionProfile());
-                  }
                   handleDismiss(getItemId(gi.item!));
                 }
               : undefined;
@@ -775,7 +759,7 @@ export default function DiscoverPage() {
                     <DiscoverCard
                       groupedItem={gi}
                       positionIndex={idx}
-                      onDismiss={handleTrackedDismiss}
+                      onDismiss={handleLessLike}
                     />
                   )}
                 </FeedItemShell>
@@ -835,6 +819,17 @@ function OnboardingFlow({ onComplete }: { onComplete: (selectedCategories: strin
           <div className="text-3xl mb-2">🎯</div>
           <h2 className="text-xl font-black">Build Your Feed</h2>
           <p className="text-sm text-text-secondary mt-1">Pick topics you&apos;re interested in. You can change these anytime.</p>
+        </div>
+
+        <div className="mb-5 grid gap-2 rounded-2xl border border-surface-border bg-surface-elevated p-3 text-sm">
+          <div className="flex items-center gap-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">→</span>
+            <span className="text-text-secondary"><strong className="text-text-primary">Swipe right</strong> for more like this</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-rose-500 text-white">←</span>
+            <span className="text-text-secondary"><strong className="text-text-primary">Swipe left</strong> for less like this</span>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-2 mb-6">

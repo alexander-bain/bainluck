@@ -148,7 +148,7 @@ struct WelcomeView: View {
                 .font(.largeTitle.weight(.black))
                 .multilineTextAlignment(.center)
 
-            Text("Each card is a live prediction. Swipe to browse, tap to explore the full market.")
+            Text("Each card is a live prediction. Swipe to tune your feed, tap to explore the full market.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -160,7 +160,7 @@ struct WelcomeView: View {
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.red)
                         .frame(width: 40)
-                    Text("Swipe left to dismiss")
+                    Text("Swipe left for less like this")
                         .font(.subheadline)
                     Spacer()
                 }
@@ -170,7 +170,7 @@ struct WelcomeView: View {
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.green)
                         .frame(width: 40)
-                    Text("Swipe right to keep")
+                    Text("Swipe right for more like this")
                         .font(.subheadline)
                     Spacer()
                 }

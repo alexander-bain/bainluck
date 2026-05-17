@@ -48,6 +48,7 @@ from app.utils.feed_market_quality import (
     classify_market_quality,
     diversify_discover_first_page,
     diversify_quality_families,
+    editorial_archetype,
 )
 from app.utils.feed_reasons import (
     generate_event_reason,
@@ -1608,6 +1609,37 @@ async def _load_personalization_context(
         )
         .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
     )
+    feature_interactions_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_name,
+            DiscoverInteraction.category,
+            DiscoverInteraction.action,
+            func.count(DiscoverInteraction.id).label("count"),
+        )
+        .where(
+            interaction_identity_clause,
+            DiscoverInteraction.created_at >= interaction_cutoff,
+            DiscoverInteraction.item_name.isnot(None),
+            DiscoverInteraction.category.isnot(None),
+            DiscoverInteraction.action.in_((
+                "detail_click",
+                "open",
+                "share",
+                "like",
+                "unlike",
+                "dismiss",
+                "group_expand",
+                "context_expand",
+            )),
+        )
+        .group_by(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_name,
+            DiscoverInteraction.category,
+            DiscoverInteraction.action,
+        )
+    )
     recent_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -1646,6 +1678,7 @@ async def _load_personalization_context(
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
     category_affinities = _build_discover_category_affinities(interactions_result.all())
+    feature_affinities = _build_discover_feature_affinities(feature_interactions_result.all())
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
     recent_dismissed_event_ids: set[int] = set()
@@ -1701,6 +1734,7 @@ async def _load_personalization_context(
         pinned_futures_ids=pinned_futures_ids,
         roster_player_names=roster_player_names,
         discover_category_affinities=category_affinities,
+        discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
@@ -1723,6 +1757,7 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         "challenge_complete": 1.0,
         "context_expand": 0.35,
         "context_collapse": 0.0,
+        "unlike": -1.0,
         "dismiss": -2.0,
     }
     for category, action, count in rows:
@@ -1738,6 +1773,90 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         if action_counts.get(category, 0) < 2:
             continue
         affinities[category] = max(-0.15, min(0.18, score / 20.0))
+    return affinities
+
+
+def _discover_feature_tokens(
+    *,
+    item_name: str | None,
+    category: str | None,
+    item_type: str | None = None,
+) -> set[str]:
+    """Derive cheap story/entity tokens used for fast swipe personalization."""
+    name = item_name or ""
+    normalized_category = (category or "other").strip().lower() or "other"
+    tokens = {f"category:{normalized_category}"}
+    if item_type:
+        tokens.add(f"type:{str(item_type).lower()}")
+
+    archetype = editorial_archetype(name, normalized_category)
+    tokens.add(f"archetype:{archetype}")
+
+    lower = name.lower()
+    if " vs " in lower or " v. " in lower:
+        tokens.add("format:matchup")
+    if any(term in lower for term in ("spotify", "billboard", "album", "song", "box office", "oscar", "grammy")):
+        tokens.add("topic:entertainment_charts")
+    if any(term in lower for term in ("fed", "rate cut", "inflation", "cpi", "recession", "jobs report")):
+        tokens.add("topic:macro")
+    if any(term in lower for term in ("openai", "anthropic", "gpt", "ai", "nvidia", "spacex", "tesla")):
+        tokens.add("topic:ai_tech")
+    if any(term in lower for term in ("president", "election", "senate", "house", "primary")):
+        tokens.add("topic:elections")
+
+    # Entity-ish tokens: proper-name bigrams catch artists, teams, politicians,
+    # companies, and places without a separate entity extraction service.
+    proper_tokens = re.findall(r"\b[A-Z][A-Za-z'&.-]{2,}\b", name)
+    stop = {
+        "Will", "What", "When", "Which", "Market", "Yes", "No", "The", "This",
+        "Next", "Week", "Month", "Year", "Today", "Tomorrow", "Over", "Under",
+    }
+    filtered = [t for t in proper_tokens if t not in stop]
+    for first, second in zip(filtered, filtered[1:]):
+        entity = re.sub(r"[^a-z0-9]+", "_", f"{first}_{second}".lower()).strip("_")
+        if entity and len(entity) <= 60:
+            tokens.add(f"entity:{entity}")
+    for token in filtered[:4]:
+        entity = re.sub(r"[^a-z0-9]+", "_", token.lower()).strip("_")
+        if entity and len(entity) >= 3:
+            tokens.add(f"entity:{entity}")
+
+    return tokens
+
+
+def _build_discover_feature_affinities(rows) -> dict[str, float]:
+    """Convert recent item interactions into bounded story/entity deltas."""
+    weights = {
+        "detail_click": 1.0,
+        "open": 1.0,
+        "share": 2.5,
+        "like": 2.0,
+        "group_expand": 0.6,
+        "context_expand": 0.3,
+        "unlike": -1.0,
+        # Older clients may still send dismiss; treat it as a stronger soft
+        # downrank for related features, while exact suppression is separate.
+        "dismiss": -1.5,
+    }
+    raw_scores: dict[str, float] = {}
+    for item_type, item_name, category, action, count in rows:
+        if action not in weights:
+            continue
+        tokens = _discover_feature_tokens(
+            item_name=item_name,
+            category=category,
+            item_type=item_type,
+        )
+        weighted = weights[action] * int(count or 0)
+        for token in tokens:
+            raw_scores[token] = raw_scores.get(token, 0.0) + weighted
+
+    affinities: dict[str, float] = {}
+    for token, score in raw_scores.items():
+        value = score / 18.0
+        if abs(value) < 0.03:
+            continue
+        affinities[token] = max(-0.12, min(0.12, value))
     return affinities
 
 
@@ -1780,6 +1899,9 @@ def _build_personalization_trace(
         "is_personalized": bool(p_result.is_personalized),
         "reasons": list(p_result.reasons),
         "category_affinity_delta": round(float(category_delta), 3),
+        "feature_affinity_reasons": [
+            r for r in p_result.reasons if r.startswith("discover_feature_")
+        ],
         "bounded": 0.3 <= multiplier <= 3.0,
     }
 
@@ -2057,6 +2179,11 @@ async def _score_events(
             event_id=event.id,
             home_score=event.home_score,
             away_score=event.away_score,
+            feature_tokens=list(_discover_feature_tokens(
+                item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                category=_personalization_category_from_sport_key(sport_key),
+                item_type="event",
+            )),
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
@@ -2741,6 +2868,11 @@ async def _score_futures(
             futures_market_id=market.id,
             sport_key=market.sport.key if market.sport else None,
             outcome_names=outcome_names,
+            feature_tokens=list(_discover_feature_tokens(
+                item_name=market.name,
+                category=market.llm_sport_category,
+                item_type="futures",
+            )),
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
