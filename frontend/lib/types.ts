@@ -995,6 +995,8 @@ export interface TeamFutureItem {
   total_outcomes: number | null;
   resolution_date: string | null;
   canonical_market_key?: string | null;
+  /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
+  season_year?: string | null;
   matched_team: {
     id: number;
     name: string;

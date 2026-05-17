@@ -92,6 +92,8 @@ interface ProgressionLadderProps {
   teamColors?: { primary: string; secondary: string };
   onStageClick?: (stage: Stage) => void;
   horizontal?: boolean;
+  /** Season/year label for display, e.g. "2025-26" (BR52). */
+  seasonYear?: string;
 }
 
 function probColor(p: number): string {
@@ -108,6 +110,7 @@ export default function ProgressionLadder({
   teamColors,
   onStageClick,
   horizontal = false,
+  seasonYear,
 }: ProgressionLadderProps) {
   const sorted = [...stages].sort((a, b) => a.stage_order - b.stage_order);
   const display = sorted.slice(0, 5);
@@ -165,7 +168,7 @@ export default function ProgressionLadder({
           size={28}
         />
         <span className="text-sm font-medium text-text-primary truncate flex-1">{entityName}</span>
-        <span className="text-[10px] text-text-muted">PLAYOFFS</span>
+        <span className="text-[10px] text-text-muted">{seasonYear ? `${seasonYear} PLAYOFFS` : "PLAYOFFS"}</span>
       </div>
 
       {/* Stages as simple rows */}

@@ -784,7 +784,12 @@ function TeamFuturesSection({
       {/* Playoff Journey cards — using ProgressionLadder from demo */}
       {journeys.length > 0 && (
         <div className="grid gap-3 mb-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
-          {journeys.map((journey) => (
+          {journeys.map((journey) => {
+            // BR52: Extract season year from any stage's primary item
+            const seasonYear = journey.stages
+              .map((s) => s.merged.primary.season_year)
+              .find((y) => y != null) ?? undefined;
+            return (
             <ProgressionLadder
               key={journey.teamId}
               entityName={journey.teamName}
@@ -806,8 +811,10 @@ function TeamFuturesSection({
                   : undefined
               }
               onStageClick={(stage) => router.push(`/futures/${stage.id}`)}
+              seasonYear={seasonYear}
             />
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -942,6 +949,7 @@ function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
         <div className="flex items-center gap-1.5 mt-0.5">
           <p className="text-[11px] text-text-muted truncate">
             {marketName}
+            {primary.season_year && <span className="text-text-muted/70"> &middot; {primary.season_year}</span>}
             {rankStr && <span className="text-text-muted/70"> &middot; {rankStr}</span>}
           </p>
           {/* Source dots */}

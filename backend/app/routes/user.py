@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
-    User, UserPin, UserFavorite, UserPreference, Team,
+    User, UserPin, UserFavorite, UserPreference, Team, Sport,
     FuturesMarket, FuturesOutcome,
 )
 from app.services.database import get_db
@@ -991,6 +991,33 @@ async def update_sport_affinities(
 # Team Futures — aggregated futures for followed teams
 # =============================================================================
 
+import re as _re
+
+_SEASON_YEAR_RE = _re.compile(r"(20\d{2}(?:\s*[-/]\s*\d{2,4})?)")
+
+
+def _extract_season_year(
+    canonical_market_key: str | None,
+    market_name: str | None,
+) -> str | None:
+    """Extract a season/year string for display (BR52).
+
+    Tries canonical_market_key first (format: sport:league:category:season),
+    then falls back to regex on market_name.
+
+    Returns e.g. "2025-26", "2026", or None.
+    """
+    if canonical_market_key:
+        parts = canonical_market_key.split(":")
+        if len(parts) >= 4 and parts[3]:
+            return parts[3]
+    if market_name:
+        m = _SEASON_YEAR_RE.search(market_name)
+        if m:
+            return m.group(1).replace(" ", "")
+    return None
+
+
 def _escape_like(s: str) -> str:
     """Escape special LIKE/ILIKE characters for safe pattern matching."""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -1069,11 +1096,26 @@ async def _query_team_futures(
     if not team_ids:
         return {"items": [], "teams": [], "total_count": 0}
 
-    # Load Team records for the provided IDs
+    # Load Team records with their sport for sport-scoped matching (BR53).
     result = await db.execute(
-        select(Team).where(Team.id.in_(team_ids))
+        select(Team, Sport.key.label("sport_key"))
+        .join(Sport, Team.sport_id == Sport.id)
+        .where(Team.id.in_(team_ids))
     )
-    teams = {t.id: t for t in result.scalars().all()}
+    teams: dict[int, Team] = {}
+    # team_id → sport category (e.g., "hockey", "baseball")
+    team_sport_categories: dict[int, str] = {}
+    for t, sport_key in result.all():
+        teams[t.id] = t
+        root = sport_key.split("_")[0].lower() if sport_key else ""
+        if root == "americanfootball":
+            cat = "football"
+        elif root == "icehockey":
+            cat = "hockey"
+        else:
+            cat = root
+        if cat:
+            team_sport_categories[t.id] = cat
 
     if not teams:
         return {"items": [], "teams": [], "total_count": 0}
@@ -1132,8 +1174,9 @@ async def _query_team_futures(
         team_conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
 
     query1 = (
-        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total)
+        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"))
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
         .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
         .where(and_(*market_base_filters, or_(*team_conditions)))
         .order_by(
@@ -1158,8 +1201,9 @@ async def _query_team_futures(
         award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
 
         query2 = (
-            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total)
+            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total, Sport.key.label("market_sport_key"))
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
             .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
             .where(and_(*market_base_filters, or_(*award_filters)))
             .order_by(FuturesOutcome.current_probability.desc().nulls_last())
@@ -1170,8 +1214,27 @@ async def _query_team_futures(
 
     # For each outcome, figure out which followed team matched.
     # Uses strict suffix-word matching + roster player matching.
-    def _find_matched_team(outcome: FuturesOutcome) -> dict | None:
-        # Direct team_id match (always correct)
+    # BR53: name/player matches require the market's sport category to match
+    # the team's sport category to prevent cross-sport false positives
+    # (e.g., "Aliya Boston" WNBA player under Boston Bruins branding,
+    # or "Believers: Boston Red Sox" Sports Emmy matching baseball teams).
+    def _find_matched_team(
+        outcome: FuturesOutcome,
+        market: FuturesMarket,
+        market_sport_key: str | None = None,
+    ) -> dict | None:
+        # Derive market sport category for cross-sport filtering (BR53).
+        market_sport_cat: str | None = market.llm_sport_category
+        if not market_sport_cat and market_sport_key:
+            root = market_sport_key.split("_")[0].lower()
+            if root == "americanfootball":
+                market_sport_cat = "football"
+            elif root == "icehockey":
+                market_sport_cat = "hockey"
+            else:
+                market_sport_cat = root
+
+        # Direct team_id match (always correct — team_id is sport-scoped)
         if outcome.team_id and outcome.team_id in teams:
             t = teams[outcome.team_id]
             return {
@@ -1185,6 +1248,11 @@ async def _query_team_futures(
         outcome_name = outcome.name or ""
         for t in teams.values():
             if _strict_team_name_matches(t.name, outcome_name):
+                # BR53: verify sport compatibility for name matches
+                if market_sport_cat:
+                    team_cat = team_sport_categories.get(t.id)
+                    if team_cat and team_cat != market_sport_cat:
+                        continue  # sport mismatch — try next team
                 return {
                     "id": t.id,
                     "name": t.name,
@@ -1197,6 +1265,11 @@ async def _query_team_futures(
             if player_lower in outcome_lower:
                 t = teams.get(tid)
                 if t:
+                    # BR53: verify sport compatibility for player matches
+                    if market_sport_cat:
+                        team_cat = team_sport_categories.get(t.id)
+                        if team_cat and team_cat != market_sport_cat:
+                            continue  # sport mismatch — try next player
                     return {
                         "id": t.id,
                         "name": t.name,
@@ -1208,12 +1281,12 @@ async def _query_team_futures(
     # Process both result sets: team matches (query 1) + award matches (query 2)
     items = []
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
-    for outcome, market, outcome_total in list(rows1) + list(rows2):
+    for outcome, market, outcome_total, mkt_sport_key in list(rows1) + list(rows2):
         # Skip if we already have an outcome from this market
         if market.id in seen_market_ids:
             continue
 
-        matched = _find_matched_team(outcome)
+        matched = _find_matched_team(outcome, market, market_sport_key=mkt_sport_key)
         if not matched:
             continue  # Skip if we can't determine which team matched
 
@@ -1221,6 +1294,9 @@ async def _query_team_futures(
 
         prob = float(outcome.current_probability) if outcome.current_probability is not None else None
         change = float(outcome.probability_change_24h) if outcome.probability_change_24h is not None else None
+
+        # BR52: Extract season/year for card subtitle display.
+        season_year = _extract_season_year(market.canonical_market_key, market.name)
 
         items.append({
             "outcome_id": outcome.id,
@@ -1237,6 +1313,7 @@ async def _query_team_futures(
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "matched_team": matched,
             "canonical_market_key": market.canonical_market_key,
+            "season_year": season_year,
         })
 
         if len(items) >= limit:
