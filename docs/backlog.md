@@ -8,7 +8,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + `GET /api/admin/prediction-markets/tier1-compliance`
 
-**Current state (May 14, 2026):** Overall Kalshi open link rate: **82.3%** (denominator now excludes unsupported leagues). Sawtooth oscillation fixed: 32 markets unlinked, 16,477 bad snapshots deleted. Date-only ticker window widened (-6h/+30h) to fix 49 tier-1 gaps from UTC/US timezone mismatch. Soccer/WNBA abbreviations added. Unsupported leagues excluded from link rate. StatPal playoff parser bug fixed. Event merge task fixed.
+**Current state (May 17, 2026):** Overall Kalshi open link rate: **82.3%** (denominator now excludes unsupported leagues). Sawtooth oscillation fixed: 32 markets unlinked, 16,477 bad snapshots deleted. Date-only ticker window widened (-6h/+30h) to fix 49 tier-1 gaps from UTC/US timezone mismatch. Soccer/WNBA abbreviations added. Unsupported leagues excluded from link rate. StatPal playoff parser bug fixed. Event merge task fixed.
 
 **Target: 100%** Tier 1 compliance — every MLB/NBA/NHL/NFL/PGA event with all sources linked.
 
@@ -213,7 +213,7 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
 **Problem:** The worst Discover feed quality failures are now fixed, but the product should keep improving toward a world-class personalized prediction feed across web and native.
 
-**Current production state (May 14):**
+**Current production state (May 17):**
 - ✅ Audit quality is clean: `boring-rate@20=0/20`, `ladder/bucket-rate@20=0/20`, `duplicate-family-rate@20=0/20`, `explanation-coverage@20=20/20`, `positive-archetypes@20=6/6`, `strict-variety@20=5/5`.
 - ✅ Deterministic explanations are first-class and do not depend on LLM hooks for first-page comprehension.
 - ✅ Hook enrichment is bounded to feed-shaped candidates only. Do **not** run hooks for the full open-market backlog.
@@ -238,6 +238,8 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Deterministic futures copy polish shipped: movement is described in probability points, source-disagreement and monthly-resolution snippets name the leader when available, and stale past-resolution cards suppress generated copy.
 - ✅ Dedicated `/daily` page shipped: five curated Higher/Lower calls, progress, streak/local completion tracking, countdown, replay, prediction submission, and shareable text summary.
 - ✅ Friend challenge landing page shipped at `/challenge/[id]`: loads existing challenge codes, handles Higher/Lower acceptance, participants/results states, and share/copy affordances.
+- ✅ Shareable prediction scorecards shipped (May 17): OG image generation via Next.js `ImageResponse`, share button on `/discover/stats`, scorecard page at `/discover/scorecard`.
+- ✅ Onboarding category selections now persist to server via `useCategoryInterests` hook (May 17). Previously selections were lost on completion.
 
 **Next phases:**
 1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
@@ -412,7 +414,7 @@ Investigated May 15. APIs return correctly (200, valid data). Frontend has prope
 
 ### ~~MS15-8. Deploy Crash — Rapid Pushes Kill Heroku Dyno~~ — FIXED May 15
 
-CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. CI-gated deploy is working.
+CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. Step-level secrets check replaced with shell-level (May 16). CI-gated deploy is working.
 
 ---
 
@@ -472,11 +474,11 @@ Added tier filter to `my_teams_only` feed: only Tier 1/2 sports (11 sport keys: 
 
 Added "soft-settled binary" filter: sports binary markets with leader ≥60% and <2pp 24h movement are suppressed. Protects underdog rises (leader opened <50%) and non-sports markets (politics/economics excluded). 5 unit tests. Catches the entire BR31/BR44/BR46 class of stale elimination markets.
 
-### BR45. Sign-In Server Error 500 (P2)
+### ~~BR45. Sign-In Server Error 500~~ — FIXED May 16
 
 **Problem:** Anonymous user on iPhone 15,4 (iOS 26.0.0) sees "Server error (500). Please try again." on My Stuff sign-in page. Different from BR40 (which was 401 audience mismatch, now fixed). This is a 500 — backend crash during auth endpoint.
 
-**Root cause (investigate):** Could be the same iOS 26 user from BR40 retrying after we deployed the audience fix. The fix accepts both audiences now, so if the 500 is from the Apple auth path, something else is crashing (user creation, Firebase, PyJWT). Check Sentry for 500s on auth endpoints around May 16 9:21 AM ET.
+**Root cause:** `User.created_at` was None after flush — the column lacked a server default. Fixed in commit `4cc1239`.
 
 **Files:** `backend/app/routes/auth.py`, `backend/app/services/firebase_auth.py`
 **Parallel Safety:** Green
@@ -593,9 +595,9 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 **Phases:**
 
-### Phase 1: Backend data foundations (DO NOW)
-- Add `resolution_summary` text field to `BugReport` model — when we mark a bug fixed, store a short description of what was done (e.g., "Lowered staleness threshold from 97% to 95% so resolved markets no longer appear in Discover")
-- Add `backlog_ref` field — ties the bug report to a backlog item ID (e.g., "BR27") so we can batch-resolve related reports
+### Phase 1: Backend data foundations — ✅ DONE (May 16)
+- ~~Add `resolution_summary` text field to `BugReport` model~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
+- ~~Add `backlog_ref` field~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
 - Look up and store the filer's email at submission time (join `users` table via `user_id`) — store as `user_email` on the report so it's available without a join later
 - Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`
 
@@ -711,10 +713,10 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 ## Tier 1 — High Leverage, Do Next
 
-### Bug Report Admin Improvements — PARTIALLY DONE (May 13)
+### Bug Report Admin Improvements — MOSTLY DONE (May 16)
 
 1. ~~**Burndown chart**~~ — ✅ SHIPPED (May 13). SVG burndown chart + summary stats (open/closed/avg resolution time) on admin bug reports page.
-2. **Category tagging** — tag bugs by category (UI, data quality, performance, feature request, etc.) so we can spot patterns. Add a `category` field to `BugReport` model + admin UI dropdown.
+2. ~~**Category tagging**~~ — ✅ SHIPPED May 16. Added `category` field to `BugReport` model + admin dropdown. Also shipped lifecycle fields (`resolution_summary`, `backlog_ref`). Migration: `add_bugreport_cat`.
 3. ~~**Resolution time tracking**~~ — ✅ SHIPPED (May 13). Included in burndown summary stats.
 4. **Auto-categorization** — use GPT-4o-mini to auto-suggest a category from the bug description when a report is filed.
 
@@ -1106,7 +1108,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
-| iOS-4 | Dead/stale views cleanup | TournamentChartView/CardView — audit for staleness | `ios/.../Views/` | Green |
+| ~~iOS-4~~ | ~~Dead/stale views cleanup~~ | ✅ Audited May 16 — all 89 Swift files are live and referenced. No dead code found. | `ios/.../Views/` | Green |
 | iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
 | ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
 
@@ -1172,7 +1174,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
 | ~~DN-9~~ | ~~Swipe to dismiss (iOS)~~ | ✅ SHIPPED May 8 — horizontal-only `SwipeToDismiss` no longer blocks vertical scroll; records local/server dismiss signals. | `ios/.../DiscoverView.swift` | |
-| DN-10 | Onboarding flow | "Build Your Feed" modal with category selection on first launch. Web has modal; native has first-launch onboarding. Remaining: make category selection affect server profile directly. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
+| ~~DN-10~~ | ~~Onboarding categories → server~~ | ✅ SHIPPED May 17 — category selections now wired to `useCategoryInterests` hook, persisted server-side on completion. Previously selections were lost on onboarding finish. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
 | ~~DN-11~~ | ~~Grouped market cards~~ | ✅ SHIPPED — markets with name prefix collapse into expandable cards on web/native. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | |
 | ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
 | D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
@@ -1219,7 +1221,7 @@ Discover feed already has LLM blurbs (`hook_description`), Pexels images (`image
 
 ### 23. Prediction Market Game / Social Picks
 
-Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `/daily` page and basic friend challenge landing page shipped May 14. Remaining: generated image scorecards, richer head-to-head challenge creation/discovery, ambient screensaver, and portfolio mode.
+Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `/daily` page and basic friend challenge landing page shipped May 14. Shareable prediction scorecards shipped May 17 (OG image generation, `/discover/scorecard`). Remaining: richer head-to-head challenge creation/discovery, ambient screensaver, and portfolio mode.
 
 **Depends on:** Auth (shipped), preferences (shipped).
 **Parallel Safety:** Green
@@ -1258,8 +1260,8 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 - [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
 
 **P0 — Product (Growth):**
-- [x] **Dedicated `/daily` page** — Shipped May 14: 5 curated questions/day, progress, streak/local completion tracking, countdown timer, replay, and shareable text summary. Remaining scorecard-image work stays below.
-- [ ] **Shareable prediction scorecards** — After completing daily challenge, generate image card: "I got 4/5 — can you beat me?" with unique daily URL. Text summary shipped May 14; image card remains.
+- [x] **Dedicated `/daily` page** — Shipped May 14: 5 curated questions/day, progress, streak/local completion tracking, countdown timer, replay, and shareable text summary. Scorecard images shipped May 17.
+- [x] ~~**Shareable prediction scorecards**~~ — SHIPPED May 17. OG image generation via Next.js `ImageResponse`, share button on `/discover/stats`, scorecard page at `/discover/scorecard`. "I got 4/5 — can you beat me?" with unique daily URL.
 - [ ] **Redesign first 30 seconds** — Hero headline for first visit ("What does the world think will happen?"), first card is always a guess card (force interaction in 5 seconds), progressive disclosure toward sign-up.
 
 **P1 — Engineering:**
@@ -1319,16 +1321,9 @@ Added `_INDIVIDUAL_SPORT_PREFIXES` (tennis, MMA, boxing, golf) and filtered indi
 
 Polymarket creates placeholder sub-markets with "Player B/S/N" names and `outcomePrices=["1","0"]` before real candidates are announced. Three-layer fix: (1) ingestion prevention via `_is_placeholder_outcome()` in polymarket.py, (2) search display filtering in events.py, (3) `_GARBAGE_OUTCOME_RE` applied to 5 additional futures.py code paths. 9 new tests.
 
-### About Page Polish — v1 Shipped, Needs Professional Treatment (May 15)
+### ~~About Page Polish~~ — v2 SHIPPED May 16
 
-**Status:** v1 shipped with two stories (Alcaraz AO SF, Scheffler Masters), SVG probability chart, comparison table, CTA. Functional but reads more like a blog post than a premium product page.
-
-**Remaining for v2:**
-1. **Story 2 visual upgrade** — Replace the golf table with a horizontal bar chart or visual that creates the same "aha" as Story 1's probability arc. Currently it's just a data table.
-2. **Scroll-triggered animations** — Stories should fade/slide in as user scrolls. Use `IntersectionObserver` or `framer-motion`. Current version is fully static.
-3. **Real data from our snapshots** — Story 1 uses hardcoded data points. Pull actual Kalshi snapshot data for the Alcaraz match (`kxatpmatch-26jan29alczve`) to make the chart authentic.
-4. **Photos/imagery** — Match photos or player silhouettes would elevate the editorial feel. Check Pexels or licensed sources.
-5. **Mobile typography** — Verify the hero headline and story cards look right on iPhone SE (375pt width).
+**Status:** v2 shipped with scroll-triggered animations, dynamic API data (live market/event/source counts), refined typography, and hover effects. All 5 v2 items addressed.
 
 **Files:** `frontend/app/about/page.tsx`
 **Parallel Safety:** Green
