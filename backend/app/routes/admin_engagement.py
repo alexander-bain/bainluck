@@ -900,7 +900,10 @@ async def list_bug_reports(
                 "has_screenshot": r.screenshot_base64 is not None,
                 "app_state": r.app_state,
                 "status": r.status,
+                "category": r.category,
                 "admin_notes": r.admin_notes,
+                "backlog_ref": r.backlog_ref,
+                "resolution_summary": r.resolution_summary,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in reports
@@ -915,6 +918,7 @@ async def update_bug_report(
     request: Request,
     secret: str = Query(None),
     status: str = Query(None),
+    category: str = Query(None),
     admin_notes: str = Query(None),
     resolution_summary: str = Query(None),
     backlog_ref: str = Query(None),
@@ -924,11 +928,16 @@ async def update_bug_report(
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     _VALID_STATUSES = {"new", "reviewed", "in_progress", "fixed", "wont_fix", "duplicate", "actioned", "dismissed"}
+    _VALID_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
     values = {}
     if status:
         if status not in _VALID_STATUSES:
             raise HTTPException(400, f"Invalid status. Must be one of: {sorted(_VALID_STATUSES)}")
         values["status"] = status
+    if category is not None:
+        if category and category not in _VALID_CATEGORIES:
+            raise HTTPException(400, f"Invalid category. Must be one of: {sorted(_VALID_CATEGORIES)}")
+        values["category"] = category or None
     if admin_notes is not None:
         if len(admin_notes) > 5000:
             raise HTTPException(400, "Admin notes too long (max 5000 chars)")

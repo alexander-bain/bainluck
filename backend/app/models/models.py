@@ -1031,6 +1031,7 @@ class BugReport(Base):
     screenshot_base64: Mapped[Optional[str]] = mapped_column(Text)
     app_state: Mapped[Optional[dict]] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(20), default="new", index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(30))
     admin_notes: Mapped[Optional[str]] = mapped_column(Text)
     backlog_ref: Mapped[Optional[str]] = mapped_column(String(20))
     resolution_summary: Mapped[Optional[str]] = mapped_column(Text)

@@ -15,7 +15,10 @@ interface BugReport {
   screenshot_base64: string | null;
   app_state: Record<string, string> | null;
   status: string;
+  category: string | null;
   admin_notes: string | null;
+  backlog_ref: string | null;
+  resolution_summary: string | null;
   created_at: string | null;
 }
 
@@ -168,6 +171,19 @@ export default function BugReportsPage() {
     loadReports();
   };
 
+  const updateField = async (id: number, field: string, value: string) => {
+    const headers = await getAuthHeaders();
+    const secretParam = secret ? `&secret=${secret}` : "";
+    const param = encodeURIComponent(value);
+    await fetch(
+      `${API}/api/admin/bug-reports/${id}?${field}=${param}${secretParam}`,
+      { method: "PATCH", headers }
+    );
+    setReports(prev =>
+      prev.map(r => (r.id === id ? { ...r, [field]: value || null } : r))
+    );
+  };
+
   const selectReport = async (id: number) => {
     setSelectedId(id);
     setShowPrompt(false);
@@ -311,6 +327,11 @@ export default function BugReportsPage() {
                               {r.app_state.platform}
                             </span>
                           )}
+                          {r.category && (
+                            <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">
+                              {r.category.replace(/_/g, " ")}
+                            </span>
+                          )}
                           <span className="text-xs text-gray-400">
                             {r.app_state?.user_name && r.app_state.user_name !== "anonymous"
                               ? r.app_state.user_name
@@ -417,6 +438,59 @@ export default function BugReportsPage() {
                   </div>
                 )}
 
+                {/* Category & Lifecycle */}
+                <div className="bg-white rounded-xl border p-5 space-y-4">
+                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider">Triage</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Category</label>
+                      <select
+                        value={selected.category || ""}
+                        onChange={e => updateField(selected.id, "category", e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      >
+                        <option value="">Uncategorized</option>
+                        <option value="ui">UI</option>
+                        <option value="data_quality">Data Quality</option>
+                        <option value="performance">Performance</option>
+                        <option value="feature_request">Feature Request</option>
+                        <option value="ios">iOS</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Backlog Ref</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. BR42"
+                        defaultValue={selected.backlog_ref || ""}
+                        onBlur={e => {
+                          const val = e.target.value.trim();
+                          if (val !== (selected.backlog_ref || "")) {
+                            updateField(selected.id, "backlog_ref", val);
+                          }
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Resolution Summary</label>
+                    <textarea
+                      placeholder="How was this resolved?"
+                      rows={2}
+                      defaultValue={selected.resolution_summary || ""}
+                      onBlur={e => {
+                        const val = e.target.value.trim();
+                        if (val !== (selected.resolution_summary || "")) {
+                          updateField(selected.id, "resolution_summary", val);
+                        }
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
+                    />
+                  </div>
+                </div>
+
                 {/* Actions */}
                 <div className="bg-white rounded-xl border p-5 space-y-3">
                   <div className="flex items-center gap-3">
@@ -428,7 +502,7 @@ export default function BugReportsPage() {
                           : "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
                       }`}
                     >
-                      {selected.status === "actioned" ? "✓ Added to Backlog" : "Mark as Added to Backlog"}
+                      {selected.status === "actioned" ? "Added to Backlog" : "Mark as Added to Backlog"}
                     </button>
                     <button
                       onClick={() => updateStatus(selected.id, "dismissed")}
