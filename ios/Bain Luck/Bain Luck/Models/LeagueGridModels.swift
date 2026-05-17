@@ -45,6 +45,12 @@ nonisolated struct GridCell: Decodable, Sendable {
     let mergedProbability: Double?
     let sources: [GridCellSource]?
     let trend24h: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case mergedProbability = "merged_probability"
+        case sources
+        case trend24h = "trend24H"
+    }
 }
 
 nonisolated struct GridCellSource: Decodable, Sendable {
@@ -64,4 +70,15 @@ nonisolated struct GridMover: Decodable, Sendable, Identifiable {
     let direction: String
     let logoUrl: String?
     let primaryColor: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case shortName = "short_name"
+        case teamId = "team_id"
+        case column
+        case change24h = "change24H"
+        case direction
+        case logoUrl = "logo_url"
+        case primaryColor = "primary_color"
+    }
 }
