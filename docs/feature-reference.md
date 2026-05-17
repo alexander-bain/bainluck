@@ -828,7 +828,7 @@ The league page (`/sport/[sport]/[league]`) is a one-stop destination for everyt
 - Frontend: `frontend/app/sport/[sport]/[league]/page.tsx`
 - API client: `fetchLeagueMarkets()` in `frontend/lib/api.ts`
 
-### Discover Feed Quality, Ranking, and Personalization (Updated May 8, 2026)
+### Discover Feed Quality, Ranking, and Personalization (Updated May 17, 2026)
 
 The Discover feed is a social prediction-market feed across sports, politics, geopolitics, economics, tech, culture, entertainment, health, and weather. It is separate from the homepage sports feed: `/discover` calls `/api/feed` with a low event mix (`event_pct=0.15`) so the most interesting public stories can beat routine games.
 
@@ -837,6 +837,8 @@ The Discover feed is a social prediction-market feed across sports, politics, ge
 - Futures use `compute_futures_highlight()` plus quality/archetype classification in `feed_market_quality.py`.
 - Deterministic explanations in `feed_reasons.py` generate first-page headlines from outcome data: named movers, opening-probability surprises, leader changes, source disagreement, and resolving-soon context.
 - LLM hooks (`hook_description`) are helpful enrichment, not a first-page dependency.
+- Async Discover LLM metadata enrichment writes compact structured metadata to `FuturesMarket.market_metadata["discover_llm"]`: topic, subtopic, entities, archetype, audience scope, salience score, junk flags, and comparison axes. The feed never calls OpenAI at request time; it only consumes cached metadata for bounded deterministic score nudges and swipe-personalization feature tokens.
+- Celery schedule: `enrich_discover_llm_metadata` runs every 6h with `limit=125`; `generate_discover_comparison_candidates` runs daily and caches cross-category game-pair candidates in Redis; `evaluate_discover_with_llm` runs daily, grades the top 50 Discover futures, compares against Polymarket email highlights, and writes advisory `llm_proposed_*` rows to `discover_review_decisions`.
 
 **Quality gates and mixer:**
 - Suppresses narrow commodity/finance ladders, dated buckets, social-count filler, low-signal repeats, stale/no-movement cards, and game-market noise.
@@ -849,6 +851,7 @@ The Discover feed is a social prediction-market feed across sports, politics, ge
 - `/api/admin/discover-quality/trace/{market_id}` explains base eligibility, candidate pool membership, scoring, rank phases, caps, and suggested fixes for one market.
 - `/admin/discover-quality` combines quality metrics, timing, hook coverage, missing-ground-truth traces, engagement metrics, and ranking opportunities.
 - `/api/admin/discover-engagement` summarizes first-party web/native impressions/actions by surface/category/item type and returns promote/investigate/downrank opportunity signals.
+- LLM eval proposals are review-only. `llm_proposed_promote`, `llm_proposed_downrank`, and `llm_proposed_investigate` do not affect ranking unless an admin later records an accepted promote/downrank decision.
 
 **Shareability:**
 - Web Discover cards share stable UTM detail URLs with card-specific share text.
@@ -857,14 +860,14 @@ The Discover feed is a social prediction-market feed across sports, politics, ge
 
 **Personalization layers:**
 - Anonymous web/native: local category profile from impressions, opens, dismisses, likes/shares, and expands; re-ranks only within five-card windows after the first three cards.
-- Authenticated backend: existing favorites, pins, sport affinities, and roster-player matching remain primary. Recent first-party Discover interactions add tiny bounded category deltas (`+0.18x` max, `-0.15x` min) in `utils/personalization.py`.
+- Authenticated/backend session ranking: existing favorites, pins, sport affinities, and roster-player matching remain primary. Recent first-party Discover interactions add tiny bounded category and feature/entity/archetype deltas; right swipe is `like` / "more like this", left swipe is `unlike` / "less like this". Repeated hard dismisses can escalate category penalty, while `unlike` stays a soft downrank.
 - The engagement-derived signal is intentionally conservative and cannot override quality caps or explicit "Nah" sport filtering.
 
 **Native parity:**
 - iOS/macOS Discover has redesigned event/futures cards, redesigned Higher/Lower cards, fifth-card game cadence, native share links, local tuning menu, Firebase Analytics parity, and first-party engagement capture.
 
 **Key files:**
-- Backend: `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`
+- Backend: `backend/app/routes/feed.py`, `backend/app/tasks/enrich_markets.py`, `backend/app/tasks/__init__.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/scripts/audit_feed_quality.py`
 - Web: `frontend/app/discover/page.tsx`, `frontend/components/DiscoverCard.tsx`, `frontend/lib/discoverInteractions.ts`, `frontend/app/admin/discover-quality/page.tsx`
 - Native: `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
 
