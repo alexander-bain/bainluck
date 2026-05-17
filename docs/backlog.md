@@ -224,8 +224,9 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Web shareability shipped: stable UTM share URLs, card-specific share copy, generated OG images, shared-link CTAs, and share/open analytics.
 - ✅ Native parity pass shipped: redesigned event/futures/guess cards, fifth-card Higher/Lower cadence, share links, local category tuning, and Firebase analytics parity.
 - ✅ First-party engagement capture shipped: web/native post impressions/actions to `/api/feed/interactions`, stored in `discover_interactions`.
-- ✅ Authenticated server-side personalization now applies tiny bounded category boosts/penalties from recent Discover interactions, layered on top of favorites, pins, sport affinities, and roster-player matching.
-- ✅ Authenticated feed items now expose per-card `personalization_trace` diagnostics, and `/admin/discover-quality` renders multiplier, score delta, category-affinity delta, and reasons when present.
+- ✅ Server-side personalization now applies tiny bounded category and feature/entity/archetype boosts/penalties from recent Discover interactions for signed-in users and anonymous sessions, layered on top of favorites, pins, sport affinities, and roster-player matching.
+- ✅ Authenticated feed items now expose per-card `personalization_trace` diagnostics, and `/admin/discover-quality` renders multiplier, score delta, category/feature-affinity deltas, and reasons when present.
+- ✅ Web and native swipe semantics are explicit: right swipe records `like` / "more like this" and keeps the card; left swipe records `unlike` / "less like this" and only hides the card for the current session.
 - ✅ Polymarket email-highlight sheet can now feed the Discover audit through CSV path/URL env vars, producing `email-hit@20` / `email-hit@50` coverage without changing ranking.
 - ✅ Email ground-truth parsing now accepts stable `Audit Export` headers, records row count/latest-date/stale metadata, supports private Google Sheets via service-account auth, and surfaces export errors in audit/admin diagnostics instead of crashing.
 - ✅ `/admin/discover-quality` now separates Polymarket email-highlight misses into a dedicated editorial audit panel with bucket counts, sheet scores, hooks, DB trace entry points, and recommended actions.
@@ -267,7 +268,7 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 7. Use email-highlight misses as an audit signal first, not a direct ranking boost. Tune candidate pools, story mixing, explanation/media treatment, and fun-market surfacing only after reviewing false positives and duplicate-family risk.
 8. Use the aggregate feedback review queue daily during TestFlight: accept only human-reviewed ranking changes at first, prioritizing high-dismiss/high-rank downrank candidates, high-open/share/context-expand low-rank promote candidates, and rage-shake reports where Discover context identifies repeated or stale cards.
 9. Add account-level preference sync so web/native local tuning can merge into server-side profiles after sign-in.
-10. Graduate from category-only personalization to story-family/entity personalization once engagement volume is sufficient.
+10. Add comparison-game cards as part of the Discover game cadence, pairing high-interest markets across categories and recording those guesses separately from Higher/Lower cards.
 11. Use engagement opportunity signals, repeat/stale launch-health signals, rage-shake context, and Polymarket email-highlight misses to tune ranking, card design, and explanation/media treatment.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/routes/admin.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/feed_reasons.py`, `backend/app/utils/personalization.py`, `backend/app/utils/polymarket_email_ground_truth.py`, `backend/scripts/audit_feed_quality.py`, `frontend/app/discover/page.tsx`, `frontend/app/admin/discover-quality/page.tsx`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/BugReportView.swift`
@@ -368,17 +369,23 @@ These are Billboard Hot 100 ranking markets with many outcomes. The feed shows t
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/personalization.py`
 **Parallel Safety:** RED — feed.py
 
-### WATCH-1. Apple Watch App Pages Stay Black — Functionally Unusable (P2)
+### WATCH-1. Apple Watch App Mostly Black, Occasionally Shows Malformed Content (P2)
 
-**Problem:** Watch app pages mostly stay black/empty. The guess game, glances, and live views don't load content.
+**Problem:** Watch app IS deployed and running, but pages are mostly black/empty. Occasionally something poorly formatted flashes briefly (truncated labels), then disappears. Not a deployment issue — a reliability issue.
 
-**Investigated (May 17):** Watch app shares `FeedResponse` from main iOS `FeedModels.swift`, so models are in sync. Likely causes:
-1. **App not deployed to Watch** — Physical Watch deployment was "not yet working" as of May 4 prototype. Watch may be running a stale or never-deployed build.
-2. **watchOS network** — Watch may not reach `api.bainluck.com` independently. Need WatchConnectivity framework to relay from iPhone.
-3. **Rate limiting** — New 60 req/min limiter may block Watch requests sharing iPhone's IP.
-4. **Silent decode failure** — Error swallowed on non-first-load retries.
+**Investigated (May 17):** Watch app shares `FeedResponse` from main iOS `FeedModels.swift`, so models should be in sync. The app code has proper error/loading/empty states, but they're not rendering reliably. Likely causes:
+1. **watchOS network timeouts** — 30s timeout in `WatchAPIClient` may be too long for Watch, which expects snappy responses. The API can take 5-15s under load (seen in Manus sweep). Watch may kill the request or the view may re-render before data arrives.
+2. **Race condition in view lifecycle** — `.task { await vm.load() }` may fire, get interrupted by watchOS suspending the app, then never complete. The "fleeting malformed content" suggests data arrives momentarily but the view is torn down.
+3. **Silent decode failure** — If any field in `FeedResponse` changed shape, `JSONDecoder` throws and the `catch` block shows "Couldn't load" only if `markets.isEmpty`. The error might flash and then the view goes black.
+4. **watchOS resource limits** — Watch apps have tight memory/CPU budgets. Decoding a 20-item feed response with nested objects may exceed limits, causing watchOS to kill the extension.
 
-**Fix plan:** (1) Verify Watch has latest build via Xcode, (2) add logging to `WatchAPIClient`, (3) test on Simulator first, (4) if network: add WatchConnectivity relay from iPhone.
+**Fix plan:**
+1. Reduce feed request to `limit=5` (Watch doesn't need 20 items)
+2. Add aggressive timeout (8s) with retry
+3. Add `os.log` debug logging to trace request → decode → render lifecycle
+4. Test on Watch Simulator with Xcode debugger attached to see exact failure point
+5. Consider WatchConnectivity relay from iPhone as fallback (avoids independent Watch→API calls)
+6. Simplify the Decodable model to only the fields Watch actually uses (fewer failure points)
 
 **Files:** `ios/Bain Luck/BainLuckWatch Watch App/` (8 Swift files)
 **Parallel Safety:** Green
@@ -1263,7 +1270,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | ~~DN-11~~ | ~~Grouped market cards~~ | ✅ SHIPPED — markets with name prefix collapse into expandable cards on web/native. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | |
 | ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
 | D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
-| ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ PARTIALLY SHIPPED May 8 — interaction-derived category boosts/penalties affect authenticated backend ranking with tight caps; local web/native tuning remains anonymous fallback. Remaining entity/story-family scoring is tracked in 0u. | `routes/feed.py`, `utils/personalization.py` | |
+| ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ SHIPPED May 17 — right swipe/like gives bounded "more like this" boosts; left swipe/unlike gives bounded soft downranks; backend ranking now uses category plus feature/entity/archetype affinities for signed-in and session users. | `routes/feed.py`, `utils/personalization.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
 | D-6 | Push notifications for moves | Foundation shipped (May 13): iOS token capture + backend endpoint. Actual push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
 | D-7 | Live game companion mode | NEEDS DESIGN. On iPhone, companion mode is basically just the chart full-screen (what else fits?). On iPad/Mac, the current event detail page IS already a great second screen — so what's really different? Key features: aggressive auto-refresh (10s), screen stays awake (scoped idle timer), simplified layout hiding below-the-fold. Design brief needed before building. | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
 | ~~D-8~~ | ~~Daily digest email~~ | ✅ SHIPPED (May 13) — Celery beat scheduled at 8am ET. | `tasks/daily_digest.py`, email templates | |
