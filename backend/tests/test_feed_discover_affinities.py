@@ -69,6 +69,17 @@ def test_discover_category_affinity_counts_unlike_as_soft_downrank():
     assert result["soccer"] == pytest.approx((-3.0 + 0.35) / 20.0)
 
 
+def test_discover_category_affinity_escalates_repeated_unlikes():
+    rows = [
+        ("baseball", "unlike", 10),
+        ("baseball", "context_collapse", 1),
+    ]
+
+    result = _build_discover_category_affinities(rows)
+
+    assert result["baseball"] == -0.40
+
+
 def test_discover_feature_tokens_include_archetype_and_entities():
     tokens = _discover_feature_tokens(
         item_name="Will Noah Kahan be #1 on Spotify this week?",

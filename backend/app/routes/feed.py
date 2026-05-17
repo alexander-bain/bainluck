@@ -1655,7 +1655,7 @@ async def _load_personalization_context(
         .where(
             interaction_identity_clause,
             DiscoverInteraction.item_type.in_(("event", "futures")),
-            DiscoverInteraction.action.in_(("impression", "dismiss")),
+            DiscoverInteraction.action.in_(("impression", "dismiss", "unlike")),
             DiscoverInteraction.created_at >= dismiss_cutoff,
         )
         .group_by(
@@ -1695,7 +1695,7 @@ async def _load_personalization_context(
             except (TypeError, ValueError):
                 continue
             last_seen_dt = _utc(last_seen)
-            if action == "dismiss":
+            if action in ("dismiss", "unlike"):
                 if item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
@@ -1759,7 +1759,7 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     """
     raw_scores: dict[str, float] = {}
     action_counts: dict[str, int] = {}
-    dismiss_counts: dict[str, int] = {}
+    negative_counts: dict[str, int] = {}
     weights = {
         "detail_click": 1.5,
         "open": 1.5,
@@ -1780,17 +1780,17 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         n = int(count or 0)
         raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
         action_counts[key] = action_counts.get(key, 0) + n
-        if action == "dismiss":
-            dismiss_counts[key] = dismiss_counts.get(key, 0) + n
+        if action in ("dismiss", "unlike"):
+            negative_counts[key] = negative_counts.get(key, 0) + n
 
     affinities: dict[str, float] = {}
     for category, score in raw_scores.items():
         if action_counts.get(category, 0) < 2:
             continue
-        # Escalate penalty when dismissals dominate: 3+ dismissals with a
-        # strongly negative raw score unlock a deeper floor.
-        n_dismissals = dismiss_counts.get(category, 0)
-        if n_dismissals >= 3 and score < -4.0:
+        # Escalate penalty when negative swipes dominate: 3+ dismiss/unlike
+        # actions with a strongly negative raw score unlock a deeper floor.
+        n_negative = negative_counts.get(category, 0)
+        if n_negative >= 3 and score < -4.0:
             floor = -0.40
         else:
             floor = -0.15
