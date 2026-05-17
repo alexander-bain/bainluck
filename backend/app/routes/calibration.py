@@ -858,8 +858,8 @@ async def public_calibration(
                 vm.mutually_exclusive,
                 COUNT(DISTINCT vm.market_id) AS market_count,
                 COUNT(*) AS total_outcomes,
-                COUNT(*) FILTER (WHERE fo.current_probability >= 0.95) AS near_one,
-                COUNT(*) FILTER (WHERE fo.current_probability <= 0.05) AS near_zero,
+                COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
+                COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS has_resolution,
                 COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                   AND fo.opening_probability > 0
                                   AND fo.opening_probability < 1) AS eligible
@@ -871,13 +871,13 @@ async def public_calibration(
         clean_vms AS (
             SELECT * FROM vm_stats
             WHERE eligible >= 1
-              AND (near_one + near_zero) >= total_outcomes * 0.8
-              AND near_one >= 1
+              AND has_resolution >= total_outcomes * 0.8
+              AND has_winner >= 1
         ),
         ranked_outcomes AS (
             SELECT
                 COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
-                (fo.current_probability >= 0.95) AS is_winner,
+                COALESCE(fo.is_winner, false) AS is_winner,
                 (fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
@@ -891,8 +891,7 @@ async def public_calibration(
             JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
-              AND fo.current_probability IS NOT NULL
-              AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+              AND fo.is_winner IS NOT NULL
         ),
         -- Detect default/placeholder pricing: if 50%+ of outcomes in a
         -- multi-outcome market share the exact same opening_probability,

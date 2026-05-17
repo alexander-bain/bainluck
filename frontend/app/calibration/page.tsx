@@ -133,7 +133,7 @@ export default function CalibrationPage() {
 
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
-  const [priceCohort, setPriceCohort] = useState<"all" | "closing" | "opening">("closing");
+  const [priceCohort, setPriceCohort] = useState<"all" | "closing" | "opening">("all");
 
   const normalized = useMemo(() => {
     if (!data) return null;
@@ -262,14 +262,6 @@ export default function CalibrationPage() {
         <p className="text-xs text-text-muted">
           Data from March&ndash;May 2026 &middot; Updated hourly
         </p>
-      </div>
-
-      {/* Cohort toggle */}
-      <div className="flex items-center justify-center gap-2">
-        <span className="text-xs text-text-muted font-medium mr-1">Price basis:</span>
-        <TabButton label="Closing Line" active={priceCohort === "closing"} onClick={() => setPriceCohort("closing")} />
-        <TabButton label="Opening Price" active={priceCohort === "opening"} onClick={() => setPriceCohort("opening")} />
-        <TabButton label="All" active={priceCohort === "all"} onClick={() => setPriceCohort("all")} />
       </div>
 
       {/* Stat cards */}
