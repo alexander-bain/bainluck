@@ -1744,9 +1744,17 @@ async def _load_personalization_context(
 
 
 def _build_discover_category_affinities(rows) -> dict[str, float]:
-    """Convert recent Discover interaction counts into tiny category deltas."""
+    """Convert recent Discover interaction counts into bounded category deltas.
+
+    BR54: Dismiss signals now escalate more strongly. Three or more dismissals
+    in a category without any positive engagement push the penalty from -0.15
+    toward -0.40, equivalent to the sport_suppress penalty. This means the
+    multiplier drops to ~0.60x, making minor sports and other disliked
+    categories fall below the min_score threshold (30) for typical base scores.
+    """
     raw_scores: dict[str, float] = {}
     action_counts: dict[str, int] = {}
+    dismiss_counts: dict[str, int] = {}
     weights = {
         "detail_click": 1.5,
         "open": 1.5,
@@ -1767,12 +1775,21 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         n = int(count or 0)
         raw_scores[key] = raw_scores.get(key, 0.0) + weights[action] * n
         action_counts[key] = action_counts.get(key, 0) + n
+        if action == "dismiss":
+            dismiss_counts[key] = dismiss_counts.get(key, 0) + n
 
     affinities: dict[str, float] = {}
     for category, score in raw_scores.items():
         if action_counts.get(category, 0) < 2:
             continue
-        affinities[category] = max(-0.15, min(0.18, score / 20.0))
+        # Escalate penalty when dismissals dominate: 3+ dismissals with a
+        # strongly negative raw score unlock a deeper floor.
+        n_dismissals = dismiss_counts.get(category, 0)
+        if n_dismissals >= 3 and score < -4.0:
+            floor = -0.40
+        else:
+            floor = -0.15
+        affinities[category] = max(floor, min(0.18, score / 20.0))
     return affinities
 
 

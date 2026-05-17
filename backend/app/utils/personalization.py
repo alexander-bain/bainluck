@@ -46,7 +46,7 @@ PINNED_BONUS = 0.3        # User has this item pinned
 MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
 ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
 CATEGORY_INTEREST_MAX_BONUS = 0.18  # Recent Discover opens/shares by category
-CATEGORY_DISMISS_MAX_PENALTY = -0.15  # Recent Discover dismisses by category
+CATEGORY_DISMISS_MAX_PENALTY = -0.40  # Recent Discover dismisses by category (BR54: escalated from -0.15)
 FEATURE_INTEREST_MAX_BONUS = 0.12  # Recent Discover swipes by story/entity feature
 FEATURE_DISLIKE_MAX_PENALTY = -0.12  # Soft "less like this" by story/entity feature
 

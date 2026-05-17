@@ -106,22 +106,58 @@ class TestMarketQualityClassification:
             assert "social_filler" in quality.reasons
 
     def test_music_metric_markets_are_low_quality_and_family_capped(self):
-        examples = [
+        # Raw metric markets remain low_quality/suppressed
+        boring_examples = [
             "GREENGREEN: Album Equivalent Units (May 01-May 07, 2026)",
             "Friday Night Lights streams up this week?",
-            "Top USA Artist on Spotify on Apr 29, 2026?",
-            "#2 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
             "Where will 'Ordinary' by Alex Warren rank on the Billboard Hot 100 chart dated May 9?",
+        ]
+
+        boring_qualities = [
+            classify_market_quality(name, sport_category="entertainment")
+            for name in boring_examples
+        ]
+
+        assert all(q.quality_class == "low_quality" for q in boring_qualities)
+        assert all("entertainment_metric" in q.reasons for q in boring_qualities)
+
+    def test_chart_ranking_markets_are_not_suppressed(self):
+        # "Who's #1?" and "Top Artist on Spotify?" are genuinely interesting
+        # prediction markets, not raw chart metrics. BR56: user complained
+        # about never seeing Spotify content.
+        interesting_examples = [
+            "Top USA Artist on Spotify on Apr 29, 2026?",
+            "#1 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
+            "#2 on the Billboard Hot 100 chart for the Week of May 9, 2026?",
         ]
 
         qualities = [
             classify_market_quality(name, sport_category="entertainment")
-            for name in examples
+            for name in interesting_examples
         ]
 
-        assert all(q.quality_class == "low_quality" for q in qualities)
-        assert all("entertainment_metric" in q.reasons for q in qualities)
-        assert len({q.family_key for q in qualities}) <= 3
+        assert all(q.quality_class == "normal" for q in qualities)
+        assert all("entertainment_metric" not in q.reasons for q in qualities)
+
+    def test_netflix_rank_one_and_two_get_distinct_family_keys(self):
+        # BR56: #1 and #2 Netflix Show markets must not be deduped into the
+        # same family, or whichever has less movement gets killed.
+        q1 = classify_market_quality("#1 US Netflix Show: May 12-18", "entertainment")
+        q2 = classify_market_quality("#2 US Netflix Show: May 12-18", "entertainment")
+
+        assert q1.family_key != q2.family_key
+        assert "rankone" in q1.family_key
+        assert "ranktwo" in q2.family_key
+        assert q1.quality_class == "normal"
+        assert q2.quality_class == "normal"
+
+    def test_spotify_song_rank_markets_get_distinct_family_keys(self):
+        q1 = classify_market_quality("#1 Global Spotify Song: May 12-18", "entertainment")
+        q2 = classify_market_quality("#2 Global Spotify Song: May 12-18", "entertainment")
+
+        assert q1.family_key != q2.family_key
+        assert q1.quality_class == "normal"
+        assert q2.quality_class == "normal"
 
     def test_regional_us_elections_are_low_quality_and_story_capped(self):
         examples = [

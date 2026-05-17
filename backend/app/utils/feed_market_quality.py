@@ -40,6 +40,13 @@ _MONTH_RE = (
 
 _NUMBER_RE = re.compile(r"[-+]?\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
 
+# Mapping for #N ranking placeholders — word form prevents the <num> pass
+# from collapsing distinct rankings (e.g., #1 vs #2) into the same token.
+_RANK_WORDS = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+}
+
 _PRICE_BUCKET_RE = re.compile(
     r"\b("
     r"oil|crude|brent|wti|gas|natural gas|gold|silver|copper|"
@@ -105,9 +112,9 @@ _SOCIAL_FILLER_RE = re.compile(
 _ENTERTAINMENT_METRIC_RE = re.compile(
     r"\b("
     r"streams up this week|weekly streams|album equivalent units|"
-    r"billboard hot 100|billboard 200|weekly top (songs|albums)|"
-    r"top usa artist on spotify|top album on weekly|top song on weekly|"
-    r"rank on the billboard|#\d+ on the billboard"
+    r"weekly top (songs|albums)|"
+    r"top album on weekly|top song on weekly|"
+    r"rank on the billboard|#[2-9]\d* on the billboard"
     r")\b",
     re.IGNORECASE,
 )
@@ -263,6 +270,11 @@ class MarketQuality:
 def _normalized_text(text: str) -> str:
     text = text.lower()
     text = re.sub(r"https?://\S+", " ", text)
+    # Preserve #N ranking patterns (e.g., "#1 Netflix Show" vs "#2 Netflix
+    # Show") so that different rankings get distinct family keys. Without
+    # this, both collapse to "<num> netflix show" and dedup kills one.
+    # Use a non-numeric placeholder so the subsequent <num> pass won't eat it.
+    text = re.sub(r"#(\d{1,2})\b", lambda m: f"<rank{_RANK_WORDS[int(m.group(1))]}>" if int(m.group(1)) in _RANK_WORDS else "<rankother>", text)
     text = re.sub(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?", "<num>", text)
     text = re.sub(rf"\b({_MONTH_RE})\b", "<month>", text)
     text = re.sub(r"\b\d{4}\b", "<year>", text)
