@@ -426,6 +426,9 @@ struct MyStuffView: View {
             }
 
             Section {
+                NavigationLink(value: Route.calibration) {
+                    Label("Calibration", systemImage: "chart.dots.scatter")
+                }
                 NavigationLink(value: Route.about) {
                     Label("About Bain Luck", systemImage: "info.circle")
                 }
