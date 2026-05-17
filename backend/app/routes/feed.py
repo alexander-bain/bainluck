@@ -68,6 +68,11 @@ from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
 )
+from app.tasks.enrich_markets import (
+    _discover_llm_feature_tokens,
+    _discover_llm_score_adjustment,
+    _get_discover_llm_metadata,
+)
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -2802,6 +2807,11 @@ async def _score_futures(
             headline=headline,
             quality=quality,
         )
+        discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
+        llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
+        if llm_score_adjustment:
+            base_score = max(0, min(100, base_score + llm_score_adjustment))
+            highlight_result.reasons.append(f"discover_llm_score:{llm_score_adjustment:+d}")
         if quality.reasons:
             highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 
@@ -2889,7 +2899,7 @@ async def _score_futures(
                 item_name=market.name,
                 category=market.llm_sport_category,
                 item_type="futures",
-            )),
+            )) + _discover_llm_feature_tokens(discover_llm_metadata),
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
@@ -2964,6 +2974,16 @@ async def _score_futures(
             "image_url": market.image_url,
             "hook_description": market.hook_description,
         }
+        if discover_llm_metadata:
+            futures_data["discover_llm"] = {
+                "topic": discover_llm_metadata.get("topic"),
+                "subtopic": discover_llm_metadata.get("subtopic"),
+                "archetype": discover_llm_metadata.get("archetype"),
+                "audience_scope": discover_llm_metadata.get("audience_scope"),
+                "salience_score": discover_llm_metadata.get("salience_score"),
+                "junk_flags": discover_llm_metadata.get("junk_flags") or [],
+                "comparison_axes": discover_llm_metadata.get("comparison_axes") or [],
+            }
 
         # Compute market_tags on-the-fly
         inline_market_tags = compute_market_tags(

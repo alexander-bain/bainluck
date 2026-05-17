@@ -59,14 +59,15 @@ struct WatchGlancesView: View {
         HStack(spacing: 6) {
             Circle()
                 .fill(market.dotColor)
-                .frame(width: 6, height: 6)
+                .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(market.name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Text(market.leader)
-                    .font(.system(size: 10))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -75,14 +76,14 @@ struct WatchGlancesView: View {
 
             VStack(alignment: .trailing, spacing: 1) {
                 Text("\(market.probability)%")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
 
                 if let movement = market.movement, movement != 0 {
                     HStack(spacing: 1) {
                         Image(systemName: movement > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                         Text("\(abs(Int((movement * 100).rounded())))")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundStyle(movement > 0 ? .green : .red)
                 }

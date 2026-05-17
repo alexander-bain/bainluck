@@ -286,6 +286,7 @@ Web and native send first-party Discover events to `POST /api/feed/interactions`
 Admin rollup:
 - `GET /api/admin/discover-engagement` groups engagement by surface/category/item type.
 - The endpoint also emits promote/investigate/downrank recommendations from open, dismiss, share, and impression rates.
+- Discover LLM intelligence is async/cached, not request-time. `enrich_discover_llm_metadata` stores compact structured metadata in `futures_markets.market_metadata->discover_llm`, `generate_discover_comparison_candidates` caches cross-category game pairs in Redis, and `evaluate_discover_with_llm` writes advisory `llm_proposed_*` rows to `discover_review_decisions`. Feed ranking only reads cached DB metadata and applies bounded deterministic score/feature nudges.
 - `/admin/discover-quality` displays those metrics alongside feed quality traces.
 
 Personalization layering:

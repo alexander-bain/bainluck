@@ -512,6 +512,27 @@ def enrich_market_hooks(self, limit: int = 50):
     return _tracked_run("enrich_hooks", _enrich(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.enrich_discover_llm_metadata")
+def enrich_discover_llm_metadata(self, limit: int = 100):
+    """Generate cached structured LLM metadata for Discover candidates."""
+    from app.tasks.enrich_markets import enrich_discover_llm_metadata as _enrich
+    return _tracked_run("enrich_discover_llm", _enrich(limit))
+
+
+@celery_app.task(bind=True, name="app.tasks.generate_discover_comparison_candidates")
+def generate_discover_comparison_candidates(self, limit: int = 60):
+    """Generate cached cross-category comparison-game candidates."""
+    from app.tasks.enrich_markets import generate_discover_comparison_candidates as _generate
+    return _tracked_run("discover_comparisons", _generate(limit))
+
+
+@celery_app.task(bind=True, name="app.tasks.evaluate_discover_with_llm")
+def evaluate_discover_with_llm(self, limit: int = 50):
+    """Grade Discover cards daily and log LLM proposals for admin review."""
+    from app.tasks.enrich_markets import evaluate_discover_with_llm as _evaluate
+    return _tracked_run("discover_llm_eval", _evaluate(limit))
+
+
 @celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
 def check_aggregation_quality(self):
     """Daily: sample events, measure source diversity, alert on single-source spikes."""
@@ -936,6 +957,22 @@ celery_app.conf.beat_schedule = {
         # entire open-market backlog.
         "schedule": crontab(minute=40, hour="*/6"),
         "kwargs": {"limit": 100},
+    },
+    "enrich-discover-llm-metadata": {
+        "task": "app.tasks.enrich_discover_llm_metadata",
+        # Async/cached only: enrich feed-shaped cards, never on feed request.
+        "schedule": crontab(minute=10, hour="*/6"),
+        "kwargs": {"limit": 125},
+    },
+    "generate-discover-comparison-candidates": {
+        "task": "app.tasks.generate_discover_comparison_candidates",
+        "schedule": crontab(minute=20, hour=9),
+        "kwargs": {"limit": 60},
+    },
+    "evaluate-discover-with-llm-daily": {
+        "task": "app.tasks.evaluate_discover_with_llm",
+        "schedule": crontab(minute=35, hour=9),
+        "kwargs": {"limit": 50},
     },
     "enrich-market-images": {
         "task": "app.tasks.enrich_market_images",

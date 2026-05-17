@@ -39,14 +39,16 @@ struct WatchGuessView: View {
         if let result = vm.lastResult {
             resultView(result, q)
         } else {
+            ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 6) {
                 Text("What are the odds?")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
 
                 Text(q.title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
+                    .minimumScaleFactor(0.7)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
 
@@ -57,27 +59,28 @@ struct WatchGuessView: View {
                     .multilineTextAlignment(.center)
 
                 Text("\(q.threshold)%")
-                    .font(.system(size: 32, weight: .heavy, design: .rounded))
+                    .font(.system(size: 44, weight: .heavy, design: .rounded))
                     .foregroundStyle(.blue)
                     .padding(.vertical, 2)
 
                 HStack(spacing: 6) {
                     Button { Task { await vm.submitGuess("higher") } } label: {
                         Label("Higher", systemImage: "arrow.up")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(maxWidth: .infinity)
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .tint(.green)
 
                     Button { Task { await vm.submitGuess("lower") } } label: {
                         Label("Lower", systemImage: "arrow.down")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(maxWidth: .infinity)
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .tint(.red)
                 }
             }
             .padding(.horizontal, 4)
+            }
         }
     }
 
@@ -91,10 +94,10 @@ struct WatchGuessView: View {
                 .font(.system(size: 14, weight: .bold))
 
             Text("\(q.actualPct)%")
-                .font(.system(size: 28, weight: .heavy, design: .rounded))
+                .font(.system(size: 38, weight: .heavy, design: .rounded))
 
             Text(q.subject)
-                .font(.system(size: 10))
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)

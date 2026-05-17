@@ -76,13 +76,15 @@ struct WatchLiveView: View {
             HStack(spacing: 0) {
                 VStack(spacing: 2) {
                     Text(game.awayAbbrev)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
                     if let score = game.awayScore {
                         Text("\(score)")
-                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .font(.system(size: 22, weight: .heavy, design: .rounded))
                     }
                     Text("\(game.awayProb)%")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
                 }
                 .frame(maxWidth: .infinity)
@@ -93,13 +95,15 @@ struct WatchLiveView: View {
 
                 VStack(spacing: 2) {
                     Text(game.homeAbbrev)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
                     if let score = game.homeScore {
                         Text("\(score)")
-                            .font(.system(size: 16, weight: .heavy, design: .rounded))
+                            .font(.system(size: 22, weight: .heavy, design: .rounded))
                     }
                     Text("\(game.homeProb)%")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
                 }
                 .frame(maxWidth: .infinity)
