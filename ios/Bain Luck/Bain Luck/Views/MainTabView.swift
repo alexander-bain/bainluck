@@ -100,24 +100,24 @@ struct MainTabView: View {
                 }
 
                 Section("Quick Links") {
-                    Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
+                    sidebarLabel("Futures", systemImage: "chart.line.uptrend.xyaxis")
                         .tag(AppTab.futures)
-                    Label("Weather", systemImage: "cloud.sun.fill")
+                    sidebarLabel("Weather", systemImage: "cloud.sun.fill")
                         .tag(AppTab.weather)
-                    Label("Economics", systemImage: "chart.bar.fill")
+                    sidebarLabel("Economics", systemImage: "chart.bar.fill")
                         .tag(AppTab.economics)
-                    Label("Politics", systemImage: "building.columns.fill")
+                    sidebarLabel("Politics", systemImage: "building.columns.fill")
                         .tag(AppTab.politics)
-                    Label("Entertainment", systemImage: "film.fill")
+                    sidebarLabel("Entertainment", systemImage: "film.fill")
                         .tag(AppTab.entertainment)
-                    Label("Preferences", systemImage: "gearshape")
+                    sidebarLabel("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
-                    Label("Calibration", systemImage: "chart.dots.scatter")
+                    sidebarLabel("Calibration", systemImage: "chart.dots.scatter")
                         .tag(AppTab.calibration)
                 }
             }
             .navigationTitle("🍀 Bain Luck")
-            .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 260)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
         } detail: {
             switch navCoordinator.selectedTab {
             case .feed:
@@ -145,6 +145,16 @@ struct MainTabView: View {
             case .calibration:
                 NavigationStack { CalibrationView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             }
+        }
+    }
+
+    private func sidebarLabel(_ title: String, systemImage: String) -> some View {
+        Label {
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        } icon: {
+            Image(systemName: systemImage)
         }
     }
 }
