@@ -1798,6 +1798,58 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     return affinities
 
 
+_REGIONAL_FEATURE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "boston",
+        ("region:boston", "region:massachusetts", "region:new_england"),
+    ),
+    (
+        "massachusetts",
+        ("region:massachusetts", "region:new_england"),
+    ),
+    (
+        "red sox",
+        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_red_sox"),
+    ),
+    (
+        "celtics",
+        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_celtics"),
+    ),
+    (
+        "bruins",
+        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_bruins"),
+    ),
+    (
+        "patriots",
+        ("region:massachusetts", "region:new_england", "team:new_england_patriots"),
+    ),
+    (
+        "new england",
+        ("region:new_england",),
+    ),
+    (
+        "connecticut",
+        ("region:connecticut", "region:new_england"),
+    ),
+    (
+        "rhode island",
+        ("region:rhode_island", "region:new_england"),
+    ),
+    (
+        "new hampshire",
+        ("region:new_hampshire", "region:new_england"),
+    ),
+    (
+        "vermont",
+        ("region:vermont", "region:new_england"),
+    ),
+    (
+        "maine",
+        ("region:maine", "region:new_england"),
+    ),
+)
+
+
 def _discover_feature_tokens(
     *,
     item_name: str | None,
@@ -1825,6 +1877,9 @@ def _discover_feature_tokens(
         tokens.add("topic:ai_tech")
     if any(term in lower for term in ("president", "election", "senate", "house", "primary")):
         tokens.add("topic:elections")
+    for alias, region_tokens in _REGIONAL_FEATURE_ALIASES:
+        if re.search(rf"\b{re.escape(alias)}\b", lower):
+            tokens.update(region_tokens)
 
     # Entity-ish tokens: proper-name bigrams catch artists, teams, politicians,
     # companies, and places without a separate entity extraction service.

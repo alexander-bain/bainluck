@@ -92,6 +92,30 @@ def test_discover_feature_tokens_include_archetype_and_entities():
     assert "entity:noah_kahan" in tokens
 
 
+def test_discover_feature_tokens_bridge_boston_teams_to_massachusetts():
+    red_sox_tokens = _discover_feature_tokens(
+        item_name="Tampa Bay Rays vs Boston Red Sox",
+        category="baseball",
+        item_type="event",
+    )
+    election_tokens = _discover_feature_tokens(
+        item_name="Who will win the Massachusetts Governor election?",
+        category="politics",
+        item_type="futures",
+    )
+
+    assert "team:boston_red_sox" in red_sox_tokens
+    assert "region:boston" in red_sox_tokens
+    assert "region:massachusetts" in red_sox_tokens
+    assert "region:new_england" in red_sox_tokens
+    assert "region:massachusetts" in election_tokens
+    assert "region:new_england" in election_tokens
+    assert red_sox_tokens & election_tokens >= {
+        "region:massachusetts",
+        "region:new_england",
+    }
+
+
 def test_discover_feature_affinity_reacts_to_single_like_quickly():
     rows = [
         ("futures", "Will Noah Kahan be #1 on Spotify this week?", "entertainment", "like", 1),
