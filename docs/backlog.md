@@ -368,6 +368,21 @@ These are Billboard Hot 100 ranking markets with many outcomes. The feed shows t
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/personalization.py`
 **Parallel Safety:** RED — feed.py
 
+### WATCH-1. Apple Watch App Pages Stay Black — Functionally Unusable (P2)
+
+**Problem:** Watch app pages mostly stay black/empty. The guess game, glances, and live views don't load content.
+
+**Investigated (May 17):** Watch app shares `FeedResponse` from main iOS `FeedModels.swift`, so models are in sync. Likely causes:
+1. **App not deployed to Watch** — Physical Watch deployment was "not yet working" as of May 4 prototype. Watch may be running a stale or never-deployed build.
+2. **watchOS network** — Watch may not reach `api.bainluck.com` independently. Need WatchConnectivity framework to relay from iPhone.
+3. **Rate limiting** — New 60 req/min limiter may block Watch requests sharing iPhone's IP.
+4. **Silent decode failure** — Error swallowed on non-first-load retries.
+
+**Fix plan:** (1) Verify Watch has latest build via Xcode, (2) add logging to `WatchAPIClient`, (3) test on Simulator first, (4) if network: add WatchConnectivity relay from iPhone.
+
+**Files:** `ios/Bain Luck/BainLuckWatch Watch App/` (8 Swift files)
+**Parallel Safety:** Green
+
 ---
 
 ## Manus Sweep Findings (May 15, 2026)
