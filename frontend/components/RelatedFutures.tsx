@@ -2036,7 +2036,7 @@ function AwardCompactRow({
   );
 }
 
-// ─── V5 TRADE WATCH (2-col per team) ───
+// ─── V5 TRADE WATCH (highest-prob destination per player) ───
 function TradeWatchPair({
   homeTrades,
   awayTrades,
@@ -2044,8 +2044,6 @@ function TradeWatchPair({
   awayTeam,
   homeColor,
   awayColor,
-  homeLogo,
-  awayLogo,
 }: {
   homeTrades: RelatedFuture[];
   awayTrades: RelatedFuture[];
@@ -2056,55 +2054,63 @@ function TradeWatchPair({
   homeLogo?: string;
   awayLogo?: string;
 }) {
-  if (homeTrades.length === 0 && awayTrades.length === 0) return null;
+  const allTrades = [...homeTrades, ...awayTrades];
+  if (allTrades.length === 0) return null;
 
-  function renderCol(trades: RelatedFuture[], shortName: string, color: string, logo?: string) {
-    if (trades.length === 0) return <div />;
-    const sorted = [...trades].sort((a, b) => (b.probability || 0) - (a.probability || 0));
-    return (
-      <div className="rounded-xl border overflow-hidden bg-surface-card" style={{ borderTop: `3px solid ${color}` }}>
-        <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-surface-border/30">
-          {logo ? (
-            <img src={logo} alt="" className="w-4 h-4 object-contain" />
-          ) : (
-            <div className="w-4 h-4 rounded flex items-center justify-center text-white text-[6px] font-extrabold" style={{ backgroundColor: color }}>
-              {shortName.slice(0, 3).toUpperCase()}
-            </div>
-          )}
-          <span className="text-[9px] font-bold">Traded to {shortName}</span>
-        </div>
-        {sorted.slice(0, 5).map((f, i) => {
-          const playerName = extractTradePlayer(f.market_name);
-          return (
-            <Link
-              key={f.outcome_id}
-              href={`/futures/${f.market_id}`}
-              className="flex items-center gap-2 px-2 py-1.5 border-b border-surface-border/10 last:border-0 hover:bg-surface-elevated/30 transition-colors"
-            >
-              <PlayerHeadshot
-                name={playerName}
-                matchedPlayer={f.matched_player}
-                teamColor={color}
-                size={i === 0 ? 32 : 20}
-              />
-              <span className="text-[9px] font-semibold flex-1 truncate">{playerName}</span>
-              <span className="text-[10px] font-bold font-mono" style={{ color: (f.probability || 0) >= 0.10 ? undefined : "var(--text-muted)" }}>
-                {formatProbability(f.probability)}
-              </span>
-            </Link>
-          );
-        })}
-      </div>
-    );
+  // Group by player, keep only the highest-probability destination per player
+  const byPlayer = new Map<string, RelatedFuture>();
+  for (const f of allTrades) {
+    const player = extractTradePlayer(f.market_name);
+    const existing = byPlayer.get(player);
+    if (!existing || (f.probability || 0) > (existing.probability || 0)) {
+      byPlayer.set(player, f);
+    }
   }
 
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  // Sort by probability descending, take top 3
+  const topTrades = [...byPlayer.entries()]
+    .sort((a, b) => (b[1].probability || 0) - (a[1].probability || 0))
+    .slice(0, 3);
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {renderCol(awayTrades, awayShort, awayColor, awayLogo)}
-      {renderCol(homeTrades, homeShort, homeColor, homeLogo)}
+    <div className="space-y-1">
+      {topTrades.map(([playerName, f]) => {
+        // Determine which team this trade destination is for
+        const isHomeDest = homeTrades.includes(f);
+        const destColor = isHomeDest ? homeColor : awayColor;
+        const destTeam = isHomeDest
+          ? (homeTeam.split(" ").pop() || homeTeam)
+          : (awayTeam.split(" ").pop() || awayTeam);
+        return (
+          <Link
+            key={f.outcome_id}
+            href={`/futures/${f.market_id}`}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface-elevated/50 transition-colors"
+          >
+            <PlayerHeadshot
+              name={playerName}
+              matchedPlayer={f.matched_player}
+              teamColor={destColor}
+              size={24}
+            />
+            <span className="text-[11px] font-semibold text-text-primary flex-1 truncate">
+              {playerName}
+            </span>
+            <span className="text-[10px] text-text-secondary">
+              to {destTeam}
+            </span>
+            <span
+              className="text-[11px] font-bold font-mono ml-1"
+              style={{ color: (f.probability || 0) >= 0.10 ? destColor : "var(--text-muted)" }}
+            >
+              {formatProbability(f.probability)}
+            </span>
+          </Link>
+        );
+      })}
+      <p className="text-[9px] text-text-muted px-3 pt-1">
+        Probabilities from prediction markets. Not betting advice.
+      </p>
     </div>
   );
 }
@@ -2772,11 +2778,10 @@ export default function RelatedFutures({
       {/* Trade Watch — below team cards, only for rich-data events */}
       {(homeCats.trades.length > 0 || awayCats.trades.length > 0) && (
         <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
+          <div className="mb-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
-              Trade Rumors
+              Trade Watch
             </span>
-            <span className="text-[10px] text-text-muted">speculative · not news</span>
           </div>
           <TradeWatchPair
             homeTrades={homeCats.trades}
@@ -2785,8 +2790,6 @@ export default function RelatedFutures({
             awayTeam={awayTeam}
             homeColor={hColor}
             awayColor={aColor}
-            homeLogo={homeTeamLogo}
-            awayLogo={awayTeamLogo}
           />
         </div>
       )}
