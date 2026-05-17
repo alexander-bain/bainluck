@@ -45,7 +45,7 @@ def test_discover_category_affinity_caps_dismiss_penalty():
 
     result = _build_discover_category_affinities(rows)
 
-    assert result["politics"] == -0.15
+    assert result["politics"] == -0.40
 
 
 def test_discover_category_affinity_ignores_unknown_actions_and_empty_categories():
