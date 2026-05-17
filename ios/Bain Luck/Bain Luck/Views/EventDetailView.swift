@@ -660,7 +660,7 @@ struct EventDetailView: View {
             "signal:favorite_switched": "Favorite Switched",
             "signal:very_close": "Very Close",
             "signal:close_matchup": "Close Matchup",
-            "signal:major_prob_swing": "Major Odds Swing",
+            "signal:major_prob_swing": "Major Probability Swing",
             "timing:starting_very_soon": "Starting Very Soon",
             "timing:starting_soon": "Starting Soon",
             "stakes:elimination": "Elimination",

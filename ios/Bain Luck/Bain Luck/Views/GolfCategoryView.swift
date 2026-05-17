@@ -166,7 +166,7 @@ struct GolfCategoryView: View {
                     Text("Season Championship Grid")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                    Text("Major winners, odds across the full season")
+                    Text("Major winners, probabilities across the full season")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

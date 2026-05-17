@@ -1799,7 +1799,7 @@ private struct NativeGuessCard: View {
 
     private func guessHeader(category: String?) -> some View {
         HStack {
-            Label("What are the odds?", systemImage: "target")
+            Label("What's the probability?", systemImage: "target")
                 .font(.system(size: 11, weight: .heavy))
                 .tracking(0.8)
                 .foregroundStyle(.orange)
@@ -1988,7 +1988,7 @@ private struct NativeEventGuessCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("What are the odds?", systemImage: "target")
+                Label("What's the probability?", systemImage: "target")
                     .font(.system(size: 11, weight: .heavy))
                     .tracking(0.8)
                     .foregroundStyle(.orange)

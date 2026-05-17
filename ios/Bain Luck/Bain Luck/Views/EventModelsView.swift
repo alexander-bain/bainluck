@@ -105,7 +105,7 @@ struct EventModelsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Why multiple sources?", systemImage: "info.circle")
                 .font(.subheadline.weight(.semibold))
-            Text("Betting markets reflect real money at stake. Statistical models compute from game state alone. Comparing them reveals when the market and the math disagree.")
+            Text("Prediction markets reflect collective expectations. Statistical models compute from game state alone. Comparing them reveals when the market and the math disagree.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

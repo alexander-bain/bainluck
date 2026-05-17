@@ -179,7 +179,7 @@ struct LeagueGridView: View {
                     .padding(.vertical, 2)
                 }
             } header: {
-                Text("Championship Odds")
+                Text("Championship Probabilities")
             }
         }
         #if os(iOS)
@@ -256,7 +256,7 @@ struct LeagueGridView: View {
             }
 
             // Teams grid
-            Section("Championship Odds") {
+            Section("Championship Probabilities") {
                 // Column headers
                 HStack {
                     Text("Team")

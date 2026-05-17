@@ -206,7 +206,7 @@ struct FuturesDetailView: View {
             if let bookmakers = market.bookmakers, !bookmakers.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Divider()
-                    Text("Odds from \(bookmakers.count) sportsbook\(bookmakers.count != 1 ? "s" : "")")
+                    Text("Probabilities from \(bookmakers.count) sportsbook\(bookmakers.count != 1 ? "s" : "")")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     ScrollView(.horizontal, showsIndicators: false) {

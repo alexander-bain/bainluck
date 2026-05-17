@@ -210,7 +210,7 @@ struct OddsChartView: View {
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 if dataPoints.isEmpty {
-                    Text("No odds data available")
+                    Text("No probability data available")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(height: chartHeight)
@@ -951,7 +951,7 @@ struct OddsChartView: View {
         let type: String
         switch source {
         case "consensus":
-            name = "Betting Odds"
+            name = "Sportsbook Consensus"
             type = "market"
         default:
             name = sources[source]?.displayName ?? fallbackDisplayName(source)

@@ -112,7 +112,7 @@ struct AboutView: View {
                 // Disclaimer
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Disclaimer").font(.caption).fontWeight(.semibold)
-                    Text("Bain Luck is for informational and entertainment purposes only. We do not encourage or facilitate gambling. Win probabilities are derived from publicly available data and do not constitute betting advice.")
+                    Text("Bain Luck shows prediction market probabilities for informational and entertainment purposes only. No betting, wagering, or real-money transactions are facilitated through this app. Probabilities are derived from publicly available market data and do not constitute financial or betting advice.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 .padding()
@@ -151,7 +151,7 @@ struct AboutView: View {
     private let categories: [(emoji: String, label: String, desc: String)] = [
         ("🏀", "Sports", "NBA, NFL, MLB, NHL, Soccer, Golf, MMA"),
         ("📈", "Markets", "Kalshi + Polymarket, unified"),
-        ("🌦️", "Weather", "Rainfall, temperature, tornado bets"),
+        ("🌦️", "Weather", "Rainfall, temperature, tornado forecasts"),
         ("💰", "Economics", "Fed rates, GDP, inflation"),
         ("🗳️", "Politics", "Elections, policy, geopolitics"),
         ("🎬", "Entertainment", "Awards, box office, culture"),
@@ -166,7 +166,7 @@ struct AboutView: View {
 
     private let principles: [(title: String, desc: String)] = [
         ("Probability-first", "Every number is a probability, not a moneyline"),
-        ("Fans first", "Context for fans, not betting advice"),
+        ("Fans first", "Context for fans, not financial advice"),
         ("Source transparency", "See where every probability comes from"),
         ("Cross-source", "Aggregate across all markets"),
         ("No gambling", "Informational only, always"),

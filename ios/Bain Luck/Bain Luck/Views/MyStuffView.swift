@@ -168,7 +168,7 @@ struct MyStuffView: View {
                 .padding(.top, 40)
 
                 VStack(spacing: 12) {
-                    signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "See all your teams' odds, futures, and playoff paths in one place")
+                    signInPerk(icon: "heart.fill", color: .red, title: "Follow your teams", desc: "See all your teams' probabilities, futures, and playoff paths in one place")
                     signInPerk(icon: "safari.fill", color: .blue, title: "Personalized Discover", desc: "Your feed learns what you care about and surfaces more of it")
                     signInPerk(icon: "flame.fill", color: .orange, title: "Prediction streaks", desc: "Track your Higher/Lower accuracy and streaks across devices")
                     signInPerk(icon: "chart.line.uptrend.xyaxis", color: .purple, title: "Prediction history", desc: "See your accuracy, category breakdowns, and badges")
@@ -1016,7 +1016,7 @@ private struct TeamFuturesSection: View {
         } header: {
             HStack(spacing: 6) {
                 Label {
-                    Text("Your Teams' Odds")
+                    Text("Your Teams' Probabilities")
                 } icon: {
                     Image(systemName: "target")
                 }

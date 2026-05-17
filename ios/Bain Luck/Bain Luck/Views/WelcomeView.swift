@@ -60,7 +60,7 @@ struct WelcomeView: View {
                 .font(.largeTitle.weight(.black))
                 .multilineTextAlignment(.center)
 
-            Text("Bain Luck turns prediction markets and betting odds into simple probabilities — across sports, politics, economics, and more.")
+            Text("See what the world thinks will happen — powered by prediction market data, across sports, politics, economics, and more.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
