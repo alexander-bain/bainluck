@@ -107,6 +107,23 @@ struct LeaguesView: View {
                         }
                         .padding(.vertical, 2)
                     }
+                    NavigationLink(value: Route.about) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "info.circle")
+                                .font(.body)
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.gray, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("About Bain Luck")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Sources, methodology, philosophy")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
                 }
 
                 Section("Prediction Markets") {
