@@ -295,6 +295,79 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 ---
 
+## Rage Shake Triage #7 (May 17) — Bugs #49-58
+
+10 bug reports. Consolidated into 6 distinct issues. All touch feed.py or the Discover feed — hand off to Discover thread.
+
+### BR57/58. All Outcomes Show Equal Odds (33%/26%/26%/26%) — SYSTEMIC (P1)
+
+**Problem:** Multiple Discover cards show all outcomes at exactly the same probability. Examples:
+- BR58: "Where will 'BE HER' by Ella Langley rank?" → 3: 33%, 4: 33%, 5: 33%. "Where will 'Folded' by Kehlani rank?" → 9: 33%, 10: 33%, 6: 33%.
+- BR57: "Where will 'Doors' by Noah Kahan rank?" → 6: 26%, 7: 26%, 9: 26%.
+
+These are Billboard Hot 100 ranking markets with many outcomes. The feed shows top 3, and after normalization they all round to the same integer percentage. The hook description says "New favorite: 3 (81%)" but the card shows 33% — the normalization is dividing the raw probability by the sum of ALL outcomes, not just the displayed top 3.
+
+**Root cause (likely):** Feed normalization divides each outcome by the full sum across ALL outcomes (many of which aren't displayed). When showing only top 3 of 20+ outcomes, the displayed probabilities are tiny fractions that round to the same value. The normalization threshold (>105%) triggers because 20+ outcomes each at ~5% sum to 100%, but showing only top 3 makes them look artificially equal.
+
+**Fix needed:** Either (a) show raw probabilities for the top 3 with a "(of N outcomes)" qualifier, (b) renormalize to only the displayed outcomes, or (c) show the original probability before cross-source normalization.
+
+**Files:** `backend/app/routes/feed.py` (top_outcomes_data normalization)
+**Parallel Safety:** RED — feed.py
+
+### BR49. Yes/No Display on Non-Binary Multi-Outcome Markets (P2)
+
+**Problem:** "Will Anthropic or OpenAI IPO first?" shows "69% Yes" as the hero. But this isn't a yes/no question — it's asking WHICH company will IPO first. Showing "Yes" is meaningless. The card should show the leading outcome name (e.g., "OpenAI" or "Anthropic"), not "Yes".
+
+**Root cause:** The feed card uses the top outcome name, which for Kalshi binary markets is literally "Yes". For markets where the question implies a choice between named options, "Yes" is unhelpful. Need to detect when the top outcome is "Yes"/"No" on a non-binary question and fall back to the market name or a different display.
+
+**Files:** `backend/app/routes/feed.py` (outcome display), `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** RED — feed.py
+
+### BR50. Sparse Snapshot Chart on Market Detail (P2)
+
+**Problem:** "What will be the 51st state in Trump's term?" detail page shows a chart with only ~2 days of data (May 10-11) despite being an open market. The chart has very few data points, making it look broken. "Updated May 12 at 5:40 AM" — hasn't been polled in 5 days.
+
+**Root cause:** This Kalshi market may have low polling priority or may not be getting regular snapshot updates. The market has 7 outcomes (Venezuela 6%, Puerto Rico 5%, etc.) but the chart only shows 2 days of history.
+
+**Files:** `backend/app/tasks/kalshi.py` (polling frequency), futures detail page
+**Parallel Safety:** Yellow
+
+### BR51. PGA Championship: Playoff — Missing Trend Line + Search Issue (P3)
+
+**Problem:** Two issues:
+1. Market detail for "PGA Championship: Playoff" shows only 1 outcome (Yes: 21%) with no trend line/chart. Binary markets should show a simple probability-over-time chart.
+2. User searched "PGA championship playoff" and didn't find this market — only found it by searching just "playoff". Multi-word search may be splitting terms too aggressively.
+
+**Files:** `ios/.../Views/FuturesDetailView.swift` (chart rendering), `backend/app/routes/events.py` (search)
+**Parallel Safety:** Yellow (chart) / Yellow (search)
+
+### BR52/53. My Stuff "Your Teams' Odds" — Wrong Player/Team Associations (P2)
+
+**Problem:** Two issues:
+1. BR52: "Your Teams' Odds" shows playoff progression for Boston, New England, Celtics, Red Sox, Patriots — but doesn't show which YEAR the odds refer to. User can't tell if it's stale 2025 data or current 2026 season.
+2. BR53: "Awards & Players" section shows "Aliya Boston" (WNBA player) under Bruins branding. "She's not on the Bruins" — the "Boston" in her name matches the user's followed teams incorrectly. Also shows "Believers: Boston Red Sox" (Sports Emmy), "Aliyah Boston" (multiple WNBA awards) — all name-matched to "Boston" teams regardless of sport.
+
+**Root cause:** The "my teams" matching uses fuzzy city/name matching that catches any "Boston" or "Aliya/Aliyah Boston" regardless of whether the player is actually on a followed team. Need sport-scoped matching: WNBA player awards should only match if the user follows a WNBA team, not just any Boston team.
+
+**Files:** `ios/.../Views/MyStuffView.swift`, backend user/feed endpoints
+**Parallel Safety:** Yellow (iOS) / RED (if backend feed.py)
+
+### BR54/56. Feed Quality — Low-Interest Cards, Repetitive, Missing Spotify/Netflix #1 (P2)
+
+**Problem:** User sees many uninteresting cards and keeps dismissing them. Specific complaints:
+- BR54: "None of these are interesting and I keep seeing them" — lots of minor soccer (Coritiba, Aberdeen, Tondela), tennis, cricket. Feed isn't learning from dismiss signals fast enough.
+- BR56: "I keep seeing cards for the #2 show on Netflix. Why not #1? Why never Spotify?" — the feed surfaces "#2 US Netflix Show" but never the #1 show or Spotify rankings. The market-quality classifier may be suppressing #1 markets or they're being deduped as part of the same family.
+
+**Root cause:** Multiple issues:
+1. Dismiss signal isn't aggressively suppressing low-tier sports for this user
+2. Netflix/Spotify #1 markets may be filtered by quality classifier or dedup
+3. Too many minor soccer/tennis events in the feed without sufficient quality gating
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/personalization.py`
+**Parallel Safety:** RED — feed.py
+
+---
+
 ## Manus Sweep Findings (May 15, 2026)
 
 10-module automated audit. Results in `Manus/audit_results/2026-05-15/`. Sweep ran during a deploy-triggered outage, so some findings are outage artifacts. Real findings below.
