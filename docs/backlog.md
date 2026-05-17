@@ -544,6 +544,44 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 ---
 
+## Rage Shake Triage #7 (May 17) — Bugs #66, #70
+
+Claude CLI failed to process these because screenshot image handling returned `API Error: 400 Could not process image`. Items were added from text-only report context; screenshots should be reviewed later with the links below.
+
+### BR66. Native Sports Feed Runs Out After Live Cards (P2)
+
+**Problem:** On iOS Sports tab, after scrolling past a few "Live Now" cards, there is nothing else to see. The feed should continue with upcoming, recent, and relevant non-live sports content instead of feeling empty once live cards are exhausted.
+
+**Context:** iPhone18,2, iOS 26.5.0, current page `Feed`, `live_game_count=3`, submitted May 17 2026 2:04 PM.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/59/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_59.jpg`
+
+**Investigation notes:**
+1. Check whether `FeedView` only renders live sections for the current response shape or fails to request/fill additional sections after live games.
+2. Compare native Sports feed structure against web `/sports`: live, upcoming, recent/completed, leagues/market sections.
+3. Confirm backend `/api/feed` or sports endpoint returns enough non-live items for native, and whether native filters them out.
+
+**Files:** `ios/.../Views/FeedView.swift`, `ios/.../Services/APIClient.swift`, `backend/app/routes/feed.py`
+**Parallel Safety:** Yellow
+
+### BR70. My Stuff Category Section Formatting Is Noisy (P3)
+
+**Problem:** My Stuff category section looks poorly formatted and highlights too many weird/low-value categories. Native should match the cleaner web treatment instead of surfacing every odd category token.
+
+**Context:** iPhone18,2, iOS 26.5.0, current page `My Stuff`, submitted May 17 2026 2:30 PM.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/67/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_67.jpg`
+
+**Investigation notes:**
+1. Compare native My Stuff category rendering against the web My Stuff/category summary design.
+2. Restrict highlighted categories to a small curated set, merge synonyms, and hide noisy/internal categories.
+3. Tighten spacing, typography, and wrapping for the category section on iPhone-width screens.
+
+**Files:** `ios/.../Views/MyStuffView.swift`, `ios/.../Views/PreferencesView.swift` if shared category chips are reused
+**Parallel Safety:** Green
+
+---
+
 ## Email Infrastructure: Compliance + Provider Migration (PREREQUISITE for any user-facing email)
 
 **Problem:** We're sending emails (bug fix notifications, daily digest) via Gmail API with OAuth. This works for sending to Alex only, but before sending to ANY other user we need proper compliance.
