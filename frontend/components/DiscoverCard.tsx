@@ -60,11 +60,15 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   }, [trackAction]);
 
   const handleLike = useCallback(() => setLikedWithTracking(true), [setLikedWithTracking]);
+  const handleSwipeLike = useCallback(() => {
+    setLikedWithTracking(true);
+    onDismiss?.();
+  }, [onDismiss, setLikedWithTracking]);
   const handleLessLike = useCallback(() => {
     trackAction("unlike");
     onDismiss?.();
   }, [onDismiss, trackAction]);
-  const swipe = useSwipe(handleLessLike, handleLike);
+  const swipe = useSwipe(handleLessLike, handleSwipeLike);
 
   const cardStyle = {
     transform: `translateX(${swipe.offset}px) rotate(${swipe.offset * 0.02}deg)`,
@@ -72,7 +76,7 @@ function SingleCard({ item, onDismiss, positionIndex }: { item: FeedItem; onDism
   };
 
   return (
-    <div className="relative" {...swipe.handlers}>
+    <div ref={swipe.ref} className="relative touch-pan-y select-none" {...swipe.handlers}>
       {/* Swipe hint overlays */}
       {swipe.swipeAction === "like" && (
         <div className="absolute inset-0 z-20 flex items-center justify-start pl-5 pointer-events-none">

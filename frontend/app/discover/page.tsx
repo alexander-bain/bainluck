@@ -112,31 +112,23 @@ function isStale(item: FeedItem): boolean {
   return false;
 }
 
-/** Interleave items so no two adjacent share a category. Boost underrepresented categories. */
+/** Interleave items so the default feed does not cluster into one sport or topic. */
 function interleave(items: FeedItem[]): FeedItem[] {
   if (items.length <= 2) return items;
-
-  // Count by category
-  const catCounts = new Map<string, number>();
-  for (const item of items) {
-    const cat = getItemCategory(item);
-    catCounts.set(cat, (catCounts.get(cat) || 0) + 1);
-  }
 
   // Separate sports from non-sports
   const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey"]);
   const sports = items.filter(i => SPORTS.has(getItemCategory(i)));
   const nonSports = items.filter(i => !SPORTS.has(getItemCategory(i)));
 
-  // Interleave: insert non-sports items every 4-5 positions
   const result: FeedItem[] = [];
   let si = 0, ni = 0;
   let lastCat = "";
   let sportsSinceNonSport = 0;
+  const maxSportsRun = nonSports.length >= 4 ? 2 : 3;
 
   while (si < sports.length || ni < nonSports.length) {
-    // Try to insert non-sports every 4 items (ensures ~20% quota)
-    if (ni < nonSports.length && (sportsSinceNonSport >= 4 || si >= sports.length)) {
+    if (ni < nonSports.length && (sportsSinceNonSport >= maxSportsRun || si >= sports.length)) {
       result.push(nonSports[ni++]);
       sportsSinceNonSport = 0;
       lastCat = getItemCategory(result[result.length - 1]);
@@ -162,6 +154,66 @@ function interleave(items: FeedItem[]): FeedItem[] {
       result.push(sports[si++]);
       lastCat = getItemCategory(result[result.length - 1]);
       sportsSinceNonSport++;
+    } else if (ni < nonSports.length) {
+      result.push(nonSports[ni++]);
+      sportsSinceNonSport = 0;
+      lastCat = getItemCategory(result[result.length - 1]);
+    } else {
+      break;
+    }
+  }
+
+  return result;
+}
+
+function getGroupedCategory(groupedItem: DiscoverGroupedItem): string {
+  const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
+  return item ? getItemCategory(item) : "other";
+}
+
+function interleaveGrouped(items: DiscoverGroupedItem[]): DiscoverGroupedItem[] {
+  if (items.length <= 2) return items;
+
+  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey"]);
+  const sports = items.filter(i => SPORTS.has(getGroupedCategory(i)));
+  const nonSports = items.filter(i => !SPORTS.has(getGroupedCategory(i)));
+  const result: DiscoverGroupedItem[] = [];
+  let si = 0, ni = 0;
+  let lastCat = "";
+  let sportsSinceNonSport = 0;
+  const maxSportsRun = nonSports.length >= 4 ? 2 : 3;
+
+  while (si < sports.length || ni < nonSports.length) {
+    if (ni < nonSports.length && (sportsSinceNonSport >= maxSportsRun || si >= sports.length)) {
+      result.push(nonSports[ni++]);
+      sportsSinceNonSport = 0;
+      lastCat = getGroupedCategory(result[result.length - 1]);
+      continue;
+    }
+
+    if (si < sports.length) {
+      const cat = getGroupedCategory(sports[si]);
+      if (cat === lastCat && si + 1 < sports.length) {
+        let swapIdx = -1;
+        for (let j = si + 1; j < Math.min(si + 5, sports.length); j++) {
+          if (getGroupedCategory(sports[j]) !== lastCat) {
+            swapIdx = j;
+            break;
+          }
+        }
+        if (swapIdx !== -1) {
+          [sports[si], sports[swapIdx]] = [sports[swapIdx], sports[si]];
+        }
+      }
+      result.push(sports[si++]);
+      lastCat = getGroupedCategory(result[result.length - 1]);
+      sportsSinceNonSport++;
+    } else if (ni < nonSports.length) {
+      result.push(nonSports[ni++]);
+      sportsSinceNonSport = 0;
+      lastCat = getGroupedCategory(result[result.length - 1]);
+    } else {
+      break;
     }
   }
 
@@ -391,7 +443,6 @@ export default function DiscoverPage() {
   const [allItems, setAllItems] = useState<FeedItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [pagesLoaded, setPagesLoaded] = useState(0);
   const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [challengeIndex, setChallengeIndex] = useState(0);
@@ -415,23 +466,57 @@ export default function DiscoverPage() {
     return () => window.removeEventListener("discover-profile-updated", refreshProfile);
   }, []);
 
+  const { data, isLoading, error: feedError } = useSWR(
+    "discover-feed",
+    () => fetchFeed({ limit: 200, event_pct: 0.15 }),
+    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
+  );
+
+  const { data: resolutionsData } = useSWR(
+    "discover-resolutions",
+    fetchResolutions,
+    { revalidateOnFocus: false }
+  );
+
+  useEffect(() => {
+    if (data) setHasMore(data.has_more);
+  }, [data]);
+
   // Load more pages from the API when client-side items run out
   const loadNextPage = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const nextOffset = (pagesLoaded + 1) * 200;
-      const resp = await fetchFeed({ limit: 200, offset: nextOffset, event_pct: 0.15 });
-      if (resp.items.length === 0 || !resp.has_more) {
-        setHasMore(false);
+      const loadedItems = [...(data?.items ?? []), ...allItems];
+      const loadedIds = new Set(loadedItems.map(getItemId));
+      const offsets = Array.from(new Set([0, loadedItems.length]));
+      let sawMore = false;
+      let added = false;
+
+      for (const offset of offsets) {
+        const resp = await fetchFeed({ limit: 200, offset, event_pct: 0.15 });
+        sawMore = sawMore || resp.has_more;
+        const freshItems = resp.items.filter((item) => !loadedIds.has(getItemId(item)));
+        if (freshItems.length === 0) continue;
+
+        for (const item of freshItems) loadedIds.add(getItemId(item));
+        setAllItems((prev) => {
+          const prevIds = new Set([...(data?.items ?? []), ...prev].map(getItemId));
+          return [
+            ...prev,
+            ...freshItems.filter((item) => !prevIds.has(getItemId(item))),
+          ];
+        });
+        added = true;
+        break;
       }
-      if (resp.items.length > 0) {
-        setAllItems((prev) => [...prev, ...resp.items]);
-        setPagesLoaded((p) => p + 1);
+
+      if (!added && !sawMore) {
+        setHasMore(false);
       }
     } catch { }
     setLoadingMore(false);
-  }, [loadingMore, hasMore, pagesLoaded]);
+  }, [allItems, data, loadingMore, hasMore]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -448,18 +533,6 @@ export default function DiscoverPage() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, []);
-
-  const { data, isLoading, error: feedError } = useSWR(
-    "discover-feed",
-    () => fetchFeed({ limit: 200, event_pct: 0.15 }),
-    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
-  );
-
-  const { data: resolutionsData } = useSWR(
-    "discover-resolutions",
-    fetchResolutions,
-    { revalidateOnFocus: false }
-  );
 
   const handleDismiss = useCallback((itemId: string) => {
     // Hide from the current browsing session only. The server receives
@@ -505,8 +578,8 @@ export default function DiscoverPage() {
       : categoryFilter === "sports"
       ? filtered.filter((i) => SPORTS_CATS.has(getItemCategory(i)))
       : filtered.filter((i) => getItemCategory(i) === categoryFilter);
-    const grouped = groupRelatedMarkets(catFiltered);
-    return applyLocalPersonalization(grouped, interactionProfile);
+    const grouped = groupRelatedMarkets(interleave(catFiltered));
+    return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
   }, [data, allItems, dismissed, categoryFilter, interactionProfile]);
 
   const visibleItems = processedItems.slice(0, visibleCount);

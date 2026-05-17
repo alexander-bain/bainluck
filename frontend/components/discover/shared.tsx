@@ -183,21 +183,21 @@ export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
   const [offset, setOffset] = useState(0);
   const [swipeAction, setSwipeAction] = useState<"like" | "dismiss" | null>(null);
 
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    startX.current = e.touches[0].clientX;
-    currentX.current = startX.current;
+  const beginSwipe = useCallback((clientX: number) => {
+    startX.current = clientX;
+    currentX.current = clientX;
     swiping.current = true;
   }, []);
 
-  const onTouchMove = useCallback((e: React.TouchEvent) => {
+  const updateSwipe = useCallback((clientX: number) => {
     if (!swiping.current) return;
-    currentX.current = e.touches[0].clientX;
+    currentX.current = clientX;
     const dx = currentX.current - startX.current;
     setOffset(dx * 0.5);
     setSwipeAction(dx > 60 ? "like" : dx < -60 ? "dismiss" : null);
   }, []);
 
-  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+  const finishSwipe = useCallback((e?: { preventDefault: () => void; stopPropagation: () => void }) => {
     swiping.current = false;
     const dx = currentX.current - startX.current;
     if (Math.abs(dx) > 80) {
@@ -205,8 +205,8 @@ export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
       window.setTimeout(() => {
         suppressClick.current = false;
       }, 350);
-      e.preventDefault();
-      e.stopPropagation();
+      e?.preventDefault();
+      e?.stopPropagation();
       if (dx > 80 && onSwipeRight) onSwipeRight();
       else if (dx < -80 && onSwipeLeft) onSwipeLeft();
     }
@@ -214,11 +214,61 @@ export function useSwipe(onSwipeLeft?: () => void, onSwipeRight?: () => void) {
     setSwipeAction(null);
   }, [onSwipeLeft, onSwipeRight]);
 
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    beginSwipe(e.touches[0].clientX);
+  }, [beginSwipe]);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    updateSwipe(e.touches[0].clientX);
+  }, [updateSwipe]);
+
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    finishSwipe(e);
+  }, [finishSwipe]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    beginSwipe(e.clientX);
+    ref.current?.setPointerCapture?.(e.pointerId);
+  }, [beginSwipe]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    updateSwipe(e.clientX);
+  }, [updateSwipe]);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    finishSwipe(e);
+    ref.current?.releasePointerCapture?.(e.pointerId);
+  }, [finishSwipe]);
+
+  const onPointerCancel = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    swiping.current = false;
+    setOffset(0);
+    setSwipeAction(null);
+  }, []);
+
   const onClickCapture = useCallback((e: React.MouseEvent) => {
     if (!suppressClick.current) return;
     e.preventDefault();
     e.stopPropagation();
   }, []);
 
-  return { ref, offset, swipeAction, handlers: { onTouchStart, onTouchMove, onTouchEnd, onClickCapture } };
+  return {
+    ref,
+    offset,
+    swipeAction,
+    handlers: {
+      onTouchStart,
+      onTouchMove,
+      onTouchEnd,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+      onClickCapture,
+    },
+  };
 }
