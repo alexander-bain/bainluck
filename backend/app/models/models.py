@@ -1073,3 +1073,30 @@ class PredictionChallenge(Base):
     # Relationships
     market: Mapped["FuturesMarket"] = relationship()
     creator: Mapped[Optional["User"]] = relationship()
+
+
+class DeviceToken(Base):
+    """APNS/FCM device tokens for push notifications."""
+
+    __tablename__ = "device_tokens"
+    __table_args__ = (
+        UniqueConstraint("device_token", name="uq_device_tokens_token"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(10), nullable=False)  # "ios" or "macos"
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    user: Mapped[Optional["User"]] = relationship()
