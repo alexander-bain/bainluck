@@ -463,31 +463,45 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
         )}
 
-        {/* Current Leader */}
+        {/* Current Leader / Winner */}
         {leader && (
           <div className="mt-6 pt-4 border-t border-surface-border">
-            <div className="text-sm text-text-secondary mb-2">Current Favorite</div>
+            <div className="text-sm text-text-secondary mb-2">
+              {isResolved && leader.is_winner ? "Winner" : "Current Favorite"}
+            </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-8 h-8 flex items-center justify-center text-lg bg-amber-100 text-amber-700 rounded-full font-bold">
-                  1
+                <span className={`w-8 h-8 flex items-center justify-center text-lg rounded-full font-bold ${
+                  isResolved && leader.is_winner
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}>
+                  {isResolved && leader.is_winner ? "✓" : "1"}
                 </span>
                 <span className="text-xl font-semibold text-text-primary">
                   {leader.name}
                 </span>
                 {leader.is_winner && (
-                  <span className="text-sm bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded font-medium">
-                    Winner
+                  <span className="text-sm bg-emerald-500/15 text-emerald-600 px-2 py-0.5 rounded font-medium">
+                    Won
                   </span>
                 )}
               </div>
               <div className="text-right">
-                <div className="font-mono text-2xl font-bold text-text-primary">
-                  {formatProbability(leader.probability)}
-                </div>
-                <div className="text-sm text-text-secondary">
-                  {formatAmericanOdds(leader.american_odds)}
-                </div>
+                {isResolved && leader.is_winner ? (
+                  <div className="font-mono text-2xl font-bold text-emerald-600">
+                    100%
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-mono text-2xl font-bold text-text-primary">
+                      {formatProbability(leader.probability)}
+                    </div>
+                    <div className="text-sm text-text-secondary">
+                      {formatAmericanOdds(leader.american_odds)}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -639,7 +653,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
             <span>📊</span>
-            All Outcomes
+            {isResolved ? "Final Results" : "All Outcomes"}
           </h2>
           {sortedOutcomes.length > 25 && (
             <button
@@ -693,6 +707,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               ) ?? false}
               marketCategory={market?.llm_sport_category}
               marketName={market?.name}
+              isResolved={isResolved}
             />
           ))}
         </div>
@@ -758,6 +773,7 @@ function OutcomeRow({
   hasHistory,
   marketCategory,
   marketName,
+  isResolved = false,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -767,6 +783,7 @@ function OutcomeRow({
   hasHistory: boolean;
   marketCategory?: string | null;
   marketName?: string;
+  isResolved?: boolean;
 }) {
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
@@ -781,6 +798,10 @@ function OutcomeRow({
       className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
         isSelected
           ? "bg-blue-50 border border-blue-200"
+          : isResolved && outcome.is_winner === true
+          ? "bg-emerald-50 border border-emerald-200"
+          : isResolved && outcome.is_winner === false
+          ? "bg-slate-50/50"
           : isLeader
           ? "bg-amber-50 border border-amber-200"
           : "bg-slate/5 hover:bg-slate/10"
@@ -855,8 +876,11 @@ function OutcomeRow({
           >
             {outcome.name}
           </span>
-          {outcome.is_winner && (
-            <span className="text-xs text-emerald-600 font-medium">Winner</span>
+          {isResolved && outcome.is_winner === true && (
+            <span className="text-xs text-emerald-600 font-medium">Won</span>
+          )}
+          {isResolved && outcome.is_winner === false && (
+            <span className="text-xs text-red-400 font-medium">Lost</span>
           )}
         </div>
       </div>
@@ -872,7 +896,9 @@ function OutcomeRow({
 
       {/* 24h Change */}
       <div className="w-20 text-right shrink-0">
-        {change !== null && change !== 0 ? (
+        {isResolved && outcome.is_winner !== null ? (
+          <span className="text-xs text-text-muted">-</span>
+        ) : change !== null && change !== 0 ? (
           <span
             className={`text-xs font-medium px-2 py-0.5 rounded-full ${
               change > 0
@@ -890,16 +916,38 @@ function OutcomeRow({
 
       {/* Current probability and odds */}
       <div className="text-right shrink-0">
-        <div
-          className={`font-mono text-base tabular-nums ${
-            isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
-          }`}
-        >
-          {formatProbability(outcome.probability)}
-        </div>
-        <div className="text-xs text-text-secondary font-mono">
-          {formatAmericanOdds(outcome.american_odds)}
-        </div>
+        {isResolved && outcome.is_winner === true ? (
+          <>
+            <div className="font-mono text-base tabular-nums font-bold text-emerald-600">
+              100%
+            </div>
+            <div className="text-xs text-emerald-500 font-medium">
+              Settled
+            </div>
+          </>
+        ) : isResolved && outcome.is_winner === false ? (
+          <>
+            <div className="font-mono text-base tabular-nums font-semibold text-text-muted">
+              0%
+            </div>
+            <div className="text-xs text-text-muted font-medium">
+              Settled
+            </div>
+          </>
+        ) : (
+          <>
+            <div
+              className={`font-mono text-base tabular-nums ${
+                isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
+              }`}
+            >
+              {formatProbability(outcome.probability)}
+            </div>
+            <div className="text-xs text-text-secondary font-mono">
+              {formatAmericanOdds(outcome.american_odds)}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

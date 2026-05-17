@@ -287,10 +287,21 @@ function OutcomeRow({
           <motion.div
             className="h-full rounded-full"
             style={{
-              backgroundColor: isLeader ? "var(--accent-futures)" : "var(--text-muted)",
-              opacity: isLeader ? 0.7 : 0.3,
+              backgroundColor: isResolved && outcome.is_winner === true
+                ? "var(--accent-live, #10b981)"
+                : isResolved && outcome.is_winner === false
+                ? "var(--text-muted)"
+                : isLeader ? "var(--accent-futures)" : "var(--text-muted)",
+              opacity: isResolved && outcome.is_winner === false ? 0.15
+                : isLeader ? 0.7 : 0.3,
             }}
-            animate={{ width: `${Math.min(prob * 100, 100)}%` }}
+            animate={{
+              width: isResolved && outcome.is_winner === true
+                ? "100%"
+                : isResolved && outcome.is_winner === false
+                ? "0%"
+                : `${Math.min(prob * 100, 100)}%`,
+            }}
             transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
           />
         </div>
@@ -298,13 +309,25 @@ function OutcomeRow({
 
       {/* Probability + movement */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <MovementIndicator change={movement} />
-        <span className={cn(
-          "font-mono text-sm tabular-nums",
-          isLeader ? "font-bold text-text-primary" : "text-text-muted",
-        )}>
-          {formatProbability(outcome.probability)}
-        </span>
+        {isResolved && outcome.is_winner === true ? (
+          <span className="font-mono text-sm tabular-nums font-bold text-emerald-600">
+            Won
+          </span>
+        ) : isResolved && outcome.is_winner === false ? (
+          <span className="font-mono text-sm tabular-nums text-text-muted">
+            Lost
+          </span>
+        ) : (
+          <>
+            <MovementIndicator change={movement} />
+            <span className={cn(
+              "font-mono text-sm tabular-nums",
+              isLeader ? "font-bold text-text-primary" : "text-text-muted",
+            )}>
+              {formatProbability(outcome.probability)}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );
