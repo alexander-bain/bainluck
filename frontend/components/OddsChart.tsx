@@ -686,10 +686,42 @@ export default function OddsChart({
       }
     }
 
-    // Forward-fill game state: carry most recent score/period/clock to subsequent points
+    // Forward-fill probability data: carry last known value through gap-filled
+    // minutes so lines appear continuous instead of showing visual gaps.
+    // Without this, gap-filled minutes have null deltas and Recharts must rely
+    // on connectNulls to draw a thin interpolation — which can look broken
+    // when there are many consecutive nulls (e.g., sparse MLB betting data).
+    // Forward-filling is semantically correct: the probability IS the last
+    // known value until a new data point arrives.
     const sorted = Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
+
+    // Collect all probability delta keys to forward-fill
+    const probKeys: string[] = ["homeDelta", "bainLuckDelta", "espnDelta"];
+    for (const source of nonBettingSources) {
+      probKeys.push(source.dataKey);
+    }
+    for (const bookmaker of Object.keys(filteredBookmakerHistory)) {
+      probKeys.push(`${bookmaker}_delta`);
+    }
+
+    const lastKnown: Record<string, number | null> = {};
+    for (const key of probKeys) {
+      lastKnown[key] = null;
+    }
+    for (const pt of sorted) {
+      for (const key of probKeys) {
+        const val = pt[key];
+        if (typeof val === "number") {
+          lastKnown[key] = val;
+        } else if (lastKnown[key] !== null) {
+          pt[key] = lastKnown[key];
+        }
+      }
+    }
+
+    // Forward-fill game state: carry most recent score/period/clock to subsequent points
     let lastScore: { home: number | null; away: number | null } = { home: null, away: null };
     let lastPeriod: string | null = null;
     let lastClock: string | null = null;
