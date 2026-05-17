@@ -3,6 +3,7 @@ import Combine
 import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "eventDetail")
+private let eventDetailFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
 
 // MARK: - ViewModel
 
@@ -181,7 +182,7 @@ struct EventDetailView: View {
     }
 
     private var shareURL: URL {
-        URL(string: "https://bainluck.com/events/\(eventId)")!
+        URL(string: "https://bainluck.com/events/\(eventId)") ?? eventDetailFallbackURL
     }
 
     var body: some View {

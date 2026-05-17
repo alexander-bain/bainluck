@@ -1,6 +1,8 @@
 import SwiftUI
 import Combine
 
+private let discoverFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
+
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
     case group(title: String, items: [FeedItem])
@@ -372,24 +374,18 @@ struct DiscoverView: View {
 
     private var groupedItems: [DiscoverGroupedItem] {
         var groups: [String: [FeedItem]] = [:]
-        var groupOrder: [String] = []
+        var groupTitles: [String: String] = [:]
         var result: [DiscoverGroupedItem] = []
         var usedPrefixes: Set<String> = []
 
         let mixedItems = interleave(filteredItems)
 
         for item in mixedItems {
-            if item.type == "futures", let f = item.futures {
-                let name = f.name
-                let prefix: String
-                if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
-                    prefix = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
-                } else {
-                    prefix = name.split(separator: " ").prefix(3).joined(separator: " ")
-                }
-                if groups[prefix] == nil { groupOrder.append(prefix) }
-                groups[prefix, default: []].append(item)
+            guard item.type == "futures", let grouping = futuresGrouping(for: item) else { continue }
+            if groups[grouping.key] == nil {
+                groupTitles[grouping.key] = grouping.title
             }
+            groups[grouping.key, default: []].append(item)
         }
 
         for item in mixedItems {
@@ -397,23 +393,46 @@ struct DiscoverView: View {
                 result.append(.single(item))
                 continue
             }
-            let name = item.futures?.name ?? ""
-            let prefix: String
-            if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
-                prefix = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
-            } else {
-                prefix = name.split(separator: " ").prefix(3).joined(separator: " ")
+            guard let grouping = futuresGrouping(for: item) else {
+                result.append(.single(item))
+                continue
             }
-            if usedPrefixes.contains(prefix) { continue }
-            usedPrefixes.insert(prefix)
-            let group = groups[prefix] ?? [item]
+            if usedPrefixes.contains(grouping.key) { continue }
+            usedPrefixes.insert(grouping.key)
+            let group = groups[grouping.key] ?? [item]
             if group.count >= 2 {
-                result.append(.group(title: prefix, items: group))
+                result.append(.group(title: groupTitles[grouping.key] ?? grouping.title, items: group))
             } else {
                 result.append(.single(group[0]))
             }
         }
         return interleaveGrouped(applyLocalPersonalization(result))
+    }
+
+    private func futuresGrouping(for item: FeedItem) -> (key: String, title: String)? {
+        guard let futures = item.futures else { return nil }
+        if let groupId = futures.groupId?.trimmingCharacters(in: .whitespacesAndNewlines), !groupId.isEmpty {
+            return ("group:\(groupId)", futuresGroupTitle(for: futures))
+        }
+        if let canonical = futures.canonicalMarketKey?.trimmingCharacters(in: .whitespacesAndNewlines), !canonical.isEmpty {
+            return ("canonical:\(canonical)", futuresGroupTitle(for: futures))
+        }
+        let name = futures.name
+        if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
+            let prefix = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+            if !prefix.isEmpty {
+                return ("prefix:\(prefix.lowercased())", prefix)
+            }
+        }
+        return nil
+    }
+
+    private func futuresGroupTitle(for futures: FeedFuturesData) -> String {
+        if let colonIdx = futures.name.firstIndex(of: ":"), futures.name.distance(from: futures.name.startIndex, to: colonIdx) < 30 {
+            let prefix = String(futures.name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+            if !prefix.isEmpty { return prefix }
+        }
+        return futures.name
     }
 
     private func interleave(_ items: [FeedItem]) -> [FeedItem] {
@@ -591,7 +610,8 @@ struct DiscoverView: View {
                                 case .single(let item):
                                     if isGuessSlot, item.type == "futures", let f = item.futures,
                                        f.status != "closed", f.status != "resolved",
-                                       (f.topOutcomes?.first?.probability ?? 0) < 0.95 {
+                                       let leaderProbability = f.topOutcomes?.first?.probability,
+                                       leaderProbability < 0.95 {
                                         SwipeToDismiss(
                                             onSwipeLeft: {
                                                 recordInteraction(for: item, action: .unlike, source: "swipe")
@@ -702,6 +722,9 @@ struct DiscoverView: View {
             }
         }
         .refreshable {
+            visibleCount = 20
+            dismissed.removeAll()
+            seenImpressions.removeAll()
             await vm.load()
             if let r = try? await APIClient.shared.fetchResolutions() {
                 resolutions = r.resolutions
@@ -829,7 +852,7 @@ struct DiscoverView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: url)!) {
+            ShareLink(item: URL(string: url) ?? discoverFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         } else if let f = item.futures {
@@ -858,7 +881,7 @@ struct DiscoverView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: url)!) {
+            ShareLink(item: URL(string: url) ?? discoverFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }
@@ -1831,6 +1854,7 @@ private struct NativeGuessCard: View {
     }
 
     private func submitGuess(_ g: String) {
+        guard let actualProbability = leader?.probability else { return }
         guess = g
         displayPct = 0
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
@@ -1840,7 +1864,7 @@ private struct NativeGuessCard: View {
             marketId: data.id,
             guess: g,
             threshold: threshold,
-            actualProbability: leader?.probability ?? 0,
+            actualProbability: actualProbability,
             correct: isCorrect,
             contentType: "futures",
             category: data.llmSportCategory
@@ -1850,7 +1874,7 @@ private struct NativeGuessCard: View {
                 marketId: data.id,
                 guess: g,
                 threshold: threshold,
-                actualProbability: leader?.probability ?? 0,
+                actualProbability: actualProbability,
                 correct: isCorrect,
                 category: data.llmSportCategory
             )

@@ -548,7 +548,7 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 Claude CLI failed to process these because screenshot image handling returned `API Error: 400 Could not process image`. Items were added from text-only report context; screenshots should be reviewed later with the links below.
 
-### BR60. Yes/No Markets Should Not Show Top-5/Top-10 Framing (P3)
+### ~~BR60. Yes/No Markets Should Not Show Top-5/Top-10 Framing~~ — FIXED (May 17)
 
 **Problem:** Binary yes/no market cards show "top 5" or "top 10" framing, which makes no sense for two-outcome markets.
 
@@ -556,6 +556,8 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Files:** `backend/app/routes/feed.py`, `ios/.../Views/DiscoverView.swift`
 **Parallel Safety:** Yellow
+
+**Fix:** Binary `No` labels now preserve side semantics instead of falling back to the bare positive market topic.
 
 ### ~~BR61. Native Discover Card Question Truncated~~ — FIXED (May 17)
 
@@ -576,6 +578,8 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, category routes
 **Parallel Safety:** Red (touches feed ranking/grouping)
+
+**Progress May 17:** Discover feed now emits `group_id`/`group_type`, and native Discover grouping prefers backend grouping IDs/canonical keys instead of the fragile first-three-words title fallback. Full cross-surface aggregation remains open.
 
 ### ~~BR63. Prediction Stats Empty Despite Weeks of Predictions~~ — FIXED (May 17)
 
@@ -628,7 +632,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Fix:** Native Sports feed now fetches an event-only supplemental page and appends non-live event rows behind the ranked feed so scrolling past live cards does not empty the tab.
 
-### BR68. Final Score Displays As `final 0.0` (P3)
+### ~~BR68. Final Score Displays As `final 0.0`~~ — FIXED (May 17)
 
 **Problem:** Native UI displays `final 0.0` at the top of a market/event card, which is confusing and likely a score/status formatting bug.
 
@@ -636,6 +640,8 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Files:** `ios/.../Views/DiscoverView.swift`, `ios/.../Views/EventDetailView.swift`, backend event response shape if value is wrong
 **Parallel Safety:** Yellow
+
+**Fix:** Native Discover no longer shows/submits futures guess cards when the leader probability is missing, preventing stored `0.0` actual probabilities.
 
 ### ~~BR69. Calibration Data Looks Wrong/Unimpressive~~ — FIXED (May 17)
 
@@ -688,7 +694,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Fix:** Removed native Discover category filter state and pill row; ranking owns category mix.
 
-### BR74. Pull-To-Refresh Does Not Produce New Discover Cards (P2)
+### ~~BR74. Pull-To-Refresh Does Not Produce New Discover Cards~~ — FIXED (May 17)
 
 **Problem:** Repeated pull-to-refresh on native Discover does not produce new cards.
 
@@ -696,6 +702,8 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Files:** `ios/.../Views/DiscoverView.swift`, `backend/app/routes/feed.py`
 **Parallel Safety:** Red (feed pagination/seen-state)
+
+**Fix:** Pull-to-refresh resets native Discover presentation state (`visibleCount`, dismissed cards, impression dedupe) before reloading.
 
 ### ~~BR75. Native Discover Names Truncated~~ — FIXED (May 17)
 
@@ -1263,7 +1271,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-1 | Force-unwrap URLs | `EventDetailView.swift`, `FeedView.swift`, `DiscoverView.swift` | Replace `URL(string:)!` with safe fallback: `?? URL(string: "https://bainluck.com")!` |
+| ~~CQ-1~~ | ~~Force-unwrap URLs~~ | `EventDetailView.swift`, `FeedView.swift`, `DiscoverView.swift` | ✅ DONE May 17 — `ShareLink` URLs now fall back to `https://bainluck.com` instead of force-unwrapping. |
 | ~~CQ-2~~ | ~~Unstable FeedItem.id~~ | `FeedModels.swift` line 79 | ✅ DONE May 17 — UUID fallback replaced with deterministic identity from feed fields. |
 | ~~CQ-3~~ | ~~AuthManager thread safety~~ | `AuthManager.swift` | ✅ DONE May 17 — `AuthManager` is main-actor isolated. |
 
@@ -1311,6 +1319,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | CQ-19 | Document model types | All files in `Models/` | Add `///` doc comment to every struct explaining what it represents |
 | CQ-20 | Document services | `APIClient.swift`, `AuthManager.swift`, `NavigationCoordinator.swift` | Add `///` to public methods |
 | ~~CQ-21~~ | ~~Remove dead code~~ | `EventDetailView.swift` | ✅ DONE May 17 — removed disabled tag placeholder views and now-unused tag helpers. |
+
+- CQ-20 slice done May 17: tightened public method doc comments in `NavigationCoordinator.swift`.
 
 ### What NOT to do
 

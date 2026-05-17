@@ -6,6 +6,7 @@ import UIKit
 #endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "feed")
+private let feedFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
 
 // MARK: - ViewModel
 
@@ -507,7 +508,7 @@ struct FeedView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)")!) {
+            ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)") ?? feedFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
             #if os(macOS)
@@ -543,7 +544,7 @@ struct FeedView: View {
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)")!) {
+            ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)") ?? feedFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }

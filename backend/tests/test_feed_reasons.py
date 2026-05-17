@@ -176,6 +176,14 @@ class TestHumanizeBinaryOutcomeName:
         result = humanize_binary_outcome_name("No", "Will Anthropic IPO first?")
         assert result == "Not Anthropic"
 
+    def test_no_outcome_preserves_side_for_top_five_market(self):
+        result = humanize_binary_outcome_name(
+            "No",
+            "Will Rory McIlroy finish Top 5 at the Truist Championship?",
+        )
+        assert result.startswith("No: ") or result.startswith("Not")
+        assert not result.startswith("Rory McIlroy finish Top 5")
+
     def test_extracts_person_name(self):
         assert humanize_binary_outcome_name("Yes", "Will Taylor Swift be pregnant in 2026?") == "Taylor Swift"
 

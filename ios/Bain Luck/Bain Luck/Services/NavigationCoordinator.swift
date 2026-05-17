@@ -29,8 +29,8 @@ final class NavigationCoordinator: ObservableObject {
     @Published var showBugReport = false
     @Published var liveGameTitle: String = "Bain Luck"
 
-    /// Parse a URL and navigate to the appropriate destination.
-    /// Returns `true` if the URL was handled.
+    /// Handles supported app links by selecting the destination tab and queuing any route payload.
+    /// Returns `true` when the URL maps to a known Bain Luck route.
     func handleURL(_ url: URL) -> Bool {
         // Custom scheme: bainluck://events/123
         // Universal link: https://bainluck.com/events/123
@@ -138,7 +138,7 @@ final class NavigationCoordinator: ObservableObject {
         return false
     }
 
-    /// Switch to a tab and push a route after a brief delay for animation.
+    /// Selects the destination tab, then queues the route after the tab transition can begin.
     func navigate(to route: Route, tab: AppTab) {
         selectedTab = tab
         // Brief delay to let tab switch animate before pushing
@@ -147,14 +147,14 @@ final class NavigationCoordinator: ObservableObject {
         }
     }
 
-    /// Consume the pending route (called by the active tab view).
+    /// Returns and clears the next route waiting for the active tab view.
     func consumeRoute() -> Route? {
         let route = pendingRoute
         pendingRoute = nil
         return route
     }
 
-    /// Consume the pending search query (called by SearchView).
+    /// Returns and clears the search query captured from a deep link.
     func consumeSearchQuery() -> String? {
         let query = pendingSearchQuery
         pendingSearchQuery = nil

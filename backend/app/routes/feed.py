@@ -2458,6 +2458,8 @@ async def _score_futures(
             FuturesMarket.llm_sport_category,
             FuturesMarket.market_tier,
             FuturesMarket.canonical_market_key,
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
             FuturesMarket.image_url,
             FuturesMarket.hook_description,
             FuturesMarket.market_metadata,
@@ -3027,6 +3029,8 @@ async def _score_futures(
             "top_outcomes": top_outcomes_data,
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
+            "group_id": market.group_id,
+            "group_type": market.group_type,
             "image_url": market.image_url,
             "hook_description": market.hook_description,
         }

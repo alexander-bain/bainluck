@@ -87,10 +87,11 @@ def humanize_binary_outcome_name(
         label = label[:37] + "..."
 
     if not is_yes:
-        # For "No" outcomes, prepend negation only if short enough
+        # Preserve side semantics. Returning the bare topic makes "No" cards
+        # read like the positive side for binary markets such as Top 5/Top 10.
         neg_label = f"Not: {label}"
         if len(neg_label) > 40:
-            return label  # Better to show the topic than a truncated negation
+            neg_label = f"No: {label[:33]}..."
         return neg_label
 
     return label
