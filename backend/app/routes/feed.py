@@ -503,12 +503,21 @@ async def get_feed(
     # alternate_names (short forms like "Bears", "Brown") which cause false
     # positives: "bears" matching "chicago bears", "brown" matching "browns".
     my_team_names: list[str] = []
+    # Map team name -> set of sport categories the user follows that team in.
+    # Used by futures matching (BR53) to prevent cross-sport false positives
+    # like "Aliya Boston" (WNBA) matching "Boston Bruins" (NHL).
+    my_team_sport_categories: dict[str, set[str]] = {}
     if my_teams_only and user and ctx.team_relations:
         team_ids = list(ctx.team_relations.keys())
         team_name_result = await db.execute(
-            select(Team.name).where(Team.id.in_(team_ids))
+            select(Team.name, Sport.key).where(Team.id.in_(team_ids)).join(Sport, Team.sport_id == Sport.id)
         )
-        my_team_names = [name for (name,) in team_name_result.all() if name]
+        for name, sport_key in team_name_result.all():
+            if name:
+                my_team_names.append(name)
+                cat = _personalization_category_from_sport_key(sport_key)
+                if cat:
+                    my_team_sport_categories.setdefault(name, set()).add(cat)
 
     feed_items = []
 
@@ -569,6 +578,7 @@ async def get_feed(
                 ctx,
                 my_teams_only=my_teams_only,
                 my_team_names=my_team_names,
+                my_team_sport_categories=my_team_sport_categories,
                 tag_filter=dynamic_tag_filter or None,
                 static_tag_filter=static_tag_filter or None,
                 timing_records=_timings,
@@ -2183,6 +2193,7 @@ async def _score_futures(
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
+    my_team_sport_categories: Optional[dict[str, set[str]]] = None,
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
     timing_records: Optional[list[dict[str, float | str]]] = None,
@@ -2667,13 +2678,25 @@ async def _score_futures(
 
             matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
 
-            # Fall back to outcome name matching when team_ids aren't linked
+            # Fall back to outcome name matching when team_ids aren't linked.
+            # BR53: require sport-category match to prevent cross-sport false
+            # positives (e.g., "Aliya Boston" matching "Boston Bruins" via
+            # token overlap, or "Believers: Boston Red Sox" Sports Emmy
+            # matching a baseball team).
             matched_by_name = False
             if not matched_by_id and my_team_names:
+                market_cat = market.llm_sport_category
+                if not market_cat and market_sport_key:
+                    market_cat = _personalization_category_from_sport_key(market_sport_key)
                 for o in market.outcomes:
                     if o.name:
                         for team_name in (my_team_names or []):
                             if _team_name_matches(team_name, o.name):
+                                # Verify sport compatibility (BR53)
+                                if my_team_sport_categories and market_cat:
+                                    team_cats = my_team_sport_categories.get(team_name)
+                                    if team_cats and market_cat not in team_cats:
+                                        continue  # sport mismatch — skip
                                 matched_by_name = True
                                 break
                     if matched_by_name:
@@ -2685,6 +2708,9 @@ async def _score_futures(
         # Collect matched outcome details for "why is this here?" context
         matched_outcomes_list = []
         if my_teams_only and user_team_ids:
+            market_cat_for_match = market.llm_sport_category
+            if not market_cat_for_match and (market.sport and market.sport.key):
+                market_cat_for_match = _personalization_category_from_sport_key(market.sport.key)
             for o in market.outcomes:
                 is_match = False
                 if o.team_id and o.team_id in user_team_ids:
@@ -2692,6 +2718,11 @@ async def _score_futures(
                 elif my_team_names and o.name:
                     for team_name in (my_team_names or []):
                         if _team_name_matches(team_name, o.name):
+                            # BR53: sport-category check for name-matched outcomes
+                            if my_team_sport_categories and market_cat_for_match:
+                                team_cats = my_team_sport_categories.get(team_name)
+                                if team_cats and market_cat_for_match not in team_cats:
+                                    continue
                             is_match = True
                             break
                 if is_match:
