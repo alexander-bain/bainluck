@@ -196,7 +196,7 @@ _SIGNATURE_EVENTS = {
     "fedex_st_jude_championship",
 }
 
-from app.utils.name_normalization import clean_slug as _clean_slug, strip_diacritics as _strip_diacritics_canonical
+from app.utils.name_normalization import clean_slug as _clean_slug, strip_diacritics as _strip_diacritics_canonical, _SPONSOR_SUFFIX_RE
 
 TOURNAMENT_ORDER = [
     "masters", "pga_championship", "us_open", "the_open",
@@ -320,7 +320,7 @@ _DG_TOUR_TO_KEY = {
     "pga": "pga",
     "euro": "dp_world",
     "kft": "korn_ferry",
-    "opp": "asian",       # "opposite-field" / international events
+    "opp": "pga",         # opposite-field PGA Tour events (same week as majors)
     "alt": "dp_world",    # alternate/co-sanctioned events
 }
 

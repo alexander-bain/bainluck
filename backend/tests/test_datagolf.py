@@ -471,3 +471,81 @@ class TestLeaderboardCompletionDetection:
         ]
         win_probs = [e["win_prob"] for e in entries if e["win_prob"] is not None]
         assert not all(wp in (0.0, 100.0) for wp in win_probs)
+
+
+# ---------------------------------------------------------------------------
+# Tour classification (golf.py _classify_tour + _DG_TOUR_TO_KEY)
+# ---------------------------------------------------------------------------
+
+from app.routes.golf import _classify_tour, _DG_TOUR_TO_KEY
+
+
+class TestClassifyTour:
+    """Verify tour classification from market names and DataGolf external_ids."""
+
+    def test_major_wins_over_everything(self):
+        assert _classify_tour("Masters Winner?", "masters", True, False) == "major"
+
+    def test_womens_returns_lpga(self):
+        assert _classify_tour("KPMG Women's PGA Championship", "pga_championship_womens", False, True) == "lpga"
+
+    def test_dp_world_from_name(self):
+        assert _classify_tour("DP World Tour: Dubai Classic", "dubai_classic", False, False) == "dp_world"
+
+    def test_liv_from_name(self):
+        assert _classify_tour("LIV Golf Adelaide", "liv", False, False) == "liv"
+
+    def test_asian_tour_from_name(self):
+        assert _classify_tour("Asian Tour: Hainan Open", "hainan_open", False, False) == "asian"
+
+    def test_default_is_pga(self):
+        """Unmatched non-major/non-women's events default to PGA Tour."""
+        assert _classify_tour("Some Tournament Winner?", "some_tournament", False, False) == "pga"
+
+    def test_datagolf_opp_maps_to_pga(self):
+        """DataGolf 'opp' (opposite-field) events are PGA Tour, NOT Asian Tour."""
+        result = _classify_tour(
+            "Barracuda Championship - Winner",
+            "barracuda_championship",
+            False, False,
+            market_external_ids=["datagolf:opp:123:win"],
+        )
+        assert result == "pga"
+
+    def test_datagolf_euro_maps_to_dp_world(self):
+        result = _classify_tour(
+            "Irish Open - Winner",
+            "irish_open",
+            False, False,
+            market_external_ids=["datagolf:euro:456:win"],
+        )
+        assert result == "dp_world"
+
+    def test_datagolf_kft_maps_to_korn_ferry(self):
+        result = _classify_tour(
+            "NV5 Invitational - Winner",
+            "nv5_invitational",
+            False, False,
+            market_external_ids=["datagolf:kft:789:win"],
+        )
+        assert result == "korn_ferry"
+
+
+class TestDGTourToKey:
+    """Verify _DG_TOUR_TO_KEY mapping correctness."""
+
+    def test_opp_is_pga_not_asian(self):
+        """Opposite-field events are PGA Tour events, not Asian Tour."""
+        assert _DG_TOUR_TO_KEY["opp"] == "pga"
+
+    def test_pga_maps_to_pga(self):
+        assert _DG_TOUR_TO_KEY["pga"] == "pga"
+
+    def test_euro_maps_to_dp_world(self):
+        assert _DG_TOUR_TO_KEY["euro"] == "dp_world"
+
+    def test_kft_maps_to_korn_ferry(self):
+        assert _DG_TOUR_TO_KEY["kft"] == "korn_ferry"
+
+    def test_alt_maps_to_dp_world(self):
+        assert _DG_TOUR_TO_KEY["alt"] == "dp_world"
