@@ -112,11 +112,9 @@ struct MainTabView: View {
                         .tag(AppTab.entertainment)
                     sidebarLabel("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
-                    sidebarLabel("Calibration", systemImage: "chart.dots.scatter")
-                        .tag(AppTab.calibration)
                 }
             }
-            .navigationTitle("🍀 Bain Luck")
+            .navigationTitle("Bain Luck")
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
         } detail: {
             switch navCoordinator.selectedTab {

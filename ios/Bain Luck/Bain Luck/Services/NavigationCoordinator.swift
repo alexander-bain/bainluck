@@ -127,10 +127,6 @@ final class NavigationCoordinator: ObservableObject {
                 return true
             }
 
-        case "calibration":
-            navigate(to: .calibration, tab: .leagues)
-            return true
-
         default:
             break
         }

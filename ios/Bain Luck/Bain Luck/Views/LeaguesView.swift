@@ -73,23 +73,6 @@ struct LeaguesView: View {
                         }
                         .padding(.vertical, 2)
                     }
-                    NavigationLink(value: Route.calibration) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "chart.dots.scatter")
-                                .font(.body)
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Color.teal, in: RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Calibration")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("Do markets predict?")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
                     NavigationLink(value: Route.dailyChallenge) {
                         HStack(spacing: 12) {
                             Image(systemName: "flame.fill")
