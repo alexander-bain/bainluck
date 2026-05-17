@@ -1,6 +1,7 @@
 """Admin endpoints for discover quality, engagement, bug reports, and feedback."""
 
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -955,12 +956,17 @@ async def update_bug_report(
             raise HTTPException(404, f"Bug report {report_id} not found")
         await db.commit()
 
-        if status == "fixed" and resolution_summary:
-            try:
-                from app.tasks.bug_notifications import send_bug_fixed_email
-                await send_bug_fixed_email(report_id, db)
-            except Exception as e:
-                logger.warning("Bug fix email failed for report %d: %s", report_id, e)
+        if status == "actioned" and resolution_summary:
+            async def _send_notification(rid: int) -> None:
+                try:
+                    from app.services.database import async_session_maker
+                    from app.tasks.bug_notifications import send_bug_fixed_email
+                    async with async_session_maker() as bg_db:
+                        await send_bug_fixed_email(rid, bg_db)
+                except Exception as exc:
+                    logger.warning("Bug fix email failed for report %d: %s", rid, exc)
+
+            asyncio.create_task(_send_notification(report_id))
 
     return {"status": "ok"}
 
