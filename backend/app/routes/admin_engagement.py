@@ -925,6 +925,7 @@ async def update_bug_report(
     admin_notes: str = Query(None),
     resolution_summary: str = Query(None),
     backlog_ref: str = Query(None),
+    user_email: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if not await _check_admin_auth(secret, request, db):
@@ -949,6 +950,8 @@ async def update_bug_report(
         values["resolution_summary"] = resolution_summary
     if backlog_ref is not None:
         values["backlog_ref"] = backlog_ref
+    if user_email is not None:
+        values["user_email"] = user_email or None
 
     if values:
         result = await db.execute(
