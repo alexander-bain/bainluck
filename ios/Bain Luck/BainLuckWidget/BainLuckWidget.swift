@@ -75,6 +75,8 @@ struct BainLuckWidgetView: View {
             SmallLiveGameView(entry: entry)
         case .systemMedium:
             MediumLiveGamesView(entry: entry)
+        case .systemLarge:
+            LargeDashboardView(entry: entry)
         default:
             SmallLiveGameView(entry: entry)
         }
@@ -93,7 +95,7 @@ struct BainLuckDesktopWidget: Widget {
         }
         .configurationDisplayName("Bain Luck")
         .description("Live game probabilities and trending prediction markets at a glance.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -116,6 +118,12 @@ struct BainLuckWidgetBundle: WidgetBundle {
 }
 
 #Preview("Medium", as: .systemMedium) {
+    BainLuckDesktopWidget()
+} timeline: {
+    BainLuckWidgetEntry.placeholder
+}
+
+#Preview("Large", as: .systemLarge) {
     BainLuckDesktopWidget()
 } timeline: {
     BainLuckWidgetEntry.placeholder

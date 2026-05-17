@@ -23,7 +23,7 @@ private let logger = Logger(subsystem: "com.bainluck", category: "notifications"
 /// `requestPermissionAfterDelay()` once the app has loaded. When the user
 /// is authenticated, call `setUser(id:)` so the token registration
 /// includes the user identity.
-final class NotificationManager: ObservableObject {
+final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
     @Published var isPermissionGranted = false
@@ -37,7 +37,53 @@ final class NotificationManager: ObservableObject {
     /// Whether we've already sent the token to the backend this session.
     private var tokenRegistered = false
 
-    private init() {}
+    /// Reference to the nav coordinator for deep linking from notifications.
+    weak var navCoordinator: NavigationCoordinator?
+
+    private override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Show notifications as banners even when the app is in the foreground.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
+    }
+
+    /// Handle notification taps — deep link into the relevant content.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+
+        // If the notification payload includes a deep link URL, navigate to it.
+        if let urlString = userInfo["url"] as? String,
+           let url = URL(string: urlString) {
+            Task { @MainActor in
+                _ = navCoordinator?.handleURL(url)
+            }
+        } else if let eventIdString = userInfo["event_id"] as? String,
+                  let eventId = Int(eventIdString) {
+            Task { @MainActor in
+                navCoordinator?.navigate(to: .eventDetail(id: eventId), tab: .feed)
+            }
+        } else if let marketIdString = userInfo["market_id"] as? String,
+                  let marketId = Int(marketIdString) {
+            Task { @MainActor in
+                navCoordinator?.navigate(to: .futuresDetail(id: marketId), tab: .feed)
+            }
+        }
+
+        completionHandler()
+    }
 
     // MARK: - Public API
 
@@ -146,6 +192,22 @@ class BainLuckAppDelegate: NSObject, UIApplicationDelegate {
 
     func application(
         _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        NotificationManager.shared.didFailToRegisterForRemoteNotifications(error: error)
+    }
+}
+#elseif os(macOS)
+class BainLuckMacAppDelegate: NSObject, NSApplicationDelegate {
+    func application(
+        _ application: NSApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        NotificationManager.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    }
+
+    func application(
+        _ application: NSApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         NotificationManager.shared.didFailToRegisterForRemoteNotifications(error: error)

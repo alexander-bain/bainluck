@@ -18,6 +18,8 @@ import AppKit
 struct Bain_LuckApp: App {
     #if os(iOS)
     @UIApplicationDelegateAdaptor(BainLuckAppDelegate.self) var appDelegate
+    #elseif os(macOS)
+    @NSApplicationDelegateAdaptor(BainLuckMacAppDelegate.self) var macAppDelegate
     #endif
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
@@ -83,7 +85,8 @@ struct Bain_LuckApp: App {
                 .task {
                     pinManager.isAuthenticated = authManager.isAuthenticated
                     await pinManager.loadPins()
-                    // Request notification permission after a delay (not on first frame)
+                    // Wire up notification deep linking and request permission
+                    NotificationManager.shared.navCoordinator = navCoordinator
                     NotificationManager.shared.requestPermissionAfterDelay()
                     if let userId = authManager.user?.id {
                         NotificationManager.shared.setUser(id: userId)
