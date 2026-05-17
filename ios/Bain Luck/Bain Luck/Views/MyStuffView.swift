@@ -59,6 +59,12 @@ final class MyStuffViewModel: ObservableObject {
             loading = false
             logger.info("My Stuff feed loaded: \(feed.items.count) items, \(futures?.items.count ?? 0) futures")
             configureAutoRefresh()
+        } catch let apiError as APIError where apiError.isCancellation {
+            if isInitial { loading = false }
+            logger.debug("My Stuff feed load cancelled")
+        } catch is CancellationError {
+            if isInitial { loading = false }
+            logger.debug("My Stuff feed load cancelled")
         } catch {
             if isInitial {
                 self.error = error.localizedDescription

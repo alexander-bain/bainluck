@@ -22,6 +22,14 @@ enum APIError: LocalizedError {
             return "No connection. Check your network and try again."
         }
     }
+
+    var isCancellation: Bool {
+        if case .networkError(let underlying) = self {
+            let nsError = underlying as NSError
+            return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        }
+        return false
+    }
 }
 
 // MARK: - API Client
@@ -132,7 +140,11 @@ actor APIClient {
 
     // MARK: - Generic POST (Encodable body)
 
-    private func postEncodable<B: Encodable & Sendable, T: Decodable & Sendable>(_ path: String, body: B) async throws -> sending T {
+    private func postEncodable<B: Encodable & Sendable, T: Decodable & Sendable>(
+        _ path: String,
+        body: B,
+        timeout: TimeInterval? = nil
+    ) async throws -> sending T {
         guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
@@ -140,6 +152,9 @@ actor APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -582,7 +597,7 @@ actor APIClient {
     // MARK: - Bug Reports
 
     func submitBugReport(_ body: BugReportSubmission) async throws -> BugReportResponse {
-        return try await postEncodable("/api/feedback/bug-report", body: body)
+        return try await postEncodable("/api/feedback/bug-report", body: body, timeout: 120)
     }
 
     // MARK: - Calibration
