@@ -464,9 +464,6 @@ struct EventDetailView: View {
                 }
             }
 
-            // Tag chips (inline in hero, matching web)
-            heroTagChips(event)
-
             // Center: logos flanking giant probabilities
             HStack(spacing: 0) {
                 // Away team logo + score
@@ -623,13 +620,6 @@ struct EventDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Hero Tag Chips (disabled — internal taxonomy tags not user-facing)
-
-    @ViewBuilder
-    private func heroTagChips(_ event: EventDetail) -> some View {
-        EmptyView()
-    }
-
     // MARK: - Hero Status Badge
 
     @ViewBuilder
@@ -642,95 +632,6 @@ struct EventDetailView: View {
         default:
             StatusBadge(status: "scheduled", commenceTime: event.commenceTime)
         }
-    }
-
-    // MARK: - Event Tags
-
-    @ViewBuilder
-    private func eventTagsSection(_ event: EventDetail) -> some View {
-        EmptyView()
-    }
-
-    private static func tagLabel(_ tag: String) -> String {
-        let labels: [String: String] = [
-            "importance:championship": "Championship",
-            "importance:playoff": "Playoff",
-            "importance:exhibition": "Exhibition",
-            "signal:upset": "Upset Alert",
-            "signal:favorite_switched": "Favorite Switched",
-            "signal:very_close": "Very Close",
-            "signal:close_matchup": "Close Matchup",
-            "signal:major_prob_swing": "Major Probability Swing",
-            "timing:starting_very_soon": "Starting Very Soon",
-            "timing:starting_soon": "Starting Soon",
-            "stakes:elimination": "Elimination",
-            "stakes:clinch": "Clinch Scenario",
-            "stakes:playoff_race": "Playoff Race",
-            "stakes:relegation": "Relegation",
-            "stakes:promotion": "Promotion",
-            "stakes:seeding": "Seeding",
-            "stakes:title_defense": "Title Defense",
-            "stakes:must_win": "Must Win",
-            "stakes:record_chase": "Record Chase",
-            "stakes:streak": "Streak",
-            "narrative:rivalry": "Rivalry",
-            "narrative:historic_rivalry": "Historic Rivalry",
-            "narrative:revenge_game": "Revenge Game",
-            "narrative:cinderella": "Cinderella Story",
-            "narrative:upset_alert": "Upset Alert",
-            "narrative:comeback": "Comeback",
-            "narrative:legacy_moment": "Legacy Moment",
-            "narrative:debut": "Debut",
-            "narrative:return_from_injury": "Return from Injury",
-            "narrative:farewell_tour": "Farewell Tour",
-            "narrative:rematch": "Rematch",
-            "narrative:david_vs_goliath": "David vs. Goliath",
-            "narrative:redemption": "Redemption",
-            "narrative:winning_streak": "Winning Streak",
-            "narrative:losing_streak": "Losing Streak",
-            "audience:national_interest": "National Interest",
-            "audience:casual_friendly": "Casual Friendly",
-            "audience:crossover_appeal": "Crossover Appeal",
-            "audience:viral_potential": "Viral Potential",
-            "audience:hardcore_only": "Hardcore Only",
-            "competitive_structure:series": "Series",
-            "competitive_structure:best_of_7": "Best of 7",
-            "competitive_structure:bracket": "Bracket",
-            "competitive_structure:knockout": "Knockout",
-            "competitive_structure:group_stage": "Group Stage",
-            "competitive_structure:single_elimination": "Single Elimination",
-            "competitive_structure:round_robin": "Round Robin",
-            "tier:1": "Major",
-            "tier:2": "Tier 2",
-            "tier:3": "Tier 3",
-            "ei:high": "High Excitement",
-            "ei:very_high": "Must Watch",
-            "competitive_structure:field": "Field",
-        ]
-        if let label = labels[tag] { return label }
-        // Fallback: strip namespace, capitalize, replace underscores
-        let value = tag.components(separatedBy: ":").last ?? tag
-        return value.replacingOccurrences(of: "_", with: " ").capitalized
-    }
-
-    private static func tagForeground(_ tag: String) -> Color {
-        let ns = tag.components(separatedBy: ":").first ?? ""
-        switch ns {
-        case "importance": return Color(hex: "#f59e0b")
-        case "signal": return Color(hex: "#22c55e")
-        case "timing": return Color(hex: "#3b82f6")
-        case "stakes": return Color(hex: "#ef4444")
-        case "narrative": return Color(hex: "#f59e0b")
-        case "audience": return Color(hex: "#06b6d4")
-        case "competitive_structure": return Color(hex: "#818cf8")
-        case "tier": return Color(hex: "#3b82f6")
-        case "ei": return Color(hex: "#f59e0b")
-        default: return .secondary
-        }
-    }
-
-    private static func tagBackground(_ tag: String) -> Color {
-        tagForeground(tag).opacity(0.15)
     }
 
     // MARK: - ESPN

@@ -1247,7 +1247,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Description | Files | Safety |
 |---|------|-------------|-------|--------|
 | ~~iOS-4~~ | ~~Dead/stale views cleanup~~ | ✅ Audited May 16 — all 89 Swift files are live and referenced. No dead code found. | `ios/.../Views/` | Green |
-| iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
+| ~~iOS-6~~ | ~~Feed `limit=200` override~~ | ✅ VERIFIED May 17 — native Sports feed build passed with supplemental event backfill. | `FeedView.swift` | Green |
 | iOS-7 | Rebuild native Futures browser before re-exposing | Native Futures entry points are hidden from production navigation until the tab has a polished, useful browse experience with clear category structure, stable card layouts, and parity with the web futures browser. | `FuturesListView.swift`, `MainTabView.swift`, `LeaguesView.swift` | Yellow |
 | ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
 
@@ -1264,8 +1264,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | CQ-1 | Force-unwrap URLs | `EventDetailView.swift`, `FeedView.swift`, `DiscoverView.swift` | Replace `URL(string:)!` with safe fallback: `?? URL(string: "https://bainluck.com")!` |
-| CQ-2 | Unstable FeedItem.id | `FeedModels.swift` line 79 | Replace `UUID().uuidString` fallback with stable string like `"unknown-\(type)-\(score)"` |
-| CQ-3 | AuthManager thread safety | `AuthManager.swift` | Add `@MainActor` to the class declaration |
+| ~~CQ-2~~ | ~~Unstable FeedItem.id~~ | `FeedModels.swift` line 79 | ✅ DONE May 17 — UUID fallback replaced with deterministic identity from feed fields. |
+| ~~CQ-3~~ | ~~AuthManager thread safety~~ | `AuthManager.swift` | ✅ DONE May 17 — `AuthManager` is main-actor isolated. |
 
 ### Wave 2: Kill Duplication (2 hours, biggest quality win)
 
@@ -1310,7 +1310,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | CQ-19 | Document model types | All files in `Models/` | Add `///` doc comment to every struct explaining what it represents |
 | CQ-20 | Document services | `APIClient.swift`, `AuthManager.swift`, `NavigationCoordinator.swift` | Add `///` to public methods |
-| CQ-21 | Remove dead code | `EventDetailView.swift` | Delete `heroTagChips` and `eventTagsSection` that return `EmptyView()` |
+| ~~CQ-21~~ | ~~Remove dead code~~ | `EventDetailView.swift` | ✅ DONE May 17 — removed disabled tag placeholder views and now-unused tag helpers. |
 
 ### What NOT to do
 

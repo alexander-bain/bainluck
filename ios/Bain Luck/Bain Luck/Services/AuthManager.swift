@@ -14,6 +14,7 @@ private let logger = Logger(subsystem: "com.bainluck", category: "auth")
 private let keychainTokenKey = "com.bainluck.sessionToken"
 private let keychainAppleUserIdKey = "com.bainluck.appleUserId"
 
+@MainActor
 final class AuthManager: ObservableObject {
     @Published var user: AuthUser?
     @Published var isLoading = true

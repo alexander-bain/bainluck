@@ -75,7 +75,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     var id: String {
         if let e = event { return "event-\(e.id)" }
         if let f = futures { return "futures-\(f.id)" }
-        return UUID().uuidString
+        return [
+            "feed",
+            type,
+            headline,
+            contextSummary,
+            reason,
+            String(score)
+        ]
+        .compactMap { $0?.stableFeedIdentityComponent }
+        .joined(separator: "-")
     }
 
     enum CodingKeys: String, CodingKey {
@@ -102,6 +111,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
         }
+    }
+}
+
+private extension String {
+    var stableFeedIdentityComponent: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
     }
 }
 
