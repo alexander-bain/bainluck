@@ -651,13 +651,18 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     """Run all winner backfill tasks."""
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
-    commence_stats = {"golf": 0, "hockey": 0}
+    commence_stats = {"golf": 0, "hockey": 0, "golf_error": None, "hockey_error": None}
+    from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
     try:
-        from app.tasks.kalshi import _fix_golf_commence_times, _fix_hockey_commence_times
         commence_stats["golf"] = await _fix_golf_commence_times()
+    except Exception as e:
+        commence_stats["golf_error"] = str(e)
+        logger.warning("Golf commence_time fix failed: %s", e)
+    try:
         commence_stats["hockey"] = await _fix_hockey_commence_times()
     except Exception as e:
-        logger.warning("Commence_time fix failed: %s", e)
+        commence_stats["hockey_error"] = str(e)
+        logger.warning("Hockey commence_time fix failed: %s", e)
 
     # Phase 0a: Backfill Polymarket group_id (no API, fast)
     group_stats = await _backfill_polymarket_group_ids()

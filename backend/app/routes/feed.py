@@ -240,6 +240,32 @@ DISCOVER_SPORTS_CATEGORIES = (
     "esports", "rugby", "lacrosse",
 )
 
+# Sport keys allowed in My Stuff feed (Tier 1 + Tier 2 from SPORT_POLLING_TIERS).
+# Excludes Tier 3 sports (NCAA hockey, esports, minor soccer leagues, etc.) that
+# cause false positives — e.g., a Red Sox follower seeing "Boston College" hockey
+# or "Boston Breach" esports. Bug reports BR42/BR43.
+MY_STUFF_ALLOWED_SPORT_KEYS = {
+    # Tier 1 — core US sports
+    "basketball_nba",
+    "basketball_ncaab",
+    "icehockey_nhl",
+    "baseball_mlb",
+    "americanfootball_nfl",
+    # Tier 2 — secondary
+    "basketball_wnba",
+    "americanfootball_ncaaf",
+    "soccer_epl",
+    "soccer_usa_mls",
+    "soccer_uefa_champs_league",
+    "mma_mixed_martial_arts",
+}
+
+# LLM sport categories corresponding to MY_STUFF_ALLOWED_SPORT_KEYS.
+# Used for futures filtering where sport_key isn't directly available.
+MY_STUFF_ALLOWED_CATEGORIES = {
+    "basketball", "football", "baseball", "hockey", "soccer", "mma",
+}
+
 _SPORTS_POSTSEASON_SQL_FILTER = and_(
     FuturesMarket.llm_sport_category.in_(("basketball", "football", "baseball", "hockey")),
     or_(
@@ -942,6 +968,33 @@ def _market_runtime_filter_trace(
         if days_stale > 2 and not has_any_movement:
             blockers.append("stale_no_movement")
 
+    # Soft-settled binary market: leader >=60% with negligible movement.
+    # Catches elimination/advancement markets stuck below the 90% threshold.
+    # Only applied to sports categories where elimination makes a market
+    # de facto resolved even when the exchange hasn't formally settled it.
+    soft_settled = False
+    max_recent_movement = 0.0
+    sport_cat = (sport_category or "").lower()
+    is_sports_category = sport_cat in {
+        "sports", "football", "basketball", "baseball",
+        "hockey", "soccer", "golf", "tennis", "mma", "racing",
+    }
+    if (
+        is_sports_category
+        and leader_prob is not None
+        and leader_prob >= 0.60
+        and len(probs_available) == 2
+    ):
+        max_recent_movement = max(
+            (abs(o["probability_change_24h"]) for o in outcomes_data
+             if o["probability_change_24h"] is not None),
+            default=0.0,
+        )
+        if max_recent_movement < 0.02:
+            if leader_opening is None or leader_opening >= 0.50:
+                soft_settled = True
+                blockers.append("soft_settled_binary")
+
     commence_time = _utc(market.commence_time)
 
     return {
@@ -954,6 +1007,8 @@ def _market_runtime_filter_trace(
             "effective_resolution_threshold": resolved_threshold,
             "effective_resolution_opening_threshold": opening_threshold,
             "has_any_movement": has_any_movement,
+            "max_recent_movement": round(max_recent_movement, 4),
+            "soft_settled_binary": soft_settled,
             "days_stale": round(days_stale, 2) if days_stale is not None else None,
             "commence_time": commence_time.isoformat() if commence_time else None,
             "commence_time_staleness_applied": False,
@@ -1758,6 +1813,10 @@ async def _score_events(
         else:
             # No teams → nothing to show
             return []
+        # Restrict to Tier 1+2 sports — prevents false positives from name
+        # collisions with Tier 3 sports (e.g., "Boston" matching Boston College
+        # hockey, Boston Breach esports, Boston River soccer). BR42/BR43.
+        query = query.where(Sport.key.in_(MY_STUFF_ALLOWED_SPORT_KEYS))
         query = query.limit(200)  # Safety cap (user's teams only)
     else:
         # Prioritize live > recently completed > scheduled so the 500-row
@@ -2422,6 +2481,43 @@ async def _score_futures(
             if market.resolution_date is None and days_stale > no_resolution_stale_days and not has_any_movement:
                 continue
 
+        # 4) Soft-settled binary market: leader >=60% with negligible movement.
+        #    Catches elimination/advancement markets that exchanges haven't
+        #    formally resolved (e.g., "Will Celtics advance?" stuck at 69% No
+        #    for a week after elimination). Legitimate uncertain markets at
+        #    60-90% have daily price swings >=2pp; dead markets don't.
+        #    Only applied to sports categories where elimination definitively
+        #    settles a market even when the exchange hasn't resolved it.
+        market_sport_category = (market.llm_sport_category or "").lower()
+        is_sports_for_soft_settle = market_sport_category in {
+            "sports", "football", "basketball", "baseball",
+            "hockey", "soccer", "golf", "tennis", "mma", "racing",
+        }
+        if (
+            is_sports_for_soft_settle
+            and leader_prob is not None
+            and leader_prob >= 0.60
+            and len(probs_available) == 2
+        ):
+            max_recent_movement = max(
+                (abs(o["probability_change_24h"]) for o in outcomes_data
+                 if o["probability_change_24h"] is not None),
+                default=0.0,
+            )
+            if max_recent_movement < 0.02:
+                # Check if leader has been flat since opening (within 10pp)
+                leader_opening_prob = None
+                for o in outcomes_data:
+                    if o["name"] == leader_name:
+                        leader_opening_prob = o.get("opening_probability")
+                        break
+                # If no opening data or the leader was already high at open,
+                # this market was never interesting OR has been settled for a
+                # while. If the leader ROSE significantly from opening, it
+                # moved to this level and stopped — also effectively settled.
+                if leader_opening_prob is None or leader_opening_prob >= 0.50:
+                    continue
+
         # Get source count from canonical key
         source_count = 1
         if market.canonical_market_key:
@@ -2499,6 +2595,16 @@ async def _score_futures(
 
         # my_teams_only: skip futures that don't involve the user's teams
         if my_teams_only:
+            # Skip Tier 3 sports — same filter as events to avoid false
+            # positives from name collisions. BR42/BR43.
+            market_sport_key = market.sport.key if market.sport else None
+            if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
+                continue
+            # Also filter by llm_sport_category for markets without a sport FK
+            if not market_sport_key and market.llm_sport_category:
+                if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                    continue
+
             matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
 
             # Fall back to outcome name matching when team_ids aren't linked
@@ -2585,9 +2691,15 @@ async def _score_futures(
             for o in sorted_outcomes[:3]  # Show top 3 in feed card
         ]
 
-        # Normalize probabilities when independent binary markets sum > 105%
-        prob_sum = sum(o["probability"] for o in top_outcomes_data if o["probability"])
-        if prob_sum > 1.05:
+        # Normalize probabilities when independent binary markets sum > 100%.
+        # For 2-outcome markets (true binary questions), any sum > 101% is
+        # wrong — there's no excuse for two mutually exclusive outcomes
+        # exceeding 100%. For multi-outcome markets, allow up to 105% since
+        # small overages from independent sources are expected.
+        prob_with_values = [o for o in top_outcomes_data if o["probability"]]
+        prob_sum = sum(o["probability"] for o in prob_with_values)
+        norm_threshold = 1.01 if len(prob_with_values) == 2 else 1.05
+        if prob_sum > norm_threshold:
             for o in top_outcomes_data:
                 if o["probability"]:
                     o["probability"] = round(o["probability"] / prob_sum, 4)

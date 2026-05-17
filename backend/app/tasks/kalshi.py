@@ -687,6 +687,8 @@ async def _fix_golf_commence_times() -> int:
             """)
         )
         markets = result.fetchall()
+        logger.info("Golf commence_time fix: %d resolved golf markets found, schedule=%s",
+                     len(markets), "available" if schedule else "UNAVAILABLE")
 
         fixed = 0
         for m in markets:

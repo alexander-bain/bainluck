@@ -650,6 +650,168 @@ class TestFeedQualityDebug:
         assert trace["eligible"] is True
         assert "effectively_resolved" not in trace["blockers"]
 
+    def test_soft_settled_binary_suppresses_stale_sports_elimination(self):
+        """A basketball binary market at 69% No with no movement = soft settled."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "No",
+                    "probability": 0.69,
+                    "probability_change_24h": 0.003,
+                    "opening_probability": 0.55,
+                },
+                {
+                    "name": "Yes",
+                    "probability": 0.31,
+                    "probability_change_24h": -0.003,
+                    "opening_probability": 0.45,
+                },
+            ],
+            "No",
+            0.69,
+            now,
+            sport_category="basketball",
+        )
+
+        assert trace["eligible"] is False
+        assert "soft_settled_binary" in trace["blockers"]
+        assert trace["checks"]["soft_settled_binary"] is True
+
+    def test_soft_settled_binary_allows_active_sports_market(self):
+        """A basketball binary market at 65% with significant movement = keep it."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 0.65,
+                    "probability_change_24h": 0.05,
+                    "opening_probability": 0.50,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.35,
+                    "probability_change_24h": -0.05,
+                    "opening_probability": 0.50,
+                },
+            ],
+            "Yes",
+            0.65,
+            now,
+            sport_category="basketball",
+        )
+
+        assert trace["eligible"] is True
+        assert "soft_settled_binary" not in trace["blockers"]
+
+    def test_soft_settled_binary_does_not_apply_to_politics(self):
+        """A politics binary market at 69% with no movement should stay eligible."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "No",
+                    "probability": 0.69,
+                    "probability_change_24h": 0.001,
+                    "opening_probability": 0.55,
+                },
+                {
+                    "name": "Yes",
+                    "probability": 0.31,
+                    "probability_change_24h": -0.001,
+                    "opening_probability": 0.45,
+                },
+            ],
+            "No",
+            0.69,
+            now,
+            sport_category="politics",
+        )
+
+        assert trace["eligible"] is True
+        assert "soft_settled_binary" not in trace["blockers"]
+
+    def test_soft_settled_binary_spares_underdog_rise(self):
+        """Sports binary at 65% where leader opened at 30% = genuine story, keep it."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 0.65,
+                    "probability_change_24h": 0.005,
+                    "opening_probability": 0.30,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.35,
+                    "probability_change_24h": -0.005,
+                    "opening_probability": 0.70,
+                },
+            ],
+            "Yes",
+            0.65,
+            now,
+            sport_category="hockey",
+        )
+
+        assert trace["eligible"] is True
+        assert "soft_settled_binary" not in trace["blockers"]
+
+    def test_soft_settled_binary_does_not_apply_to_multi_outcome(self):
+        """Multi-outcome sports market at 60% leader should not be soft-settled."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Team A",
+                    "probability": 0.60,
+                    "probability_change_24h": 0.001,
+                    "opening_probability": 0.55,
+                },
+                {
+                    "name": "Team B",
+                    "probability": 0.25,
+                    "probability_change_24h": 0.001,
+                    "opening_probability": 0.25,
+                },
+                {
+                    "name": "Team C",
+                    "probability": 0.15,
+                    "probability_change_24h": -0.002,
+                    "opening_probability": 0.20,
+                },
+            ],
+            "Team A",
+            0.60,
+            now,
+            sport_category="basketball",
+        )
+
+        assert trace["eligible"] is True
+        assert "soft_settled_binary" not in trace["blockers"]
+
     def test_canonical_dedupe_does_not_collapse_unrelated_yes_no_markets(self):
         china_invade = {
             "data": {
