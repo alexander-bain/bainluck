@@ -2405,6 +2405,7 @@ async def _score_futures(
             FuturesMarket.canonical_market_key,
             FuturesMarket.image_url,
             FuturesMarket.hook_description,
+            FuturesMarket.market_metadata,
             FuturesMarket.volume_24h,
             FuturesMarket.updated_at,
             FuturesMarket.resolution_date,
