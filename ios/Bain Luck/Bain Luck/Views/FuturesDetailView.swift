@@ -70,7 +70,9 @@ struct FuturesDetailView: View {
                         headerSection(market)
 
                         // Probability evolution chart
-                        if market.outcomes.count >= 2 {
+                        // Show for any market with outcomes (>= 1), including
+                        // binary markets that have only a single "Yes" outcome
+                        if market.outcomes.count >= 1 {
                             TournamentChartView(
                                 marketId: marketId,
                                 hours: 168,

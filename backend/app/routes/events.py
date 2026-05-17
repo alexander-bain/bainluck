@@ -942,15 +942,35 @@ async def search_events(
     total_count = total_count or 0
     total_pages = (total_count + per_page - 1) // per_page
 
-    # Also search futures markets by name or outcome (label) name
+    # Also search futures markets by name or outcome (label) name.
+    # For multi-word queries, split into individual terms so that
+    # "PGA championship playoff" matches "PGA Championship: Playoff"
+    # even when the exact phrase doesn't appear verbatim in the name.
+    if len(terms) > 1:
+        futures_name_conditions = [
+            FuturesMarket.name.ilike(f"%{term}%") for term in terms
+        ]
+        futures_name_match = and_(*futures_name_conditions)
+        # Also try matching outcome names with per-term AND logic
+        futures_outcome_conditions = [
+            FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(f"%{term}%"))
+            for term in terms
+        ]
+        futures_outcome_match = and_(*futures_outcome_conditions)
+    else:
+        futures_name_match = FuturesMarket.name.ilike(search_pattern)
+        futures_outcome_match = FuturesMarket.outcomes.any(
+            FuturesOutcome.name.ilike(search_pattern)
+        )
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
             or_(
-                FuturesMarket.name.ilike(search_pattern),
-                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(search_pattern)),
+                futures_name_match,
+                futures_outcome_match,
             ),
             FuturesMarket.status == "open",
             or_(
