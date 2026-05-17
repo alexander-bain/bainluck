@@ -122,13 +122,25 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
+  // Request more history for markets that haven't been updated recently,
+  // so the chart isn't empty when the last poll was days ago.
+  const historyHours = useMemo(() => {
+    if (!market?.updated_at) return 168; // 7 days default
+    const hoursSinceUpdate = (Date.now() - new Date(market.updated_at).getTime()) / (1000 * 60 * 60);
+    // If last update was >3 days ago, expand the window to cover it
+    if (hoursSinceUpdate > 72) {
+      return Math.min(Math.ceil(hoursSinceUpdate + 48), 720); // up to 30 days
+    }
+    return 168; // 7 days
+  }, [market?.updated_at]);
+
   const {
     data: historyData,
     error: historyError,
     isLoading: historyLoading,
   } = useSWR(
-    market ? ["futures-history", marketId] : null,
-    () => fetchFuturesHistory(marketId, 168)
+    market ? ["futures-history", marketId, historyHours] : null,
+    () => fetchFuturesHistory(marketId, historyHours)
   );
 
   // Track futures detail view once data loads
@@ -320,10 +332,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       )}
 
       {/* Expired market banner */}
-      {market.resolution_date && new Date(market.resolution_date) < new Date() && (
+      {(isResolved || (market.resolution_date && new Date(market.resolution_date) < new Date())) && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 text-sm text-amber-400">
-          This market resolved on {new Date(market.resolution_date).toLocaleDateString()}.
-          Showing final probabilities.
+          {isResolved
+            ? `This market has been settled.${market.resolution_date ? ` Resolved ${new Date(market.resolution_date).toLocaleDateString()}.` : ""}`
+            : `This market resolved on ${new Date(market.resolution_date!).toLocaleDateString()}. Showing final probabilities.`}
         </div>
       )}
 
@@ -609,7 +622,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                   ? market.canonical_market_key
                   : undefined
               }
-              hours={168}
+              hours={historyHours}
             />
           ) : (
             <FuturesChart
