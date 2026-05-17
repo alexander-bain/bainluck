@@ -279,12 +279,12 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
 Shipped across web and native. Discover is default landing page (`/`). Sports at `/sports`. Desktop: Discover | Sports | Browse (dropdown) | My Stuff. Mobile bottom nav: Discover | Sports | Search | My Stuff. Native: Discover | Sports | Browse | Search | My Stuff. Browse dropdown/tab has Politics, Entertainment, Economics, Weather. About behind user menu. Footer removed. Tab persistence deferred.
 
-### 0s. League Pages — Phase 3 REMAINING
+### ~~0s. League Pages — ALL PHASES SHIPPED~~
 
 **Phase 1 (backend):** ✅ SHIPPED (May 6)
 **Phase 2 (frontend):** ✅ SHIPPED (May 6)
-**Phase 3: Cross-sport generalization** — Apply same sectioned layout to NHL, MLB, NFL. Each sport gets the same sections.
-**Phase 4: iOS parity** — ✅ SHIPPED (May 13) — LeagueGridView now fetches league markets in parallel and renders Playoff Series, Awards, Props, Season Stats, and More Markets sections below the grid. Uses slug-to-sport-key mapping for all 14 leagues.
+**Phase 3: Cross-sport generalization** — ✅ SHIPPED May 17. MoversRibbon, sport-aware layout applied to NHL, MLB, NFL.
+**Phase 4: iOS parity** — ✅ SHIPPED (May 13) — LeagueGridView with all market sections.
 
 **Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueGridView.swift`
 
@@ -303,93 +303,47 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 10 bug reports. Consolidated into 6 distinct issues. All touch feed.py or the Discover feed — hand off to Discover thread.
 
-### BR57/58. All Outcomes Show Equal Odds (33%/26%/26%/26%) — SYSTEMIC (P1)
+### ~~BR57/58. All Outcomes Show Equal Odds (33%/26%/26%/26%)~~ — FIXED May 17
 
-**Problem:** Multiple Discover cards show all outcomes at exactly the same probability. Examples:
-- BR58: "Where will 'BE HER' by Ella Langley rank?" → 3: 33%, 4: 33%, 5: 33%. "Where will 'Folded' by Kehlani rank?" → 9: 33%, 10: 33%, 6: 33%.
-- BR57: "Where will 'Doors' by Noah Kahan rank?" → 6: 26%, 7: 26%, 9: 26%.
-
-These are Billboard Hot 100 ranking markets with many outcomes. The feed shows top 3, and after normalization they all round to the same integer percentage. The hook description says "New favorite: 3 (81%)" but the card shows 33% — the normalization is dividing the raw probability by the sum of ALL outcomes, not just the displayed top 3.
-
-**Root cause (likely):** Feed normalization divides each outcome by the full sum across ALL outcomes (many of which aren't displayed). When showing only top 3 of 20+ outcomes, the displayed probabilities are tiny fractions that round to the same value. The normalization threshold (>105%) triggers because 20+ outcomes each at ~5% sum to 100%, but showing only top 3 makes them look artificially equal.
-
-**Fix needed:** Either (a) show raw probabilities for the top 3 with a "(of N outcomes)" qualifier, (b) renormalize to only the displayed outcomes, or (c) show the original probability before cross-source normalization.
+Feed normalization now renormalizes to displayed outcomes only, preventing Billboard/multi-outcome markets from showing artificially equal probabilities.
 
 **Files:** `backend/app/routes/feed.py` (top_outcomes_data normalization)
-**Parallel Safety:** RED — feed.py
 
-### BR49. Yes/No Display on Non-Binary Multi-Outcome Markets (P2)
+### ~~BR49. Yes/No Display on Non-Binary Multi-Outcome Markets~~ — FIXED May 17
 
-**Problem:** "Will Anthropic or OpenAI IPO first?" shows "69% Yes" as the hero. But this isn't a yes/no question — it's asking WHICH company will IPO first. Showing "Yes" is meaningless. The card should show the leading outcome name (e.g., "OpenAI" or "Anthropic"), not "Yes".
-
-**Root cause:** The feed card uses the top outcome name, which for Kalshi binary markets is literally "Yes". For markets where the question implies a choice between named options, "Yes" is unhelpful. Need to detect when the top outcome is "Yes"/"No" on a non-binary question and fall back to the market name or a different display.
+Feed now detects "Yes"/"No" top outcomes on non-binary questions and falls back to the market name or leading named outcome.
 
 **Files:** `backend/app/routes/feed.py` (outcome display), `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** RED — feed.py
 
-### BR50. Sparse Snapshot Chart on Market Detail (P2)
+### ~~BR50. Sparse Snapshot Chart on Market Detail~~ — FIXED May 17
 
-**Problem:** "What will be the 51st state in Trump's term?" detail page shows a chart with only ~2 days of data (May 10-11) despite being an open market. The chart has very few data points, making it look broken. "Updated May 12 at 5:40 AM" — hasn't been polled in 5 days.
-
-**Root cause:** This Kalshi market may have low polling priority or may not be getting regular snapshot updates. The market has 7 outcomes (Venezuela 6%, Puerto Rico 5%, etc.) but the chart only shows 2 days of history.
+Sparse chart handling improved — markets with limited snapshot data now display appropriately.
 
 **Files:** `backend/app/tasks/kalshi.py` (polling frequency), futures detail page
-**Parallel Safety:** Yellow
 
-### BR51. PGA Championship: Playoff — Missing Trend Line + Search Issue (P3)
+### ~~BR51. PGA Championship: Playoff — Missing Trend Line + Search Issue~~ — FIXED May 17
 
-**Problem:** Two issues:
-1. Market detail for "PGA Championship: Playoff" shows only 1 outcome (Yes: 21%) with no trend line/chart. Binary markets should show a simple probability-over-time chart.
-2. User searched "PGA championship playoff" and didn't find this market — only found it by searching just "playoff". Multi-word search may be splitting terms too aggressively.
+Binary chart rendering and multi-word search matching both fixed.
 
 **Files:** `ios/.../Views/FuturesDetailView.swift` (chart rendering), `backend/app/routes/events.py` (search)
-**Parallel Safety:** Yellow (chart) / Yellow (search)
 
-### BR52/53. My Stuff "Your Teams' Odds" — Wrong Player/Team Associations (P2)
+### ~~BR52/53. My Stuff "Your Teams' Odds" — Wrong Player/Team Associations~~ — FIXED May 17
 
-**Problem:** Two issues:
-1. BR52: "Your Teams' Odds" shows playoff progression for Boston, New England, Celtics, Red Sox, Patriots — but doesn't show which YEAR the odds refer to. User can't tell if it's stale 2025 data or current 2026 season.
-2. BR53: "Awards & Players" section shows "Aliya Boston" (WNBA player) under Bruins branding. "She's not on the Bruins" — the "Boston" in her name matches the user's followed teams incorrectly. Also shows "Believers: Boston Red Sox" (Sports Emmy), "Aliyah Boston" (multiple WNBA awards) — all name-matched to "Boston" teams regardless of sport.
-
-**Root cause:** The "my teams" matching uses fuzzy city/name matching that catches any "Boston" or "Aliya/Aliyah Boston" regardless of whether the player is actually on a followed team. Need sport-scoped matching: WNBA player awards should only match if the user follows a WNBA team, not just any Boston team.
+Team matching now uses sport-scoped matching — WNBA players no longer match to NHL teams based on city name. Year context added to playoff progression display.
 
 **Files:** `ios/.../Views/MyStuffView.swift`, backend user/feed endpoints
-**Parallel Safety:** Yellow (iOS) / RED (if backend feed.py)
 
-### BR54/56. Feed Quality — Low-Interest Cards, Repetitive, Missing Spotify/Netflix #1 (P2)
+### ~~BR54/56. Feed Quality — Low-Interest Cards, Repetitive, Missing Spotify/Netflix #1~~ — FIXED May 17
 
-**Problem:** User sees many uninteresting cards and keeps dismissing them. Specific complaints:
-- BR54: "None of these are interesting and I keep seeing them" — lots of minor soccer (Coritiba, Aberdeen, Tondela), tennis, cricket. Feed isn't learning from dismiss signals fast enough.
-- BR56: "I keep seeing cards for the #2 show on Netflix. Why not #1? Why never Spotify?" — the feed surfaces "#2 US Netflix Show" but never the #1 show or Spotify rankings. The market-quality classifier may be suppressing #1 markets or they're being deduped as part of the same family.
-
-**Root cause:** Multiple issues:
-1. Dismiss signal isn't aggressively suppressing low-tier sports for this user
-2. Netflix/Spotify #1 markets may be filtered by quality classifier or dedup
-3. Too many minor soccer/tennis events in the feed without sufficient quality gating
+Feed quality classifier updated: minor sports suppressed more aggressively, Netflix/Spotify #1 markets no longer filtered by dedup, dismiss signals now apply stronger personalization penalties.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/personalization.py`
-**Parallel Safety:** RED — feed.py
 
-### WATCH-1. Apple Watch App Mostly Black, Occasionally Shows Malformed Content (P2)
+### ~~WATCH-1. Apple Watch App Mostly Black, Occasionally Shows Malformed Content~~ — FIXED May 17
 
-**Problem:** Watch app IS deployed and running, but pages are mostly black/empty. Occasionally something poorly formatted flashes briefly (truncated labels), then disappears. Not a deployment issue — a reliability issue.
-
-**Investigated (May 17):** Watch app shares `FeedResponse` from main iOS `FeedModels.swift`, so models should be in sync. The app code has proper error/loading/empty states, but they're not rendering reliably. Likely causes:
-1. **watchOS network timeouts** — 30s timeout in `WatchAPIClient` may be too long for Watch, which expects snappy responses. The API can take 5-15s under load (seen in Manus sweep). Watch may kill the request or the view may re-render before data arrives.
-2. **Race condition in view lifecycle** — `.task { await vm.load() }` may fire, get interrupted by watchOS suspending the app, then never complete. The "fleeting malformed content" suggests data arrives momentarily but the view is torn down.
-3. **Silent decode failure** — If any field in `FeedResponse` changed shape, `JSONDecoder` throws and the `catch` block shows "Couldn't load" only if `markets.isEmpty`. The error might flash and then the view goes black.
-4. **watchOS resource limits** — Watch apps have tight memory/CPU budgets. Decoding a 20-item feed response with nested objects may exceed limits, causing watchOS to kill the extension.
-
-**Fix plan:**
-1. Reduce feed request to `limit=5` (Watch doesn't need 20 items)
-2. Add aggressive timeout (8s) with retry
-3. Add `os.log` debug logging to trace request → decode → render lifecycle
-4. Test on Watch Simulator with Xcode debugger attached to see exact failure point
-5. Consider WatchConnectivity relay from iPhone as fallback (avoids independent Watch→API calls)
-6. Simplify the Decodable model to only the fields Watch actually uses (fewer failure points)
+Reliability fixes shipped: reduced feed request limit, aggressive timeout with retry, improved error handling, and decode stability improvements.
 
 **Files:** `ios/Bain Luck/BainLuckWatch Watch App/` (8 Swift files)
-**Parallel Safety:** Green
 
 ---
 
@@ -447,19 +401,17 @@ CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, canc
 
 **Resolved:** ~~MS-1~~ (false alarm), ~~MS-2~~ (false alarm), ~~MS-3~~ (prop monotonicity), ~~MS-4~~ (politics misclassification), ~~MS-5~~ (Spotify normalization), ~~MS-6~~ (economics monotonicity), ~~MS-7~~ (chart stale tails), ~~MS-9~~ (soccer halftime), ~~MS-10~~ (NCAAB settled markets), ~~MS-12~~ (golf grid monotonicity), ~~BUG-NBA~~ (not a bug), ~~BUG-DUP~~ (event merge task handles it).
 
-### MS-8. MLB Chart Rendering Failure (WARNING)
+### ~~MS-8. MLB Chart Rendering Failure~~ — FIXED May 17
 
-**Problem:** Rays vs Red Sox chart has massive gaps. Possibly a data gap in win_prob_snapshots.
-
-**Files:** `backend/app/routes/events.py`
-**Parallel Safety:** Yellow
-
-### MS-11. Completed Market Shows Stale Live Probability (WARNING)
-
-**Problem:** Completed MLB game shows "Yes: 52%" for a settled market — upstream data lag from Kalshi. Low priority edge case.
+Chart gap handling improved — MLB charts no longer show massive data gaps.
 
 **Files:** `backend/app/routes/events.py`
-**Parallel Safety:** Yellow
+
+### ~~MS-11. Completed Market Shows Stale Live Probability~~ — FIXED May 17
+
+Stale probability display on completed markets resolved.
+
+**Files:** `backend/app/routes/events.py`
 
 ### MS-13. Missing Sport Coverage (INFO)
 
@@ -756,11 +708,11 @@ Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map
 
 **Monitor:** `GET /api/admin/backfill-winners/status?secret=$ADMIN_TOKEN` → check `sources` array + `stuck_diagnosis`.
 
-**Current state (May 15, 2026 evening):**
+**Current state (May 17, 2026):**
 | Source | Resolved | has_winner | Coverage | Target |
 |--------|----------|------------|----------|--------|
-| Kalshi | 69,011 | 58,728 | **85%** | 95%+ |
-| Polymarket | 79,854 | 68,167 | **85%** | 95%+ |
+| Kalshi | ~70K | ~61K | **88%** | 95%+ |
+| Polymarket | ~81K | ~74K | **92%** | 95%+ |
 | DataGolf | 80 | 76 | **95%** | ✅ |
 
 **What shipped (May 15):**
@@ -929,13 +881,11 @@ Verified May 15 late: `calibration_probability` is NULL on golf outcomes — the
 **Files:** `backend/app/tasks/__init__.py` (beat schedule), `backend/app/routes/admin.py` (debug + purge endpoints)
 **Parallel Safety:** Green
 
-### Production Observability — Latency, Crash Rate, Quality Indicators
+### ~~Production Observability — Latency, Crash Rate, Quality Indicators~~ — SHIPPED May 17
 
-We measure per-request latency (X-Response-Time header, slow-request logging >500ms/>1s) but have no aggregation, dashboards, or percentile tracking. Can't answer "what's our p50/p95?" or "which endpoints are slowest?" or "what's our crash rate over time?"
+Latency tracking middleware shipped: per-request timing, p50/p95/p99 percentiles, endpoint-level breakdown, admin stats endpoint for monitoring.
 
-**Need:** A solution that tracks latency percentiles (p50/p95/p99), error/crash rates, endpoint-level breakdown, and trends over time. Options range from free (sample + store in Redis/Postgres, build admin dashboard) to paid (Sentry Performance, Datadog, New Relic). Evaluate tradeoffs and pick one.
-
-**Parallel Safety:** Green
+**Files:** `backend/app/main.py`, `backend/app/routes/admin.py`
 
 ### ~~Manus Sweep May 6~~ — ALL 12/12 FIXED (May 7)
 
@@ -980,12 +930,11 @@ Series markets now loaded as a dedicated `series_markets` array via display-time
 
 **Files:** `backend/app/routes/events.py`, `frontend/components/RelatedFutures.tsx`, `ios/.../Views/EventDetailView.swift`
 
-### 0f. Event Detail Below-the-Fold Redesign — TradeWatch Rethink
+### ~~0f. Event Detail Below-the-Fold Redesign — TradeWatch Rethink~~ — SHIPPED May 17
 
-**Problem:** TradeWatch is one-sided and needs layout fix. Steps 1-5 shipped April 22. Only TradeWatch rethink remains (highest-prob destination only, disclaimer added).
+TradeWatch redesigned with improved layout and data presentation.
 
 **Files:** `frontend/app/events/[id]/page.tsx`
-**Parallel Safety:** Yellow (frontend only)
 
 ### 0t-2. Period Markers for Non-ESPN Events — PARTIALLY FIXED (May 11)
 
@@ -1018,7 +967,7 @@ Series markets now loaded as a dedicated `series_markets` array via display-time
 | ~~MAC-1~~ | ~~Live-updating title bar~~ | ✅ SHIPPED May 8 | `Bain_LuckApp.swift` | |
 | ~~MAC-3~~ | ~~Keyboard navigation~~ | ✅ SHIPPED May 8 | `FeedView.swift` | |
 | ~~MAC-5~~ | ~~Menu bar extra (live scores)~~ | ✅ SHIPPED May 8 | `MenuBarView.swift` (new) | |
-| MAC-6 | Push notifications | 2-3h | Various | Green |
+| ~~MAC-6~~ | ~~Push notifications~~ | ✅ SHIPPED May 17 | `Bain_LuckApp.swift` (AppDelegate, UNUserNotificationCenterDelegate) | |
 | ~~MAC-8~~ | ~~Right-click context menus~~ | ✅ SHIPPED May 8 | Various SwiftUI views | |
 | ~~MAC-9~~ | ~~Share button + universal links~~ | ✅ DONE — ShareLink cross-platform, MyStuffView context menus improved. | Various | |
 | MAC-12 | macOS widgets (Today view) | 3-4h | New widget extension | Green |
@@ -1031,7 +980,7 @@ Series markets now loaded as a dedicated `series_markets` array via display-time
 
 **First pass shipped:** 5 functions, 82 tests, 4 utility modules (April 21).
 
-**Remaining targets:** `get_golf` (686L), `_match_prediction_markets` (649L), `operations_dashboard` (595L), `_build_golf_tour_grid` (549L), `_get_march_madness_data` (406L).
+**Remaining targets:** `get_golf` (686L), `_match_prediction_markets` (649L), ~~`operations_dashboard` (595L)~~ (SHIPPED May 17), `_build_golf_tour_grid` (549L), `_get_march_madness_data` (406L).
 
 **Large route files:** `admin.py` (8,684L), `events.py` (5,042L), `playoffs.py` (3,539L), `futures.py` (2,866L), `golf.py` (2,294L).
 
@@ -1041,11 +990,11 @@ Series markets now loaded as a dedicated `series_markets` array via display-time
 
 1 remaining bug: Tour misclassification (Hainan = Asian Tour, not PGA Tour) — seasonal, not reproducible. All other 6 bugs fixed (April 17-19).
 
-### 4. Site Navigation Hierarchy (B1)
+### ~~4. Site Navigation Hierarchy (B1)~~ — SHIPPED May 17
 
-`/basketball/nba` hierarchy instead of flat `/playoffs/nba`. Blocked on golf strategy decisions.
+Canonical `/sport/[sport]/[league]` URL pattern shipped. Navigation uses consistent sport-aware hierarchy.
 
-**Parallel Safety:** Red (restructures frontend routing)
+**Files:** Frontend routing, `frontend/app/sport/`
 
 ### 5. Playoff Series Matchup Markets
 
@@ -1272,7 +1221,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
 | D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
 | ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ SHIPPED May 17 — right swipe/like gives bounded "more like this" boosts; left swipe/unlike gives bounded soft downranks; backend ranking now uses category plus feature/entity/archetype affinities for signed-in and session users. | `routes/feed.py`, `utils/personalization.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
-| D-6 | Push notifications for moves | Foundation shipped (May 13): iOS token capture + backend endpoint. Actual push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
+| D-6 | Push notifications for moves | Foundation shipped (May 13-17): DeviceToken model, iOS token capture, backend registration endpoint, test send endpoint. Actual production push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
 | D-7 | Live game companion mode | NEEDS DESIGN. On iPhone, companion mode is basically just the chart full-screen (what else fits?). On iPad/Mac, the current event detail page IS already a great second screen — so what's really different? Key features: aggressive auto-refresh (10s), screen stays awake (scoped idle timer), simplified layout hiding below-the-fold. Design brief needed before building. | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
 | ~~D-8~~ | ~~Daily digest email~~ | ✅ SHIPPED (May 13) — Celery beat scheduled at 8am ET. | `tasks/daily_digest.py`, email templates | |
 | ~~D-9~~ | ~~Friend challenges~~ | ✅ SHIPPED May 14 — backend scaffold plus `/challenge/[id]` frontend landing page for loading, accepting, viewing participants/results, and sharing challenge links. | `routes/challenges.py`, `app/challenge/[id]/page.tsx` | |

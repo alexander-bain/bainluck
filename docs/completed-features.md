@@ -1,5 +1,67 @@
 # Completed Features (Shipped)
 
+## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
+
+### Shareable Prediction Scorecards
+- ✅ **OG image generation** — Next.js `ImageResponse` generates dynamic scorecard images with accuracy, streak, and prediction count. Unique daily URLs.
+- ✅ **Share button on `/discover/stats`** — Users can share their prediction performance.
+- ✅ **Scorecard page at `/discover/scorecard`** — Standalone shareable page with OG metadata for social previews.
+
+### Production Latency Tracking
+- ✅ **Latency middleware** — Per-request timing with p50/p95/p99 percentile tracking, endpoint-level breakdown, slow-request logging.
+- ✅ **Admin stats endpoint** — Aggregated latency metrics available at admin endpoint for monitoring.
+
+### Bug Report Categories + Lifecycle Fields
+- ✅ **Category field on BugReport model** — Admin dropdown for categorizing reports. Migration: `add_bugreport_cat`.
+- ✅ **Lifecycle fields** — `resolution_summary` and `backlog_ref` fields for tracking bug resolution workflow.
+- ✅ **Bug report auth fix** — Bug report submissions never had `user_id` because `request.state.user_id` was never set. Fixed by using `get_optional_user` dependency instead.
+
+### About Page v2
+- ✅ **Scroll-triggered animations** — Sections animate in on scroll with staggered entry.
+- ✅ **Dynamic API data** — Live market/event/source counts pulled from API instead of hardcoded.
+- ✅ **Refined typography and hover effects** — Polished visual presentation.
+
+### ErrorState Component + Standardized Error Handling
+- ✅ **Unified `ErrorState` component** — Standardized error display across all pages replacing 3 inconsistent patterns.
+- ✅ **Applied across league, category, and hub pages** — Consistent error UX site-wide.
+
+### Bug-Fixed Email Notifications
+- ✅ **Trigger on "actioned" status** — Gmail API sends "your bug was fixed" email when admin marks bug report as actioned.
+- ✅ **Opt-in via rage shake form** — Users check a box to receive fix notifications.
+
+### Push Notification Foundation
+- ✅ **DeviceToken model** — Database model for storing device push tokens.
+- ✅ **Registration endpoint** — Backend endpoint for iOS/macOS to register device tokens.
+- ✅ **Test send endpoint** — Admin endpoint for testing push delivery.
+
+### League Pages Phase 3
+- ✅ **MoversRibbon component** — Shows biggest probability movers across league markets.
+- ✅ **Sport-aware layout** — NHL, MLB, NFL now use the same sectioned layout as NBA. Cross-sport generalization complete.
+
+### macOS Push Notifications
+- ✅ **AppDelegate for push** — macOS `AppDelegate` handles push notification registration.
+- ✅ **UNUserNotificationCenterDelegate** — Notification presentation and handling on macOS.
+
+### Rage Shake Triage #7 Bug Fixes (May 17)
+- ✅ **BR49: Yes/No display** — Non-binary multi-outcome markets no longer show "Yes" as the hero outcome.
+- ✅ **BR50: Sparse chart** — Market detail charts handle sparse snapshot data gracefully.
+- ✅ **BR51: Search + binary chart** — Multi-word search matching improved; binary markets show trend lines.
+- ✅ **BR52/53: Team associations** — Sport-scoped matching prevents cross-sport name collisions (e.g., WNBA "Boston" no longer matches NHL Bruins).
+- ✅ **BR54/56: Feed quality** — Minor sport suppression, Netflix/Spotify #1 surfacing, stronger dismiss signal penalties.
+- ✅ **BR57/58: Equal odds** — Feed normalization renormalizes to displayed outcomes only for multi-outcome markets.
+
+### Other Fixes (May 17)
+- ✅ **MS-8: MLB chart gaps** — Chart gap handling improved for MLB games.
+- ✅ **MS-11: Stale live probability** — Completed markets no longer show stale pre-settlement probabilities.
+- ✅ **WATCH-1: Apple Watch reliability** — Reduced feed limit, aggressive timeout, improved decode stability.
+- ✅ **Golf DQ: import crash + tour misclassification** — Fixed DataGolf import crash and tour classification errors.
+- ✅ **Site navigation hierarchy** — Canonical `/sport/[sport]/[league]` URL pattern shipped.
+- ✅ **God function extraction: `operations_dashboard`** — Extracted from monolithic admin route.
+- ✅ **TradeWatch redesign** — Improved layout and data presentation on event detail pages.
+- ✅ **Onboarding category persistence** — Category selections now persist to server via `useCategoryInterests` hook.
+
+**Files:** `backend/app/main.py`, `backend/app/routes/admin.py`, `backend/app/routes/feed.py`, `backend/app/routes/feedback.py`, `backend/app/models/models.py`, `frontend/app/about/page.tsx`, `frontend/app/discover/stats/page.tsx`, `frontend/app/discover/scorecard/page.tsx`, `frontend/components/ErrorState.tsx`, `ios/Bain Luck/Bain Luck/Bain_LuckApp.swift`
+
 ## May 15, 2026 — Rage Shake Triage #5 + Backlog Blitz (22 items, 4 waves)
 
 ### Rage Shake Triage #5 — Bugs #32-40 (6 fixed, 4 transient)
