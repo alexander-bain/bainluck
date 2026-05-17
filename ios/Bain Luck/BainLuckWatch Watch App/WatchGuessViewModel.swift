@@ -1,6 +1,9 @@
 import Combine
 import Foundation
+import os.log
 import WatchKit
+
+private let logger = Logger(subsystem: "com.bainluck.watch", category: "Guess")
 
 @MainActor
 final class WatchGuessViewModel: ObservableObject {
@@ -14,12 +17,14 @@ final class WatchGuessViewModel: ObservableObject {
     private var currentIndex = 0
 
     func loadQuestions(force: Bool = false) async {
+        logger.info("Guess loadQuestions started (force=\(force))")
         loading = true
         error = nil
         defer { loading = false }
 
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
+            logger.info("Guess feed received: \(feed.items.count) items")
             questions = feed.items.compactMap { item -> GuessQuestion? in
                 if item.type == "futures", let f = item.futures {
                     guard let leader = f.topOutcomes?.first,
@@ -34,12 +39,13 @@ final class WatchGuessViewModel: ObservableObject {
                         category: f.llmSportCategory
                     )
                 } else if item.type == "event", let e = item.event {
-                    guard let prob = e.currentOdds?.homeProbability,
+                    guard let homeTeam = e.homeTeam, let awayTeam = e.awayTeam,
+                          let prob = e.currentOdds?.homeProbability,
                           prob > 0.05, prob < 0.95 else { return nil }
                     return GuessQuestion(
                         id: e.id,
-                        title: "\(e.awayTeam) vs \(e.homeTeam)",
-                        subject: "\(e.homeTeam) to win",
+                        title: "\(awayTeam) vs \(homeTeam)",
+                        subject: "\(homeTeam) to win",
                         actualProb: prob,
                         threshold: Self.generateThreshold(prob),
                         isEvent: true,
@@ -48,10 +54,12 @@ final class WatchGuessViewModel: ObservableObject {
                 }
                 return nil
             }
+            logger.info("Guess: \(self.questions.count) questions from \(feed.items.count) items")
             questions.shuffle()
             currentIndex = 0
             currentQuestion = questions.first
         } catch {
+            logger.error("Guess load failed: \(error.localizedDescription)")
             self.error = "Couldn't load"
             questions = []
             currentQuestion = nil
@@ -60,8 +68,11 @@ final class WatchGuessViewModel: ObservableObject {
         // Load streak
         do {
             let stats = try await WatchAPIClient.shared.fetchPredictionStats()
+            logger.info("Guess streak loaded: \(stats.currentStreak ?? 0)")
             streak = stats.currentStreak
-        } catch {}
+        } catch {
+            logger.error("Guess streak fetch failed: \(error.localizedDescription)")
+        }
     }
 
     func submitGuess(_ guess: String) async {

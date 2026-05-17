@@ -1,6 +1,9 @@
 import Combine
+import os.log
 import SwiftUI
 import WatchKit
+
+private let logger = Logger(subsystem: "com.bainluck.watch", category: "Glances")
 
 struct WatchGlancesView: View {
     @StateObject private var vm = WatchGlancesViewModel()
@@ -120,12 +123,14 @@ final class WatchGlancesViewModel: ObservableObject {
     @Published var lastUpdated: String?
 
     func load(force: Bool = false) async {
+        logger.info("Glances load started (force=\(force), existing=\(self.markets.count))")
         if markets.isEmpty { loading = true }
         error = nil
         defer { loading = false }
 
         do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
+            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 5, forceRefresh: force)
+            logger.info("Glances feed received: \(feed.items.count) items")
             markets = feed.items.compactMap { item -> WatchMarket? in
                 guard let f = item.futures,
                       let leader = f.topOutcomes?.first,
@@ -139,12 +144,14 @@ final class WatchGlancesViewModel: ObservableObject {
                     category: f.llmSportCategory
                 )
             }
+            logger.info("Glances: \(self.markets.count) markets from \(feed.items.count) items")
             if let t = await WatchAPIClient.shared.lastFetchTime {
                 let ago = Int(Date().timeIntervalSince(t))
                 lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
             }
             WKInterfaceDevice.current().play(.click)
         } catch {
+            logger.error("Glances load failed: \(error.localizedDescription)")
             if markets.isEmpty {
                 self.error = "Couldn't load"
             }

@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.bainluck.watch", category: "API")
 
 actor WatchAPIClient {
     static let shared = WatchAPIClient()
@@ -7,7 +10,7 @@ actor WatchAPIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
 
-    private var cachedFeed: FeedResponse?
+    private var cachedFeed: WatchFeedResponse?
     private var cachedAt: Date?
     private let cacheTTL: TimeInterval = 20
 
@@ -23,7 +26,8 @@ actor WatchAPIClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForRequest = 10
+        config.timeoutIntervalForResource = 15
         config.waitsForConnectivity = true
         session = URLSession(configuration: config)
 
@@ -31,23 +35,42 @@ actor WatchAPIClient {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
     }
 
-    func fetchFeed(limit: Int = 20, forceRefresh: Bool = false) async throws -> FeedResponse {
+    func fetchFeed(limit: Int = 5, forceRefresh: Bool = false) async throws -> WatchFeedResponse {
         if !forceRefresh, let cached = cachedFeed, let at = cachedAt,
            Date().timeIntervalSince(at) < cacheTTL {
+            logger.info("Returning cached feed (\(cached.items.count) items, \(Int(Date().timeIntervalSince(at)))s old)")
             return cached
         }
 
         guard let url = URL(string: "\(baseURL)/api/feed?limit=\(limit)&event_pct=0.3") else {
+            logger.error("Invalid feed URL for limit=\(limit)")
             throw WatchAPIError.invalidURL
         }
-        let (data, response) = try await session.data(from: url)
+        logger.info("Fetching feed limit=\(limit), forceRefresh=\(forceRefresh)")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: url)
+        } catch {
+            logger.error("Network failed: \(error.localizedDescription)")
+            throw error
+        }
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            logger.error("HTTP error: status \(code)")
             throw WatchAPIError.httpError
         }
-        let feed = try decoder.decode(FeedResponse.self, from: data)
-        cachedFeed = feed
-        cachedAt = Date()
-        return feed
+        logger.info("Feed response: \(http.statusCode), \(data.count) bytes")
+        do {
+            let feed = try decoder.decode(WatchFeedResponse.self, from: data)
+            logger.info("Decoded \(feed.items.count) items")
+            cachedFeed = feed
+            cachedAt = Date()
+            return feed
+        } catch {
+            logger.error("Decode failed: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     var lastFetchTime: Date? { cachedAt }

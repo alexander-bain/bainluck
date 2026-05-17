@@ -153,9 +153,11 @@ final class WatchLiveViewModel: ObservableObject {
             let newGames = feed.items.compactMap { item -> WatchLiveGame? in
                 guard let e = item.event, e.status == "live",
                       let homeProb = e.currentOdds?.homeProbability else { return nil }
+                let homeTeam = e.homeTeam ?? "Home"
+                let awayTeam = e.awayTeam ?? "Away"
                 let awayProb = 1.0 - homeProb
-                let homeAbbrev = e.homeTeamData?.abbreviation ?? String(e.homeTeam.split(separator: " ").last ?? "")
-                let awayAbbrev = e.awayTeamData?.abbreviation ?? String(e.awayTeam.split(separator: " ").last ?? "")
+                let homeAbbrev = e.homeTeamData?.abbreviation ?? String(homeTeam.split(separator: " ").last ?? "")
+                let awayAbbrev = e.awayTeamData?.abbreviation ?? String(awayTeam.split(separator: " ").last ?? "")
                 let clockParts = [e.espn?.period, e.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
                 return WatchLiveGame(
                     id: e.id,

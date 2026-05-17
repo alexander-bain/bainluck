@@ -57,8 +57,10 @@ struct BainLuckProvider: TimelineProvider {
             for item in feed.items {
                 if liveGame == nil, let e = item.event, e.status == "live",
                    let prob = e.currentOdds?.homeProbability {
-                    let homeAbbrev = e.homeTeamData?.abbreviation ?? String(e.homeTeam.split(separator: " ").last ?? "")
-                    let awayAbbrev = e.awayTeamData?.abbreviation ?? String(e.awayTeam.split(separator: " ").last ?? "")
+                    let homeTeam = e.homeTeam ?? "Home"
+                    let awayTeam = e.awayTeam ?? "Away"
+                    let homeAbbrev = e.homeTeamData?.abbreviation ?? String(homeTeam.split(separator: " ").last ?? "")
+                    let awayAbbrev = e.awayTeamData?.abbreviation ?? String(awayTeam.split(separator: " ").last ?? "")
                     liveGame = ComplicationGame(
                         homeAbbrev: homeAbbrev,
                         awayAbbrev: awayAbbrev,
