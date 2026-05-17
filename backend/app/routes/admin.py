@@ -4592,6 +4592,87 @@ async def merge_events_admin(
 
 
 # ---------------------------------------------------------------------------
+# Latency stats (production observability)
+# ---------------------------------------------------------------------------
+
+@router.get("/latency-stats")
+async def get_latency_stats(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    top: int = Query(20, description="Number of slowest endpoints to return"),
+):
+    """Return p50/p95/p99 latency per endpoint from the last hour.
+
+    Data comes from sampled request timings stored in Redis sorted sets
+    by the LatencyMiddleware.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import time as _time
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+        r = get_redis_client()
+    except Exception:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    endpoints_set = r.smembers("latency:_endpoints")
+    if not endpoints_set:
+        return {"endpoints": [], "note": "No latency data collected yet"}
+
+    now = _time.time()
+    cutoff = now - 3600  # last hour only
+    results = []
+
+    for raw_ep in endpoints_set:
+        ep = raw_ep.decode() if isinstance(raw_ep, bytes) else raw_ep
+        key = f"latency:{ep}"
+
+        # Get all members within the time window (score = timestamp).
+        # member format: "timestamp:latency_ms"
+        pairs = r.zrangebyscore(key, cutoff, "+inf")
+        if not pairs:
+            continue
+
+        latencies = []
+        for raw_member in pairs:
+            m = raw_member.decode() if isinstance(raw_member, bytes) else raw_member
+            try:
+                latencies.append(float(m.split(":", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+        if not latencies:
+            continue
+        latencies.sort()
+        n = len(latencies)
+
+        def _percentile(data, pct):
+            idx = int(pct / 100 * (len(data) - 1))
+            return round(data[idx], 1)
+
+        results.append({
+            "endpoint": ep,
+            "samples": n,
+            "p50_ms": _percentile(latencies, 50),
+            "p95_ms": _percentile(latencies, 95),
+            "p99_ms": _percentile(latencies, 99),
+            "max_ms": round(latencies[-1], 1),
+            "min_ms": round(latencies[0], 1),
+        })
+
+    # Sort by p95 descending so the slowest endpoints are first.
+    results.sort(key=lambda x: x["p95_ms"], reverse=True)
+    results = results[:top]
+
+    return {
+        "window": "1 hour",
+        "sample_rate": f"1/{os.getenv('LATENCY_SAMPLE_RATE', '10')}",
+        "endpoints": results,
+        "total_endpoints_tracked": len(endpoints_set),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Include sub-routers (at bottom to avoid circular imports)
 # ---------------------------------------------------------------------------
 from app.routes.admin_celery import router as celery_router  # noqa: E402

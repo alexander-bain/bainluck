@@ -110,8 +110,10 @@ app.add_middleware(
 # Rate limiting (limits library + Redis)
 # ---------------------------------------------------------------------------
 from app.utils.rate_limit import RateLimitMiddleware
+from app.middleware.latency import LatencyMiddleware
 
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(LatencyMiddleware)
 
 
 CACHE_RULES: list[tuple[str, int]] = [
