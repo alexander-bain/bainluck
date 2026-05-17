@@ -1082,6 +1082,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------------|-------|--------|
 | ~~iOS-4~~ | ~~Dead/stale views cleanup~~ | ✅ Audited May 16 — all 89 Swift files are live and referenced. No dead code found. | `ios/.../Views/` | Green |
 | iOS-6 | Feed `limit=200` override | Fixed April 22, needs build verification | `FeedView.swift` | Green |
+| iOS-7 | Rebuild native Futures browser before re-exposing | Native Futures entry points are hidden from production navigation until the tab has a polished, useful browse experience with clear category structure, stable card layouts, and parity with the web futures browser. | `FuturesListView.swift`, `MainTabView.swift`, `LeaguesView.swift` | Yellow |
 | ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
 
 ---

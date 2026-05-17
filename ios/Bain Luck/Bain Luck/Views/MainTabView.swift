@@ -100,8 +100,6 @@ struct MainTabView: View {
                 }
 
                 Section("Quick Links") {
-                    sidebarLabel("Futures", systemImage: "chart.line.uptrend.xyaxis")
-                        .tag(AppTab.futures)
                     sidebarLabel("Weather", systemImage: "cloud.sun.fill")
                         .tag(AppTab.weather)
                     sidebarLabel("Economics", systemImage: "chart.bar.fill")
@@ -112,9 +110,21 @@ struct MainTabView: View {
                         .tag(AppTab.entertainment)
                     sidebarLabel("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
+                    sidebarLabel("Calibration", systemImage: "chart.dots.scatter")
+                        .tag(AppTab.calibration)
                 }
             }
-            .navigationTitle("Bain Luck")
+            .navigationTitle("")
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        Text("🍀")
+                        Text("Bain Luck")
+                            .font(.headline.weight(.semibold))
+                    }
+                    .lineLimit(1)
+                }
+            }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
         } detail: {
             switch navCoordinator.selectedTab {
