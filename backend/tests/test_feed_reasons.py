@@ -2,6 +2,8 @@ from app.utils.feed_reasons import (
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
+    humanize_binary_outcome_name,
+    humanize_outcome_names_for_feed,
 )
 
 
@@ -149,3 +151,117 @@ def test_futures_context_summary_combines_signal_and_leader():
     )
 
     assert summary == "Yes side up 10.2 points today; No leads at 88%"
+
+
+# ── BR49: humanize_binary_outcome_name ─────────────────────────────
+
+
+class TestHumanizeBinaryOutcomeName:
+    """Yes/No outcomes should be replaced with meaningful entity names."""
+
+    def test_extracts_subject_from_will_question(self):
+        assert humanize_binary_outcome_name("Yes", "Will Anthropic IPO first?") == "Anthropic"
+
+    def test_extracts_subject_openai(self):
+        assert humanize_binary_outcome_name("Yes", "Will OpenAI IPO before 2027?") == "OpenAI"
+
+    def test_extracts_subject_with_the(self):
+        # "the Dodgers" — "the" is generic but "the Dodgers" is a valid entity
+        result = humanize_binary_outcome_name("Yes", "Will the Dodgers win the World Series?")
+        # "the" is first word, so falls back to truncation
+        assert result != "Yes"
+        assert "Dodgers" in result
+
+    def test_no_outcome_negates_subject(self):
+        result = humanize_binary_outcome_name("No", "Will Anthropic IPO first?")
+        assert result == "Not Anthropic"
+
+    def test_extracts_person_name(self):
+        assert humanize_binary_outcome_name("Yes", "Will Taylor Swift be pregnant in 2026?") == "Taylor Swift"
+
+    def test_extracts_elon_musk(self):
+        assert humanize_binary_outcome_name("Yes", "Will Elon Musk step down as CEO of Tesla?") == "Elon Musk"
+
+    def test_generic_subject_falls_back_to_truncation(self):
+        result = humanize_binary_outcome_name("Yes", "Will there be a government shutdown?")
+        assert result != "Yes"
+        assert result != "there"
+        assert "government shutdown" in result.lower()
+
+    def test_non_will_question_truncates(self):
+        result = humanize_binary_outcome_name("Yes", "Federal Reserve interest rate above 5%?")
+        assert result != "Yes"
+        assert "Federal Reserve" in result
+
+    def test_passthrough_for_named_outcomes(self):
+        assert humanize_binary_outcome_name("OpenAI", "Will Anthropic or OpenAI IPO first?") == "OpenAI"
+
+    def test_passthrough_for_empty_name(self):
+        assert humanize_binary_outcome_name("", "Will X happen?") == ""
+
+    def test_passthrough_when_no_market_name(self):
+        assert humanize_binary_outcome_name("Yes", None) == "Yes"
+
+    def test_long_market_name_truncated(self):
+        long_name = "Will the extremely long and complicated market name that goes on forever resolve positively?"
+        result = humanize_binary_outcome_name("Yes", long_name)
+        assert len(result) <= 40
+
+    def test_caps_at_40_chars(self):
+        # Verifies the 40-char cap on the truncation fallback
+        result = humanize_binary_outcome_name("Yes", "GDP growth rate for the United States exceeding expectations?")
+        assert len(result) <= 40
+
+    def test_strips_year_suffix(self):
+        result = humanize_binary_outcome_name("Yes", "Will Bitcoin reach $100k by December 2026?")
+        assert result == "Bitcoin"
+
+    def test_case_insensitive_yes_no(self):
+        assert humanize_binary_outcome_name("YES", "Will Anthropic IPO first?") == "Anthropic"
+        assert humanize_binary_outcome_name("yes", "Will Anthropic IPO first?") == "Anthropic"
+
+
+class TestHumanizeOutcomeNamesForFeed:
+    """Batch humanization for the top_outcomes list in feed cards."""
+
+    def test_humanizes_binary_yes_no(self):
+        outcomes = [
+            {"name": "Yes", "probability": 0.69},
+            {"name": "No", "probability": 0.31},
+        ]
+        result = humanize_outcome_names_for_feed(outcomes, "Will Anthropic IPO first?")
+        assert result[0]["name"] == "Anthropic"
+        assert result[1]["name"] == "Not Anthropic"
+        # Original list not mutated
+        assert outcomes[0]["name"] == "Yes"
+
+    def test_skips_named_outcomes(self):
+        outcomes = [
+            {"name": "OpenAI", "probability": 0.55},
+            {"name": "Anthropic", "probability": 0.35},
+        ]
+        result = humanize_outcome_names_for_feed(outcomes, "Who will IPO first?")
+        assert result[0]["name"] == "OpenAI"
+        assert result[1]["name"] == "Anthropic"
+
+    def test_skips_mixed_outcomes(self):
+        # If not ALL outcomes are Yes/No, don't humanize any
+        outcomes = [
+            {"name": "Yes", "probability": 0.55},
+            {"name": "OpenAI", "probability": 0.35},
+        ]
+        result = humanize_outcome_names_for_feed(outcomes, "Will OpenAI IPO?")
+        assert result[0]["name"] == "Yes"
+
+    def test_empty_list(self):
+        assert humanize_outcome_names_for_feed([], "Some market") == []
+
+    def test_preserves_other_fields(self):
+        outcomes = [
+            {"id": 1, "name": "Yes", "probability": 0.69, "rank": 1, "movement": 0.05},
+        ]
+        result = humanize_outcome_names_for_feed(outcomes, "Will Anthropic IPO first?")
+        assert result[0]["id"] == 1
+        assert result[0]["probability"] == 0.69
+        assert result[0]["rank"] == 1
+        assert result[0]["movement"] == 0.05

@@ -54,6 +54,8 @@ from app.utils.feed_reasons import (
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
+    humanize_binary_outcome_name,
+    humanize_outcome_names_for_feed,
 )
 from app.utils.feed_quality_debug import (
     build_feed_quality_debug,
@@ -886,6 +888,56 @@ def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
             "game_name_filtered": bool(re.search(r"\bvs\.?\b", market.name or "", re.IGNORECASE)),
         },
     }
+
+
+def _normalize_feed_probabilities(
+    top_outcomes: list[dict],
+    all_sorted_outcomes: list,
+) -> list[dict]:
+    """Normalize feed-card probabilities for independent binary markets.
+
+    Uses the sum across ALL outcomes (not just the displayed top N) to decide
+    whether normalization is appropriate:
+
+    - all_sum <= threshold  -> no normalization needed (already sane)
+    - threshold < all_sum <= 2.0 -> independent binary markets (gotcha #58):
+      divide each displayed outcome by all_sum so the slice shows correct
+      *relative* standing without inflating to 100%.
+    - all_sum > 2.0 -> threshold/cumulative outcomes (e.g. "rank 3+", "rank
+      4+") that are NOT mutually exclusive.  Normalizing these flattens an
+      81% leader to ~33%.  Skip entirely.
+    """
+    probs_top = [o for o in top_outcomes if o.get("probability")]
+    if not probs_top:
+        return top_outcomes
+
+    # Two-outcome markets: stricter threshold (true binary)
+    total_displayed = len(probs_top)
+    norm_threshold = 1.01 if total_displayed == 2 else 1.05
+
+    # Sum across ALL outcomes to gauge whether these are mutually exclusive
+    all_sum = sum(
+        float(o.current_probability)
+        for o in all_sorted_outcomes
+        if o.current_probability
+    )
+
+    if all_sum <= norm_threshold:
+        # Probabilities already sum to ~100% — no normalization needed
+        return top_outcomes
+
+    if all_sum > 2.0:
+        # Threshold / cumulative outcomes — do NOT normalize.
+        # Raw probabilities are individually meaningful.
+        return top_outcomes
+
+    # Independent binary markets summing to 100-200%: normalize the displayed
+    # outcomes using the all-outcome sum as divisor.
+    for o in top_outcomes:
+        if o.get("probability"):
+            o["probability"] = round(o["probability"] / all_sum, 4)
+
+    return top_outcomes
 
 
 def _top_outcomes_for_trace(market: FuturesMarket) -> tuple[list[dict], str | None, float | None]:
@@ -2554,20 +2606,28 @@ async def _score_futures(
                 top_surprise_name = o.get("name")
                 top_surprise_change = surprise_change
 
+        # Humanize Yes/No outcome names for display (BR49).
+        # Scoring/filtering above uses the raw names; display-facing
+        # generators below use humanized versions so headlines read
+        # "Anthropic leads at 69%" instead of "Yes leads at 69%".
+        _h_leader = humanize_binary_outcome_name(leader_name, market.name) if leader_name else leader_name
+        _h_mover = humanize_binary_outcome_name(top_mover_name, market.name) if top_mover_name else top_mover_name
+        _h_surprise = humanize_binary_outcome_name(top_surprise_name, market.name) if top_surprise_name else top_surprise_name
+
         headline = generate_futures_headline(
             highlight_reasons=highlight_result.reasons,
-            top_mover_name=top_mover_name,
+            top_mover_name=_h_mover,
             top_mover_change=top_mover_change,
-            top_surprise_name=top_surprise_name,
+            top_surprise_name=_h_surprise,
             top_surprise_change=top_surprise_change,
-            leader_name=leader_name,
+            leader_name=_h_leader,
             leader_probability=leader_prob,
             source_count=source_count,
         ) or highlight_result.primary_reason
         context_summary = generate_futures_context_summary(
             headline=headline,
             highlight_reasons=highlight_result.reasons,
-            leader_name=leader_name,
+            leader_name=_h_leader,
             leader_probability=leader_prob,
             source_count=source_count,
         )
@@ -2670,11 +2730,11 @@ async def _score_futures(
         reason = generate_futures_reason(
             market_name=market.name,
             highlight_reasons=highlight_result.reasons,
-            top_mover_name=top_mover_name,
+            top_mover_name=_h_mover,
             top_mover_change=top_mover_change,
-            top_surprise_name=top_surprise_name,
+            top_surprise_name=_h_surprise,
             top_surprise_change=top_surprise_change,
-            leader_name=leader_name,
+            leader_name=_h_leader,
             leader_probability=leader_prob,
             source_count=source_count,
         )
@@ -2691,18 +2751,20 @@ async def _score_futures(
             for o in sorted_outcomes[:3]  # Show top 3 in feed card
         ]
 
-        # Normalize probabilities when independent binary markets sum > 100%.
-        # For 2-outcome markets (true binary questions), any sum > 101% is
-        # wrong — there's no excuse for two mutually exclusive outcomes
-        # exceeding 100%. For multi-outcome markets, allow up to 105% since
-        # small overages from independent sources are expected.
-        prob_with_values = [o for o in top_outcomes_data if o["probability"]]
-        prob_sum = sum(o["probability"] for o in prob_with_values)
-        norm_threshold = 1.01 if len(prob_with_values) == 2 else 1.05
-        if prob_sum > norm_threshold:
-            for o in top_outcomes_data:
-                if o["probability"]:
-                    o["probability"] = round(o["probability"] / prob_sum, 4)
+        # Humanize Yes/No outcome names for feed card display (BR49)
+        top_outcomes_data = humanize_outcome_names_for_feed(
+            top_outcomes_data, market.name
+        )
+
+        # Normalize probabilities for independent binary markets (gotcha #58).
+        # Use the ALL-outcomes sum to distinguish mutually-exclusive markets
+        # (sum ~100-150%) from threshold/cumulative markets (sum >>200%).
+        # Threshold markets (e.g. "rank 3+", "rank 4+") have non-exclusive
+        # outcomes whose raw probabilities are meaningful — normalizing them
+        # flattens an 81% leader to 33% when the top 3 are all high.
+        top_outcomes_data = _normalize_feed_probabilities(
+            top_outcomes_data, sorted_outcomes
+        )
 
         futures_data = {
             "id": market.id,

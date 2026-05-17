@@ -6,6 +6,7 @@ Returns empty string when the card UI already tells the story — avoids
 repeating scores, odds, or team names visible on the card.
 """
 
+import re
 from typing import Optional
 
 
@@ -14,6 +15,112 @@ def _side_label(name: str) -> str:
     if name.strip().lower() in {"yes", "no"}:
         return f"{name.strip()} side"
     return name
+
+
+# ── Yes/No outcome humanization (BR49) ──────────────────────────────
+
+# Subjects too vague to use as a standalone label
+_GENERIC_SUBJECTS = {"there", "it", "the", "a", "an", "this", "that", "any"}
+
+# Strip these suffixes when building a short label from the full market name
+_TRAILING_NOISE_RE = re.compile(
+    r"\s*\b(?:before|by|in|during|after|on)\b\s+\d{4}.*$",
+    re.IGNORECASE,
+)
+# Remove trailing question mark
+_TRAILING_QM_RE = re.compile(r"\s*\?\s*$")
+
+
+def humanize_binary_outcome_name(
+    outcome_name: str,
+    market_name: str | None,
+) -> str:
+    """Replace generic 'Yes'/'No' outcome names with a meaningful label.
+
+    Kalshi binary markets have outcomes literally named 'Yes' and 'No'.
+    For questions like 'Will Anthropic IPO first?', showing '69% Yes' is
+    meaningless — the user needs to see 'Anthropic' or at least the gist
+    of the question.
+
+    Rules:
+    1. If outcome_name is not 'Yes' or 'No', return it unchanged.
+    2. Try to extract the subject from 'Will <subject> <verb> ...?' patterns.
+    3. Fall back to a truncated version of the market name (strip year
+       suffixes and question marks) so the card still reads naturally.
+    4. Cap at 40 chars to fit feed card layout.
+
+    Only used for feed card display — never mutates the underlying data.
+    """
+    if not outcome_name or outcome_name.strip().lower() not in {"yes", "no"}:
+        return outcome_name
+
+    if not market_name:
+        return outcome_name
+
+    is_yes = outcome_name.strip().lower() == "yes"
+
+    # --- Strategy 1: Extract subject from "Will <subject> <verb>...?" ---
+    m = re.match(
+        r"^Will\s+(.+?)\s+"
+        r"(?:IPO|be |win |reach |hit |make |get |have |lose |beat |sign |step |"
+        r"qualify|advance|clinch|resign|announce|release|launch|drop|pass|"
+        r"exceed|fall |go |become |receive |host |return |default|remain |stay )",
+        market_name,
+        re.IGNORECASE,
+    )
+    if m:
+        subject = m.group(1).strip()
+        # Skip overly generic subjects
+        first_word = subject.split()[0].lower() if subject else ""
+        if first_word not in _GENERIC_SUBJECTS and len(subject) <= 40:
+            if not is_yes:
+                return f"Not {subject}"
+            return subject
+
+    # --- Strategy 2: Truncate market name into a label ---
+    label = _TRAILING_QM_RE.sub("", market_name)
+    label = _TRAILING_NOISE_RE.sub("", label)
+    # Strip leading "Will " for brevity
+    label = re.sub(r"^Will\s+", "", label, flags=re.IGNORECASE)
+
+    if len(label) > 40:
+        label = label[:37] + "..."
+
+    if not is_yes:
+        # For "No" outcomes, prepend negation only if short enough
+        neg_label = f"Not: {label}"
+        if len(neg_label) > 40:
+            return label  # Better to show the topic than a truncated negation
+        return neg_label
+
+    return label
+
+
+def humanize_outcome_names_for_feed(
+    top_outcomes: list[dict],
+    market_name: str | None,
+) -> list[dict]:
+    """Post-process a list of outcome dicts, humanizing Yes/No names.
+
+    Returns a NEW list (does not mutate the input). Only applies
+    humanization when ALL outcomes are Yes/No (i.e., a true binary market).
+    Multi-outcome markets with named choices are left untouched.
+    """
+    if not top_outcomes:
+        return top_outcomes
+
+    # Only humanize if every outcome is Yes or No
+    all_binary = all(
+        (o.get("name") or "").strip().lower() in {"yes", "no"}
+        for o in top_outcomes
+    )
+    if not all_binary:
+        return top_outcomes
+
+    return [
+        {**o, "name": humanize_binary_outcome_name(o["name"], market_name)}
+        for o in top_outcomes
+    ]
 
 
 def _point_change(value: float) -> float:
