@@ -60,7 +60,7 @@ final class AuthManager: ObservableObject {
                 }
             default:
                 // Network error, timeout, decoding — keep token and stay signed out temporarily
-                logger.warning("Session restore failed (transient): \(apiError). Keeping stored token.")
+                logger.warning("Session restore failed (transient): \(apiError.errorDescription ?? "unknown"). Keeping stored token.")
             }
         } catch {
             // Non-API errors — keep token for retry on next launch

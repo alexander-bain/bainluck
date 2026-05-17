@@ -27,6 +27,7 @@ struct Bain_LuckApp: App {
 
 
     init() {
+        FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
         #if os(macOS)
         AnalyticsService.setUserProperty("macos", forName: "platform")

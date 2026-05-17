@@ -118,7 +118,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     /// Called from the AppDelegate when APNS registration fails.
     func didFailToRegisterForRemoteNotifications(error: Error) {
-        logger.error("APNS registration failed: \(error.localizedDescription)")
+        logger.info("APNS registration skipped: \(error.localizedDescription)")
     }
 
     // MARK: - Private
