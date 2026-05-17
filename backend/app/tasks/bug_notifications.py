@@ -58,7 +58,7 @@ def _generate_email_body(
                         f"Write a short email to {first_name} thanking them for reporting a bug in Bain Luck.\n\n"
                         f"Bug they reported: \"{description}\"\n\n"
                         f"What we fixed: \"{resolution_summary}\"\n\n"
-                        "Tone: personal, grateful, specific. Include a dad joke or witty quip related to the bug or prediction markets. "
+                        "Tone: personal, grateful, specific, and concise. Do not include jokes, puns, or quips. "
                         "End with encouragement to keep reporting bugs (shake the phone!). "
                         "Just the body text — no subject line, no greeting (we add 'Hi {name}' separately), no sign-off."
                     ),
