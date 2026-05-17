@@ -387,7 +387,9 @@ struct DiscoverView: View {
         var result: [DiscoverGroupedItem] = []
         var usedPrefixes: Set<String> = []
 
-        for item in filteredItems {
+        let mixedItems = interleave(filteredItems)
+
+        for item in mixedItems {
             if item.type == "futures", let f = item.futures {
                 let name = f.name
                 let prefix: String
@@ -401,7 +403,7 @@ struct DiscoverView: View {
             }
         }
 
-        for item in filteredItems {
+        for item in mixedItems {
             if item.type != "futures" {
                 result.append(.single(item))
                 continue
@@ -422,7 +424,93 @@ struct DiscoverView: View {
                 result.append(.single(group[0]))
             }
         }
-        return applyLocalPersonalization(result)
+        return interleaveGrouped(applyLocalPersonalization(result))
+    }
+
+    private func interleave(_ items: [FeedItem]) -> [FeedItem] {
+        guard items.count > 2 else { return items }
+
+        var sports = items.filter { sportsCats.contains(itemCategory($0)) }
+        var nonSports = items.filter { !sportsCats.contains(itemCategory($0)) }
+        guard !nonSports.isEmpty else { return items }
+
+        var result: [FeedItem] = []
+        var lastCategory = ""
+        var sportsSinceNonSport = 0
+        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
+
+        while !sports.isEmpty || !nonSports.isEmpty {
+            if !nonSports.isEmpty && (sportsSinceNonSport >= maxSportsRun || sports.isEmpty) {
+                let item = nonSports.removeFirst()
+                result.append(item)
+                sportsSinceNonSport = 0
+                lastCategory = itemCategory(item)
+                continue
+            }
+
+            if !sports.isEmpty {
+                if itemCategory(sports[0]) == lastCategory,
+                   let swapIdx = sports.prefix(5).firstIndex(where: { itemCategory($0) != lastCategory }) {
+                    sports.swapAt(0, swapIdx)
+                }
+                let item = sports.removeFirst()
+                result.append(item)
+                lastCategory = itemCategory(item)
+                sportsSinceNonSport += 1
+            } else if !nonSports.isEmpty {
+                let item = nonSports.removeFirst()
+                result.append(item)
+                sportsSinceNonSport = 0
+                lastCategory = itemCategory(item)
+            }
+        }
+
+        return result
+    }
+
+    private func groupedCategory(_ item: DiscoverGroupedItem) -> String {
+        primaryItem(item).map(itemCategory) ?? "other"
+    }
+
+    private func interleaveGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        guard items.count > 2 else { return items }
+
+        var sports = items.filter { sportsCats.contains(groupedCategory($0)) }
+        var nonSports = items.filter { !sportsCats.contains(groupedCategory($0)) }
+        guard !nonSports.isEmpty else { return items }
+
+        var result: [DiscoverGroupedItem] = []
+        var lastCategory = ""
+        var sportsSinceNonSport = 0
+        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
+
+        while !sports.isEmpty || !nonSports.isEmpty {
+            if !nonSports.isEmpty && (sportsSinceNonSport >= maxSportsRun || sports.isEmpty) {
+                let item = nonSports.removeFirst()
+                result.append(item)
+                sportsSinceNonSport = 0
+                lastCategory = groupedCategory(item)
+                continue
+            }
+
+            if !sports.isEmpty {
+                if groupedCategory(sports[0]) == lastCategory,
+                   let swapIdx = sports.prefix(5).firstIndex(where: { groupedCategory($0) != lastCategory }) {
+                    sports.swapAt(0, swapIdx)
+                }
+                let item = sports.removeFirst()
+                result.append(item)
+                lastCategory = groupedCategory(item)
+                sportsSinceNonSport += 1
+            } else if !nonSports.isEmpty {
+                let item = nonSports.removeFirst()
+                result.append(item)
+                sportsSinceNonSport = 0
+                lastCategory = groupedCategory(item)
+            }
+        }
+
+        return result
     }
 
     var body: some View {
@@ -550,6 +638,7 @@ struct DiscoverView: View {
                                             },
                                             onSwipeRight: {
                                                 recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
                                             }
                                         ) {
                                             NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
@@ -563,6 +652,7 @@ struct DiscoverView: View {
                                             },
                                             onSwipeRight: {
                                                 recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
                                             }
                                         ) {
                                             NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
@@ -575,6 +665,7 @@ struct DiscoverView: View {
                                             },
                                             onSwipeRight: {
                                                 recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
                                             }
                                         ) {
                                             NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
@@ -594,6 +685,7 @@ struct DiscoverView: View {
                                             },
                                             onSwipeRight: {
                                                 recordInteraction(for: item, action: .like, source: "swipe")
+                                                hideForSession(itemId(item))
                                             }
                                         ) {
                                             NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
@@ -613,6 +705,9 @@ struct DiscoverView: View {
                                 trackImpression(for: gi, rank: idx + 1)
                                 if idx == pageGrouped.count - 3 && visibleCount < groupedItems.count {
                                     visibleCount += 20
+                                }
+                                if idx == pageGrouped.count - 5 {
+                                    Task { await vm.loadMoreIfNeeded() }
                                 }
                             }
                         }
@@ -722,6 +817,10 @@ struct DiscoverView: View {
 
     private func hideForSession(_ id: String) {
         dismissed.insert(id)
+        if visibleCount >= max(groupedItems.count - 8, 0) {
+            visibleCount += 20
+            Task { await vm.loadMoreIfNeeded() }
+        }
         if showSwipeHint {
             withAnimation { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
@@ -854,10 +953,15 @@ final class DiscoverViewModel: ObservableObject {
     @Published var items: [FeedItem] = []
     @Published var loading = false
     @Published var error: String?
+    @Published private(set) var loadingMore = false
+
+    private var hasMore = true
+    private var nextOffset = 0
 
     private static let sportsCategories: Set<String> = [
         "basketball", "football", "baseball", "hockey", "soccer",
         "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
+        "americanfootball", "icehockey", "olympics",
     ]
 
     @MainActor
@@ -867,6 +971,8 @@ final class DiscoverViewModel: ObservableObject {
         do {
             let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
             items = Self.interleave(response.items)
+            hasMore = response.hasMore
+            nextOffset = response.offset + response.items.count
         } catch is CancellationError {
             return
         } catch let urlError as URLError where urlError.code == .cancelled {
@@ -880,19 +986,70 @@ final class DiscoverViewModel: ObservableObject {
         loading = false
     }
 
+    @MainActor
+    func loadMoreIfNeeded() async {
+        guard hasMore, !loading, !loadingMore else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+
+        do {
+            let loadedIds = Set(items.map(Self.itemKey))
+            let offsets = Array(Set([0, nextOffset])).sorted()
+            var sawMore = false
+
+            for offset in offsets {
+                let response = try await APIClient.shared.fetchFeed(
+                    limit: 200,
+                    offset: offset,
+                    eventPct: 0.15,
+                    cacheTTL: nil
+                )
+                sawMore = sawMore || response.hasMore
+                let fresh = response.items.filter { !loadedIds.contains(Self.itemKey($0)) }
+                if fresh.isEmpty { continue }
+
+                items = Self.interleave(items + fresh)
+                nextOffset = max(nextOffset, response.offset + response.items.count)
+                hasMore = response.hasMore
+                return
+            }
+
+            if !sawMore {
+                hasMore = false
+            }
+        } catch {
+            print("DiscoverView loadMore error: \(error)")
+        }
+    }
+
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
-        let sports = items.filter { sportsCategories.contains(category(for: $0)) }
-        let nonSports = items.filter { !sportsCategories.contains(category(for: $0)) }
+        var sports = items.filter { sportsCategories.contains(category(for: $0)) }
+        var nonSports = items.filter { !sportsCategories.contains(category(for: $0)) }
         if nonSports.isEmpty { return items }
 
         var result: [FeedItem] = []
-        var si = 0, ni = 0, sportsSince = 0
-        while si < sports.count || ni < nonSports.count {
-            if ni < nonSports.count && (sportsSince >= 4 || si >= sports.count) {
-                result.append(nonSports[ni]); ni += 1; sportsSince = 0
-            } else if si < sports.count {
-                result.append(sports[si]); si += 1; sportsSince += 1
-            } else { break }
+        var lastCategory = ""
+        var sportsSince = 0
+        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
+
+        while !sports.isEmpty || !nonSports.isEmpty {
+            if !nonSports.isEmpty && (sportsSince >= maxSportsRun || sports.isEmpty) {
+                let item = nonSports.removeFirst()
+                result.append(item)
+                sportsSince = 0
+                lastCategory = category(for: item)
+            } else if !sports.isEmpty {
+                if category(for: sports[0]) == lastCategory,
+                   let swapIdx = sports.prefix(5).firstIndex(where: { category(for: $0) != lastCategory }) {
+                    sports.swapAt(0, swapIdx)
+                }
+                let item = sports.removeFirst()
+                result.append(item)
+                sportsSince += 1
+                lastCategory = category(for: item)
+            } else {
+                break
+            }
         }
         return result
     }
@@ -901,6 +1058,12 @@ final class DiscoverViewModel: ObservableObject {
         if let f = item.futures { return f.llmSportCategory?.lowercased() ?? "other" }
         if let e = item.event { return e.sport?.split(separator: "_").first.map(String.init) ?? "other" }
         return "other"
+    }
+
+    private static func itemKey(_ item: FeedItem) -> String {
+        if let event = item.event { return "event-\(event.id)" }
+        if let futures = item.futures { return "futures-\(futures.id)" }
+        return item.id
     }
 }
 
@@ -2203,8 +2366,13 @@ private struct SwipeToDismiss<Content: View>: View {
                     .onEnded { v in
                         if isHorizontalDrag && abs(v.translation.width) > 120 {
                             if v.translation.width > 0 {
-                                onSwipeRight()
-                                withAnimation(.spring(response: 0.3)) { offset = 0 }
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    offset = 400
+                                    removing = true
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    onSwipeRight()
+                                }
                             } else {
                                 withAnimation(.easeOut(duration: 0.2)) {
                                     offset = -400
