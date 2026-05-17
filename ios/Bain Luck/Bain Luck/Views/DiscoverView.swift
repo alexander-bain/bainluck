@@ -154,7 +154,6 @@ enum NativeDiscoverDebugState {
 
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
-    @State private var categoryFilter = "all"
     @State private var visibleCount = 20
     @State private var dismissed: Set<String> = Self.loadDismissed()
     @State private var scrollTarget: String? = nil
@@ -168,13 +167,6 @@ struct DiscoverView: View {
     @State private var showChallenge = false
     @State private var challengeIndex = 0
     @State private var challengeComplete = false
-
-    private let categories: [(key: String, label: String, emoji: String)] = [
-        ("all", "All", "✨"), ("sports", "Sports", "🏆"),
-        ("politics", "Politics", "🏛"), ("economics", "Economics", "📈"),
-        ("tech", "Tech", "💻"), ("culture", "Culture", "🎭"),
-        ("weather", "Weather", "🌤"), ("geopolitics", "World", "🌍"),
-    ]
 
     private let sportsCats: Set<String> = [
         "basketball", "football", "baseball", "hockey", "soccer",
@@ -375,10 +367,7 @@ struct DiscoverView: View {
     }
 
     private var filteredItems: [FeedItem] {
-        let items = vm.items.filter { !isStale($0) && !dismissed.contains(itemId($0)) }
-        if categoryFilter == "all" { return items }
-        if categoryFilter == "sports" { return items.filter { sportsCats.contains(itemCategory($0)) } }
-        return items.filter { itemCategory($0) == categoryFilter }
+        vm.items.filter { !isStale($0) && !dismissed.contains(itemId($0)) }
     }
 
     private var groupedItems: [DiscoverGroupedItem] {
@@ -516,34 +505,6 @@ struct DiscoverView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
         VStack(spacing: 0) {
-            // Category chips (sticky — outside ScrollView)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(categories, id: \.key) { cat in
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) { categoryFilter = cat.key }
-                            AnalyticsService.trackDiscoverCategoryFilter(category: cat.key)
-                        } label: {
-                            HStack(spacing: 3) {
-                                Text(cat.emoji)
-                                    .font(.system(size: 11))
-                                Text(cat.label)
-                                    .font(.system(size: 12, weight: categoryFilter == cat.key ? .bold : .medium))
-                            }
-                            .foregroundStyle(categoryFilter == cat.key ? .white : .secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(categoryFilter == cat.key ? Color.primary : Color.secondary.opacity(0.08))
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            }
-            .background(.background)
-
         ScrollView {
             VStack(spacing: 0) {
                 // Resolution cards
@@ -592,7 +553,7 @@ struct DiscoverView: View {
                             .font(.title3)
                             .foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Swipe to tune Discover")
+                            Text("Shape your feed")
                                 .font(.caption.weight(.semibold))
                             Text("Right = more like this. Left = less like this.")
                                 .font(.caption2)
@@ -728,34 +689,6 @@ struct DiscoverView: View {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
-            #if DEBUG
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    let affinities = interactionProfile.topAffinities()
-                    if affinities.isEmpty {
-                        Text("No local tuning yet")
-                    } else {
-                        ForEach(affinities.indices, id: \.self) { idx in
-                            let category = affinities[idx].0
-                            let score = affinities[idx].1
-                            Label(
-                                "\(category.capitalized) \(score > 0 ? "+" : "")\(String(format: "%.1f", score))",
-                                systemImage: score > 0 ? "arrow.up" : "arrow.down"
-                            )
-                        }
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        AnalyticsService.trackDiscoverTuningReset(affinityCount: interactionProfile.topAffinities(limit: 20).count)
-                        interactionProfile.reset()
-                    } label: {
-                        Label("Reset Discover Tuning", systemImage: "arrow.counterclockwise")
-                    }
-                } label: {
-                    Label("Discover Tuning", systemImage: "slider.horizontal.3")
-                }
-            }
-            #endif
         }
         .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
@@ -1259,7 +1192,8 @@ private struct NativeEventDiscoverCard: View {
 
             Text(name)
                 .font(.subheadline.weight(.bold))
-                .lineLimit(2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
                 .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
 
@@ -1401,7 +1335,9 @@ private struct NativeFuturesDiscoverCard: View {
                         Text(leader.name)
                             .font(.headline.weight(.bold))
                             .foregroundStyle(.white.opacity(0.92))
-                            .lineLimit(2)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.92)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(14)
@@ -1411,7 +1347,8 @@ private struct NativeFuturesDiscoverCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(data.name)
                     .font(.headline.weight(.bold))
-                    .lineLimit(2)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let contextText {
                     ExpandableNativeContextText(
@@ -1498,8 +1435,9 @@ private struct NativeFuturesDiscoverCard: View {
         HStack(spacing: 8) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
-                .lineLimit(1)
-                .frame(width: 112, alignment: .leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 128, alignment: .leading)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -1792,7 +1730,8 @@ private struct NativeGroupCard: View {
                 HStack {
                     Text(title)
                         .font(.caption.weight(.bold))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("\(items.count) markets")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -1849,12 +1788,14 @@ private struct NativeCompactFuturesRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(data.name)
                         .font(.caption.weight(.semibold))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let leader = data.topOutcomes?.first {
                         Text(leader.name)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer()
@@ -1932,13 +1873,15 @@ private struct NativeGuessCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(data.name)
                     .font(.headline.weight(.bold))
-                    .lineLimit(2)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if let leader {
                     Text(leader.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -1984,14 +1927,15 @@ private struct NativeGuessCard: View {
             Text("Is the current probability higher or lower than")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("\(threshold)%")
                     .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
                     .foregroundStyle(.primary)
                 Text(subject)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)

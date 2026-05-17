@@ -7,6 +7,8 @@ scores/dicts — no database access, no side effects.
 
 from datetime import datetime
 
+from app.utils.game_state import normalize_live_game_state
+
 
 # Tag-based scoring boosts (LLM taxonomy enrichment)
 TAG_BOOSTS = {
@@ -274,11 +276,16 @@ def format_event_data(
         data["win_probability_sources"] = win_probability_sources
 
     if status == "live":
+        display_period, display_clock = normalize_live_game_state(
+            sport_key,
+            period,
+            game_clock,
+        )
         espn_data = {}
-        if game_clock:
-            espn_data["game_clock"] = game_clock
-        if period:
-            espn_data["period"] = period
+        if display_clock:
+            espn_data["game_clock"] = display_clock
+        if display_period:
+            espn_data["period"] = display_period
         if broadcast_info:
             espn_data["broadcast"] = broadcast_info
         if espn_data:

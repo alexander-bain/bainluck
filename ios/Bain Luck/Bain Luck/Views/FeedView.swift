@@ -17,6 +17,7 @@ final class FeedViewModel: ObservableObject {
     @Published var error: String?
     @Published var liveCount = 0
 
+    private static let supplementalEventLimit = 200
     private var refreshTimer: Timer?
 
     var liveNow: [FeedItem] {
@@ -49,13 +50,19 @@ final class FeedViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            // Fetch both feeds in parallel
+            // Fetch the ranked feed plus an event-only backfill so native Sports
+            // still has recent/upcoming rows when live games dominate the first page.
             async let feedTask = APIClient.shared.fetchFeed()
+            async let eventBackfillTask = APIClient.shared.fetchFeed(
+                limit: Self.supplementalEventLimit,
+                includeFutures: false
+            )
             async let groupedTask = APIClient.shared.fetchGroupedFeed(limit: 20)
             
             let feed = try await feedTask
-            items = feed.items
-            total = feed.total
+            let eventBackfill = try? await eventBackfillTask
+            items = mergeFeedItems(feed.items, withNonLiveEventsFrom: eventBackfill?.items ?? [])
+            total = max(feed.total, items.count)
             
             // Grouped feed is optional — don't fail if it errors
             if let grouped = try? await groupedTask {
@@ -66,7 +73,7 @@ final class FeedViewModel: ObservableObject {
             error = nil
             loading = false
             liveCount = liveNow.count
-            logger.info("Feed loaded: \(feed.items.count) items")
+            logger.info("Feed loaded: \(self.items.count) items")
             configureAutoRefresh()
         } catch {
             if isInitial {
@@ -75,6 +82,21 @@ final class FeedViewModel: ObservableObject {
             loading = false
             logger.error("Feed error: \(error)")
         }
+    }
+
+    private func mergeFeedItems(_ rankedItems: [FeedItem], withNonLiveEventsFrom backfillItems: [FeedItem]) -> [FeedItem] {
+        var merged = rankedItems
+        var seen = Set(rankedItems.map(\.id))
+
+        for item in backfillItems {
+            guard item.type == "event", item.event?.status != "live", !seen.contains(item.id) else {
+                continue
+            }
+            merged.append(item)
+            seen.insert(item.id)
+        }
+
+        return merged
     }
 
     private func configureAutoRefresh() {

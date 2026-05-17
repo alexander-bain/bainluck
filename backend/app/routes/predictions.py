@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc, cast, Integer, case
+from sqlalchemy import select, func, desc, cast, Integer, case, or_
 from app.services import get_db as get_session
 from app.models.models import UserPrediction, FuturesMarket, FuturesOutcome, User
 from app.dependencies.auth import get_optional_user
@@ -28,15 +28,20 @@ class PredictionSubmission(BaseModel):
     category: str | None = None
 
 
-def _get_identity(request: Request) -> tuple[int | None, str | None]:
+def _get_identity(request: Request, user: Optional[User] = None) -> tuple[int | None, str | None]:
     """Extract user_id (if authenticated) and session_id."""
     session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
-    user_id = getattr(request.state, "user_id", None)
+    user_id = user.id if user else getattr(request.state, "user_id", None)
     return user_id, session_id
 
 
 def _identity_filter(user_id: int | None, session_id: str | None):
-    """Build SQLAlchemy filter for user identity (prefer user_id)."""
+    """Build SQLAlchemy filter for user identity."""
+    if user_id and session_id:
+        return or_(
+            UserPrediction.user_id == user_id,
+            UserPrediction.session_id == session_id,
+        )
     if user_id:
         return UserPrediction.user_id == user_id
     if session_id:
@@ -142,8 +147,11 @@ async def submit_prediction(
 
 
 @router.get("/stats")
-async def get_stats(request: Request):
-    user_id, session_id = _get_identity(request)
+async def get_stats(
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    user_id, session_id = _get_identity(request, user)
     identity = _identity_filter(user_id, session_id)
 
     async with get_session() as session:
@@ -172,8 +180,11 @@ async def get_stats(request: Request):
 
 
 @router.get("/detailed-stats")
-async def get_detailed_stats(request: Request):
-    user_id, session_id = _get_identity(request)
+async def get_detailed_stats(
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    user_id, session_id = _get_identity(request, user)
     identity = _identity_filter(user_id, session_id)
 
     async with get_session() as session:
@@ -272,9 +283,12 @@ async def get_detailed_stats(request: Request):
 
 
 @router.get("/resolutions")
-async def get_resolutions(request: Request):
+async def get_resolutions(
+    request: Request,
+    user: Optional[User] = Depends(get_optional_user),
+):
     """Return predictions on markets that have since resolved."""
-    user_id, session_id = _get_identity(request)
+    user_id, session_id = _get_identity(request, user)
     identity = _identity_filter(user_id, session_id)
     if identity is None:
         return {"resolutions": []}

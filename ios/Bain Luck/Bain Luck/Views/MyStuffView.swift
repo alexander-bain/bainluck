@@ -659,6 +659,20 @@ private let progressionStages: [String: (order: Int, label: String)] = [
     "championship": (4, "Champion"),
 ]
 
+private let noisyTeamFuturePatterns = [
+    #"where will"#,
+    #"next team"#,
+    #"which team"#,
+    #"draft(ed)? by"#,
+    #"pick(ed)? in the"#,
+    #"trade(d)? to"#,
+    #"sign with"#,
+    #"contract"#,
+    #"jersey number"#,
+    #"exact(ly)? \d+"#,
+    #"how many"#,
+]
+
 /// Detect market type from name (mirrors web detectMarketTypeFromName).
 private func detectMarketTypeFromName(_ name: String) -> String? {
     let n = name.lowercased()
@@ -676,6 +690,27 @@ private func detectMarketTypeFromName(_ name: String) -> String? {
         return "championship"
     }
     return nil
+}
+
+private func isNoisyTeamFuture(_ item: TeamFutureItem) -> Bool {
+    let name = item.marketName.lowercased()
+    let category = item.category?.lowercased() ?? ""
+
+    if category == "game_prop" || category == "player_prop" || category == "other" {
+        return detectMarketTypeFromName(item.marketName) == nil && !isAwardOrPlayerMarket(name)
+    }
+
+    return noisyTeamFuturePatterns.contains { pattern in
+        name.range(of: pattern, options: .regularExpression) != nil
+    }
+}
+
+private func isAwardOrPlayerMarket(_ lowercasedName: String) -> Bool {
+    lowercasedName.contains("mvp") || lowercasedName.contains("award")
+        || lowercasedName.contains("rookie") || lowercasedName.contains("defensive")
+        || lowercasedName.contains("coach") || lowercasedName.contains("cy young")
+        || lowercasedName.contains("heisman") || lowercasedName.contains("improved")
+        || lowercasedName.contains("sixth man") || lowercasedName.contains("clutch")
 }
 
 /// Extract market type from canonical key (format: sport:league:type:season).
@@ -948,7 +983,7 @@ private struct TeamFuturesSection: View {
     @Binding var path: NavigationPath
     @State private var expanded = false
 
-    private static let initialShow = 10
+    private static let initialShow = 8
 
     private var processed: (journeys: [PlayoffJourney], awards: [MergedTeamFuture], other: [MergedTeamFuture]) {
         let merged = mergeTeamFutures(futures.items)
@@ -958,13 +993,10 @@ private struct TeamFuturesSection: View {
         var other: [MergedTeamFuture] = []
 
         for m in remaining {
+            guard !isNoisyTeamFuture(m.primary) else { continue }
+
             let name = m.primary.marketName.lowercased()
-            if name.contains("mvp") || name.contains("award")
-                || name.contains("player") || name.contains("rookie")
-                || name.contains("defensive") || name.contains("coach")
-                || name.contains("cy young") || name.contains("heisman")
-                || name.contains("improved") || name.contains("sixth man")
-                || name.contains("clutch") {
+            if isAwardOrPlayerMarket(name) {
                 awards.append(m)
             } else {
                 other.append(m)
@@ -1004,7 +1036,7 @@ private struct TeamFuturesSection: View {
                 mergedGroup(label: "Awards & Players", items: dispAwards)
             }
             if !dispOther.isEmpty {
-                mergedGroup(label: "Other Markets", items: dispOther, borderTop: !dispAwards.isEmpty)
+                mergedGroup(label: "Team Markets", items: dispOther, borderTop: !dispAwards.isEmpty)
             }
 
             if allFlat.count + data.journeys.count > Self.initialShow {
@@ -1084,24 +1116,22 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .lineLimit(1)
-                HStack(spacing: 4) {
-                    Text(cleanMarketName(item.marketName))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if isMultiSource {
-                        HStack(spacing: 2) {
-                            ForEach(merged.sources, id: \.source) { s in
-                                Circle()
-                                    .fill(sourceColors[s.source] ?? .gray)
-                                    .frame(width: 4, height: 4)
-                            }
+                Text(cleanMarketName(item.marketName))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if isMultiSource {
+                    HStack(spacing: 3) {
+                        ForEach(merged.sources, id: \.source) { s in
+                            Circle()
+                                .fill(sourceColors[s.source] ?? .gray)
+                                .frame(width: 4, height: 4)
                         }
                     }
                 }
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // 24h change
             if let change = merged.bestChange, abs(change) >= 0.001 {
@@ -1110,31 +1140,26 @@ private struct TeamFuturesSection: View {
                     .font(.caption2)
                     .fontWeight(.medium)
                     .foregroundStyle(isUp ? .green : .red)
+                    .lineLimit(1)
             }
 
             // Probability
             if isMultiSource {
-                // Per-source probabilities
-                HStack(spacing: 4) {
-                    ForEach(merged.sources, id: \.source) { s in
-                        if let p = s.probability {
-                            Text(formatProbability(p))
-                                .font(.system(.caption2, design: .monospaced))
-                                .fontWeight(.semibold)
-                                .foregroundStyle(sourceColors[s.source] ?? .gray)
-                        } else {
-                            Text("—")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+                Text(displayProb.map(formatProbability) ?? "—")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))
+                    .lineLimit(1)
+                    .frame(minWidth: 44, alignment: .trailing)
             } else if let prob = displayProb {
                 Text(formatProbability(prob))
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
                     .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))
+                    .lineLimit(1)
+                    .frame(minWidth: 44, alignment: .trailing)
             }
         }
         .padding(.vertical, 6)

@@ -31,6 +31,7 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
+from app.utils.game_state import normalize_live_game_state
 from app.utils.sport_keys import (
     SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY,
     get_sport_key_from_ticker as _get_sport_key_from_ticker,
@@ -5743,10 +5744,16 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         espn_data = {}
         if event.espn_id:
             espn_data["espn_id"] = event.espn_id
-        if event.game_clock:
-            espn_data["game_clock"] = event.game_clock
-        if event.period:
-            espn_data["period"] = event.period
+        sport_key = event.sport.key if event.sport else None
+        display_period, display_clock = normalize_live_game_state(
+            sport_key,
+            event.period,
+            event.game_clock,
+        )
+        if display_clock:
+            espn_data["game_clock"] = display_clock
+        if display_period:
+            espn_data["period"] = display_period
         if event.broadcast_info:
             espn_data["broadcast"] = event.broadcast_info
         if event.espn_win_prob_home is not None:

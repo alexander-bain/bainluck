@@ -544,17 +544,79 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 ---
 
-## Rage Shake Triage #7 (May 17) — Bugs #66, #70
+## Rage Shake Triage #8 (May 17) — Bugs #60-75
 
 Claude CLI failed to process these because screenshot image handling returned `API Error: 400 Could not process image`. Items were added from text-only report context; screenshots should be reviewed later with the links below.
 
-### BR66. Native Sports Feed Runs Out After Live Cards (P2)
+### BR60. Yes/No Markets Should Not Show Top-5/Top-10 Framing (P3)
+
+**Problem:** Binary yes/no market cards show "top 5" or "top 10" framing, which makes no sense for two-outcome markets.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/60/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_60.jpg`
+
+**Files:** `backend/app/routes/feed.py`, `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+### ~~BR61. Native Discover Card Question Truncated~~ — FIXED (May 17)
+
+**Problem:** Question text truncates on a native Discover card.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/61/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_61.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Native Discover card, guess-card, compact-row, and grouped-card text now allows more lines with fixed vertical sizing on narrow screens.
+
+### BR62. Better Aggregation for Related/Clustered Markets (P2)
+
+**Problem:** Related markets need a better aggregation/surfacing model so users see one coherent question or cluster instead of fragmented market rows.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/62/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_62.jpg`
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, category routes
+**Parallel Safety:** Red (touches feed ranking/grouping)
+
+### ~~BR63. Prediction Stats Empty Despite Weeks of Predictions~~ — FIXED (May 17)
+
+**Problem:** User has made predictions for weeks but native stats screen shows no stats.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/63/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_63.jpg`
+
+**Files:** `backend/app/routes/user.py`, `ios/.../Views/PredictionStatsView.swift`, `ios/.../Services/APIClient.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Prediction stats/resolutions routes now resolve optional auth and include authenticated user predictions instead of falling back to anonymous session-only lookup.
+
+### ~~BR64. Discover Ranking Fine-Tuning Section Is Confusing~~ — FIXED (May 17)
+
+**Problem:** Native Discover exposes a fine-tuning/ranking section that feels confusing; users should not have to manage ranking manually.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/64/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_64.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Removed the native Discover tuning/debug toolbar menu and simplified the feed-shaping banner language.
+
+### ~~BR65. Baseball Game State Shows Half Indicators~~ — FIXED (May 17)
+
+**Problem:** Baseball markets/events show `HT` and `2H` game state indicators; baseball should show innings.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/65/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_65.jpg`
+
+**Files:** `backend/app/routes/events.py`, `ios/.../Views/EventDetailView.swift`, `ios/.../Views/LeagueGridView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Normalized baseball live state in backend event/feed payloads so baseball uses inning labels and suppresses basketball-style half indicators.
+
+### ~~BR66. Native Sports Feed Runs Out After Live Cards~~ — FIXED (May 17)
 
 **Problem:** On iOS Sports tab, after scrolling past a few "Live Now" cards, there is nothing else to see. The feed should continue with upcoming, recent, and relevant non-live sports content instead of feeling empty once live cards are exhausted.
 
 **Context:** iPhone18,2, iOS 26.5.0, current page `Feed`, `live_game_count=3`, submitted May 17 2026 2:04 PM.
 
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/59/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_59.jpg`
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/66/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_66.jpg`
 
 **Investigation notes:**
 1. Check whether `FeedView` only renders live sections for the current response shape or fails to request/fill additional sections after live games.
@@ -564,13 +626,35 @@ Claude CLI failed to process these because screenshot image handling returned `A
 **Files:** `ios/.../Views/FeedView.swift`, `ios/.../Services/APIClient.swift`, `backend/app/routes/feed.py`
 **Parallel Safety:** Yellow
 
-### BR70. My Stuff Category Section Formatting Is Noisy (P3)
+**Fix:** Native Sports feed now fetches an event-only supplemental page and appends non-live event rows behind the ranked feed so scrolling past live cards does not empty the tab.
+
+### BR68. Final Score Displays As `final 0.0` (P3)
+
+**Problem:** Native UI displays `final 0.0` at the top of a market/event card, which is confusing and likely a score/status formatting bug.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/68/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_68.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`, `ios/.../Views/EventDetailView.swift`, backend event response shape if value is wrong
+**Parallel Safety:** Yellow
+
+### ~~BR69. Calibration Data Looks Wrong/Unimpressive~~ — FIXED (May 17)
+
+**Problem:** Calibration page/data appears wrong enough to undermine trust. Need verify calibration buckets, labels, sample sizes, and whether native/web are presenting the right cohort by default.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/69/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_69.jpg`
+
+**Files:** `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `ios/.../Views/CalibrationView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Public calibration now only includes settled-looking futures outcomes, preventing default unresolved loser rows from polluting buckets.
+
+### ~~BR70. My Stuff Category Section Formatting Is Noisy~~ — FIXED (May 17)
 
 **Problem:** My Stuff category section looks poorly formatted and highlights too many weird/low-value categories. Native should match the cleaner web treatment instead of surfacing every odd category token.
 
 **Context:** iPhone18,2, iOS 26.5.0, current page `My Stuff`, submitted May 17 2026 2:30 PM.
 
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/67/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_67.jpg`
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/70/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_70.jpg`
 
 **Investigation notes:**
 1. Compare native My Stuff category rendering against the web My Stuff/category summary design.
@@ -579,6 +663,50 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Files:** `ios/.../Views/MyStuffView.swift`, `ios/.../Views/PreferencesView.swift` if shared category chips are reused
 **Parallel Safety:** Green
+
+**Fix:** Native My Stuff now filters noisy/internal team-future rows, renames the generic section to `Team Markets`, and tightens row wrapping/probability layout.
+
+### ~~BR72. Missing Early-Inning Game State Indicators~~ — FIXED (May 17)
+
+**Problem:** Native sports/game UI is missing game state indicators for the first few innings.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/72/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_72.jpg`
+
+**Files:** `backend/app/routes/events.py`, `ios/.../Views/EventDetailView.swift`, `ios/.../Views/FeedView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Same backend normalization as BR65 now emits `Top 1st`, `Bottom 2nd`, etc. from baseball source data.
+
+### ~~BR73. Remove Native Discover Category Filter Pills~~ — FIXED (May 17)
+
+**Problem:** Native Discover category pills are unnecessary and visually noisy; ranking should be good enough that users do not need manual category filters.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/73/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_73.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Removed native Discover category filter state and pill row; ranking owns category mix.
+
+### BR74. Pull-To-Refresh Does Not Produce New Discover Cards (P2)
+
+**Problem:** Repeated pull-to-refresh on native Discover does not produce new cards.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/74/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_74.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`, `backend/app/routes/feed.py`
+**Parallel Safety:** Red (feed pagination/seen-state)
+
+### ~~BR75. Native Discover Names Truncated~~ — FIXED (May 17)
+
+**Problem:** Names are truncated in native Discover card UI.
+
+**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/75/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_75.jpg`
+
+**Files:** `ios/.../Views/DiscoverView.swift`
+**Parallel Safety:** Yellow
+
+**Fix:** Same native Discover text expansion as BR61 gives outcome names, subject names, and compact-card names more vertical room.
 
 ---
 
