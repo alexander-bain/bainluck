@@ -6,17 +6,23 @@ struct WatchGuessView: View {
     var body: some View {
         Group {
             if vm.loading {
-                ProgressView()
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                    Text("Loading...")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
             } else if let error = vm.error {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title2)
                         .foregroundStyle(.orange)
                     Text(error)
-                        .font(.caption)
+                        .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                     Button("Retry") { Task { await vm.loadQuestions(force: true) } }
-                        .font(.caption2)
+                        .font(.system(size: 13, weight: .semibold))
                 }
             } else if let q = vm.currentQuestion {
                 questionCard(q)
@@ -26,12 +32,20 @@ struct WatchGuessView: View {
                         .font(.title2)
                         .foregroundStyle(.orange)
                     Text("All caught up!")
-                        .font(.caption)
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .task { await vm.loadQuestions() }
+        .task(id: "auto-retry") {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if vm.error != nil || vm.currentQuestion == nil {
+                    await vm.loadQuestions(force: true)
+                }
+            }
+        }
     }
 
     @ViewBuilder

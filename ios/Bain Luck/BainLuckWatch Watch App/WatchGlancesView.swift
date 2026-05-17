@@ -11,18 +11,24 @@ struct WatchGlancesView: View {
     var body: some View {
         ScrollView {
             if vm.loading && vm.markets.isEmpty {
-                ProgressView()
-                    .padding(.top, 20)
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                    Text("Loading...")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 20)
             } else if let error = vm.error, vm.markets.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title3)
                         .foregroundStyle(.orange)
                     Text(error)
-                        .font(.caption)
+                        .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                     Button("Retry") { Task { await vm.load(force: true) } }
-                        .font(.caption2)
+                        .font(.system(size: 13, weight: .semibold))
                 }
                 .padding(.top, 20)
             } else if vm.markets.isEmpty {
@@ -31,7 +37,7 @@ struct WatchGlancesView: View {
                         .font(.title3)
                         .foregroundStyle(.secondary)
                     Text("No markets yet")
-                        .font(.caption)
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 20)
@@ -42,7 +48,7 @@ struct WatchGlancesView: View {
                     }
                     if let ago = vm.lastUpdated {
                         Text(ago)
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 4)
@@ -53,6 +59,14 @@ struct WatchGlancesView: View {
         }
         .navigationTitle("Trending")
         .task { await vm.load() }
+        .task(id: "auto-retry") {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if vm.error != nil || vm.markets.isEmpty {
+                    await vm.load(force: true)
+                }
+            }
+        }
     }
 
     private func glanceRow(_ market: WatchMarket) -> some View {
@@ -61,7 +75,7 @@ struct WatchGlancesView: View {
                 .fill(market.dotColor)
                 .frame(width: 8, height: 8)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(market.name)
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
@@ -74,16 +88,16 @@ struct WatchGlancesView: View {
 
             Spacer(minLength: 2)
 
-            VStack(alignment: .trailing, spacing: 1) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text("\(market.probability)%")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
 
                 if let movement = market.movement, movement != 0 {
                     HStack(spacing: 1) {
                         Image(systemName: movement > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                         Text("\(abs(Int((movement * 100).rounded())))")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(movement > 0 ? .green : .red)
                 }

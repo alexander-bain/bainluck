@@ -8,18 +8,24 @@ struct WatchLiveView: View {
     var body: some View {
         ScrollView {
             if vm.loading && vm.games.isEmpty {
-                ProgressView()
-                    .padding(.top, 20)
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                    Text("Loading...")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 20)
             } else if let error = vm.error, vm.games.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.title3)
                         .foregroundStyle(.orange)
                     Text(error)
-                        .font(.caption)
+                        .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                     Button("Retry") { Task { await vm.load(force: true) } }
-                        .font(.caption2)
+                        .font(.system(size: 13, weight: .semibold))
                 }
                 .padding(.top, 20)
             } else if vm.games.isEmpty {
@@ -28,7 +34,7 @@ struct WatchLiveView: View {
                         .font(.title3)
                         .foregroundStyle(.secondary)
                     Text("No live games")
-                        .font(.caption)
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 20)
@@ -62,13 +68,13 @@ struct WatchLiveView: View {
         VStack(spacing: 4) {
             HStack {
                 Text(game.sportLabel)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
                 if let clock = game.gameClock {
                     Text(clock)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.green)
                 }
             }
@@ -81,16 +87,16 @@ struct WatchLiveView: View {
                         .lineLimit(1)
                     if let score = game.awayScore {
                         Text("\(score)")
-                            .font(.system(size: 22, weight: .heavy, design: .rounded))
+                            .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
                     Text("\(game.awayProb)%")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
                 }
                 .frame(maxWidth: .infinity)
 
                 Text("vs")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
 
                 VStack(spacing: 2) {
@@ -100,10 +106,10 @@ struct WatchLiveView: View {
                         .lineLimit(1)
                     if let score = game.homeScore {
                         Text("\(score)")
-                            .font(.system(size: 22, weight: .heavy, design: .rounded))
+                            .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
                     Text("\(game.homeProb)%")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
                 }
                 .frame(maxWidth: .infinity)

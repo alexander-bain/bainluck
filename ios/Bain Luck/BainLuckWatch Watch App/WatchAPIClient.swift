@@ -26,8 +26,8 @@ actor WatchAPIClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 15
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
         config.waitsForConnectivity = true
         session = URLSession(configuration: config)
 
