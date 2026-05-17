@@ -1129,6 +1129,76 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 ---
 
+## iOS Code Quality (multi-wave cleanup)
+
+**Goal:** Bring the iOS codebase to a state you'd be comfortable showing a senior engineer. Audited May 17 — full report at `docs/ios-code-quality-plan.md`.
+
+**Approach:** 6 independent waves. Each wave is a single session, touches specific files, and can ship on its own. No wave depends on another. Pick any wave when you have time.
+
+### Wave 1: Crash Risks (30 min, do first)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-1 | Force-unwrap URLs | `EventDetailView.swift`, `FeedView.swift`, `DiscoverView.swift` | Replace `URL(string:)!` with safe fallback: `?? URL(string: "https://bainluck.com")!` |
+| CQ-2 | Unstable FeedItem.id | `FeedModels.swift` line 79 | Replace `UUID().uuidString` fallback with stable string like `"unknown-\(type)-\(score)"` |
+| CQ-3 | AuthManager thread safety | `AuthManager.swift` | Add `@MainActor` to the class declaration |
+
+### Wave 2: Kill Duplication (2 hours, biggest quality win)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-4 | Extract clipboard utility | New `Utils/Clipboard.swift` | Single `copyToClipboard(_:)` function. Replace 8 copy-paste blocks in `DiscoverView.swift` + `FeedView.swift` |
+| CQ-5 | Extract share URL builders | New `Utils/ShareURLs.swift` | `eventShareURL(_:)` and `futuresShareURL(_:)`. Replace inline URL construction in 4+ files |
+| CQ-6 | Unify guess cards | New `Components/GuessCardView.swift` | `NativeGuessCard` and `NativeEventGuessCard` are 90% identical. Merge into one generic component. Deletes ~400 lines from DiscoverView |
+| CQ-7 | Shared context menu | New `Components/CardContextMenu.swift` | `FeedView.cardContextMenu()` and `DiscoverView.discoverCardMenu()` are the same. Extract once |
+
+### Wave 3: Split DiscoverView (2 hours)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-8 | Extract DiscoverViewModel | New `ViewModels/DiscoverViewModel.swift` | Move class + NativeDiscoverProfile + debug state out of the 2,259-line view file |
+| CQ-9 | Extract discover cards | New `Components/DiscoverFuturesCard.swift`, `DiscoverEventCard.swift` | Move `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` to own files |
+| CQ-10 | Extract daily challenge card | New `Components/DailyChallengeCard.swift` | Move `NativeDailyChallengeCard` + `NativeChallengeSheet` out |
+| CQ-11 | Extract resolution card | New `Components/ResolutionCard.swift` | Move `NativeResolutionCard` out |
+
+**Result:** DiscoverView.swift drops from 2,259 → ~300 lines.
+
+### Wave 4: File Organization (1 hour)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-12 | Create ViewModels/ directory | Move `PreferencesViewModel.swift`, `OnboardingViewModel.swift`, and newly extracted VMs | Consistent location for all ViewModels |
+| CQ-13 | Extract EventDetailViewModel | New `ViewModels/EventDetailViewModel.swift` | Move out of `EventDetailView.swift` (~150 lines) |
+| CQ-14 | Split Extensions.swift | New `Utils/ColorExtensions.swift`, `Utils/ProbabilityFormatting.swift`, `Utils/SportDisplayNames.swift` | The current file is a grab bag of unrelated utilities |
+
+### Wave 5: Access Control + Naming (1 hour, ongoing)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-15 | `private(set)` on ViewModel properties | All ViewModel files | Every `@Published var` → `@Published private(set) var` where views only read |
+| CQ-16 | `private` on view helpers | All View files | Every `func heroSection()` → `private func heroSection()` |
+| CQ-17 | Stop abbreviating | All files (search-replace) | `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProb`/`homeProb`, `gm` → `gameMarkets` |
+| CQ-18 | PinManager.isAuthenticated | `PinManager.swift` | Change to `private(set) var` |
+
+### Wave 6: Doc Comments (1 hour, ongoing)
+
+| # | Item | Files | What to do |
+|---|------|-------|------------|
+| CQ-19 | Document model types | All files in `Models/` | Add `///` doc comment to every struct explaining what it represents |
+| CQ-20 | Document services | `APIClient.swift`, `AuthManager.swift`, `NavigationCoordinator.swift` | Add `///` to public methods |
+| CQ-21 | Remove dead code | `EventDetailView.swift` | Delete `heroTagChips` and `eventTagsSection` that return `EmptyView()` |
+
+### What NOT to do
+
+- Don't adopt TCA, MVVM-C, or any architecture framework — the app ships
+- Don't add localization — single market (US)
+- Don't refactor navigation — it works across iPhone/iPad/Mac
+- Don't add SwiftLint yet — fix patterns manually first, lint later
+
+**Parallel Safety:** Green (all waves are iOS-only, no backend changes)
+
+---
+
 ## App Store Submission (ACTIVE — target: this week)
 
 **Goal:** Get Bain Luck approved and live on the App Store.
