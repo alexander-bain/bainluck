@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard } from "@/components/DiscoverCard";
@@ -18,6 +18,7 @@ import {
   sendDiscoverInteraction,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
+import { useCategoryInterests } from "@/hooks/useCategoryInterests";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -385,6 +386,9 @@ export default function DiscoverPage() {
   useScrollDepth({ pageType: "discover" });
   useEngagementTime({ pageType: "discover" });
 
+  const { setInterest } = useCategoryInterests();
+  const { mutate } = useSWRConfig();
+
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -641,6 +645,21 @@ export default function DiscoverPage() {
         <OnboardingFlow onComplete={(cats) => {
           setShowOnboarding(false);
           localStorage.setItem("discover_onboarded", "1");
+
+          // Persist selected categories as sport affinities (1.0 = "Love it").
+          // useCategoryInterests handles the dual path: API for auth'd users,
+          // localStorage for anonymous (migrated to server on first sign-in
+          // via useInterestSync in PinSyncEffect).
+          for (const cat of cats) {
+            setInterest(cat, 1.0);
+          }
+
+          // Revalidate the feed so server-side personalization picks up
+          // the freshly saved affinities on the next request.
+          if (cats.length > 0) {
+            void mutate("discover-feed");
+          }
+
           if (cats.length > 0 && !SPORTS_CATS.has(cats[0])) setCategoryFilter(cats[0]);
         }} />
       )}
