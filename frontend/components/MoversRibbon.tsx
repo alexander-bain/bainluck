@@ -5,7 +5,7 @@ import type { ChampionshipGridMover } from "@/lib/types";
 
 interface MoversRibbonProps {
   movers: ChampionshipGridMover[];
-  /** Link to the full grid page (e.g. /playoffs/nba) */
+  /** Link to the full grid page (e.g. /sport/basketball/nba) */
   gridHref?: string;
 }
 

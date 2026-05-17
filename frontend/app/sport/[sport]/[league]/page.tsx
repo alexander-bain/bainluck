@@ -391,7 +391,7 @@ export default function LeagueShowcasePage() {
         {sportSlug !== "golf" && grid && grid.movers && grid.movers.length > 0 && (
           <MoversRibbon
             movers={grid.movers}
-            gridHref={`/playoffs/${leagueSlug}`}
+            gridHref={`/sport/${sportSlug}/${leagueSlug}`}
           />
         )}
 
@@ -417,7 +417,7 @@ export default function LeagueShowcasePage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
               <Link
-                href={`/playoffs/${leagueSlug}`}
+                href={`/sport/${sportSlug}/${leagueSlug}`}
                 className="text-xs font-medium text-accent-brand hover:underline"
               >
                 View full grid &rarr;
@@ -451,7 +451,7 @@ export default function LeagueShowcasePage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
               <Link
-                href={`/playoffs/${leagueSlug}`}
+                href={`/sport/${sportSlug}/${leagueSlug}`}
                 className="text-xs font-medium text-accent-brand hover:underline"
               >
                 View full grid &rarr;

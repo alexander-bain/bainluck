@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_validator as pydantic_field_validator
 from sqlalchemy import select, update, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.auth import get_optional_user
 from app.models.models import BugReport, User
 from app.services import get_db
 
@@ -51,14 +52,14 @@ async def submit_bug_report(
     body: BugReportSubmission,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
 ):
     session_id = request.headers.get("x-session-id")
-    user_id = getattr(request.state, "user_id", None)
+    user_id = user.id if user else None
 
     user_email = None
-    if user_id and body.notify_on_fix:
-        user_row = await db.execute(select(User.email).where(User.id == user_id))
-        user_email = user_row.scalar_one_or_none()
+    if user and body.notify_on_fix:
+        user_email = user.email
 
     report = BugReport(
         user_id=user_id,
