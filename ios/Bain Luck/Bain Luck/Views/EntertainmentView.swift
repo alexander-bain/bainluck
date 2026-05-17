@@ -173,11 +173,6 @@ struct EntertainmentView: View {
             HStack(spacing: 6) {
                 tagChip(kind: m.kind ?? "binary")
                 Spacer()
-                if let vol = m.volume24h, vol > 0 {
-                    Text("$\(vol >= 1000 ? "\(vol / 1000)k" : "\(vol)")")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
             }
 
             Text(m.q)

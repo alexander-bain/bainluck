@@ -3,12 +3,13 @@ import Foundation
 // MARK: - Weather Featured
 
 nonisolated struct WeatherFeaturedItem: Decodable, Identifiable, Sendable {
-    var id: String { q }
+    var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
     let prob: Int
     let src: String
     let tag: String
     let closes: String
+    let marketId: Int?
 }
 
 // MARK: - Weather City

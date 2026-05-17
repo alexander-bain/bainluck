@@ -420,8 +420,15 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                     inflation_side.append(_row)
                 continue
             modal_idx, _, _ = _modal_bracket(brackets)
+            # Extract short month label from name (e.g. "CPI YoY for May 2026" → "May")
+            _mo_match = re.search(
+                r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\b",
+                m.name or "",
+                re.IGNORECASE,
+            )
+            _cpi_mo = _mo_match.group(0).title()[:3] if _mo_match else m.name[:20]
             cpi_releases.append({
-                "mo": m.name,
+                "mo": _cpi_mo,
                 "brackets": brackets,
                 "upcoming": True,
                 "peakIs": modal_idx,
@@ -607,6 +614,7 @@ async def get_economics(db: AsyncSession = Depends(get_db)):
                 "count": len(energy_markets),
                 "gas": gas_markets_list[:2],
                 "oil": oil_rows[:4],
+                "side_markets": [r for m in energy_markets if (r := _market_row(m))][:8],
             },
             "housing": {
                 "count": len(housing_markets),

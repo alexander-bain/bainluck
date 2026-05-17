@@ -408,6 +408,7 @@ async def get_featured(db: AsyncSession = Depends(get_db)):
             "src": _market_source(m),
             "tag": _derive_tag(m.name),
             "closes": _format_closes(m.resolution_date),
+            "market_id": m.id,
         })
     return items
 

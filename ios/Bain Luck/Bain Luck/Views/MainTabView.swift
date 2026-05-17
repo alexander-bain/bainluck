@@ -131,19 +131,19 @@ struct MainTabView: View {
             case .myStuff:
                 MyStuffView()
             case .futures:
-                NavigationStack { FuturesListView() }
+                NavigationStack { FuturesListView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             case .weather:
-                NavigationStack { WeatherView() }
+                NavigationStack { WeatherView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             case .economics:
-                NavigationStack { EconomicsView() }
+                NavigationStack { EconomicsView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             case .politics:
-                NavigationStack { PoliticsView() }
+                NavigationStack { PoliticsView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             case .entertainment:
-                NavigationStack { EntertainmentView() }
+                NavigationStack { EntertainmentView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             case .preferences:
                 NavigationStack { PreferencesView() }
             case .calibration:
-                NavigationStack { CalibrationView() }
+                NavigationStack { CalibrationView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
             }
         }
     }

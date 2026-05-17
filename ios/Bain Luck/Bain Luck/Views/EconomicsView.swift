@@ -267,12 +267,13 @@ struct EconomicsView: View {
                     .clipShape(Capsule())
             }
 
-            if let peak = release.peakIs {
+            if let brackets = release.brackets, let peakIdx = release.peakIs,
+               peakIdx < brackets.count, let label = brackets[peakIdx][1].stringValue {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                         .font(.system(size: 9))
                         .foregroundColor(.orange)
-                    Text("Peak: \(peak)")
+                    Text("Most likely: \(label)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

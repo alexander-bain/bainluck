@@ -58,15 +58,64 @@ struct WeatherView: View {
     private var weatherContent: some View {
         ScrollView {
             VStack(spacing: 20) {
+                pageHeader
+
                 if !vm.featured.isEmpty {
                     featuredSection
                 }
                 if !vm.cities.isEmpty {
                     citiesSection
                 }
+
+                weatherFooter
             }
             .padding(.vertical)
         }
+    }
+
+    // MARK: - Page Header
+
+    private var pageHeader: some View {
+        let totalCount = vm.featured.count + vm.cities.count
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Live temperature and weather probabilities from prediction markets.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Label("\(totalCount) markets", systemImage: "chart.bar")
+                Label("Kalshi", systemImage: "arrow.triangle.branch")
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.blue.opacity(0.06),
+                    Color.orange.opacity(0.06)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.blue.opacity(0.15),
+                            Color.orange.opacity(0.15)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+        .padding(.horizontal)
     }
 
     // MARK: - Featured Markets
@@ -77,7 +126,14 @@ struct WeatherView: View {
                 .padding(.horizontal)
 
             ForEach(vm.featured) { item in
-                featuredCard(item)
+                if let marketId = item.marketId {
+                    NavigationLink(value: Route.futuresDetail(id: marketId)) {
+                        featuredCard(item)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    featuredCard(item)
+                }
             }
             .padding(.horizontal)
         }
@@ -222,6 +278,19 @@ struct WeatherView: View {
             }
             .padding(.horizontal)
         }
+    }
+
+    // MARK: - Footer
+
+    private var weatherFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text("Data from Kalshi \u{00B7} Not weather advice")
+        }
+        .font(.caption2).foregroundStyle(.tertiary)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 }
 
