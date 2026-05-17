@@ -905,6 +905,8 @@ async def list_bug_reports(
                 "admin_notes": r.admin_notes,
                 "backlog_ref": r.backlog_ref,
                 "resolution_summary": r.resolution_summary,
+                "user_email": r.user_email,
+                "notification_sent_at": r.notification_sent_at.isoformat() if r.notification_sent_at else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in reports
