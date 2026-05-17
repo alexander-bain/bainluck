@@ -11,6 +11,7 @@ nonisolated struct CalibrationBucket: Decodable, Sendable {
     let sumSqErr: Double
     let ciLower: Double?
     let ciUpper: Double?
+    let avgProb: Double?
 }
 
 nonisolated struct CalibrationData: Decodable, Sendable {
@@ -20,5 +21,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     let totalWinners: Int?
     let mceCiLower: Double?
     let mceCiUpper: Double?
+    let mceClosingLine: Double?
+    let mceOpeningPrice: Double?
     let generatedAt: String?
 }
