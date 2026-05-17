@@ -18,6 +18,7 @@ struct BugReportView: View {
     @State private var submitting = false
     @State private var submitted = false
     @State private var submitError: String? = nil
+    @State private var showErrorAlert = false
 
     #if os(iOS)
     @State private var canvasView = PKCanvasView()
@@ -175,10 +176,20 @@ struct BugReportView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Submit") { submitReport() }
-                        .disabled(submitting || submitted)
-                        .fontWeight(.semibold)
+                    if submitting {
+                        ProgressView()
+                    } else {
+                        Button("Submit") { submitReport() }
+                            .disabled(submitted)
+                            .fontWeight(.semibold)
+                    }
                 }
+            }
+            .alert("Couldn't Submit", isPresented: $showErrorAlert) {
+                Button("Try Again") { submitReport() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text(submitError ?? "Check your connection and try again.")
             }
         }
     }
@@ -251,7 +262,8 @@ struct BugReportView: View {
                 submitted = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             } catch {
-                submitError = "Couldn't submit — check your connection and try again."
+                submitError = "Check your connection and try again."
+                showErrorAlert = true
             }
             submitting = false
         }
