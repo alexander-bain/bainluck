@@ -74,7 +74,7 @@ struct Bain_LuckApp: App {
                 .task { await pollLiveGames() }
                 #endif
                 .onChange(of: authManager.isAuthenticated) { _, isAuth in
-                    pinManager.isAuthenticated = isAuth
+                    pinManager.setAuthenticated(isAuth)
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
                     Task {
                         if isAuth {
@@ -84,7 +84,7 @@ struct Bain_LuckApp: App {
                     }
                 }
                 .task {
-                    pinManager.isAuthenticated = authManager.isAuthenticated
+                    pinManager.setAuthenticated(authManager.isAuthenticated)
                     await pinManager.loadPins()
                     // Wire up notification deep linking and request permission
                     NotificationManager.shared.navCoordinator = navCoordinator

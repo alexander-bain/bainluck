@@ -18,13 +18,17 @@ final class PinManager: ObservableObject {
     private let defaults = UserDefaults.standard
 
     /// Whether the user is authenticated (set externally).
-    var isAuthenticated = false
+    private(set) var isAuthenticated = false
 
     init() {
         loadFromDefaults()
     }
 
     // MARK: - Public API
+
+    func setAuthenticated(_ authenticated: Bool) {
+        isAuthenticated = authenticated
+    }
 
     func isPinned(type: String, id: Int) -> Bool {
         switch type {
