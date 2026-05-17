@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
@@ -36,6 +36,51 @@ export default function PredictionStatsPage() {
 
   const [stats, setStats] = useState<DetailedStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [shareState, setShareState] = useState<"idle" | "copied" | "shared">("idle");
+
+  const handleShare = useCallback(async () => {
+    if (!stats || stats.total === 0) return;
+
+    const accuracy = Math.round(stats.accuracy * 100);
+    const shareParams = `accuracy=${accuracy}&total=${stats.total}&correct=${stats.correct}&streak=${stats.current_streak}&best=${stats.best_streak}`;
+    const shareUrl = `${window.location.origin}/discover/scorecard?${shareParams}`;
+    const shareText = `I'm ${accuracy}% accurate across ${stats.total} predictions on Bain Luck!`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "My Prediction Scorecard", text: shareText, url: shareUrl });
+        setShareState("shared");
+      } catch {
+        // User cancelled — no-op
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+        setShareState("copied");
+        setTimeout(() => setShareState("idle"), 2000);
+      } catch {
+        // Fallback: select text
+        const textarea = document.createElement("textarea");
+        textarea.value = `${shareText}\n${shareUrl}`;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setShareState("copied");
+        setTimeout(() => setShareState("idle"), 2000);
+      }
+    }
+
+    // Log share action
+    if (typeof window !== "undefined" && window.gtag) {
+      window.gtag("event", "share_scorecard", {
+        accuracy,
+        total: stats.total,
+        streak: stats.current_streak,
+      });
+    }
+
+  }, [stats]);
 
   useEffect(() => {
     async function load() {
@@ -84,6 +129,24 @@ export default function PredictionStatsPage() {
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
           <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
           <h1 className="text-lg font-black tracking-tight">Your Stats</h1>
+          <div className="ml-auto">
+            <button
+              onClick={handleShare}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent-brand text-white text-sm font-semibold hover:bg-accent-brand/90 active:scale-95 transition-all"
+            >
+              {shareState === "copied" ? (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                  Copied
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                  Share
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
