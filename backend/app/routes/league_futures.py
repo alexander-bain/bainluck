@@ -34,6 +34,10 @@ LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "americanfootball_ncaaf": ["%NCAA%Football%", "%College Football%", "%CFP%"],
     "soccer_epl": ["%Premier League%", "%EPL%"],
     "soccer_usa_mls": ["%MLS%", "%Major League Soccer%"],
+    "soccer_spain_la_liga": ["%La Liga%", "%LaLiga%"],
+    "soccer_germany_bundesliga": ["%Bundesliga%"],
+    "soccer_uefa_champs_league": ["%Champions League%", "%UCL%"],
+    "mma_mixed_martial_arts": ["%UFC%", "%Mixed Martial Arts%"],
 }
 
 # Sport key → Kalshi external_id prefix for precise filtering
@@ -46,6 +50,8 @@ LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
     "americanfootball_nfl": ["KXNFL"],
     "americanfootball_ncaaf": ["KXNCAAF", "KXCFP"],
     "soccer_epl": ["KXEPL"],
+    "soccer_usa_mls": ["KXMLS"],
+    "mma_mixed_martial_arts": ["KXUFC"],
 }
 
 # ---------------------------------------------------------------------------
@@ -76,6 +82,9 @@ _AWARD_KEYWORDS: list[str] = [
     "comeback player", "offensive player of the year",
     "defensive player of the year", "walter payton",
     "offensive rookie", "defensive rookie", "coach of the year",
+    # MMA / UFC
+    "fight of the year", "fighter of the year", "knockout of the year",
+    "performance of the night",
 ]
 
 # Keywords that identify a market as a playoff series matchup.
@@ -95,6 +104,10 @@ _PROPS_KEYWORDS: list[str] = [
     "debut date", "free agent",
     "sweep", "game 7", "playoff win total", "elimination",
     "fired", "general manager", "head coach",
+    # Soccer
+    "relegation", "promotion", "golden boot", "top scorer",
+    # MMA / UFC
+    "method of", "distance", "total rounds", "finish",
 ]
 
 # Keywords for player-stat markets (season stats section).
@@ -104,6 +117,8 @@ _SEASON_STAT_KEYWORDS: list[str] = [
     "rushing leader", "passing leader", "receiving leader",
     "goal leader", "points leader", "save leader",
     "regular season record", "regular season wins",
+    # Soccer
+    "clean sheets", "assist leader", "top assists",
 ]
 
 

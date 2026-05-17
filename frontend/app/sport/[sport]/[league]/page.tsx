@@ -31,6 +31,7 @@ import TournamentProgressionTable from "@/components/TournamentProgressionTable"
 import LeagueMarketSection from "@/components/LeagueMarketSection";
 import { EvolutionView, type PositionOption } from "@/components/EvolutionView";
 import FeedCard from "@/components/FeedCard";
+import MoversRibbon from "@/components/MoversRibbon";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const SECTION_META: Record<string, { label: string; order: number }> = {
@@ -347,12 +348,28 @@ export default function LeagueShowcasePage() {
               {completedTournaments.length > 0 && `${completedTournaments.length} completed`}
             </p>
           )}
+          {!golfData && grid && (
+            <p className="text-text-secondary mt-2">
+              {grid.team_count > 0 && `${grid.team_count} teams`}
+              {grid.season && ` \u00b7 ${grid.season}`}
+              {grid.sources_available?.length > 0 && (
+                <> &middot; {grid.sources_available.length} source{grid.sources_available.length !== 1 ? "s" : ""}</>
+              )}
+              {leagueMarkets && leagueMarkets.total_markets > 0 && (
+                <> &middot; {leagueMarkets.total_markets} market{leagueMarkets.total_markets !== 1 ? "s" : ""}</>
+              )}
+            </p>
+          )}
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-10">
 
-        {/* Hero: Current/Live Tournament */}
+        {/* ============================================================ */}
+        {/* GOLF LAYOUT: Hero tournament → Games → Evolution → Grid → Markets → Upcoming → Completed */}
+        {/* ============================================================ */}
+
+        {/* Hero: Current/Live Tournament (golf) */}
         {heroTournament && (
           <section>
             <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
@@ -364,6 +381,18 @@ export default function LeagueShowcasePage() {
               href={`/sport/${sportSlug}/${leagueSlug}/${heroTournament.slug || heroTournament.key.replace(/_/g, "-")}`}
             />
           </section>
+        )}
+
+        {/* ============================================================ */}
+        {/* TEAM SPORT LAYOUT: Movers → Games → Grid → Evolution → Markets */}
+        {/* ============================================================ */}
+
+        {/* Movers Ribbon (team sports only — golf doesn't have movers) */}
+        {sportSlug !== "golf" && grid && grid.movers && grid.movers.length > 0 && (
+          <MoversRibbon
+            movers={grid.movers}
+            gridHref={`/playoffs/${leagueSlug}`}
+          />
         )}
 
         {/* Today's Games */}
@@ -382,6 +411,25 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
+        {/* Championship Grid — before evolution chart for team sports, after for golf */}
+        {sportSlug !== "golf" && grid && grid.teams && grid.teams.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
+              <Link
+                href={`/playoffs/${leagueSlug}`}
+                className="text-xs font-medium text-accent-brand hover:underline"
+              >
+                View full grid &rarr;
+              </Link>
+            </div>
+            <TournamentProgressionTable
+              data={gridToProgression(grid)}
+              pageType="sport_league"
+            />
+          </section>
+        )}
+
         {/* Evolution Chart */}
         {evolutionMarketId && (
           <section>
@@ -397,8 +445,8 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Championship Grid (inline) */}
-        {grid && grid.teams && grid.teams.length > 0 && (
+        {/* Championship Grid — after evolution chart for golf */}
+        {sportSlug === "golf" && grid && grid.teams && grid.teams.length > 0 && (
           <section>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Championship Odds</h2>
@@ -429,7 +477,7 @@ export default function LeagueShowcasePage() {
           ))
         }
 
-        {/* Upcoming Tournaments */}
+        {/* Upcoming Tournaments (golf) */}
         {upcomingTournaments.length > (heroTournament && tournamentStatus(heroTournament) === "upcoming" ? 1 : 0) && (
           <section>
             <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Upcoming</h2>
@@ -447,7 +495,7 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Recently Completed */}
+        {/* Recently Completed (golf) */}
         {completedTournaments.length > 0 && (
           <section>
             <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Recently Completed</h2>
@@ -464,14 +512,14 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Empty state for non-golf sports */}
+        {/* Empty state — only when there is truly no data at all */}
         {sportSlug !== "golf" && !grid && todayEvents.length === 0 && !leagueMarkets && (
           <div className="text-center py-16">
             <p className="text-text-secondary text-lg">
-              {league.name} page coming soon
+              No {league.name} data available right now
             </p>
             <p className="text-text-muted text-sm mt-2">
-              Event cards and championship grid will appear here
+              Check back when the season is active for championship odds, games, and market analysis
             </p>
           </div>
         )}
