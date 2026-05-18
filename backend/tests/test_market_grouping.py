@@ -16,6 +16,9 @@ from app.utils.market_grouping import (
     compute_threshold_stem,
     compute_canonical_groups,
     detect_threshold_groups,
+    detect_stat_prop_groups,
+    detect_playoff_progression_groups,
+    detect_all_groups,
     discover_group_id_for_market,
 )
 
@@ -192,6 +195,19 @@ class TestComputeCanonicalGroups:
         groups = compute_canonical_groups(markets)
         assert "politics::president:2028" in groups
 
+    def test_preserves_duplicate_like_rows_for_caller_to_resolve(self):
+        """Grouping should not silently drop duplicate-looking market rows."""
+        markets = [
+            {"id": 1, "canonical_market_key": "awards:oscars:best-picture:2026", "source": "polymarket"},
+            {"id": 1, "canonical_market_key": "awards:oscars:best-picture:2026", "source": "polymarket"},
+            {"id": 2, "canonical_market_key": "awards:oscars:best-picture:2026", "source": "kalshi"},
+        ]
+
+        groups = compute_canonical_groups(markets)
+
+        grouped_ids = [m["id"] for m in groups["awards:oscars:best-picture:2026"]]
+        assert grouped_ids == [1, 1, 2]
+
     def test_empty_input(self):
         assert compute_canonical_groups([]) == {}
 
@@ -268,6 +284,90 @@ class TestDetectThresholdGroups:
         assert "points" in group[0]["threshold_unit"]
 
 
+# ── higher-level group detection ──
+
+
+class TestHigherLevelGroupDetection:
+    """Tests for grouped futures market detection helpers."""
+
+    def test_stat_prop_markets_group_by_player_and_stat(self):
+        markets = [
+            {"id": 1, "name": "Jayson Tatum: 25+ Points"},
+            {"id": 2, "name": "Jayson Tatum: 30+ Points"},
+            {"id": 3, "name": "Jayson Tatum: 10+ Rebounds"},
+        ]
+
+        groups = detect_stat_prop_groups(markets)
+
+        points_group = groups["stat_prop:jayson tatum:points"]
+        assert [m["id"] for m in points_group] == [1, 2]
+        assert [m["threshold_value"] for m in points_group] == [25.0, 30.0]
+        assert "stat_prop:jayson tatum:rebounds" not in groups
+
+    def test_playoff_progression_markets_group_by_team(self):
+        markets = [
+            {"id": 1, "name": "Lakers: Make Playoffs"},
+            {"id": 2, "name": "Lakers: Make Round 2"},
+            {"id": 3, "name": "Celtics: Win Championship"},
+        ]
+
+        groups = detect_playoff_progression_groups(markets)
+
+        lakers_group = groups["playoff_progression:lakers"]
+        assert [m["id"] for m in lakers_group] == [1, 2]
+        assert [m["stage_order"] for m in lakers_group] == [1, 3]
+        assert "playoff_progression:celtics" not in groups
+
+    def test_detect_all_groups_ignores_placeholder_shaped_markets(self):
+        markets = [
+            {
+                "id": 1,
+                "name": "Player B",
+                "outcomes": [{"id": 10, "name": "Player B"}],
+            },
+            {
+                "id": 2,
+                "name": "Player S",
+                "outcomes": [{"id": 20, "name": "Player S"}],
+            },
+            {
+                "id": 3,
+                "name": "Jayson Tatum: 25+ Points",
+                "outcomes": [{"id": 30, "name": "Over 25.5 points"}],
+            },
+            {
+                "id": 4,
+                "name": "Jayson Tatum: 30+ Points",
+                "outcomes": [{"id": 40, "name": "Over 30.5 points"}],
+            },
+        ]
+
+        groups = detect_all_groups(markets)
+
+        assert groups["threshold"] == {
+            "over #": [
+                {
+                    "id": 30,
+                    "name": "Over 25.5 points",
+                    "market_id": 3,
+                    "threshold_value": 25.5,
+                    "threshold_unit": "points",
+                    "threshold_direction": "above",
+                },
+                {
+                    "id": 40,
+                    "name": "Over 30.5 points",
+                    "market_id": 4,
+                    "threshold_value": 30.5,
+                    "threshold_unit": "points",
+                    "threshold_direction": "above",
+                },
+            ]
+        }
+        assert [m["id"] for m in groups["stat_prop"]["stat_prop:jayson tatum:points"]] == [3, 4]
+        assert groups["playoff_progression"] == {}
+
+
 # ── discover_group_id_for_market ──
 
 
@@ -303,6 +403,26 @@ class TestDiscoverGroupId:
             market_id=3,
         )
         assert result == ("canonical:basketball:NBA:championship:2025-26", "canonical")
+
+    def test_source_specific_group_id_takes_precedence_over_canonical_key(self):
+        result = discover_group_id_for_market(
+            source="polymarket",
+            external_id="pm_event_456",
+            canonical_market_key="basketball:NBA:championship:2025-26",
+            name="NBA Championship Winner 2025-26",
+            market_id=5,
+        )
+        assert result == ("polymarket:pm_event_456", "polymarket_event")
+
+    def test_polymarket_without_external_id_falls_back_to_canonical_key(self):
+        result = discover_group_id_for_market(
+            source="polymarket",
+            external_id=None,
+            canonical_market_key="politics:us:president:2028",
+            name="Who will win the 2028 US presidential election?",
+            market_id=6,
+        )
+        assert result == ("canonical:politics:us:president:2028", "canonical")
 
     def test_no_group_for_unknown(self):
         result = discover_group_id_for_market(

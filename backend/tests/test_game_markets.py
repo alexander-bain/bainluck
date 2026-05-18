@@ -1,10 +1,93 @@
 """Tests for the game-markets endpoint helpers."""
 
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from app.routes.events import (
     _classify_game_market, _extract_threshold, _estimate_game_pace,
     _PLAYER_OUTCOME_RE, _extract_period_from_ticker, _extract_period_from_name,
+    _game_markets_cache, get_game_markets,
 )
+
+
+def _make_result(scalar=None, rows=None, all_rows=None):
+    rows = rows or []
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    result.scalars.return_value.all.return_value = rows
+    result.all.return_value = all_rows if all_rows is not None else []
+    return result
+
+
+def _make_event(
+    *,
+    id=42,
+    home_team_name="Boston Celtics",
+    away_team_name="New York Knicks",
+    sport_key="basketball_nba",
+    status="live",
+):
+    event = MagicMock()
+    event.id = id
+    event.home_team_name = home_team_name
+    event.away_team_name = away_team_name
+    event.status = status
+    event.sport_id = 1
+    event.sport = MagicMock()
+    event.sport.key = sport_key
+    event.commence_time = datetime(2026, 5, 17, 23, 0, tzinfo=timezone.utc)
+    event.home_score = 88
+    event.away_score = 82
+    event.period = "3rd Quarter"
+    event.game_clock = "6:32"
+    return event
+
+
+def _make_market(
+    *,
+    id,
+    name,
+    external_id=None,
+    event_id=42,
+    category="game_prop",
+    status="open",
+    source="kalshi",
+    sport_id=1,
+    sport_category="basketball",
+    commence_time=None,
+):
+    market = MagicMock()
+    market.id = id
+    market.name = name
+    market.external_id = external_id
+    market.event_id = event_id
+    market.category = category
+    market.status = status
+    market.source = source
+    market.sport_id = sport_id
+    market.llm_sport_category = sport_category
+    market.commence_time = commence_time or datetime(2026, 5, 17, 23, 0, tzinfo=timezone.utc)
+    market.group_id = None
+    market.group_type = None
+    return market
+
+
+def _make_outcome(*, id, market_id, name, probability, opening_probability=None):
+    outcome = MagicMock()
+    outcome.id = id
+    outcome.market_id = market_id
+    outcome.name = name
+    outcome.current_probability = probability
+    outcome.opening_probability = opening_probability
+    return outcome
+
+
+@pytest.fixture(autouse=True)
+def clear_game_markets_cache():
+    _game_markets_cache.clear()
+    yield
+    _game_markets_cache.clear()
 
 
 class TestClassifyGameMarket:
@@ -279,3 +362,125 @@ class TestExtractPeriodFromName:
 
     def test_outcome_has_period(self):
         assert _extract_period_from_name("Celtics at Knicks", "1st Half Over 55.5") == "1H"
+
+
+class TestGetGameMarketsFormatting:
+    @pytest.mark.asyncio
+    async def test_linked_ticker_period_total_serializes_backend_period(self):
+        event = _make_event()
+        market = _make_market(
+            id=101,
+            name="Celtics at Knicks",
+            external_id="KXNBA2HTOTAL-26MAY17BOSNYK",
+        )
+        outcome = _make_outcome(
+            id=201,
+            market_id=101,
+            name="Over 105.5",
+            probability=0.52,
+            opening_probability=0.47,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert response["totals"] == []
+        assert response["period_markets"] == [
+            {
+                "threshold": 105.5,
+                "over_probability": 0.52,
+                "source": "kalshi",
+                "market_type": "half_total",
+                "market_name": "Celtics at Knicks",
+                "outcome_name": "Over 105.5",
+                "movement": 0.05,
+                "period": "2H",
+                "_market_id": 101,
+                "_external_id": "KXNBA2HTOTAL-26MAY17BOSNYK",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_linked_market_ignores_stale_category_and_status_filters(self):
+        event = _make_event(status="live")
+        market = _make_market(
+            id=102,
+            name="Celtics at Knicks",
+            external_id="KXNBA2HSPREAD-26MAY17BOSNYK",
+            category="championship",
+            status="closed",
+            sport_category="politics",
+        )
+        outcome = _make_outcome(
+            id=202,
+            market_id=102,
+            name="Celtics -3.5",
+            probability=0.54,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert response["period_markets"] == [
+            {
+                "market_name": "Celtics at Knicks",
+                "outcome_name": "Celtics -3.5",
+                "threshold": 3.5,
+                "probability": 0.54,
+                "source": "kalshi",
+                "market_type": "half_spread",
+                "period": "2H",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_unlinked_fallback_game_prop_uses_name_period_when_ticker_missing(self):
+        event = _make_event()
+        market = _make_market(
+            id=103,
+            name="2nd Half Spread: Boston Celtics at New York Knicks",
+            external_id=None,
+            event_id=None,
+        )
+        outcome = _make_outcome(
+            id=203,
+            market_id=103,
+            name="Knicks +2.5",
+            probability=0.49,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[market]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert response["period_markets"] == [
+            {
+                "market_name": "2nd Half Spread: Boston Celtics at New York Knicks",
+                "outcome_name": "Knicks +2.5",
+                "threshold": 2.5,
+                "probability": 0.49,
+                "source": "kalshi",
+                "market_type": "half_spread",
+                "period": "2H",
+            }
+        ]
