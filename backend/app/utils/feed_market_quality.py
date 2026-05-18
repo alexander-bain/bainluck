@@ -825,6 +825,7 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("film_tv_scores", re.compile(r"\brotten tomatoes\b", re.IGNORECASE), 88),
     ("macro_recession", re.compile(r"\brecession\b", re.IGNORECASE), 88),
     ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
+    ("us_2028_presidential", re.compile(r"\b2028\b.*\b(presidential|president|nominee|election)\b", re.IGNORECASE), 90),
     ("fifa_world_cup", re.compile(r"\b(fifa\s+)?world cup\b", re.IGNORECASE), 82),
 )
 

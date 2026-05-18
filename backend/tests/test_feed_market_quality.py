@@ -757,6 +757,37 @@ class TestFeedQualityDebug:
         assert debug["summary"]["ground_truth_hit_count_50"] == 1
         assert debug["missing_ground_truth"] == []
 
+    def test_ground_truth_matching_treats_recession_year_phrasings_as_same_story(self):
+        debug = build_feed_quality_debug(
+            [
+                {
+                    "type": "futures",
+                    "score": 100,
+                    "headline": "Tracked by 2 sources",
+                    "reason": "Multi-source recession market",
+                    "data": {
+                        "id": 108622,
+                        "name": "US recession by end of 2026?",
+                        "llm_sport_category": "economics",
+                        "source": "kalshi",
+                        "top_outcomes": [{"name": "Yes", "probability": 0.28}],
+                    },
+                }
+            ],
+            ground_truth_items=[
+                {
+                    "source": "kalshi",
+                    "category": "Economics",
+                    "name": "Recession this year?",
+                    "probability": "Yes 28%, No 72%",
+                }
+            ],
+            top_n=1,
+        )
+
+        assert debug["summary"]["ground_truth_hit_count_50"] == 1
+        assert debug["missing_ground_truth"] == []
+
     def test_missing_ground_truth_db_trace_explains_no_match(self):
         trace = summarize_missing_ground_truth_db_trace(
             {"name": "Will OpenAI announce GPT-6 in 2026?"},
@@ -1625,6 +1656,21 @@ class TestDiscoverFirstPageMixer:
         top50_names = [item["data"]["name"] for item in mixed[:50]]
         assert "Who will win Survivor Season 50?" in top50_names
         assert "Xi Jinping out before 2027?" in top50_names
+
+    def test_editorial_tail_backfill_adds_2028_presidential_story(self):
+        items = [
+            self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
+            for i in range(55)
+        ]
+        items.append(
+            self._item(1000, "politics", 100, name="2028 U.S. Presidential Election winner?")
+        )
+
+        mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
+
+        assert "2028 U.S. Presidential Election winner?" in [
+            item["data"]["name"] for item in mixed[:50]
+        ]
 
     def test_editorial_tail_backfill_does_not_replace_much_stronger_cards(self):
         items = [

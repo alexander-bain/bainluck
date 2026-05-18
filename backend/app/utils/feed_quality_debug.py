@@ -262,6 +262,8 @@ def _names_match(a: str, b: str) -> bool:
         return False
     if left in right or right in left:
         return True
+    if _equivalent_recession_story(left, right):
+        return True
 
     stopwords = {
         "will", "the", "to", "of", "in", "on", "by", "at", "for", "and",
@@ -273,6 +275,16 @@ def _names_match(a: str, b: str) -> bool:
         return False
     overlap = left_tokens & right_tokens
     return len(overlap) >= 3 and len(overlap) / min(len(left_tokens), len(right_tokens)) >= 0.6
+
+
+def _equivalent_recession_story(left: str, right: str) -> bool:
+    """Treat common recession phrasings as the same audit story."""
+    if "recession" not in left or "recession" not in right:
+        return False
+    current_year_terms = {"2026", "this year", "end of 2026"}
+    return any(term in left for term in current_year_terms) and any(
+        term in right for term in current_year_terms
+    )
 
 
 def _normalize_match_name(name: str) -> str:
