@@ -13,7 +13,8 @@
 ### Native Maintainability Sweep
 - ✅ **All native ViewModels moved into `ViewModels/`** — extracted embedded `ObservableObject` classes from view files, including Discover, Feed, My Stuff, Event Detail, category pages, Search, Calibration, Daily Challenge, league/category grids, and futures detail/list.
 - ✅ **Daily Challenge component extracted** — `NativeDailyChallengeCard` and `NativeChallengeSheet` moved out of `DiscoverView.swift` into `Components/DailyChallengeCard.swift`.
-- ✅ **Hidden Futures browser rebuild groundwork** — the native Futures browser remains hidden, but now has grouped category structure, polished market rows, reusable browse components, and loading/error/empty states for iOS-7 review.
+- ✅ **Resolution card component extracted** — `NativeResolutionCard` moved out of `DiscoverView.swift` into `Components/ResolutionCard.swift`.
+- ✅ **Hidden Futures browser rebuild groundwork** — the native Futures browser remains hidden, but now has a grouped category rail, polished market rows, reusable browse components, and loading/error/empty states for iOS-7 review.
 - ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.
 - ✅ **Shared native utilities** — extracted clipboard, share URL, formatting, sport display, flag URL, flow layout, and color helpers. Share links now avoid force-unwrapped URLs.
 - ✅ **Native model/service docs** — added concise doc comments across native model types and key API/auth/navigation service methods.
@@ -22,7 +23,7 @@
 ### Backend Cleanup
 - ✅ **Playoff conference maps made data-driven** — removed large static conference fallback maps from `routes/playoffs.py`; playoff grouping now uses `Team.standings_data` with tolerant label parsing and tests for string/object standings payloads.
 
-**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
+**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 
 ## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
 

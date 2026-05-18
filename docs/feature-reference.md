@@ -1001,7 +1001,8 @@ Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same produ
 - Apple Sign-In + Google Sign-In with Keychain token storage
 - Native onboarding flow (location → teams → alma maters → sports → rivals)
 - Preferences page with app icon selection
-- iPad-native layout (sidebar navigation + max-width detail views). Sidebar keeps the 🍀 Bain Luck title and Calibration quick link; the unfinished Futures browser is hidden from visible production navigation pending iOS-7.
+- iPad-native layout (sidebar navigation + max-width detail views). Sidebar keeps the 🍀 Bain Luck title and Calibration quick link; the unfinished Futures browser remains hidden from visible production navigation while iOS-7 is rebuilt.
+- Hidden Futures browser partial rebuild: grouped category rail, polished market rows, reusable browse components, and loading/error/empty states.
 - Category pages navigable from filter chips
 - Skeleton loading states, haptic feedback, live tab badge
 - Native Discover: swipe feedback, daily challenge, grouped market cards, resolution cards, native share sheets, first-party interaction capture, and bounded local personalization.

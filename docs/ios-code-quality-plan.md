@@ -14,11 +14,13 @@ Shipped:
 - Native model and service doc comments added.
 - View-model-owned published state is `private(set)` where views only read it.
 - Futures browser entry point is hidden from production navigation until the native Futures browser is rebuilt; 🍀 sidebar branding and Calibration remain visible.
+- CQ-10 shipped: daily challenge UI moved into `Components/DailyChallengeCard.swift`.
+- iOS-7 hidden Futures browser rebuild is partial: grouped category rail, polished rows, reusable browse components, and loading/error/empty states are in place.
 
 Still open:
 - CQ-6: unify `NativeGuessCard` and `NativeEventGuessCard`.
 - CQ-7: extract shared Discover/Feed context menu.
-- CQ-9/CQ-10/CQ-11: move Discover card, daily challenge, and resolution UI into component files.
+- CQ-9/CQ-11: move Discover card and resolution UI into component files.
 - CQ-16: broad helper-method `private` cleanup.
 - CQ-17: broad abbreviation cleanup.
 

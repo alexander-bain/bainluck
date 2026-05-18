@@ -92,6 +92,11 @@ The system MUST work when any single source goes dark. This was validated during
 - 4-level hierarchy: Win Prob -> Projected Score -> Game Markets -> Season Context
 - Content wrapped in `max-w-2xl` on desktop to prevent stretching
 
+### Playoff Conference Grouping (`routes/playoffs.py`)
+- Conference buckets are data-driven from `Team.standings_data`, not static fallback maps.
+- The parser tolerates both string and object standings payloads, because upstream standings shapes vary by source/league.
+- If standings data is missing or ambiguous, grouping should degrade gracefully instead of reintroducing hardcoded league-wide team maps.
+
 ---
 
 ## Celery Tasks Architecture
@@ -311,7 +316,7 @@ The native app is a shared SwiftUI codebase under `ios/Bain Luck/Bain Luck/` wit
 
 Native view models keep async mutating methods isolated with `@MainActor` rather than class-wide isolation unless the whole type requires it. Published state that only the view model writes is `private(set)`; fields bound directly from views, such as search text and selected filters, remain publicly mutable.
 
-Navigation uses `NavigationCoordinator` plus `AppTab` and `Route`. The visible iPad/macOS sidebar intentionally keeps the 🍀 Bain Luck title and the Calibration quick link. The unfinished Futures browser can still exist as a route/deep-link target, but its production navigation entry point is hidden until the native Futures browser is rebuilt.
+Navigation uses `NavigationCoordinator` plus `AppTab` and `Route`. The visible iPad/macOS sidebar intentionally keeps the 🍀 Bain Luck title and the Calibration quick link. The unfinished Futures browser can still exist as a route/deep-link target, but its production navigation entry point remains hidden while iOS-7 is rebuilt. The partial iOS-7 rebuild now includes a grouped category rail, polished market rows, reusable browse components, and loading/error/empty states.
 
 ---
 
