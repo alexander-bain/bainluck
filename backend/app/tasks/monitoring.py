@@ -174,7 +174,7 @@ async def compute_snapshot_distribution_impl():
     (too slow for a web request due to 90M-row snapshot table).
     """
     from sqlalchemy import text
-    from app.tasks.redis_state import get_redis
+    from app.tasks.redis_state import get_redis_client
 
     async with get_task_session() as session:
         sources_result = (await session.execute(text(
@@ -241,7 +241,7 @@ async def compute_snapshot_distribution_impl():
         "sources": sorted(all_sources, key=lambda s: s["source"]),
     }
 
-    redis = get_redis()
+    redis = get_redis_client()
     redis.setex(SNAPSHOT_DIST_KEY, SNAPSHOT_DIST_TTL, json.dumps(result))
     logger.info(
         "Snapshot distribution computed: %d sources, written to Redis",

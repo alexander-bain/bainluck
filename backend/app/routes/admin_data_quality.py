@@ -131,9 +131,9 @@ async def get_snapshot_distribution(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     import json as _json
-    from app.tasks.redis_state import get_redis
+    from app.tasks.redis_state import get_redis_client
 
-    redis = get_redis()
+    redis = get_redis_client()
     cached = redis.get("bainluck:snapshot_distribution")
     if not cached:
         raise HTTPException(
