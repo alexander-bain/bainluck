@@ -444,8 +444,11 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(aliens?|ufo|extraterrestrial)\b", lower):
         return "story:aliens_disclosure"
 
-    if "spacex" in lower and "ipo" in lower:
+    if "spacex" in lower and re.search(r"\b(ipo|public|bank)\b", lower):
         return "story:spacex_ipo"
+
+    if "spacex" in lower and re.search(r"\b(starship|launch|launches)\b", lower):
+        return "story:spacex_launches"
 
     if "ipo" in lower:
         return "story:ipo_markets"
@@ -462,8 +465,17 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(fifa\s+)?world cup\b", lower):
         return "story:fifa_world_cup"
 
-    if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):
+    if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model|best ai)\b", lower):
         return "story:ai"
+
+    if re.search(r"\b(met gala|oscars?|academy awards?|grammys?|emmys?)\b", lower):
+        return "story:major_entertainment_events"
+
+    if re.search(
+        r"\b(attorney general|fbi director|save act|cabinet|supreme court|nomination|confirmed)\b",
+        lower,
+    ):
+        return "story:us_federal_power"
 
     if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):
         return "story:drake_iceman"
@@ -960,8 +972,23 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("survivor", re.compile(r"\bsurvivor\b", re.IGNORECASE), 88),
     ("music_charts", re.compile(r"\b(spotify|billboard)\b", re.IGNORECASE), 88),
     ("film_tv_scores", re.compile(r"\brotten tomatoes\b", re.IGNORECASE), 88),
+    ("major_entertainment_events", re.compile(r"\bmet gala\b", re.IGNORECASE), 88),
     ("macro_recession", re.compile(r"\brecession\b", re.IGNORECASE), 88),
+    ("ai_frontier", re.compile(r"\bbest ai\b", re.IGNORECASE), 88),
+    (
+        "spacex_launches",
+        re.compile(r"\bspacex\b.*\b(starship|launch|launches)\b", re.IGNORECASE),
+        88,
+    ),
     ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
+    (
+        "federal_power",
+        re.compile(
+            r"\b(attorney general|fbi director|save act|cabinet|supreme court)\b",
+            re.IGNORECASE,
+        ),
+        86,
+    ),
     (
         "us_2028_presidential",
         re.compile(
@@ -1466,6 +1493,9 @@ def diversify_quality_families(
         "story:ai": 2,
         "story:aliens_disclosure": 2,
         "story:ipo_markets": 4,
+        "story:spacex_launches": 3,
+        "story:major_entertainment_events": 2,
+        "story:us_federal_power": 3,
         "story:drake_iceman": 1,
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,

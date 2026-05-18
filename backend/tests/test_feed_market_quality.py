@@ -498,6 +498,34 @@ class TestMarketQualityClassification:
         assert spotify.story_key == "story:music_charts"
         assert billboard.story_key == "story:music_charts"
 
+    def test_story_key_groups_remaining_editorial_recall_variants(self):
+        examples = [
+            ("Best AI at the end of 2026?", "tech", "story:ai"),
+            (
+                "How many launches will SpaceX have in May?",
+                "tech",
+                "story:spacex_launches",
+            ),
+            ("SpaceX Starship 12th launch?", "tech", "story:spacex_launches"),
+            ("Which bank will take SpaceX public?", "companies", "story:spacex_ipo"),
+            (
+                "Who will attend The Met Gala?",
+                "entertainment",
+                "story:major_entertainment_events",
+            ),
+            (
+                "Who will be Trump's next Attorney General?",
+                "politics",
+                "story:us_federal_power",
+            ),
+            ("Kash Patel out as FBI Director?", "politics", "story:us_federal_power"),
+            ("Will the SAVE Act become law?", "politics", "story:us_federal_power"),
+        ]
+
+        for name, category, expected_story_key in examples:
+            quality = classify_market_quality(name, sport_category=category)
+            assert quality.story_key == expected_story_key, name
+
     def test_story_key_groups_oil_ladder_variants(self):
         monthly_high = classify_market_quality(
             "What will WTI Crude Oil (WTI) hit in May 2026?",

@@ -127,13 +127,14 @@ interface MissingGroundTruthSummary {
 interface EmailGroundTruthDiagnostics {
   configured: boolean;
   source: string | null;
+  source_paths?: string[];
   raw_row_count: number;
   loaded_count: number;
-  latest_date: string | null;
-  stale: boolean | null;
-  stale_after_days: number;
-  min_interestingness: number;
-  lookback_days: number | null;
+  latest_date?: string | null;
+  stale?: boolean | null;
+  stale_after_days?: number;
+  min_interestingness?: number;
+  lookback_days?: number | null;
   total: number;
   top20_hits: number;
   top50_hits: number;
@@ -149,6 +150,8 @@ interface FeedDebugResponse {
   missing_ground_truth_summary: MissingGroundTruthSummary;
   email_ground_truth?: EmailGroundTruthDiagnostics;
   email_ground_truth_misses?: MissingGroundTruthItem[];
+  external_curator_ground_truth?: EmailGroundTruthDiagnostics;
+  external_curator_ground_truth_misses?: MissingGroundTruthItem[];
   debug_timing?: {
     total_ms: number;
     stages: Array<{
@@ -1598,6 +1601,15 @@ export default function DiscoverQualityPage() {
       return acc;
     }, {});
   }, [emailGroundTruthMisses]);
+  const externalCuratorMisses = useMemo(() => {
+    return data?.external_curator_ground_truth_misses || [];
+  }, [data]);
+  const externalCuratorBucketCounts = useMemo(() => {
+    return externalCuratorMisses.reduce<Record<string, number>>((acc, item) => {
+      acc[item.triage_bucket] = (acc[item.triage_bucket] || 0) + 1;
+      return acc;
+    }, {});
+  }, [externalCuratorMisses]);
 
   const triggerHooks = async () => {
     if (!submittedSecret) return;
@@ -1735,6 +1747,14 @@ export default function DiscoverQualityPage() {
                 />
               </>
             )}
+            {data.external_curator_ground_truth?.configured && (
+              <StatCard
+                label="Curator @50"
+                value={`${data.external_curator_ground_truth.top50_hits}/${data.external_curator_ground_truth.total}`}
+                ok={data.external_curator_ground_truth.total > 0 ? data.external_curator_ground_truth.top50_hits > 0 : undefined}
+                sub={`${data.external_curator_ground_truth.loaded_count}/${data.external_curator_ground_truth.raw_row_count} rows loaded`}
+              />
+            )}
             <StatCard
               label="Hook Coverage"
               value={hookCoverage ? `${hookCoverage.hook_pct}%` : "..."}
@@ -1767,6 +1787,18 @@ export default function DiscoverQualityPage() {
               </div>
               <div className="text-sm text-text-secondary break-words">
                 {data.email_ground_truth.error}
+              </div>
+            </div>
+          )}
+
+          {data.external_curator_ground_truth?.error && (
+            <div className="bg-surface-card border border-accent-danger/30 rounded-lg p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-2">
+                <AlertTriangle className="w-4 h-4 text-accent-danger" />
+                External Curator Ground Truth
+              </div>
+              <div className="text-sm text-text-secondary break-words">
+                {data.external_curator_ground_truth.error}
               </div>
             </div>
           )}
@@ -1937,6 +1969,88 @@ export default function DiscoverQualityPage() {
                 </div>
               ) : (
                 <div className="p-6 text-sm text-text-muted">No Polymarket email misses in the current diagnostic set.</div>
+              )}
+            </div>
+          )}
+
+          {data.external_curator_ground_truth?.configured && (
+            <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
+              <div className="p-4 border-b border-surface-border">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h2 className="text-sm font-semibold text-text-primary">External Curator Misses</h2>
+                    <p className="text-xs text-text-muted mt-1">
+                      Advisory public-curator inputs only. Use this to find recall gaps before adding any ranking boost.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-1">
+                    <StatusPill tone="muted">{`${data.external_curator_ground_truth.top20_hits}/${data.external_curator_ground_truth.total} @20`}</StatusPill>
+                    <StatusPill tone="muted">{`${data.external_curator_ground_truth.top50_hits}/${data.external_curator_ground_truth.total} @50`}</StatusPill>
+                  </div>
+                </div>
+                {externalCuratorMisses.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-3">
+                    {Object.entries(externalCuratorBucketCounts).map(([bucket, count]) => (
+                      <StatusPill key={bucket} tone={bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                        {`${formatTargetName(bucket)}: ${count}`}
+                      </StatusPill>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {externalCuratorMisses.length > 0 ? (
+                <div className="divide-y divide-surface-border/60">
+                  {externalCuratorMisses.slice(0, 16).map((item) => (
+                    <div key={`curator-${item.name}`} className="p-3 hover:bg-surface-elevated/40">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm text-text-primary">{item.name}</div>
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            <StatusPill tone={item.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                              {formatTargetName(item.triage_bucket)}
+                            </StatusPill>
+                            <StatusPill tone="muted">{item.category}</StatusPill>
+                            <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
+                            {item.source && <StatusPill tone="muted">{item.source}</StatusPill>}
+                            {item.db_trace && (
+                              <StatusPill tone={item.db_trace.matches.length > 0 ? "ok" : "warn"}>
+                                {item.db_trace.trace_status ? formatTargetName(item.db_trace.trace_status) : "db trace"}
+                              </StatusPill>
+                            )}
+                          </div>
+                          {item.hook && (
+                            <div className="text-xs text-text-secondary mt-2 line-clamp-2">{item.hook}</div>
+                          )}
+                          <div className="text-xs text-text-muted mt-2">{item.recommended_action}</div>
+                        </div>
+                        {item.db_trace?.matches?.[0] && (
+                          <button
+                            type="button"
+                            onClick={() => toggleTrace(item.db_trace!.matches[0].id)}
+                            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary shrink-0"
+                          >
+                            <ChevronDown className={`w-3 h-3 transition-transform ${expandedTraceId === item.db_trace.matches[0].id ? "rotate-180" : ""}`} />
+                            #{item.db_trace.matches[0].id}
+                          </button>
+                        )}
+                      </div>
+                      {item.db_trace?.matches?.[0] && expandedTraceId === item.db_trace.matches[0].id && (
+                        <div className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+                          {traceLoadingId === item.db_trace.matches[0].id && (
+                            <div className="text-xs text-text-muted animate-pulse">Loading trace...</div>
+                          )}
+                          {traceByMarketId[item.db_trace.matches[0].id] ? (
+                            <TracePanel trace={traceByMarketId[item.db_trace.matches[0].id]} />
+                          ) : (
+                            <div className="text-xs text-text-secondary">{item.db_trace.trace_summary}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-sm text-text-muted">No external curator misses in the current diagnostic set.</div>
               )}
             </div>
           )}

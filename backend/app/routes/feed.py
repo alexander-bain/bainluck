@@ -28,9 +28,20 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
-from app.models.models import DiscoverInteraction, DiscoverReviewDecision, User, UserFavorite, UserPreference, UserPin, Team
+from app.models.models import (
+    DiscoverInteraction,
+    DiscoverReviewDecision,
+    User,
+    UserFavorite,
+    UserPreference,
+    UserPin,
+    Team,
+)
 from app.services import get_db
-from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability as _compute_aggregate_probability
+from app.utils.aggregation import (
+    SOURCE_WEIGHTS,
+    compute_aggregate_probability as _compute_aggregate_probability,
+)
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils import (
     compute_highlight,
@@ -40,7 +51,10 @@ from app.utils import (
     get_season_multiplier,
 )
 from app.utils.highlights import parse_game_progress
-from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
+from app.utils.futures_highlights import (
+    compute_futures_highlight,
+    should_highlight_futures,
+)
 from app.utils.feed_market_quality import (
     _story_key as compute_story_key,
     apply_explanation_quality_score,
@@ -60,6 +74,9 @@ from app.utils.feed_reasons import (
     generate_futures_reason,
     humanize_binary_outcome_name,
     humanize_outcome_names_for_feed,
+)
+from app.utils.external_curator_ground_truth import (
+    load_external_curator_ground_truth_report_from_env,
 )
 from app.utils.feed_quality_debug import (
     apply_db_trace_missing_ground_truth_triage,
@@ -123,7 +140,9 @@ class DiscoverInteractionBatch(BaseModel):
     interactions: list[DiscoverInteractionIn] = Field(..., min_length=1, max_length=50)
 
 
-def _normalize_discover_value(value: str | None, allowed: set[str], fallback: str) -> str:
+def _normalize_discover_value(
+    value: str | None, allowed: set[str], fallback: str
+) -> str:
     normalized = (value or fallback).strip().lower()
     return normalized if normalized in allowed else fallback
 
@@ -140,16 +159,20 @@ def _record_feed_timing(
 ) -> float:
     """Record a stage timing relative to request start for admin diagnostics."""
     current_at = time.perf_counter()
-    timings.append({
-        "stage": stage,
-        "ms": round((current_at - previous_at) * 1000, 2),
-        "elapsed_ms": round((current_at - started_at) * 1000, 2),
-    })
+    timings.append(
+        {
+            "stage": stage,
+            "ms": round((current_at - previous_at) * 1000, 2),
+            "elapsed_ms": round((current_at - started_at) * 1000, 2),
+        }
+    )
     return current_at
 
 
 def _set_feed_timing_header(response: Response, started_at: float) -> None:
-    response.headers["X-Feed-Elapsed-Ms"] = str(round((time.perf_counter() - started_at) * 1000, 2))
+    response.headers["X-Feed-Elapsed-Ms"] = str(
+        round((time.perf_counter() - started_at) * 1000, 2)
+    )
 
 
 def _check_admin_secret(secret: str | None) -> bool:
@@ -159,11 +182,22 @@ def _check_admin_secret(secret: str | None) -> bool:
 
 def _discover_runtime_config_defaults() -> dict[str, float | bool]:
     return {
-        "interaction_suppression_enabled": os.getenv("DISCOVER_INTERACTION_SUPPRESSION", "true").lower() != "false",
-        "seen_suppression_hours": float(os.getenv("DISCOVER_SEEN_SUPPRESSION_HOURS", "48")),
-        "dismiss_suppression_days": float(os.getenv("DISCOVER_DISMISS_SUPPRESSION_DAYS", "14")),
-        "stale_no_movement_days": float(os.getenv("DISCOVER_STALE_NO_MOVEMENT_DAYS", "2")),
-        "no_resolution_stale_days": float(os.getenv("DISCOVER_NO_RESOLUTION_STALE_DAYS", "5")),
+        "interaction_suppression_enabled": os.getenv(
+            "DISCOVER_INTERACTION_SUPPRESSION", "true"
+        ).lower()
+        != "false",
+        "seen_suppression_hours": float(
+            os.getenv("DISCOVER_SEEN_SUPPRESSION_HOURS", "48")
+        ),
+        "dismiss_suppression_days": float(
+            os.getenv("DISCOVER_DISMISS_SUPPRESSION_DAYS", "14")
+        ),
+        "stale_no_movement_days": float(
+            os.getenv("DISCOVER_STALE_NO_MOVEMENT_DAYS", "2")
+        ),
+        "no_resolution_stale_days": float(
+            os.getenv("DISCOVER_NO_RESOLUTION_STALE_DAYS", "5")
+        ),
     }
 
 
@@ -175,11 +209,15 @@ async def _load_discover_runtime_config() -> dict[str, float | bool]:
         redis = get_async_redis_client()
         raw = await redis.hgetall("bainluck:discover_runtime_config")
         decoded = {
-            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+            (k.decode() if isinstance(k, bytes) else k): (
+                v.decode() if isinstance(v, bytes) else v
+            )
             for k, v in raw.items()
         }
         if "interaction_suppression_enabled" in decoded:
-            config["interaction_suppression_enabled"] = decoded["interaction_suppression_enabled"].lower() == "true"
+            config["interaction_suppression_enabled"] = (
+                decoded["interaction_suppression_enabled"].lower() == "true"
+            )
         for key in (
             "seen_suppression_hours",
             "dismiss_suppression_days",
@@ -207,9 +245,15 @@ async def record_discover_interactions(
 
     rows = []
     for event in body.interactions:
-        action = _normalize_discover_value(event.action, _DISCOVER_ACTIONS, "impression")
-        item_type = _normalize_discover_value(event.item_type, _DISCOVER_ITEM_TYPES, "futures")
-        surface = _normalize_discover_value(event.surface, _DISCOVER_SURFACES, "unknown")
+        action = _normalize_discover_value(
+            event.action, _DISCOVER_ACTIONS, "impression"
+        )
+        item_type = _normalize_discover_value(
+            event.item_type, _DISCOVER_ITEM_TYPES, "futures"
+        )
+        surface = _normalize_discover_value(
+            event.surface, _DISCOVER_SURFACES, "unknown"
+        )
         category = (event.category or "other").strip().lower()[:80] or "other"
         rows.append(
             DiscoverInteraction(
@@ -235,21 +279,73 @@ async def record_discover_interactions(
 
 
 _TRACE_STOPWORDS = {
-    "will", "what", "when", "which", "with", "from", "that", "this",
-    "before", "after", "market", "winner", "yes", "no", "the", "and",
-    "win", "wins", "won",
+    "will",
+    "what",
+    "when",
+    "which",
+    "with",
+    "from",
+    "that",
+    "this",
+    "before",
+    "after",
+    "market",
+    "winner",
+    "yes",
+    "no",
+    "the",
+    "and",
+    "win",
+    "wins",
+    "won",
 }
 _DEDUP_NAME_STOPWORDS = _TRACE_STOPWORDS | {
-    "who", "does", "have", "than", "then", "into", "onto", "over", "under",
-    "above", "below", "between", "next", "last", "end", "start", "season",
-    "year", "month", "week", "day", "date", "2024", "2025", "2026", "2027",
-    "2028", "2029", "2030",
+    "who",
+    "does",
+    "have",
+    "than",
+    "then",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "above",
+    "below",
+    "between",
+    "next",
+    "last",
+    "end",
+    "start",
+    "season",
+    "year",
+    "month",
+    "week",
+    "day",
+    "date",
+    "2024",
+    "2025",
+    "2026",
+    "2027",
+    "2028",
+    "2029",
+    "2030",
 }
 
 DISCOVER_SPORTS_CATEGORIES = (
-    "basketball", "football", "baseball", "hockey", "soccer",
-    "golf", "mma", "boxing", "tennis", "cricket", "motorsports",
-    "esports", "rugby", "lacrosse",
+    "basketball",
+    "football",
+    "baseball",
+    "hockey",
+    "soccer",
+    "golf",
+    "mma",
+    "boxing",
+    "tennis",
+    "cricket",
+    "motorsports",
+    "esports",
+    "rugby",
+    "lacrosse",
 )
 
 _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
@@ -266,6 +362,10 @@ _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
     "%spacex%",
     "%starship%",
     "%best ai%",
+    "%met gala%",
+    "%attorney general%",
+    "%fbi director%",
+    "%save act%",
     "%recession%",
     "%eurovision%",
     "%oscars%",
@@ -299,15 +399,22 @@ _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS = (
 def _discover_editorial_recall_filter():
     """SQL filter for high-texture Discover candidates that can be low volume."""
     return or_(
-        *(FuturesMarket.name.ilike(pattern) for pattern in _DISCOVER_EDITORIAL_RECALL_PATTERNS)
+        *(
+            FuturesMarket.name.ilike(pattern)
+            for pattern in _DISCOVER_EDITORIAL_RECALL_PATTERNS
+        )
     )
 
 
 def _discover_sports_editorial_recall_filter():
     """SQL filter for sports futures that are broad enough for Discover."""
     return or_(
-        *(FuturesMarket.name.ilike(pattern) for pattern in _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS)
+        *(
+            FuturesMarket.name.ilike(pattern)
+            for pattern in _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS
+        )
     )
+
 
 # Sport keys allowed in My Stuff feed (Tier 1 + Tier 2 from SPORT_POLLING_TIERS).
 # Excludes Tier 3 sports (NCAA hockey, esports, minor soccer leagues, etc.) that
@@ -332,11 +439,18 @@ MY_STUFF_ALLOWED_SPORT_KEYS = {
 # LLM sport categories corresponding to MY_STUFF_ALLOWED_SPORT_KEYS.
 # Used for futures filtering where sport_key isn't directly available.
 MY_STUFF_ALLOWED_CATEGORIES = {
-    "basketball", "football", "baseball", "hockey", "soccer", "mma",
+    "basketball",
+    "football",
+    "baseball",
+    "hockey",
+    "soccer",
+    "mma",
 }
 
 _SPORTS_POSTSEASON_SQL_FILTER = and_(
-    FuturesMarket.llm_sport_category.in_(("basketball", "football", "baseball", "hockey")),
+    FuturesMarket.llm_sport_category.in_(
+        ("basketball", "football", "baseball", "hockey")
+    ),
     or_(
         FuturesMarket.name.ilike("%NBA Finals%"),
         FuturesMarket.name.ilike("%WNBA Finals%"),
@@ -551,16 +665,32 @@ _pulse_label = _ei_label
 async def get_feed(
     response: Response,
     request: Request,
-    limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
+    limit: int = Query(
+        200, description="Number of feed items to return", ge=1, le=5000
+    ),
     offset: int = Query(0, description="Offset for pagination", ge=0),
-    sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
+    sport: Optional[str] = Query(
+        None, description="Filter by sport category (e.g., basketball, football)"
+    ),
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
-    my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
-    tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\"])"),
-    event_pct: Optional[float] = Query(None, description="Override event percentage floor (0.0-1.0). Discover uses 0.15."),
-    debug: bool = Query(False, description="Include admin-only feed quality diagnostics"),
-    secret: Optional[str] = Query(None, description="Admin secret for debug diagnostics"),
+    my_teams_only: bool = Query(
+        False, description="Filter to only the user's followed teams"
+    ),
+    tags: Optional[str] = Query(
+        None,
+        description='Filter by taxonomy tags (JSON array, e.g., ["sport:basketball"])',
+    ),
+    event_pct: Optional[float] = Query(
+        None,
+        description="Override event percentage floor (0.0-1.0). Discover uses 0.15.",
+    ),
+    debug: bool = Query(
+        False, description="Include admin-only feed quality diagnostics"
+    ),
+    secret: Optional[str] = Query(
+        None, description="Admin secret for debug diagnostics"
+    ),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -599,14 +729,19 @@ async def get_feed(
     if not my_teams_only and not debug:
         try:
             from app.tasks.redis_state import get_async_redis_client
+
             _async_redis = get_async_redis_client()
-            _user_part = f"u:{user.id}" if user else f"s:{session_id}" if session_id else "anon"
+            _user_part = (
+                f"u:{user.id}" if user else f"s:{session_id}" if session_id else "anon"
+            )
             _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
             cached = await _async_redis.get(_cache_key)
             if cached:
                 await _async_redis.aclose()
-                _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "cache_hit")
+                _previous_at = _record_feed_timing(
+                    _timings, _started_at, _previous_at, "cache_hit"
+                )
                 _set_feed_timing_header(response, _started_at)
                 return _json_module.loads(cached)
         except Exception:
@@ -616,10 +751,24 @@ async def get_feed(
 
     # Parse tag filter — split into static (SQL-pushable) and dynamic (inline)
     import json as _json
+
     tag_filter: Optional[list[str]] = None
-    static_tag_filter: list[str] = []  # Tags that don't change: sport, league, tier, class, level, gender, category, source
-    dynamic_tag_filter: list[str] = []  # Tags that change frequently: status, signal, timing, ei, importance
-    STATIC_NAMESPACES = {"sport", "league", "tier", "class", "level", "gender", "category", "source"}
+    static_tag_filter: list[str] = (
+        []
+    )  # Tags that don't change: sport, league, tier, class, level, gender, category, source
+    dynamic_tag_filter: list[str] = (
+        []
+    )  # Tags that change frequently: status, signal, timing, ei, importance
+    STATIC_NAMESPACES = {
+        "sport",
+        "league",
+        "tier",
+        "class",
+        "level",
+        "gender",
+        "category",
+        "source",
+    }
     if tags:
         try:
             tag_filter = _json.loads(tags)
@@ -659,7 +808,9 @@ async def get_feed(
     except Exception:
         logger.exception("Personalization context failed — falling back to anonymous")
         ctx = PersonalizationContext()
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "personalization")
+    _previous_at = _record_feed_timing(
+        _timings, _started_at, _previous_at, "personalization"
+    )
 
     # Build team name set once (used by both scoring functions + response).
     # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
@@ -673,7 +824,9 @@ async def get_feed(
     if my_teams_only and user and ctx.team_relations:
         team_ids = list(ctx.team_relations.keys())
         team_name_result = await db.execute(
-            select(Team.name, Sport.key).where(Team.id.in_(team_ids)).join(Sport, Team.sport_id == Sport.id)
+            select(Team.name, Sport.key)
+            .where(Team.id.in_(team_ids))
+            .join(Sport, Team.sport_id == Sport.id)
         )
         for name, sport_key in team_name_result.all():
             if name:
@@ -687,7 +840,16 @@ async def get_feed(
     # === SCORE EVENTS ===
     if include_events:
         try:
-            event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
+            event_items = await _score_events(
+                db,
+                now,
+                sport,
+                ctx,
+                my_teams_only=my_teams_only,
+                my_team_names=my_team_names,
+                tag_filter=dynamic_tag_filter or None,
+                static_tag_filter=static_tag_filter or None,
+            )
             feed_items.extend(event_items)
         except Exception as e:
             logger.error("Feed: event scoring failed, returning partial feed: %s", e)
@@ -713,7 +875,9 @@ async def get_feed(
                         d["home_team_data"] = _format_team_data(home_team)
                     if away_team:
                         d["away_team_data"] = _format_team_data(away_team)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "team_enrichment")
+    _previous_at = _record_feed_timing(
+        _timings, _started_at, _previous_at, "team_enrichment"
+    )
 
     # === SCORE GOLF TOURNAMENTS ===
     # Skip golf tournaments if a non-golf sport tag is active
@@ -755,7 +919,9 @@ async def get_feed(
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
 
     await _apply_manual_review_decisions(db, feed_items)
-    _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "review_decisions")
+    _previous_at = _record_feed_timing(
+        _timings, _started_at, _previous_at, "review_decisions"
+    )
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker
@@ -775,7 +941,9 @@ async def get_feed(
     if event_pct is not None and event_pct < 0.3:
         _demote_non_exceptional_discover_events(feed_items)
         # Re-sort after demotion so demoted events fall below high-scoring futures
-        feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+        feed_items.sort(
+            key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True
+        )
         feed_items = balance_discover_event_category_mix(feed_items)
 
     if not my_teams_only:
@@ -785,8 +953,12 @@ async def get_feed(
             _epct = 0.6 if not ctx.is_authenticated else 0.4
             feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=_epct)
 
-    if not my_teams_only and ((event_pct is not None and event_pct < 0.3) or not include_events):
-        feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
+    if not my_teams_only and (
+        (event_pct is not None and event_pct < 0.3) or not include_events
+    ):
+        feed_items = diversify_discover_first_page(
+            feed_items, first_page_size=min(20, limit)
+        )
         feed_items = backfill_discover_editorial_tail(
             feed_items,
             window_size=min(50, len(feed_items)),
@@ -795,7 +967,7 @@ async def get_feed(
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
 
     total = len(feed_items)
-    paginated = feed_items[offset:offset + limit]
+    paginated = feed_items[offset : offset + limit]
 
     debug_payload = None
     if debug:
@@ -803,18 +975,28 @@ async def get_feed(
             load_polymarket_email_ground_truth_report_from_env,
             now=now,
         )
+        external_curator_report = await asyncio.to_thread(
+            load_external_curator_ground_truth_report_from_env
+        )
         email_ground_truth_items = email_ground_truth_report["items"]
-        ground_truth_items = load_default_ground_truth_items() + email_ground_truth_items
+        external_curator_items = external_curator_report["items"]
+        ground_truth_items = (
+            load_default_ground_truth_items()
+            + email_ground_truth_items
+            + external_curator_items
+        )
         debug_payload = build_feed_quality_debug(
             paginated,
             ground_truth_items=ground_truth_items,
             top_n=min(20, len(paginated)),
         )
-        await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
-        debug_payload[
-            "missing_ground_truth_summary"
-        ] = apply_db_trace_missing_ground_truth_triage(
-            debug_payload["missing_ground_truth"]
+        await _attach_missing_ground_truth_traces(
+            db, debug_payload["missing_ground_truth"], now
+        )
+        debug_payload["missing_ground_truth_summary"] = (
+            apply_db_trace_missing_ground_truth_triage(
+                debug_payload["missing_ground_truth"]
+            )
         )
         email_missing_ground_truth = find_missing_ground_truth_items(
             debug_payload["items"],
@@ -839,9 +1021,36 @@ async def get_feed(
             "hit_rate_50": email_summary["hit_rate_50"],
             "hits": email_summary["hits"][:20],
             "missing_items": email_summary["missing_items"][:50],
-            "db_trace_bucket_counts": email_missing_ground_truth_summary["bucket_counts"],
+            "db_trace_bucket_counts": email_missing_ground_truth_summary[
+                "bucket_counts"
+            ],
         }
         debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
+        external_curator_missing = find_missing_ground_truth_items(
+            debug_payload["items"],
+            external_curator_items,
+            limit=80,
+        )
+        await _attach_missing_ground_truth_traces(db, external_curator_missing, now)
+        external_curator_missing_summary = apply_db_trace_missing_ground_truth_triage(
+            external_curator_missing
+        )
+        external_summary = summarize_polymarket_email_ground_truth(
+            debug_payload["items"],
+            external_curator_items,
+        )
+        debug_payload["external_curator_ground_truth"] = {
+            **external_curator_report["metadata"],
+            "total": external_summary["total"],
+            "top20_hits": external_summary["top20_hits"],
+            "top50_hits": external_summary["top50_hits"],
+            "missing": external_summary["missing"],
+            "hit_rate_50": external_summary["hit_rate_50"],
+            "hits": external_summary["hits"][:20],
+            "missing_items": external_summary["missing_items"][:50],
+            "db_trace_bucket_counts": external_curator_missing_summary["bucket_counts"],
+        }
+        debug_payload["external_curator_ground_truth_misses"] = external_curator_missing
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
     # Remove internal sort/debug keys
@@ -880,9 +1089,19 @@ async def get_feed(
         payload["debug_summary"] = debug_payload["summary"]
         payload["debug_items"] = debug_payload["items"]
         payload["missing_ground_truth"] = debug_payload["missing_ground_truth"]
-        payload["missing_ground_truth_summary"] = debug_payload["missing_ground_truth_summary"]
+        payload["missing_ground_truth_summary"] = debug_payload[
+            "missing_ground_truth_summary"
+        ]
         payload["email_ground_truth"] = debug_payload["email_ground_truth"]
-        payload["email_ground_truth_misses"] = debug_payload["email_ground_truth_misses"]
+        payload["email_ground_truth_misses"] = debug_payload[
+            "email_ground_truth_misses"
+        ]
+        payload["external_curator_ground_truth"] = debug_payload[
+            "external_curator_ground_truth"
+        ]
+        payload["external_curator_ground_truth_misses"] = debug_payload[
+            "external_curator_ground_truth_misses"
+        ]
         payload["debug_timing"] = {
             "total_ms": round((time.perf_counter() - _started_at) * 1000, 2),
             "stages": _timings,
@@ -891,7 +1110,9 @@ async def get_feed(
     # --- Write to cache ---
     if _cache_key and _async_redis:
         try:
-            await _async_redis.setex(_cache_key, _cache_ttl, _json_module.dumps(payload, default=str))
+            await _async_redis.setex(
+                _cache_key, _cache_ttl, _json_module.dumps(payload, default=str)
+            )
             await _async_redis.aclose()
         except Exception:
             pass
@@ -932,7 +1153,11 @@ async def _apply_manual_review_decisions(
             DiscoverReviewDecision.item_id,
             DiscoverReviewDecision.decision,
         )
-        .where(DiscoverReviewDecision.decision.in_(["accepted_promote", "accepted_downrank"]))
+        .where(
+            DiscoverReviewDecision.decision.in_(
+                ["accepted_promote", "accepted_downrank"]
+            )
+        )
         .order_by(DiscoverReviewDecision.created_at.desc())
         .limit(500)
     )
@@ -956,7 +1181,9 @@ async def _attach_missing_ground_truth_traces(
             "ranking_too_low",
             "quality_filter_too_harsh",
         }:
-            item["db_trace"] = summarize_missing_ground_truth_db_trace(item, [], now=now)
+            item["db_trace"] = summarize_missing_ground_truth_db_trace(
+                item, [], now=now
+            )
             continue
 
         tokens = _trace_search_tokens(item.get("name") or "")
@@ -964,9 +1191,13 @@ async def _attach_missing_ground_truth_traces(
         if item.get("name"):
             clauses.append(FuturesMarket.name.ilike(f"%{item['name'][:120]}%"))
         if tokens:
-            clauses.append(and_(*[FuturesMarket.name.ilike(f"%{token}%") for token in tokens[:3]]))
+            clauses.append(
+                and_(*[FuturesMarket.name.ilike(f"%{token}%") for token in tokens[:3]])
+            )
         if not clauses:
-            item["db_trace"] = summarize_missing_ground_truth_db_trace(item, [], now=now)
+            item["db_trace"] = summarize_missing_ground_truth_db_trace(
+                item, [], now=now
+            )
             continue
 
         result = await db.execute(
@@ -1000,14 +1231,20 @@ async def _attach_missing_ground_truth_traces(
                 "event_id": row.event_id,
                 "llm_sport_category": row.llm_sport_category,
                 "market_tier": row.market_tier,
-                "volume_24h": float(row.volume_24h) if row.volume_24h is not None else None,
-                "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
+                "volume_24h": (
+                    float(row.volume_24h) if row.volume_24h is not None else None
+                ),
+                "resolution_date": (
+                    row.resolution_date.isoformat() if row.resolution_date else None
+                ),
                 "hook_description": row.hook_description,
                 "image_url": row.image_url,
             }
             for row in result.all()
         ]
-        item["db_trace"] = summarize_missing_ground_truth_db_trace(item, matches, now=now)
+        item["db_trace"] = summarize_missing_ground_truth_db_trace(
+            item, matches, now=now
+        )
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -1057,7 +1294,9 @@ def _market_base_trace(market: FuturesMarket, now: datetime) -> dict:
             "status": market.status,
             "event_id": market.event_id,
             "resolution_date": resolution_date.isoformat() if resolution_date else None,
-            "game_name_filtered": bool(re.search(r"\bvs\.?\b", market.name or "", re.IGNORECASE)),
+            "game_name_filtered": bool(
+                re.search(r"\bvs\.?\b", market.name or "", re.IGNORECASE)
+            ),
         },
     }
 
@@ -1112,35 +1351,51 @@ def _normalize_feed_probabilities(
     return top_outcomes
 
 
-def _top_outcomes_for_trace(market: FuturesMarket) -> tuple[list[dict], str | None, float | None]:
+def _top_outcomes_for_trace(
+    market: FuturesMarket,
+) -> tuple[list[dict], str | None, float | None]:
     sorted_outcomes = sorted(
         market.outcomes,
-        key=lambda o: float(o.current_probability) if o.current_probability is not None else 0,
+        key=lambda o: (
+            float(o.current_probability) if o.current_probability is not None else 0
+        ),
         reverse=True,
     )
     outcomes_data = []
     for outcome in sorted_outcomes[:10]:
-        outcomes_data.append({
-            "name": outcome.name,
-            "probability": float(outcome.current_probability) if outcome.current_probability is not None else None,
-            "probability_change_24h": (
-                float(outcome.probability_change_24h)
-                if outcome.probability_change_24h is not None else None
-            ),
-            "rank": outcome.rank,
-            "rank_change_24h": outcome.rank_change_24h,
-            "opening_probability": (
-                float(outcome.opening_probability)
-                if outcome.opening_probability is not None else None
-            ),
-        })
+        outcomes_data.append(
+            {
+                "name": outcome.name,
+                "probability": (
+                    float(outcome.current_probability)
+                    if outcome.current_probability is not None
+                    else None
+                ),
+                "probability_change_24h": (
+                    float(outcome.probability_change_24h)
+                    if outcome.probability_change_24h is not None
+                    else None
+                ),
+                "rank": outcome.rank,
+                "rank_change_24h": outcome.rank_change_24h,
+                "opening_probability": (
+                    float(outcome.opening_probability)
+                    if outcome.opening_probability is not None
+                    else None
+                ),
+            }
+        )
 
     leader_name = None
     leader_prob = None
     if sorted_outcomes:
         leader = sorted_outcomes[0]
         leader_name = leader.name
-        leader_prob = float(leader.current_probability) if leader.current_probability is not None else None
+        leader_prob = (
+            float(leader.current_probability)
+            if leader.current_probability is not None
+            else None
+        )
     return outcomes_data, leader_name, leader_prob
 
 
@@ -1153,10 +1408,11 @@ def _market_runtime_filter_trace(
     sport_category: str | None = None,
 ) -> dict:
     blockers: list[str] = []
-    probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
-    all_settled = (
-        len(probs_available) >= 2
-        and all(p < 0.05 or p > 0.95 for p in probs_available)
+    probs_available = [
+        o["probability"] for o in outcomes_data if o["probability"] is not None
+    ]
+    all_settled = len(probs_available) >= 2 and all(
+        p < 0.05 or p > 0.95 for p in probs_available
     )
     if all_settled:
         blockers.append("all_outcomes_settled")
@@ -1200,8 +1456,16 @@ def _market_runtime_filter_trace(
     max_recent_movement = 0.0
     sport_cat = (sport_category or "").lower()
     is_sports_category = sport_cat in {
-        "sports", "football", "basketball", "baseball",
-        "hockey", "soccer", "golf", "tennis", "mma", "racing",
+        "sports",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "golf",
+        "tennis",
+        "mma",
+        "racing",
     }
     if (
         is_sports_category
@@ -1210,8 +1474,11 @@ def _market_runtime_filter_trace(
         and len(probs_available) == 2
     ):
         max_recent_movement = max(
-            (abs(o["probability_change_24h"]) for o in outcomes_data
-             if o["probability_change_24h"] is not None),
+            (
+                abs(o["probability_change_24h"])
+                for o in outcomes_data
+                if o["probability_change_24h"] is not None
+            ),
             default=0.0,
         )
         if max_recent_movement < 0.02:
@@ -1252,8 +1519,8 @@ async def _discover_candidate_pool_trace(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.ilike('% vs %'),
-        ~FuturesMarket.name.ilike('% vs. %'),
+        ~FuturesMarket.name.ilike("% vs %"),
+        ~FuturesMarket.name.ilike("% vs. %"),
     ]
     non_sports_filter = or_(
         ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
@@ -1362,13 +1629,15 @@ async def _discover_candidate_pool_trace(
         )
         ids = list(result.scalars().all())
         candidate_ids.extend(ids)
-        pools.append({
-            "name": name,
-            "limit": limit,
-            "candidate_count": len(ids),
-            "included": market_id in ids,
-            "position": ids.index(market_id) + 1 if market_id in ids else None,
-        })
+        pools.append(
+            {
+                "name": name,
+                "limit": limit,
+                "candidate_count": len(ids),
+                "included": market_id in ids,
+                "position": ids.index(market_id) + 1 if market_id in ids else None,
+            }
+        )
 
     deduped: list[int] = []
     seen: set[int] = set()
@@ -1381,7 +1650,9 @@ async def _discover_candidate_pool_trace(
     return {
         "included": market_id in seen,
         "deduped_candidate_count": len(deduped),
-        "candidate_position": deduped.index(market_id) + 1 if market_id in seen else None,
+        "candidate_position": (
+            deduped.index(market_id) + 1 if market_id in seen else None
+        ),
         "pools": pools,
     }
 
@@ -1416,7 +1687,9 @@ def _score_market_trace(
     top_mover_change = None
     if top_mover_name:
         for outcome in outcomes_data:
-            if outcome["name"] == top_mover_name and outcome.get("probability_change_24h"):
+            if outcome["name"] == top_mover_name and outcome.get(
+                "probability_change_24h"
+            ):
                 top_mover_change = outcome["probability_change_24h"]
                 break
 
@@ -1428,20 +1701,25 @@ def _score_market_trace(
         if opening is None or current is None:
             continue
         surprise_change = current - opening
-        if top_surprise_change is None or abs(surprise_change) > abs(top_surprise_change):
+        if top_surprise_change is None or abs(surprise_change) > abs(
+            top_surprise_change
+        ):
             top_surprise_name = outcome.get("name")
             top_surprise_change = surprise_change
 
-    headline = generate_futures_headline(
-        highlight_reasons=highlight_result.reasons,
-        top_mover_name=top_mover_name,
-        top_mover_change=top_mover_change,
-        top_surprise_name=top_surprise_name,
-        top_surprise_change=top_surprise_change,
-        leader_name=leader_name,
-        leader_probability=leader_prob,
-        source_count=source_count,
-    ) or highlight_result.primary_reason
+    headline = (
+        generate_futures_headline(
+            highlight_reasons=highlight_result.reasons,
+            top_mover_name=top_mover_name,
+            top_mover_change=top_mover_change,
+            top_surprise_name=top_surprise_name,
+            top_surprise_change=top_surprise_change,
+            leader_name=leader_name,
+            leader_probability=leader_prob,
+            source_count=source_count,
+        )
+        or highlight_result.primary_reason
+    )
     context_summary = generate_futures_context_summary(
         headline=headline,
         highlight_reasons=highlight_result.reasons,
@@ -1542,18 +1820,28 @@ def _suggest_trace_fix(trace: dict) -> str:
     if "quality_suppressed" in blockers:
         return "Tune the quality classifier if this is genuinely editorial."
     if "stale_no_movement" in blockers or "effectively_resolved" in blockers:
-        return "No ranking fix unless stale/resolved markets need a special recap surface."
+        return (
+            "No ranking fix unless stale/resolved markets need a special recap surface."
+        )
     rank_phases = trace.get("rank_phases") or {}
     if rank_phases.get("dropped_by_canonical_dedupe"):
-        return "Inspect canonical dedupe; this market is being collapsed behind a sibling."
+        return (
+            "Inspect canonical dedupe; this market is being collapsed behind a sibling."
+        )
     returned_rank = rank_phases.get("returned_rank")
     if returned_rank and returned_rank <= 50:
         return "No immediate fix; the market is eligible and present in the returned diagnostic feed."
     if not trace["final_ranking"]["survived_final_caps"]:
         return "Inspect quality family caps, story deduping, and first-page diversity for this story."
-    if rank_phases.get("post_diversity_rank") and rank_phases["post_diversity_rank"] > 50:
+    if (
+        rank_phases.get("post_diversity_rank")
+        and rank_phases["post_diversity_rank"] > 50
+    ):
         return "Inspect Discover diversity repair and category/story caps before tuning score."
-    if trace["final_ranking"]["final_futures_rank"] and trace["final_ranking"]["final_futures_rank"] > 50:
+    if (
+        trace["final_ranking"]["final_futures_rank"]
+        and trace["final_ranking"]["final_futures_rank"] > 50
+    ):
         return "Tune scoring inputs only if this should beat stronger same-category stories."
     return "No immediate fix; the market is eligible and present in the scored feed."
 
@@ -1586,7 +1874,9 @@ async def _discover_rank_phase_trace(
 
     deduped_futures = _dedupe_futures_by_canonical(raw_futures)
     post_dedupe_rank = _rank_futures_market(deduped_futures, market_id)
-    dropped_by_canonical_dedupe = raw_futures_rank is not None and post_dedupe_rank is None
+    dropped_by_canonical_dedupe = (
+        raw_futures_rank is not None and post_dedupe_rank is None
+    )
     canonical_replacement = None
     if dropped_by_canonical_dedupe:
         target = next(
@@ -1597,8 +1887,10 @@ async def _discover_rank_phase_trace(
         if target_key:
             replacement = next(
                 (
-                    item for item in deduped_futures
-                    if (item.get("data") or {}).get("canonical_market_key") == target_key
+                    item
+                    for item in deduped_futures
+                    if (item.get("data") or {}).get("canonical_market_key")
+                    == target_key
                 ),
                 None,
             )
@@ -1616,7 +1908,9 @@ async def _discover_rank_phase_trace(
     post_event_demote_rank = post_initial_sort_rank
     if event_pct is not None and event_pct < 0.3:
         _demote_non_exceptional_discover_events(feed_items)
-        feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+        feed_items.sort(
+            key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True
+        )
         post_event_demote_rank = _rank_futures_market(feed_items, market_id)
 
     post_event_mix_rank = post_event_demote_rank
@@ -1626,7 +1920,9 @@ async def _discover_rank_phase_trace(
 
     post_diversity_rank = post_event_mix_rank
     if (event_pct is not None and event_pct < 0.3) or not include_events:
-        feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
+        feed_items = diversify_discover_first_page(
+            feed_items, first_page_size=min(20, limit)
+        )
         post_diversity_rank = _rank_futures_market(feed_items, market_id)
 
     returned = feed_items[:limit]
@@ -1667,7 +1963,9 @@ async def build_discover_market_trace(
     now = now or datetime.now(timezone.utc)
     result = await db.execute(
         select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes), selectinload(FuturesMarket.sport))
+        .options(
+            selectinload(FuturesMarket.outcomes), selectinload(FuturesMarket.sport)
+        )
         .where(FuturesMarket.id == market_id)
     )
     market = result.scalars().first()
@@ -1677,7 +1975,8 @@ async def build_discover_market_trace(
     canonical_counts = await _get_canonical_source_counts(db)
     source_count = (
         canonical_counts.get(market.canonical_market_key, 1)
-        if market.canonical_market_key else 1
+        if market.canonical_market_key
+        else 1
     )
     base_eligibility = _market_base_trace(market, now)
     candidate_pools = await _discover_candidate_pool_trace(db, now, market_id)
@@ -1705,9 +2004,17 @@ async def build_discover_market_trace(
             "external_id": market.external_id,
             "canonical_market_key": market.canonical_market_key,
             "source_count": source_count,
-            "volume_24h": float(market.volume_24h) if market.volume_24h is not None else None,
-            "resolution_date": _utc(market.resolution_date).isoformat() if _utc(market.resolution_date) else None,
-            "updated_at": _utc(market.updated_at).isoformat() if _utc(market.updated_at) else None,
+            "volume_24h": (
+                float(market.volume_24h) if market.volume_24h is not None else None
+            ),
+            "resolution_date": (
+                _utc(market.resolution_date).isoformat()
+                if _utc(market.resolution_date)
+                else None
+            ),
+            "updated_at": (
+                _utc(market.updated_at).isoformat() if _utc(market.updated_at) else None
+            ),
         },
         "base_eligibility": base_eligibility,
         "candidate_pools": candidate_pools,
@@ -1716,7 +2023,11 @@ async def build_discover_market_trace(
         "final_ranking": {
             "survived_final_caps": rank_phases["returned"],
             "final_futures_rank": rank_phases["raw_futures_rank"],
-            "final_score": score_trace["scores"]["final"] if rank_phases["raw_futures_rank"] else None,
+            "final_score": (
+                score_trace["scores"]["final"]
+                if rank_phases["raw_futures_rank"]
+                else None
+            ),
             "scored_futures_count": rank_phases["raw_futures_count"],
         },
     }
@@ -1741,15 +2052,23 @@ async def _load_personalization_context(
 
     interaction_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     config = config or _discover_runtime_config_defaults()
-    interaction_suppression_enabled = bool(config.get("interaction_suppression_enabled", True))
-    seen_cutoff = datetime.now(timezone.utc) - timedelta(hours=float(config.get("seen_suppression_hours", 48)))
-    dismiss_cutoff = datetime.now(timezone.utc) - timedelta(days=float(config.get("dismiss_suppression_days", 14)))
+    interaction_suppression_enabled = bool(
+        config.get("interaction_suppression_enabled", True)
+    )
+    seen_cutoff = datetime.now(timezone.utc) - timedelta(
+        hours=float(config.get("seen_suppression_hours", 48))
+    )
+    dismiss_cutoff = datetime.now(timezone.utc) - timedelta(
+        days=float(config.get("dismiss_suppression_days", 14))
+    )
 
     interaction_identity_filters = []
     if user:
         interaction_identity_filters.append(DiscoverInteraction.user_id == user.id)
     if session_id:
-        interaction_identity_filters.append(DiscoverInteraction.session_id == session_id)
+        interaction_identity_filters.append(
+            DiscoverInteraction.session_id == session_id
+        )
     interaction_identity_clause = or_(*interaction_identity_filters)
 
     # Load user favorites, preferences, pins, and recent Discover behavior in parallel
@@ -1791,16 +2110,18 @@ async def _load_personalization_context(
             DiscoverInteraction.created_at >= interaction_cutoff,
             DiscoverInteraction.item_name.isnot(None),
             DiscoverInteraction.category.isnot(None),
-            DiscoverInteraction.action.in_((
-                "detail_click",
-                "open",
-                "share",
-                "like",
-                "unlike",
-                "dismiss",
-                "group_expand",
-                "context_expand",
-            )),
+            DiscoverInteraction.action.in_(
+                (
+                    "detail_click",
+                    "open",
+                    "share",
+                    "like",
+                    "unlike",
+                    "dismiss",
+                    "group_expand",
+                    "context_expand",
+                )
+            ),
         )
         .group_by(
             DiscoverInteraction.item_type,
@@ -1843,14 +2164,18 @@ async def _load_personalization_context(
         team_weights[fav.team_id] = float(fav.weight) if fav.weight else 1.0
 
     prefs = prefs_result.scalar_one_or_none()
-    sport_affinities = prefs.sport_affinities if prefs and prefs.sport_affinities else {}
+    sport_affinities = (
+        prefs.sport_affinities if prefs and prefs.sport_affinities else {}
+    )
 
     pins = pins_result.scalars().all()
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
     category_affinities = _build_discover_category_affinities(interactions_result.all())
-    feature_affinities = _build_discover_feature_affinities(feature_interactions_result.all())
+    feature_affinities = _build_discover_feature_affinities(
+        feature_interactions_result.all()
+    )
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
     recent_dismissed_event_ids: set[int] = set()
@@ -1859,7 +2184,14 @@ async def _load_personalization_context(
     recent_dismissed_group_ids: set[str] = set()
     recent_dismissed_feature_token_sets: list[set[str]] = []
     if interaction_suppression_enabled:
-        for item_type, item_id_raw, action, last_seen, item_name, category in recent_items_result.all():
+        for (
+            item_type,
+            item_id_raw,
+            action,
+            last_seen,
+            item_name,
+            category,
+        ) in recent_items_result.all():
             try:
                 item_id = int(item_id_raw)
             except (TypeError, ValueError):
@@ -1882,7 +2214,9 @@ async def _load_personalization_context(
                                 item_type=item_type,
                             )
                         )
-            elif action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff:
+            elif (
+                action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff
+            ):
                 if item_type == "event":
                     recent_seen_event_ids.add(item_id)
                 elif item_type == "futures":
@@ -1901,7 +2235,8 @@ async def _load_personalization_context(
     # Load roster player names from followed teams for player-futures matching
     roster_player_names: set[str] = set()
     followed_team_ids = [
-        tid for tid, rels in team_relations.items()
+        tid
+        for tid, rels in team_relations.items()
         if "follow" in rels or "local" in rels or "alma_mater" in rels
     ]
     if followed_team_ids:
@@ -2008,15 +2343,30 @@ _REGIONAL_FEATURE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "red sox",
-        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_red_sox"),
+        (
+            "region:boston",
+            "region:massachusetts",
+            "region:new_england",
+            "team:boston_red_sox",
+        ),
     ),
     (
         "celtics",
-        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_celtics"),
+        (
+            "region:boston",
+            "region:massachusetts",
+            "region:new_england",
+            "team:boston_celtics",
+        ),
     ),
     (
         "bruins",
-        ("region:boston", "region:massachusetts", "region:new_england", "team:boston_bruins"),
+        (
+            "region:boston",
+            "region:massachusetts",
+            "region:new_england",
+            "team:boston_bruins",
+        ),
     ),
     (
         "patriots",
@@ -2068,13 +2418,33 @@ def _discover_feature_tokens(
     lower = name.lower()
     if " vs " in lower or " v. " in lower:
         tokens.add("format:matchup")
-    if any(term in lower for term in ("spotify", "billboard", "album", "song", "box office", "oscar", "grammy")):
+    if any(
+        term in lower
+        for term in (
+            "spotify",
+            "billboard",
+            "album",
+            "song",
+            "box office",
+            "oscar",
+            "grammy",
+        )
+    ):
         tokens.add("topic:entertainment_charts")
-    if any(term in lower for term in ("fed", "rate cut", "inflation", "cpi", "recession", "jobs report")):
+    if any(
+        term in lower
+        for term in ("fed", "rate cut", "inflation", "cpi", "recession", "jobs report")
+    ):
         tokens.add("topic:macro")
-    if any(term in lower for term in ("openai", "anthropic", "gpt", "ai", "nvidia", "spacex", "tesla")):
+    if any(
+        term in lower
+        for term in ("openai", "anthropic", "gpt", "ai", "nvidia", "spacex", "tesla")
+    ):
         tokens.add("topic:ai_tech")
-    if any(term in lower for term in ("president", "election", "senate", "house", "primary")):
+    if any(
+        term in lower
+        for term in ("president", "election", "senate", "house", "primary")
+    ):
         tokens.add("topic:elections")
     for alias, region_tokens in _REGIONAL_FEATURE_ALIASES:
         if re.search(rf"\b{re.escape(alias)}\b", lower):
@@ -2084,8 +2454,23 @@ def _discover_feature_tokens(
     # companies, and places without a separate entity extraction service.
     proper_tokens = re.findall(r"\b[A-Z][A-Za-z'&.-]{2,}\b", name)
     stop = {
-        "Will", "What", "When", "Which", "Market", "Yes", "No", "The", "This",
-        "Next", "Week", "Month", "Year", "Today", "Tomorrow", "Over", "Under",
+        "Will",
+        "What",
+        "When",
+        "Which",
+        "Market",
+        "Yes",
+        "No",
+        "The",
+        "This",
+        "Next",
+        "Week",
+        "Month",
+        "Year",
+        "Today",
+        "Tomorrow",
+        "Over",
+        "Under",
     }
     filtered = [t for t in proper_tokens if t not in stop]
     for first, second in zip(filtered, filtered[1:]):
@@ -2101,11 +2486,43 @@ def _discover_feature_tokens(
 
 
 _DISCOVER_SEMANTIC_STOPWORDS = {
-    "about", "after", "again", "against", "before", "between", "from", "into",
-    "market", "month", "next", "over", "than", "that", "the", "their", "this",
-    "today", "tomorrow", "under", "week", "when", "what", "which", "will",
-    "with", "year", "yes", "no", "who", "wins", "win", "winner", "winning",
-    "champion", "champions", "championship",
+    "about",
+    "after",
+    "again",
+    "against",
+    "before",
+    "between",
+    "from",
+    "into",
+    "market",
+    "month",
+    "next",
+    "over",
+    "than",
+    "that",
+    "the",
+    "their",
+    "this",
+    "today",
+    "tomorrow",
+    "under",
+    "week",
+    "when",
+    "what",
+    "which",
+    "will",
+    "with",
+    "year",
+    "yes",
+    "no",
+    "who",
+    "wins",
+    "win",
+    "winner",
+    "winning",
+    "champion",
+    "champions",
+    "championship",
 }
 
 
@@ -2117,7 +2534,8 @@ def _discover_semantic_tokens(
 ) -> set[str]:
     """Derive compact semantic tokens for soft dismiss propagation."""
     tokens = {
-        token for token in _discover_feature_tokens(
+        token
+        for token in _discover_feature_tokens(
             item_name=item_name,
             category=category,
             item_type=item_type,
@@ -2298,6 +2716,7 @@ async def _score_events(
     # Only for tags that don't change after event creation (sport, league, tier, etc.)
     if static_tag_filter:
         import json as _json_mod
+
         query = query.where(
             Event.event_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
@@ -2307,13 +2726,17 @@ async def _score_events(
     # all sports, but only ~20-40 involve the user's teams).
     if my_teams_only:
         team_conditions = []
-        user_team_ids_list = list(set(ctx.team_relations.keys())) if ctx.team_relations else []
+        user_team_ids_list = (
+            list(set(ctx.team_relations.keys())) if ctx.team_relations else []
+        )
         if user_team_ids_list:
             team_conditions.append(Event.home_team_id.in_(user_team_ids_list))
             team_conditions.append(Event.away_team_id.in_(user_team_ids_list))
         if my_team_names:
             for tn in my_team_names:
-                escaped = tn.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                escaped = (
+                    tn.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                )
                 team_conditions.append(Event.home_team_name.ilike(f"%{escaped}%"))
                 team_conditions.append(Event.away_team_name.ilike(f"%{escaped}%"))
         if team_conditions:
@@ -2356,6 +2779,7 @@ async def _score_events(
     if events_needing_fallback:
         fallback_ids = [e.id for e in events_needing_fallback]
         from sqlalchemy import text
+
         fb_result = await db.execute(
             text("""
                 SELECT DISTINCT ON (event_id) event_id, home_win_probability
@@ -2402,7 +2826,7 @@ async def _score_events(
             if not matched_by_id and my_team_names:
                 home_name = event.home_team_name or ""
                 away_name = event.away_team_name or ""
-                for team_name in (my_team_names or []):
+                for team_name in my_team_names or []:
                     if _team_name_matches(team_name, home_name):
                         matched_by_name = True
                         break
@@ -2413,15 +2837,25 @@ async def _score_events(
             if not matched_by_id and not matched_by_name:
                 continue
 
-        opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
-        opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
+        opening_home_prob = (
+            float(event.opening_home_probability)
+            if event.opening_home_probability
+            else None
+        )
+        opening_away_prob = (
+            float(event.opening_away_probability)
+            if event.opening_away_probability
+            else None
+        )
 
         # Always compute aggregate from all available sources (ESPN, stat model,
         # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
         current_home_prob = _compute_aggregate_probability(event)
         if current_home_prob is None and event.id in snapshot_fallbacks:
             current_home_prob = snapshot_fallbacks[event.id]
-        current_away_prob = round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
+        current_away_prob = (
+            round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
+        )
 
         # Skip events without any probability data:
         # - Scheduled: StatPal-created events not yet matched to Odds API
@@ -2430,14 +2864,21 @@ async def _score_events(
         #   sports where only StatPal has schedules but no odds coverage.
         if current_home_prob is None and event.status == "scheduled":
             continue
-        if (current_home_prob is None
-                and event.status in ("completed", "closed")
-                and not event.home_score and not event.away_score):
+        if (
+            current_home_prob is None
+            and event.status in ("completed", "closed")
+            and not event.home_score
+            and not event.away_score
+        ):
             continue
 
         # Track whether we have sportsbook-specific data or only aggregate
         has_sportsbook_odds = opening_home_prob is not None
-        prob_source = None if has_sportsbook_odds else ("aggregate" if current_home_prob is not None else None)
+        prob_source = (
+            None
+            if has_sportsbook_odds
+            else ("aggregate" if current_home_prob is not None else None)
+        )
 
         # Auto-detect preseason as exhibition from sport key when
         # llm_importance isn't set (ESPN doesn't sync preseason sport keys)
@@ -2453,12 +2894,20 @@ async def _score_events(
             sport_key=event.sport.key if event.sport else None,
             current_home_prob=current_home_prob,
             current_away_prob=current_away_prob,
-            current_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
-            current_over_under=float(event.opening_over_under) if event.opening_over_under else None,
+            current_home_spread=(
+                float(event.opening_home_spread) if event.opening_home_spread else None
+            ),
+            current_over_under=(
+                float(event.opening_over_under) if event.opening_over_under else None
+            ),
             opening_home_prob=opening_home_prob,
             opening_away_prob=opening_away_prob,
-            opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
-            opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
+            opening_home_spread=(
+                float(event.opening_home_spread) if event.opening_home_spread else None
+            ),
+            opening_over_under=(
+                float(event.opening_over_under) if event.opening_over_under else None
+            ),
             opening_favorite=event.opening_favorite,
             now=now,
             home_team_name=event.home_team_name,
@@ -2471,14 +2920,20 @@ async def _score_events(
         sport_key = event.sport.key if event.sport else None
         _event_tags = event.event_tags or []
 
-        _source_count = len(event.win_probability_sources) if event.win_probability_sources else 0
+        _source_count = (
+            len(event.win_probability_sources) if event.win_probability_sources else 0
+        )
         _game_progress, _ = parse_game_progress(event.period, sport_key)
 
         base_score, extra_reasons = compute_base_score(
             highlight_score=highlight_result.score,
             highlight_reasons=highlight_result.reasons,
-            home_champ_prob=champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0,
-            away_champ_prob=champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0,
+            home_champ_prob=(
+                champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0
+            ),
+            away_champ_prob=(
+                champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0
+            ),
             sport_key=sport_key,
             now=now,
             event_tags=_event_tags,
@@ -2503,15 +2958,20 @@ async def _score_events(
             event_id=event.id,
             home_score=event.home_score,
             away_score=event.away_score,
-            feature_tokens=list(_discover_feature_tokens(
-                item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                category=_personalization_category_from_sport_key(sport_key),
-                item_type="event",
-            )) + list(_discover_semantic_tokens(
-                item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                category=_personalization_category_from_sport_key(sport_key),
-                item_type="event",
-            )),
+            feature_tokens=list(
+                _discover_feature_tokens(
+                    item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                    category=_personalization_category_from_sport_key(sport_key),
+                    item_type="event",
+                )
+            )
+            + list(
+                _discover_semantic_tokens(
+                    item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                    category=_personalization_category_from_sport_key(sport_key),
+                    item_type="event",
+                )
+            ),
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
@@ -2578,7 +3038,11 @@ async def _score_events(
             if not all(t in inline_tags for t in tag_filter):
                 continue
 
-        ended_at = get_statpal_end_time(event) if event.status in ("completed", "closed") else None
+        ended_at = (
+            get_statpal_end_time(event)
+            if event.status in ("completed", "closed")
+            else None
+        )
         event_data = format_event_data(
             event_id=event.id,
             external_id=event.external_id,
@@ -2692,8 +3156,8 @@ async def _score_futures(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.ilike('% vs %'),
-        ~FuturesMarket.name.ilike('% vs. %'),
+        ~FuturesMarket.name.ilike("% vs %"),
+        ~FuturesMarket.name.ilike("% vs. %"),
         # NOTE: '% at %' filter deliberately removed — it killed non-sports
         # markets like "S&P at 4pm", "temperature at NYC". The event_id IS NULL
         # filter already excludes game matchups.
@@ -2753,8 +3217,11 @@ async def _score_futures(
 
     if static_tag_filter:
         import json as _json_mod
+
         id_filters.append(
-            FuturesMarket.market_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
+            FuturesMarket.market_tags.op("@>")(
+                cast(_json_mod.dumps(static_tag_filter), JSONB)
+            )
         )
 
     # Pool 1: sports futures (capped — tier-ordered so best surface first)
@@ -2826,7 +3293,9 @@ async def _score_futures(
     movement_scores = (
         select(
             FuturesOutcome.market_id.label("market_id"),
-            func.max(func.abs(FuturesOutcome.probability_change_24h)).label("max_movement"),
+            func.max(func.abs(FuturesOutcome.probability_change_24h)).label(
+                "max_movement"
+            ),
         )
         .where(FuturesOutcome.probability_change_24h.isnot(None))
         .group_by(FuturesOutcome.market_id)
@@ -2916,11 +3385,17 @@ async def _score_futures(
     mark_timing("pool_nonsports_movement")
     nonsports_enriched_result = await db.execute(nonsports_enriched_query)
     mark_timing("pool_nonsports_enriched")
-    nonsports_editorial_recall_result = await db.execute(nonsports_editorial_recall_query)
+    nonsports_editorial_recall_result = await db.execute(
+        nonsports_editorial_recall_query
+    )
     mark_timing("pool_nonsports_editorial_recall")
     nonsports_timely_result = await db.execute(nonsports_timely_query)
     mark_timing("pool_nonsports_timely")
-    mark_timing("candidate_queries", since_at=candidate_queries_started_at, update_previous=False)
+    mark_timing(
+        "candidate_queries",
+        since_at=candidate_queries_started_at,
+        update_previous=False,
+    )
 
     candidate_market_ids = (
         list(sports_result.scalars().all())
@@ -2961,11 +3436,11 @@ async def _score_futures(
 
     # Build canonical key → source count map for cross-source scoring
     candidate_canonical_keys = {
-        market.canonical_market_key
-        for market in markets
-        if market.canonical_market_key
+        market.canonical_market_key for market in markets if market.canonical_market_key
     }
-    canonical_source_counts = await _get_canonical_source_counts(db, keys=candidate_canonical_keys)
+    canonical_source_counts = await _get_canonical_source_counts(
+        db, keys=candidate_canonical_keys
+    )
     mark_timing("canonical_counts")
 
     scored_items = []
@@ -2995,27 +3470,38 @@ async def _score_futures(
 
         for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
             prob = float(o.current_probability) if o.current_probability else None
-            change = float(o.probability_change_24h) if o.probability_change_24h else None
-            outcomes_data.append({
-                "name": o.name,
-                "probability": prob,
-                "probability_change_24h": change,
-                "rank": o.rank,
-                "rank_change_24h": o.rank_change_24h,
-                "opening_probability": float(o.opening_probability) if o.opening_probability else None,
-            })
+            change = (
+                float(o.probability_change_24h) if o.probability_change_24h else None
+            )
+            outcomes_data.append(
+                {
+                    "name": o.name,
+                    "probability": prob,
+                    "probability_change_24h": change,
+                    "rank": o.rank,
+                    "rank_change_24h": o.rank_change_24h,
+                    "opening_probability": (
+                        float(o.opening_probability) if o.opening_probability else None
+                    ),
+                }
+            )
 
         if sorted_outcomes:
             leader = sorted_outcomes[0]
             leader_name = leader.name
-            leader_prob = float(leader.current_probability) if leader.current_probability else None
+            leader_prob = (
+                float(leader.current_probability)
+                if leader.current_probability
+                else None
+            )
 
         # --- Staleness filters ---
         # 1) All outcomes settled: every outcome is <5% or >95%
-        probs_available = [o["probability"] for o in outcomes_data if o["probability"] is not None]
-        all_settled = (
-            len(probs_available) >= 2
-            and all(p < 0.05 or p > 0.95 for p in probs_available)
+        probs_available = [
+            o["probability"] for o in outcomes_data if o["probability"] is not None
+        ]
+        all_settled = len(probs_available) >= 2 and all(
+            p < 0.05 or p > 0.95 for p in probs_available
         )
         if all_settled:
             continue
@@ -3039,14 +3525,28 @@ async def _score_futures(
 
         # 3) Stale market: no price updates for 7+ days and zero movement
         has_any_movement = any(
-            o["probability_change_24h"] is not None and abs(o["probability_change_24h"]) > 0.001
+            o["probability_change_24h"] is not None
+            and abs(o["probability_change_24h"]) > 0.001
             for o in outcomes_data
         )
         if market.updated_at:
-            days_stale = (now - market.updated_at.replace(tzinfo=timezone.utc if market.updated_at.tzinfo is None else market.updated_at.tzinfo)).total_seconds() / 86400
+            days_stale = (
+                now
+                - market.updated_at.replace(
+                    tzinfo=(
+                        timezone.utc
+                        if market.updated_at.tzinfo is None
+                        else market.updated_at.tzinfo
+                    )
+                )
+            ).total_seconds() / 86400
             if days_stale > stale_no_movement_days and not has_any_movement:
                 continue
-            if market.resolution_date is None and days_stale > no_resolution_stale_days and not has_any_movement:
+            if (
+                market.resolution_date is None
+                and days_stale > no_resolution_stale_days
+                and not has_any_movement
+            ):
                 continue
 
         # 4) Soft-settled binary market: leader >=60% with negligible movement.
@@ -3058,8 +3558,16 @@ async def _score_futures(
         #    settles a market even when the exchange hasn't resolved it.
         market_sport_category = (market.llm_sport_category or "").lower()
         is_sports_for_soft_settle = market_sport_category in {
-            "sports", "football", "basketball", "baseball",
-            "hockey", "soccer", "golf", "tennis", "mma", "racing",
+            "sports",
+            "football",
+            "basketball",
+            "baseball",
+            "hockey",
+            "soccer",
+            "golf",
+            "tennis",
+            "mma",
+            "racing",
         }
         if (
             is_sports_for_soft_settle
@@ -3068,8 +3576,11 @@ async def _score_futures(
             and len(probs_available) == 2
         ):
             max_recent_movement = max(
-                (abs(o["probability_change_24h"]) for o in outcomes_data
-                 if o["probability_change_24h"] is not None),
+                (
+                    abs(o["probability_change_24h"])
+                    for o in outcomes_data
+                    if o["probability_change_24h"] is not None
+                ),
                 default=0.0,
             )
             if max_recent_movement < 0.02:
@@ -3118,7 +3629,9 @@ async def _score_futures(
             if opening is None or current is None:
                 continue
             surprise_change = current - opening
-            if top_surprise_change is None or abs(surprise_change) > abs(top_surprise_change):
+            if top_surprise_change is None or abs(surprise_change) > abs(
+                top_surprise_change
+            ):
                 top_surprise_name = o.get("name")
                 top_surprise_change = surprise_change
 
@@ -3126,20 +3639,35 @@ async def _score_futures(
         # Scoring/filtering above uses the raw names; display-facing
         # generators below use humanized versions so headlines read
         # "Anthropic leads at 69%" instead of "Yes leads at 69%".
-        _h_leader = humanize_binary_outcome_name(leader_name, market.name) if leader_name else leader_name
-        _h_mover = humanize_binary_outcome_name(top_mover_name, market.name) if top_mover_name else top_mover_name
-        _h_surprise = humanize_binary_outcome_name(top_surprise_name, market.name) if top_surprise_name else top_surprise_name
+        _h_leader = (
+            humanize_binary_outcome_name(leader_name, market.name)
+            if leader_name
+            else leader_name
+        )
+        _h_mover = (
+            humanize_binary_outcome_name(top_mover_name, market.name)
+            if top_mover_name
+            else top_mover_name
+        )
+        _h_surprise = (
+            humanize_binary_outcome_name(top_surprise_name, market.name)
+            if top_surprise_name
+            else top_surprise_name
+        )
 
-        headline = generate_futures_headline(
-            highlight_reasons=highlight_result.reasons,
-            top_mover_name=_h_mover,
-            top_mover_change=top_mover_change,
-            top_surprise_name=_h_surprise,
-            top_surprise_change=top_surprise_change,
-            leader_name=_h_leader,
-            leader_probability=leader_prob,
-            source_count=source_count,
-        ) or highlight_result.primary_reason
+        headline = (
+            generate_futures_headline(
+                highlight_reasons=highlight_result.reasons,
+                top_mover_name=_h_mover,
+                top_mover_change=top_mover_change,
+                top_surprise_name=_h_surprise,
+                top_surprise_change=top_surprise_change,
+                leader_name=_h_leader,
+                leader_probability=leader_prob,
+                source_count=source_count,
+            )
+            or highlight_result.primary_reason
+        )
         context_summary = generate_futures_context_summary(
             headline=headline,
             highlight_reasons=highlight_result.reasons,
@@ -3175,7 +3703,9 @@ async def _score_futures(
         llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
         if llm_score_adjustment:
             base_score = max(0, min(100, base_score + llm_score_adjustment))
-            highlight_result.reasons.append(f"discover_llm_score:{llm_score_adjustment:+d}")
+            highlight_result.reasons.append(
+                f"discover_llm_score:{llm_score_adjustment:+d}"
+            )
         if quality.reasons:
             highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 
@@ -3205,10 +3735,12 @@ async def _score_futures(
             if not matched_by_id and my_team_names:
                 market_cat = market.llm_sport_category
                 if not market_cat and market_sport_key:
-                    market_cat = _personalization_category_from_sport_key(market_sport_key)
+                    market_cat = _personalization_category_from_sport_key(
+                        market_sport_key
+                    )
                 for o in market.outcomes:
                     if o.name:
-                        for team_name in (my_team_names or []):
+                        for team_name in my_team_names or []:
                             if _team_name_matches(team_name, o.name):
                                 # Verify sport compatibility (BR53)
                                 if my_team_sport_categories and market_cat:
@@ -3228,13 +3760,15 @@ async def _score_futures(
         if my_teams_only and user_team_ids:
             market_cat_for_match = market.llm_sport_category
             if not market_cat_for_match and (market.sport and market.sport.key):
-                market_cat_for_match = _personalization_category_from_sport_key(market.sport.key)
+                market_cat_for_match = _personalization_category_from_sport_key(
+                    market.sport.key
+                )
             for o in market.outcomes:
                 is_match = False
                 if o.team_id and o.team_id in user_team_ids:
                     is_match = True
                 elif my_team_names and o.name:
-                    for team_name in (my_team_names or []):
+                    for team_name in my_team_names or []:
                         if _team_name_matches(team_name, o.name):
                             # BR53: sport-category check for name-matched outcomes
                             if my_team_sport_categories and market_cat_for_match:
@@ -3244,12 +3778,22 @@ async def _score_futures(
                             is_match = True
                             break
                 if is_match:
-                    matched_outcomes_list.append({
-                        "name": o.name,
-                        "probability": float(o.current_probability) if o.current_probability else None,
-                        "rank": o.rank,
-                        "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
-                    })
+                    matched_outcomes_list.append(
+                        {
+                            "name": o.name,
+                            "probability": (
+                                float(o.current_probability)
+                                if o.current_probability
+                                else None
+                            ),
+                            "rank": o.rank,
+                            "movement": (
+                                float(o.probability_change_24h)
+                                if o.probability_change_24h
+                                else None
+                            ),
+                        }
+                    )
 
         outcome_names = [o.name for o in market.outcomes if o.name]
         p_result = compute_futures_multiplier(
@@ -3259,15 +3803,21 @@ async def _score_futures(
             futures_market_id=market.id,
             sport_key=market.sport.key if market.sport else None,
             outcome_names=outcome_names,
-            feature_tokens=list(_discover_feature_tokens(
-                item_name=market.name,
-                category=market.llm_sport_category,
-                item_type="futures",
-            )) + list(_discover_semantic_tokens(
-                item_name=market.name,
-                category=market.llm_sport_category,
-                item_type="futures",
-            )) + _discover_llm_feature_tokens(discover_llm_metadata),
+            feature_tokens=list(
+                _discover_feature_tokens(
+                    item_name=market.name,
+                    category=market.llm_sport_category,
+                    item_type="futures",
+                )
+            )
+            + list(
+                _discover_semantic_tokens(
+                    item_name=market.name,
+                    category=market.llm_sport_category,
+                    item_type="futures",
+                )
+            )
+            + _discover_llm_feature_tokens(discover_llm_metadata),
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
@@ -3302,9 +3852,15 @@ async def _score_futures(
             {
                 "id": o.id,
                 "name": o.name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": (
+                    float(o.current_probability) if o.current_probability else None
+                ),
                 "rank": o.rank,
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                "movement": (
+                    float(o.probability_change_24h)
+                    if o.probability_change_24h
+                    else None
+                ),
             }
             for o in sorted_outcomes[:3]  # Show top 3 in feed card
         ]
@@ -3332,10 +3888,18 @@ async def _score_futures(
             "llm_sport_category": market.llm_sport_category,
             "source": market.source,
             "source_count": source_count,
-            "sources": (_canonical_source_names_cache or {}).get(market.canonical_market_key, [market.source]) if market.canonical_market_key else [market.source],
+            "sources": (
+                (_canonical_source_names_cache or {}).get(
+                    market.canonical_market_key, [market.source]
+                )
+                if market.canonical_market_key
+                else [market.source]
+            ),
             "market_tier": market.market_tier,
             "status": market.status,
-            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "resolution_date": (
+                market.resolution_date.isoformat() if market.resolution_date else None
+            ),
             "top_outcomes": top_outcomes_data,
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
@@ -3453,12 +4017,15 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
 
     global _champ_prob_cache, _champ_prob_cache_ts
     now_ts = time.time()
-    if _champ_prob_cache is not None and (now_ts - _champ_prob_cache_ts) < _CHAMP_PROB_CACHE_TTL:
+    if (
+        _champ_prob_cache is not None
+        and (now_ts - _champ_prob_cache_ts) < _CHAMP_PROB_CACHE_TTL
+    ):
         return _champ_prob_cache
 
     from sqlalchemy import text
-    result = await db.execute(
-        text("""
+
+    result = await db.execute(text("""
             SELECT fo.team_id, MAX(fo.current_probability) AS max_prob
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fo.market_id = fm.id
@@ -3468,8 +4035,7 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
               AND fo.current_probability IS NOT NULL
               AND fo.current_probability > 0
             GROUP BY fo.team_id
-        """)
-    )
+        """))
     cache = {row.team_id: float(row.max_prob) for row in result.all()}
     _champ_prob_cache = cache
     _champ_prob_cache_ts = now_ts
@@ -3490,7 +4056,10 @@ async def _get_canonical_source_counts(
 
     global _canonical_source_counts_cache, _canonical_source_names_cache, _canonical_source_counts_ts
     now = time.time()
-    if _canonical_source_counts_cache is not None and (now - _canonical_source_counts_ts) < _CANONICAL_CACHE_TTL:
+    if (
+        _canonical_source_counts_cache is not None
+        and (now - _canonical_source_counts_ts) < _CANONICAL_CACHE_TTL
+    ):
         if keys is None:
             return _canonical_source_counts_cache
         return {
@@ -3502,14 +4071,11 @@ async def _get_canonical_source_counts(
     if keys is not None and not keys:
         return {}
 
-    query = (
-        select(
-            FuturesMarket.canonical_market_key,
-            func.count(func.distinct(FuturesMarket.source)).label("source_count"),
-            func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
-        )
-        .where(FuturesMarket.canonical_market_key.isnot(None))
-    )
+    query = select(
+        FuturesMarket.canonical_market_key,
+        func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+        func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+    ).where(FuturesMarket.canonical_market_key.isnot(None))
     if keys is not None:
         query = query.where(FuturesMarket.canonical_market_key.in_(keys))
     query = query.group_by(FuturesMarket.canonical_market_key)
@@ -3517,9 +4083,15 @@ async def _get_canonical_source_counts(
     result = await db.execute(query)
     rows = result.all()
     cache = {row.canonical_market_key: row.source_count for row in rows}
-    names_cache = {row.canonical_market_key: sorted(row.sources) if row.sources else [] for row in rows}
+    names_cache = {
+        row.canonical_market_key: sorted(row.sources) if row.sources else []
+        for row in rows
+    }
     if keys is not None:
-        _canonical_source_names_cache = {**((_canonical_source_names_cache or {})), **names_cache}
+        _canonical_source_names_cache = {
+            **((_canonical_source_names_cache or {})),
+            **names_cache,
+        }
         return cache
 
     _canonical_source_counts_cache = cache
@@ -3571,7 +4143,11 @@ def _ensure_feed_diversity(
     # Need to promote events. Take top events that aren't already in top N,
     # and interleave them with the existing top items.
     # Merge futures + other (tournaments, etc.) into one pool sorted by score.
-    non_events = sorted(futures + other, key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+    non_events = sorted(
+        futures + other,
+        key=lambda x: (x["score"], x.get("_sort_time", 0)),
+        reverse=True,
+    )
     result = []
     event_idx = 0
     non_event_idx = 0
@@ -3645,7 +4221,7 @@ _DEFAULT_FEED_TOURS = frozenset({"pga", "major", "dp_world", "lpga", "liv"})
 # Map tournament tour values to user affinity keys
 _TOUR_AFFINITY_KEYS: dict[str, str] = {
     "pga": "golf_pga",
-    "major": "golf_pga",       # Majors bundled with PGA Tour
+    "major": "golf_pga",  # Majors bundled with PGA Tour
     "dp_world": "golf_dp_world",
     "lpga": "golf_lpga",
     "liv": "golf_liv",
@@ -3708,6 +4284,7 @@ async def _score_golf_tournaments(
     if tournaments is None:
         try:
             from app.routes.golf import get_golf
+
             golf_data = await get_golf(db=db)
         except Exception as e:
             logger.warning("Feed: failed to load golf tournaments: %s", e)
@@ -3742,8 +4319,7 @@ async def _score_golf_tournaments(
         if not is_winner_market:
             market_names = t.get("market_names", [])
             is_winner_market = any(
-                "winner" in n.lower() or "outright" in n.lower()
-                for n in market_names
+                "winner" in n.lower() or "outright" in n.lower() for n in market_names
             )
         if not is_winner_market:
             continue
@@ -3756,7 +4332,9 @@ async def _score_golf_tournaments(
         # Build the reason text
         leader = golfers[0]
         leader_pct = round(leader["probability"] * 100, 1)
-        reason = f"{t.get('tour_label', 'Golf')}: {leader['name']} leads at {leader_pct}%"
+        reason = (
+            f"{t.get('tour_label', 'Golf')}: {leader['name']} leads at {leader_pct}%"
+        )
         if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
             mv = leader["movement_24h"]
             direction = "up" if mv > 0 else "down"
@@ -3805,17 +4383,20 @@ async def _score_golf_tournaments(
             "source_count": len(set(t.get("market_sources", []))),
         }
 
-        feed_items.append({
-            "type": "tournament",
-            "score": score,
-            "reason": reason,
-            "headline": headline,
-            "data": data,
-            "_sort_time": (
-                datetime.fromisoformat(t["commence_time"]).timestamp()
-                if t.get("commence_time") else 0
-            ),
-        })
+        feed_items.append(
+            {
+                "type": "tournament",
+                "score": score,
+                "reason": reason,
+                "headline": headline,
+                "data": data,
+                "_sort_time": (
+                    datetime.fromisoformat(t["commence_time"]).timestamp()
+                    if t.get("commence_time")
+                    else 0
+                ),
+            }
+        )
 
     return feed_items
 

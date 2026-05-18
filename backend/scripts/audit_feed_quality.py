@@ -19,6 +19,9 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.utils.external_curator_ground_truth import (  # noqa: E402
+    load_external_curator_ground_truth_report_from_env,
+)
 from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
@@ -31,6 +34,10 @@ from app.utils.polymarket_email_ground_truth import (  # noqa: E402
 
 def _load_polymarket_email_ground_truth() -> dict:
     return load_polymarket_email_ground_truth_report_from_env()
+
+
+def _load_external_curator_ground_truth() -> dict:
+    return load_external_curator_ground_truth_report_from_env()
 
 
 def main() -> int:
@@ -49,7 +56,13 @@ def main() -> int:
 
     email_ground_truth_report = _load_polymarket_email_ground_truth()
     email_ground_truth_items = email_ground_truth_report["items"]
-    ground_truth_items = load_default_ground_truth_items() + email_ground_truth_items
+    external_curator_report = _load_external_curator_ground_truth()
+    external_curator_items = external_curator_report["items"]
+    ground_truth_items = (
+        load_default_ground_truth_items()
+        + email_ground_truth_items
+        + external_curator_items
+    )
     debug = build_feed_quality_debug(
         items,
         ground_truth_items=ground_truth_items,
@@ -58,9 +71,7 @@ def main() -> int:
     classified = debug["items"]
     summary = debug["summary"]
     boring20 = [
-        c
-        for c in classified[:20]
-        if c["quality_class"] in ("low_quality", "suppress")
+        c for c in classified[:20] if c["quality_class"] in ("low_quality", "suppress")
     ]
     duplicate_families = summary["duplicate_families"]
 
@@ -142,6 +153,45 @@ def main() -> int:
         print("-" * 72)
         print(f"rows loaded/raw:         0/{metadata['raw_row_count']}")
         print(f"latest email date:       {metadata['latest_date'] or 'unknown'}")
+        if metadata.get("error"):
+            print(f"error:                   {metadata['error']}")
+        print()
+
+    if external_curator_items:
+        external_summary = summarize_polymarket_email_ground_truth(
+            classified,
+            external_curator_items,
+        )
+        metadata = external_curator_report["metadata"]
+        print("EXTERNAL CURATOR GROUND TRUTH")
+        print("-" * 72)
+        print(
+            f"rows loaded/raw:         {metadata['loaded_count']}/"
+            f"{metadata['raw_row_count']}"
+        )
+        print(
+            f"curator-hit@20:          {external_summary['top20_hits']}/"
+            f"{external_summary['total']}"
+        )
+        print(
+            f"curator-hit@50:          {external_summary['top50_hits']}/"
+            f"{external_summary['total']} ({external_summary['hit_rate_50']:.0%})"
+        )
+        if metadata.get("error"):
+            print(f"error:                   {metadata['error']}")
+        if external_summary["missing_items"]:
+            print("curator misses:")
+            for item in external_summary["missing_items"][:10]:
+                print(
+                    f"  [{item.get('category') or '?'}] "
+                    f"{(item.get('name') or '')[:78]}"
+                )
+        print()
+    elif external_curator_report["metadata"].get("configured"):
+        metadata = external_curator_report["metadata"]
+        print("EXTERNAL CURATOR GROUND TRUTH")
+        print("-" * 72)
+        print(f"rows loaded/raw:         0/{metadata['raw_row_count']}")
         if metadata.get("error"):
             print(f"error:                   {metadata['error']}")
         print()
