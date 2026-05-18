@@ -90,6 +90,27 @@ class TestBinaryToImpliedSpread:
         assert result is not None
         assert -11 < result.spread < -9
 
+    def test_exact_crossover_uses_threshold_boundary(self):
+        contracts = [
+            {"threshold": 3.5, "probability": 0.62},
+            {"threshold": 7.5, "probability": 0.50},
+            {"threshold": 10.5, "probability": 0.38},
+        ]
+        result = binary_to_implied_spread(contracts)
+        assert result is not None
+        assert result.spread == -7.5
+        assert result.lower_threshold == 3.5
+        assert result.upper_threshold == 7.5
+
+    def test_degenerate_near_flat_crossover_uses_midpoint(self):
+        contracts = [
+            {"threshold": 5.5, "probability": 0.5004},
+            {"threshold": 9.5, "probability": 0.4998},
+        ]
+        result = binary_to_implied_spread(contracts)
+        assert result is not None
+        assert result.spread == -7.5
+
 
 class TestBinaryToImpliedTotal:
     """Tests for binary_to_implied_total()."""
@@ -121,6 +142,14 @@ class TestBinaryToImpliedTotal:
     def test_insufficient_data(self):
         assert binary_to_implied_total([]) is None
         assert binary_to_implied_total([{"threshold": 220, "probability": 0.55}]) is None
+
+    def test_no_crossover_returns_none_instead_of_extrapolating_total(self):
+        contracts = [
+            {"threshold": 210, "probability": 0.80},
+            {"threshold": 220, "probability": 0.70},
+            {"threshold": 230, "probability": 0.60},
+        ]
+        assert binary_to_implied_total(contracts) is None
 
 
 class TestProjectedFinalScore:
@@ -168,6 +197,10 @@ class TestExtractSpreadThreshold:
     def test_spread_keyword(self):
         assert extract_spread_threshold("Spread 7.5") == 7.5
 
+    def test_margin_phrase_and_signed_points_suffix(self):
+        assert extract_spread_threshold("Winning margin 12.5+") == 12.5
+        assert extract_spread_threshold("Celtics -6.5 pts") == 6.5
+
     def test_no_match(self):
         assert extract_spread_threshold("Boston Celtics") is None
         assert extract_spread_threshold("Over 220.5") is None
@@ -182,6 +215,10 @@ class TestExtractTotalThreshold:
 
     def test_ou_pattern(self):
         assert extract_total_threshold("O/U 222") == 222.0
+
+    def test_or_more_and_above_patterns(self):
+        assert extract_total_threshold("229.5 or more") == 229.5
+        assert extract_total_threshold("Above 6.5 runs") == 6.5
 
     def test_no_match(self):
         assert extract_total_threshold("Boston Celtics -9.5") is None

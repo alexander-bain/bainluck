@@ -34,6 +34,20 @@ class TestNormalizeColumnSums:
         total = sum(t["cells"]["championship"]["merged_probability"] for t in teams)
         assert abs(total - 1.0) < 0.01
 
+    def test_normalizes_overshoot_without_changing_probability_order(self):
+        teams = [_make_team("A", 0.62), _make_team("B", 0.36), _make_team("C", 0.20)]
+        cols = [SimpleNamespace(key="championship")]
+
+        normalize_column_sums(teams, cols, "test")
+
+        probabilities = [t["cells"]["championship"]["merged_probability"] for t in teams]
+        source_probabilities = [
+            t["cells"]["championship"]["sources"][0]["probability"] for t in teams
+        ]
+        assert abs(sum(probabilities) - EXPECTED_COLUMN_SUMS["championship"]) < 0.01
+        assert probabilities == sorted(probabilities, reverse=True)
+        assert source_probabilities == probabilities
+
     def test_no_normalization_for_unknown_columns(self):
         teams = [_make_team("A", 0.30)]
         teams[0]["cells"]["make_playoffs"] = {"merged_probability": 0.30, "sources": []}

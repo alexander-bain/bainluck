@@ -284,6 +284,60 @@ class TestDeterministicFuturesHeadlines:
         )
         assert headline == "Patrick Mahomes down 7.0 points today"
 
+    def test_binary_yes_mover_is_humanized_before_headline(self):
+        """Binary futures should name the subject, not the raw Yes/No side."""
+        from app.utils.feed_reasons import (
+            generate_futures_headline,
+            generate_futures_reason,
+            humanize_binary_outcome_name,
+        )
+
+        market_name = "Will Anthropic IPO before OpenAI?"
+        result = compute_futures_highlight(
+            market_tier=3,
+            sport_category="tech",
+            market_name=market_name,
+            outcomes=[
+                {
+                    "name": "Yes",
+                    "probability": 0.56,
+                    "probability_change_24h": 0.08,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.48,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.44,
+                    "probability_change_24h": -0.08,
+                    "rank": 2,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.52,
+                },
+            ],
+        )
+
+        assert result.top_mover_name == "Yes"
+        display_mover = humanize_binary_outcome_name(result.top_mover_name, market_name)
+        assert display_mover == "Anthropic"
+
+        headline = generate_futures_headline(
+            result.reasons,
+            top_mover_name=display_mover,
+            top_mover_change=0.08,
+        )
+        reason = generate_futures_reason(
+            market_name,
+            result.reasons,
+            top_mover_name=display_mover,
+            top_mover_change=0.08,
+        )
+        assert headline == "Anthropic up 8.0 points today"
+        assert reason == (
+            "Anthropic moved up 8.0 points today in "
+            "Will Anthropic IPO before OpenAI?"
+        )
+
     def test_source_disagreement_headline_takes_priority_over_movement(self):
         """Cross-source disagreement should be the deterministic top story."""
         from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason

@@ -175,6 +175,53 @@ def test_futures_copy_suppresses_stale_past_resolution_markets():
     )
 
 
+def test_futures_copy_suppresses_stale_markets_before_other_signals():
+    highlight_reasons = [
+        "stale_past_resolution",
+        "major_movement_24h",
+        "source_divergence",
+        "major_surprise",
+    ]
+
+    assert (
+        generate_futures_headline(
+            highlight_reasons=highlight_reasons,
+            top_mover_name="Yes",
+            top_mover_change=0.31,
+            top_surprise_name="Yes",
+            top_surprise_change=0.44,
+            leader_name="Yes",
+            leader_probability=0.99,
+            source_count=3,
+        )
+        == ""
+    )
+    assert (
+        generate_futures_reason(
+            market_name="Already resolved?",
+            highlight_reasons=highlight_reasons,
+            top_mover_name="Yes",
+            top_mover_change=0.31,
+            top_surprise_name="Yes",
+            top_surprise_change=0.44,
+            leader_name="Yes",
+            leader_probability=0.99,
+            source_count=3,
+        )
+        == ""
+    )
+    assert (
+        generate_futures_context_summary(
+            headline="Sources disagree (3)",
+            highlight_reasons=highlight_reasons,
+            leader_name="Yes",
+            leader_probability=0.99,
+            source_count=3,
+        )
+        == ""
+    )
+
+
 def test_futures_headline_falls_back_to_leader_when_no_signal_detail():
     headline = generate_futures_headline(
         highlight_reasons=[],
@@ -225,6 +272,26 @@ def test_futures_context_summary_combines_signal_and_leader():
     )
 
     assert summary == "Yes side up 10.2 points today; No leads at 88%"
+
+
+def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
+    headline = generate_futures_headline(
+        highlight_reasons=["source_divergence"],
+        leader_name="Sentimental Favorite",
+        leader_probability=0.37,
+        source_count=3,
+    )
+
+    summary = generate_futures_context_summary(
+        headline=headline,
+        highlight_reasons=["source_divergence"],
+        leader_name="Sentimental Favorite",
+        leader_probability=0.37,
+        source_count=3,
+    )
+
+    assert headline == "Sources disagree (3)"
+    assert summary == "Sources disagree (3); Sentimental Favorite leads at 37%"
 
 
 def test_event_reason_uses_category_tag_context_when_odds_reason_absent():
