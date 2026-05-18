@@ -29,6 +29,10 @@
 - ✅ **Link-rate stale settlement exclusion** — headline link-rate metrics now exclude stale open/unlinked Kalshi game markets when the ticker game date is more than 36 hours old, matching the Tier-1 gaps closed-game exclusion.
 - ✅ **Bug-fixed email auto-reply suppression headers** — Gmail bug-fix notifications now include standard automated-email suppression headers and focused MIME tests.
 - ✅ **Native naming/access cleanup slice 5** — cleaned low-risk local abbreviations in Menu Bar, Search, Market Map, Discover Event Card, and Related-by-Tag components; native build passed.
+- ✅ **Discover event demotion gate** — "upset"/"comeback"/"historic" event exceptions now require top-tier league context, and raw high event score requires EI >= 50 to avoid Discover demotion.
+- ✅ **Russia-war story cap** — Ukraine-omitted Russia territory/capture markets now share the capped `story:russia_ukraine` diversity family.
+- ✅ **Discover dismiss persistence** — web Discover dismissals now persist to localStorage so refreshed anonymous sessions do not immediately replay dismissed cards.
+- ✅ **Swipe penalty escalation** — category dislikes now escalate at 5+ and 8+ negative swipes, feature dislike caps are stronger, and the personalization multiplier lower bound is 0.15.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

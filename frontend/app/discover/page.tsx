@@ -33,6 +33,13 @@ function getDismissed(): Set<string> {
   }
 }
 
+function saveDismissed(items: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...items]));
+  } catch { }
+}
+
 function getItemId(item: FeedItem): string {
   if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
   if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
@@ -535,9 +542,13 @@ export default function DiscoverPage() {
   }, []);
 
   const handleDismiss = useCallback((itemId: string) => {
-    // Hide from the current browsing session only. The server receives
-    // "unlike" from the card component, which is a soft downrank signal.
-    setDismissed((prev) => new Set([...prev, itemId]));
+    // Persist local dismissals so anonymous users do not see the same card
+    // again after refresh while the server downrank catches up.
+    setDismissed((prev) => {
+      const next = new Set([...prev, itemId]);
+      saveDismissed(next);
+      return next;
+    });
   }, []);
 
   const startChallenge = useCallback(() => {

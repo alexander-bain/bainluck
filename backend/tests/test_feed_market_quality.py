@@ -357,6 +357,22 @@ class TestMarketQualityClassification:
 
         assert story_keys == {"story:middle_east_conflict"}
 
+    def test_story_key_groups_russia_war_territory_variants_without_ukraine(self):
+        examples = [
+            "Will Russia capture Kharkiv before July?",
+            "Will Russia advance toward Sumy before July?",
+            "Will Russia launch an offensive near Pokrovsk?",
+            "Will Russian forces seize more territory before July?",
+        ]
+
+        qualities = [
+            classify_market_quality(name, sport_category="geopolitics")
+            for name in examples
+        ]
+
+        assert {quality.story_key for quality in qualities} == {"story:russia_ukraine"}
+        assert all(quality.quality_class != "suppress" for quality in qualities)
+
     def test_story_key_groups_repeated_company_stake_and_tournament_props(self):
         stake = classify_market_quality(
             "Will the US federal government take a stake in Lockheed Martin Corporation?",
@@ -1203,6 +1219,39 @@ class TestQualityFamilyDiversity:
         ]
         assert len(election) == 2
         assert len(stakes) == 2
+
+    def test_diversify_caps_russia_war_territory_story_to_two(self):
+        names = [
+            "Will Russia capture Kharkiv before July?",
+            "Will Russia capture Sumy before July?",
+            "Will Russia advance toward Dnipro before July?",
+            "Will Russia launch an offensive near Pokrovsk?",
+        ]
+        items = []
+        for idx, name in enumerate(names):
+            quality = classify_market_quality(name, sport_category="geopolitics")
+            items.append({
+                "score": 100 - idx,
+                "_quality_class": quality.quality_class,
+                "_quality_family_key": quality.family_key,
+                "_quality_story_key": quality.story_key,
+            })
+        items.append({
+            "score": 80,
+            "_quality_class": "compelling",
+            "_quality_family_key": "openai release gpt 5",
+            "_quality_story_key": "story:ai",
+        })
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        russia_war = [
+            i for i in capped
+            if i["_quality_story_key"] == "story:russia_ukraine"
+        ]
+        assert len(russia_war) == 2
+        assert [i["score"] for i in russia_war] == [100, 99]
+        assert any(i["_quality_story_key"] == "story:ai" for i in capped)
 
     def test_diversify_hard_caps_regional_and_niche_low_signal_stories(self):
         items = [

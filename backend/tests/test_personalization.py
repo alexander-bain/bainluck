@@ -21,6 +21,8 @@ from app.utils.personalization import (
     NAH_AFFINITY_THRESHOLD,
     CATEGORY_INTEREST_MAX_BONUS,
     CATEGORY_DISMISS_MAX_PENALTY,
+    CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY,
+    CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY,
     FEATURE_INTEREST_MAX_BONUS,
     FEATURE_DISLIKE_MAX_PENALTY,
     MIN_MULTIPLIER,
@@ -39,11 +41,13 @@ def _anonymous_ctx() -> PersonalizationContext:
 
 def _anonymous_session_ctx(
     discover_category_affinities=None,
+    discover_category_negative_counts=None,
     discover_feature_affinities=None,
 ) -> PersonalizationContext:
     """Anonymous context with session-derived Discover behavior."""
     return PersonalizationContext(
         discover_category_affinities=discover_category_affinities or {},
+        discover_category_negative_counts=discover_category_negative_counts or {},
         discover_feature_affinities=discover_feature_affinities or {},
         is_authenticated=False,
     )
@@ -57,6 +61,7 @@ def _basic_ctx(
     pinned_futures_ids=None,
     roster_player_names=None,
     discover_category_affinities=None,
+    discover_category_negative_counts=None,
     discover_feature_affinities=None,
 ) -> PersonalizationContext:
     """Authenticated context with optional overrides."""
@@ -68,6 +73,7 @@ def _basic_ctx(
         pinned_futures_ids=pinned_futures_ids or set(),
         roster_player_names=roster_player_names or set(),
         discover_category_affinities=discover_category_affinities or {},
+        discover_category_negative_counts=discover_category_negative_counts or {},
         discover_feature_affinities=discover_feature_affinities or {},
         is_authenticated=True,
     )
@@ -776,6 +782,64 @@ class TestDiscoverCategoryAffinity:
         assert tech.multiplier == pytest.approx(1.0 + CATEGORY_INTEREST_MAX_BONUS)
         assert politics.multiplier == pytest.approx(1.0 + CATEGORY_DISMISS_MAX_PENALTY)
 
+    def test_five_negative_swipes_escalate_category_penalty(self):
+        lower_count_ctx = _basic_ctx(
+            discover_category_affinities={"politics": -0.10},
+            discover_category_negative_counts={"politics": 4},
+        )
+        escalated_ctx = _basic_ctx(
+            discover_category_affinities={"politics": -0.10},
+            discover_category_negative_counts={"politics": 5},
+        )
+
+        lower_count = compute_futures_multiplier(
+            lower_count_ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+        )
+        escalated = compute_futures_multiplier(
+            escalated_ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+        )
+
+        assert lower_count.multiplier == pytest.approx(0.90)
+        assert escalated.multiplier == pytest.approx(
+            1.0 + CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY
+        )
+        assert escalated.multiplier < lower_count.multiplier
+        assert escalated.multiplier >= MIN_MULTIPLIER
+
+    def test_eight_negative_swipes_escalate_category_penalty_again(self):
+        five_swipe_ctx = _basic_ctx(
+            discover_category_affinities={"politics": CATEGORY_DISMISS_MAX_PENALTY},
+            discover_category_negative_counts={"politics": 5},
+        )
+        eight_swipe_ctx = _basic_ctx(
+            discover_category_affinities={"politics": CATEGORY_DISMISS_MAX_PENALTY},
+            discover_category_negative_counts={"politics": 8},
+        )
+
+        five_swipes = compute_futures_multiplier(
+            five_swipe_ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+        )
+        eight_swipes = compute_futures_multiplier(
+            eight_swipe_ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+        )
+
+        assert five_swipes.multiplier == pytest.approx(
+            1.0 + CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY
+        )
+        assert eight_swipes.multiplier == pytest.approx(
+            1.0 + CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
+        )
+        assert eight_swipes.multiplier < five_swipes.multiplier
+        assert eight_swipes.multiplier >= MIN_MULTIPLIER
+
     def test_event_maps_sport_key_to_discover_category(self):
         ctx = _basic_ctx(discover_category_affinities={"basketball": 0.08})
         result = compute_event_multiplier(ctx, home_team_id=None, away_team_id=None, sport_key="basketball_nba")
@@ -842,14 +906,17 @@ class TestDiscoverCategoryAffinity:
         )
         assert result.multiplier == pytest.approx(1.0 + FOLLOW_BONUS + FEATURE_DISLIKE_MAX_PENALTY)
         assert any("your_team_futures" in r for r in result.reasons)
-        assert "discover_feature_dislike:entity:new_york_yankees:-0.12" in result.reasons
+        assert (
+            f"discover_feature_dislike:entity:new_york_yankees:"
+            f"{FEATURE_DISLIKE_MAX_PENALTY:.2f}"
+        ) in result.reasons
 
     def test_feature_signal_is_capped(self):
         ctx = _basic_ctx(discover_feature_affinities={
             "topic:elections": 0.09,
             "archetype:public_figure": 0.08,
-            "format:matchup": -0.09,
-            "topic:social_count": -0.08,
+            "format:matchup": -0.15,
+            "topic:social_count": -0.14,
         })
         boosted = compute_futures_multiplier(
             ctx,
@@ -895,7 +962,7 @@ class TestDiscoverCategoryAffinity:
         ctx = _basic_ctx(
             team_relations={10: {"follow"}},
             team_weights={10: 1.0},
-            discover_feature_affinities={"region:california": -0.12},
+            discover_feature_affinities={"region:california": -9.0},
         )
         result = compute_futures_multiplier(
             ctx,
@@ -905,7 +972,10 @@ class TestDiscoverCategoryAffinity:
         )
         assert result.multiplier == pytest.approx(1.0 + FOLLOW_BONUS + FEATURE_DISLIKE_MAX_PENALTY)
         assert any("your_team_futures" in r for r in result.reasons)
-        assert "discover_feature_dislike:region:california:-0.12" in result.reasons
+        assert (
+            f"discover_feature_dislike:region:california:"
+            f"{FEATURE_DISLIKE_MAX_PENALTY:.2f}"
+        ) in result.reasons
 
     def test_category_soft_downrank_stacks_with_sport_affinity(self):
         ctx = _basic_ctx(
@@ -938,7 +1008,10 @@ class TestDiscoverCategoryAffinity:
         assert result.multiplier == MIN_MULTIPLIER
         assert "sport_nah:-0.60" in result.reasons
         assert "discover_dismiss:-0.40" in result.reasons
-        assert "discover_feature_dislike:region:california:-0.12" in result.reasons
+        assert (
+            f"discover_feature_dislike:region:california:"
+            f"{FEATURE_DISLIKE_MAX_PENALTY:.2f}"
+        ) in result.reasons
 
     def test_event_category_and_feature_interest_stack_with_team_and_sport(self):
         ctx = _basic_ctx(

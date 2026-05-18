@@ -235,6 +235,15 @@ _BIG_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+_RUSSIA_WAR_TERRITORY_RE = re.compile(
+    r"\b(russia|russian)\b.*\b("
+    r"captur\w*|seiz\w*|occup\w*|annex\w*|advanc\w*|enter\w*|offensive|"
+    r"territor\w*|frontline|oblast|donbas|donetsk|luhansk|kharkiv|sumy|"
+    r"zaporizhzhia|zaporizhia|kherson|crimea|odesa|odessa|dnipro|pokrovsk|chasyv yar|kupiansk"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _STOPWORDS = {
     "will", "the", "a", "an", "to", "of", "in", "on", "by", "at", "for",
     "be", "is", "are", "and", "or", "with", "between", "above", "below",
@@ -327,7 +336,10 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:middle_east_conflict"
 
-    if "russia" in lower and "ukraine" in lower:
+    if ("russia" in lower and "ukraine" in lower) or _RUSSIA_WAR_TERRITORY_RE.search(name):
+        return "story:russia_ukraine"
+
+    if "russia" in lower and re.search(r"\b(putin|president|regime|fall|collapse)\b", lower):
         return "story:russia_ukraine"
 
     if "2028" in lower and re.search(r"\b(president|presidential|nominee|election)\b", lower):
@@ -359,6 +371,9 @@ def _story_key(name: str, category: str) -> str | None:
 
     if _LOW_SIGNAL_SPORT_RE.search(name):
         return "story:niche_low_signal_sports"
+
+    if category == "soccer" and not _TOP_TIER_SOCCER_RE.search(name):
+        return "story:minor_soccer_leagues"
 
     return None
 

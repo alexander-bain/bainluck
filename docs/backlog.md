@@ -289,23 +289,27 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
 The following 8 items address three interconnected problems discovered in the May 18 health check: (a) foreign soccer events dominate the feed because the "upset" headline bypasses Discover event demotion regardless of league tier, (b) geopolitics floods futures slots with near-identical Russia-war markets, pushing entertainment to position 69+, and (c) left-swipe personalization is too weak to suppress high-scoring items.
 
-**0u-R1. Gate "upset" event demotion bypass on league tier** (HIGHEST IMPACT)
+**~~0u-R1. Gate "upset" event demotion bypass on league tier~~** — SHIPPED May 18
 
 The `is_exceptional` check in `feed.py:626` lets any event with "upset" in its headline keep its full score in Discover mode. The headline generator labels nearly every recently-completed game as "Recent upset" — including Ligue 2, Brazilian Série B, and Chilean Primera División. This causes 17 of 50 Discover items to be foreign soccer events, crowding out entertainment/politics/tech.
 
-**Fix:** Require league tier <= 2 for the "upset"/"comeback"/"historic" keywords to count as exceptional. Also tighten the `score >= 90` gate to require `ei_score >= 50` alongside it, so a routine minor-league game can't qualify on base signals alone.
+**Fix shipped:** Discover event demotion now uses a shared helper in normal ranking and debug traces. Keyword exceptions (`upset`, `comeback`, `historic`, etc.) require major-league context via `get_league_tier(...) <= 2` or `tier:1`/`tier:2` tags. Raw `score >= 90` also requires EI/event-interest score >= 50. Regression tests cover low-tier soccer upset demotion, NBA upset preservation, and high raw score without EI demotion.
 
 **Files:** `backend/app/routes/feed.py` (~line 626)
 
-**0u-R2. Fix Russia-war story key to catch territory markets**
+**~~0u-R2. Fix Russia-war story key to catch territory markets~~** — SHIPPED May 18
 
 10 near-identical "Will Russia capture [village]?" markets all score 100 and consume ~10 of ~20 futures slots. They don't share the existing `story:russia_ukraine` key because they only mention "Russia" (the key requires both "Russia" AND "Ukraine"). Add a broader `story:russia_war` key that matches Russia + capture/territory/advance/offensive keywords. Cap at 2.
 
+**Fix shipped:** Russia/Russian + capture/seize/occupy/annex/advance/offensive/territory/frontline/place keywords now map to the existing capped `story:russia_ukraine` family. Tests prove Ukraine-omitted territory markets group together and diversify to the top 2 variants.
+
 **Files:** `backend/app/utils/feed_market_quality.py` (`_story_key()`, `per_story_caps`)
 
-**0u-R3. Fix frontend localStorage dismiss persistence**
+**~~0u-R3. Fix frontend localStorage dismiss persistence~~** — SHIPPED May 18
 
 `handleDismiss` in `discover/page.tsx:537` calls `setDismissed()` but never writes to localStorage. Dismissed items reappear on every page refresh. One-line fix: persist the updated set to localStorage inside the callback.
+
+**Fix shipped:** `handleDismiss` now writes the updated dismissed-id set to `discover_dismissed` in localStorage. `npm run build` passed after clearing generated `.next` cache from a full local disk.
 
 **Files:** `frontend/app/discover/page.tsx` (~line 537)
 
@@ -321,9 +325,11 @@ Define `_TOP_TIER_SOCCER_RE` — EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL
 
 **Files:** `backend/app/utils/futures_highlights.py`, `backend/app/utils/feed_market_quality.py`
 
-**0u-R6. Steeper swipe penalty escalation**
+**~~0u-R6. Steeper swipe penalty escalation~~** — SHIPPED May 18
 
 Current max category penalty is -0.40 (0.60x multiplier). A 100-score market becomes 60 — still prominent after 20+ swipes. Add escalation tiers: 5+ swipes → -0.60 (0.40x), 8+ swipes → -0.80 (0.20x). Lower `MIN_MULTIPLIER` from 0.30 to 0.15 (only reachable after 8+ negative swipes). Increase `FEATURE_DISLIKE_MAX_PENALTY` from -0.12 to -0.25.
+
+**Fix shipped:** `PersonalizationContext` now carries `discover_category_negative_counts`; category dislike penalties escalate at 5+ and 8+ negative swipes, `MIN_MULTIPLIER` is 0.15, and feature dislike caps at -0.25. Tests cover escalation tiers, feature dislike capping, and bounded multipliers.
 
 **Files:** `backend/app/utils/personalization.py`, `backend/app/routes/feed.py` (`_build_discover_category_affinities()`)
 
@@ -333,9 +339,11 @@ Currently dismissing market #12345 only suppresses that exact ID. Add `recent_di
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/personalization.py`
 
-**0u-R8. Tests for all ranking fixes**
+**0u-R8. Tests for all ranking fixes** — PARTIAL May 18
 
 Unit tests for: league-gated event demotion (Ligue 2 upset demoted, NBA upset kept), Russia-war story key matching and cap, election/soccer allowlists, escalated penalty tiers, story-key dismiss propagation.
+
+**May 18 coverage shipped:** R1, R2, R3, and R6 have focused tests/build coverage. Remaining test work tracks R4, R5, and R7 after those items are implemented.
 
 **Files:** `backend/tests/test_feed_market_quality.py`, `backend/tests/test_personalization.py`, new test files as needed
 

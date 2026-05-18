@@ -1,6 +1,6 @@
 """Personalization scoring for the unified feed.
 
-Computes a multiplier (typically 0.5x–3.0x) applied to each feed item's
+Computes a multiplier (typically 0.15x–3.0x) applied to each feed item's
 base interestingness score based on the user's preferences, favorite teams,
 sport affinities, and team relationships (follow, local, alma_mater, rival).
 
@@ -22,7 +22,7 @@ Multiplier sources (applied additively, then clamped):
   + pinned_item:   +0.3  (user explicitly pinned this)
   + minor_pro:     -0.2  (minor league with no team/sport affinity match)
   + roster_player: +0.4  (futures about a player on a followed team's roster)
-  = clamped to [0.3, 3.0]
+  = clamped to [0.15, 3.0]
 """
 
 import logging
@@ -47,8 +47,10 @@ MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
 ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
 CATEGORY_INTEREST_MAX_BONUS = 0.18  # Recent Discover opens/shares by category
 CATEGORY_DISMISS_MAX_PENALTY = -0.40  # Recent Discover dismisses by category (BR54: escalated from -0.15)
+CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY = -0.60
+CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY = -0.80
 FEATURE_INTEREST_MAX_BONUS = 0.12  # Recent Discover swipes by story/entity feature
-FEATURE_DISLIKE_MAX_PENALTY = -0.12  # Soft "less like this" by story/entity feature
+FEATURE_DISLIKE_MAX_PENALTY = -0.25  # Soft "less like this" by story/entity feature
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -59,7 +61,7 @@ LOW_AFFINITY_PENALTY = -0.3     # penalty for low-affinity sports ("If wild" = 0
 NAH_AFFINITY_PENALTY = -0.6     # stronger penalty for "Nah" (0.0) sports
 
 # Clamp range
-MIN_MULTIPLIER = 0.3
+MIN_MULTIPLIER = 0.15
 MAX_MULTIPLIER = 3.0
 
 
@@ -83,6 +85,8 @@ class PersonalizationContext:
     roster_player_names: set[str] = field(default_factory=set)
     # category → bounded multiplier delta from recent Discover interactions
     discover_category_affinities: dict[str, float] = field(default_factory=dict)
+    # category → count of recent negative Discover swipes (dismiss/unlike)
+    discover_category_negative_counts: dict[str, int] = field(default_factory=dict)
     # feature token → bounded multiplier delta from recent Discover interactions
     # Examples: "archetype:culture_moment", "entity:noah_kahan".
     discover_feature_affinities: dict[str, float] = field(default_factory=dict)
@@ -423,10 +427,26 @@ def _category_from_sport_key(sport_key: str | None) -> str | None:
 def _category_affinity_bonus(ctx: PersonalizationContext, category: str | None) -> float:
     if not category or not ctx.discover_category_affinities:
         return 0.0
-    value = ctx.discover_category_affinities.get(category.lower(), 0.0)
+    normalized_category = category.lower()
+    value = ctx.discover_category_affinities.get(normalized_category, 0.0)
     if abs(value) < 0.01:
         return 0.0
-    return max(CATEGORY_DISMISS_MAX_PENALTY, min(CATEGORY_INTEREST_MAX_BONUS, value))
+    if value > 0:
+        return min(CATEGORY_INTEREST_MAX_BONUS, value)
+
+    floor = _category_dismiss_floor(ctx, normalized_category)
+    if floor < CATEGORY_DISMISS_MAX_PENALTY:
+        return floor
+    return max(floor, value)
+
+
+def _category_dismiss_floor(ctx: PersonalizationContext, category: str) -> float:
+    n_negative = ctx.discover_category_negative_counts.get(category, 0)
+    if n_negative >= 8:
+        return CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
+    if n_negative >= 5:
+        return CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY
+    return CATEGORY_DISMISS_MAX_PENALTY
 
 
 def _category_affinity_reason(value: float) -> str:

@@ -320,6 +320,76 @@ def _rank_futures_market(items: list[dict], market_id: int) -> int | None:
     return None
 
 
+_DISCOVER_EVENT_EXCEPTION_KEYWORDS = (
+    "elimination",
+    "buzzer",
+    "walk-off",
+    "historic",
+    "upset",
+    "comeback",
+    "playoff",
+    "championship",
+)
+
+
+def _discover_event_ei_score(item: dict) -> float:
+    data = item.get("data") or {}
+    ei = data.get("ei") or data.get("pulse")
+    if isinstance(ei, dict):
+        raw_score = ei.get("score", 0)
+    else:
+        raw_score = ei or 0
+    try:
+        return float(raw_score)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _discover_event_has_major_league_context(item: dict) -> bool:
+    data = item.get("data") or {}
+    sport_key = data.get("sport") or data.get("sport_key")
+    if sport_key and get_league_tier(sport_key) <= 2:
+        return True
+    event_tags = data.get("event_tags") or []
+    return "tier:1" in event_tags or "tier:2" in event_tags
+
+
+def _is_discover_event_demotion_exception(item: dict) -> bool:
+    """Return whether a Discover-mode event should keep its original score.
+
+    Tier 3/4 events (minor soccer, AHL, etc.) need a much higher bar to qualify
+    as exceptional — a routine "upset" in Ligue 2 is not interesting to a
+    Discover audience, even if EI is moderately high.
+    """
+    if item.get("type") != "event":
+        return False
+
+    ei_score = _discover_event_ei_score(item)
+    has_major_league_context = _discover_event_has_major_league_context(item)
+
+    if ei_score >= 85:
+        return True
+    if ei_score >= 70 and has_major_league_context:
+        return True
+
+    headline = (item.get("headline") or "").lower()
+    has_exception_keyword = any(
+        kw in headline for kw in _DISCOVER_EVENT_EXCEPTION_KEYWORDS
+    )
+    if has_exception_keyword and has_major_league_context:
+        return True
+
+    return item.get("score", 0) >= 90 and ei_score >= 50
+
+
+def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
+    for item in feed_items:
+        if item.get("type") != "event":
+            continue
+        if not _is_discover_event_demotion_exception(item):
+            item["score"] = min(item["score"], 35)
+
+
 def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     """Deduplicate futures by canonical key using the feed's existing rules."""
     seen_canonical: dict[str, dict] = {}
@@ -614,25 +684,9 @@ async def get_feed(
     # interesting futures can compete. A routine playoff game scores 100
     # from live+close+tier but isn't more interesting than "Will China
     # invade Taiwan?" for a Discover audience. Only truly exceptional
-    # events (EI 85+, live elimination/buzzer-beater) keep their score.
+    # events (strong EI or top-tier exception keywords) keep their score.
     if event_pct is not None and event_pct < 0.3:
-        for item in feed_items:
-            if item["type"] != "event":
-                continue
-            data = item.get("data", {})
-            ei = data.get("ei") or data.get("pulse")
-            ei_score = ei.get("score", 0) if ei else 0
-            headline = (item.get("headline") or "").lower()
-            is_exceptional = (
-                ei_score >= 70
-                or any(kw in headline for kw in [
-                    "elimination", "buzzer", "walk-off", "historic",
-                    "upset", "comeback", "playoff", "championship",
-                ])
-                or item.get("score", 0) >= 90
-            )
-            if not is_exceptional:
-                item["score"] = min(item["score"], 35)
+        _demote_non_exceptional_discover_events(feed_items)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
 
@@ -1435,23 +1489,7 @@ async def _discover_rank_phase_trace(
 
     post_event_demote_rank = post_initial_sort_rank
     if event_pct is not None and event_pct < 0.3:
-        for item in feed_items:
-            if item["type"] != "event":
-                continue
-            data = item.get("data", {})
-            ei = data.get("ei") or data.get("pulse")
-            ei_score = ei.get("score", 0) if ei else 0
-            headline = (item.get("headline") or "").lower()
-            is_exceptional = (
-                ei_score >= 70
-                or any(kw in headline for kw in [
-                    "elimination", "buzzer", "walk-off", "historic",
-                    "upset", "comeback", "playoff", "championship",
-                ])
-                or item.get("score", 0) >= 90
-            )
-            if not is_exceptional:
-                item["score"] = min(item["score"], 35)
+        _demote_non_exceptional_discover_events(feed_items)
         feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
         post_event_demote_rank = _rank_futures_market(feed_items, market_id)
 
