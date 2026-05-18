@@ -63,6 +63,7 @@ actor APIClient {
         return id
     }()
 
+    /// Installs the auth token source used to attach Bearer credentials to API requests.
     func setAuthTokenProvider(_ provider: (() async -> String?)?) {
         authTokenProvider = provider
     }
@@ -307,6 +308,7 @@ actor APIClient {
 
     // MARK: - Feed
 
+    /// Fetches the main Discover feed with optional sport, tag, and content-type filters.
     func fetchFeed(
         sport: String? = nil,
         limit: Int = 50,
@@ -337,6 +339,7 @@ actor APIClient {
 
     // MARK: - Grouped Futures Feed
 
+    /// Fetches grouped futures cards for deduplicated market browsing.
     func fetchGroupedFeed(limit: Int = 20, offset: Int = 0) async throws -> GroupedFeedResponse {
         let q: [String: String] = [
             "limit": "\(limit)",
@@ -347,36 +350,42 @@ actor APIClient {
 
     // MARK: - Event Detail
 
+    /// Fetches a game or event detail page by backend event ID.
     func fetchEvent(id: Int) async throws -> EventDetail {
         return try await fetch("/api/events/\(id)", cacheTTL: 15)
     }
 
     // MARK: - Event History
 
+    /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
         return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
     }
 
     // MARK: - Related Futures
 
+    /// Fetches season futures and related markets attached to an event detail page.
     func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse {
         return try await fetch("/api/events/\(eventId)/related-futures", cacheTTL: 60)
     }
 
     // MARK: - Team Progression (Championship Path)
 
+    /// Fetches championship-path progression data for teams in a specific event.
     func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse {
         return try await fetch("/api/events/\(eventId)/team-progression", cacheTTL: 120)
     }
 
     // MARK: - Game Markets (Player Props, Spreads, Totals)
 
+    /// Fetches linked prediction markets, props, spreads, and totals for an event.
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
         return try await fetch("/api/events/\(eventId)/game-markets", cacheTTL: 60)
     }
 
     // MARK: - Search
 
+    /// Searches event pages by text query, with optional sport scoping and pagination.
     func fetchSearch(query: String, sport: String? = nil, page: Int = 1) async throws -> SearchResponse {
         var q: [String: String] = ["q": query, "page": "\(page)"]
         if let sport { q["sport"] = sport }
@@ -385,26 +394,31 @@ actor APIClient {
 
     // MARK: - Typeahead
 
+    /// Fetches lightweight search suggestions for the current query text.
     func fetchTypeahead(query: String) async throws -> TypeaheadResponse {
         return try await fetch("/api/events/typeahead", query: ["q": query])
     }
 
+    /// Fetches cached trending search suggestions for the search UI.
     func fetchTrendingSearches() async throws -> TrendingSearchesResponse {
         return try await fetch("/api/events/search/trending", cacheTTL: 300)
     }
 
     // MARK: - Team Page
 
+    /// Fetches the team page summary, events, and market context by team slug.
     func fetchTeamPage(slug: String) async throws -> TeamPageResponse {
         return try await fetch("/api/teams/\(slug)")
     }
 
     // MARK: - Futures Detail
 
+    /// Fetches a futures market detail page by backend market ID.
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail {
         return try await fetch("/api/futures/\(id)")
     }
 
+    /// Fetches outcome probability history for a futures market.
     func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168) async throws -> ProbabilityTimelineResponse {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
@@ -414,6 +428,7 @@ actor APIClient {
 
     // MARK: - EI Rankings
 
+    /// Fetches event importance rankings, optionally scoped to one sport.
     func fetchEIRankings(sport: String? = nil, limit: Int = 25) async throws -> EIRankingsResponse {
         var q: [String: String] = ["limit": "\(limit)"]
         if let sport { q["sport"] = sport }
@@ -422,6 +437,7 @@ actor APIClient {
 
     // MARK: - Faceted Search
 
+    /// Fetches browseable event results filtered by tags and date range.
     func fetchFacetedEvents(tags: [String] = [], page: Int = 1, days: Int = 14) async throws -> FacetedEventsResponse {
         var q: [String: String] = [
             "page": "\(page)",
@@ -435,6 +451,7 @@ actor APIClient {
         return try await fetch("/api/events/faceted", query: q, cacheTTL: 30)
     }
 
+    /// Fetches browseable futures results filtered by tags.
     func fetchFacetedFutures(tags: [String] = [], page: Int = 1) async throws -> FacetedFuturesResponse {
         var q: [String: String] = [
             "page": "\(page)",
@@ -449,6 +466,7 @@ actor APIClient {
 
     // MARK: - Auth
 
+    /// Exchanges an Apple identity token for a Bain Luck backend session.
     func signInWithApple(idToken: String, firstName: String?, lastName: String?) async throws -> AppleAuthResponse {
         return try await post("/api/auth/apple", body: [
             "id_token": idToken,
@@ -459,78 +477,93 @@ actor APIClient {
 
     // MARK: - Weather
 
+    /// Fetches featured weather prediction markets for the weather dashboard.
     func fetchWeatherFeatured() async throws -> [WeatherFeaturedItem] {
         return try await fetch("/api/weather/featured", cacheTTL: 120)
     }
 
+    /// Fetches supported cities and regions for weather market browsing.
     func fetchWeatherCities() async throws -> [WeatherCity] {
         return try await fetch("/api/weather/cities", cacheTTL: 120)
     }
 
     // MARK: - Economics
 
+    /// Fetches grouped economics markets for the economics dashboard.
     func fetchEconomics() async throws -> EconomicsResponse {
         return try await fetch("/api/economics", cacheTTL: 120)
     }
 
     // MARK: - Politics
 
+    /// Fetches grouped politics markets for the politics dashboard.
     func fetchPolitics() async throws -> PoliticsResponse {
         return try await fetch("/api/politics", cacheTTL: 120)
     }
 
     // MARK: - Entertainment
 
+    /// Fetches grouped entertainment markets for the entertainment dashboard.
     func fetchEntertainment() async throws -> EntertainmentResponse {
         return try await fetch("/api/entertainment", cacheTTL: 120)
     }
 
     // MARK: - League Markets
 
+    /// Fetches league-level futures, standings, and market sections by sport key.
     func fetchLeagueMarkets(sportKey: String) async throws -> LeagueMarketsResponse {
         return try await fetch("/api/leagues/\(sportKey)", cacheTTL: 120)
     }
 
     // MARK: - Auth
 
+    /// Exchanges a Google access token for a Bain Luck backend session.
     func signInWithGoogle(accessToken: String) async throws -> AppleAuthResponse {
         return try await post("/api/auth/google-access-token", body: [
             "access_token": accessToken,
         ])
     }
 
+    /// Fetches the currently authenticated user's profile.
     func fetchProfile() async throws -> AuthUser {
         return try await fetch("/api/auth/me")
     }
 
+    /// Checks whether the current session is authenticated.
     func fetchAuthStatus() async throws -> AuthStatusResponse {
         return try await fetch("/api/auth/status")
     }
 
     // MARK: - Onboarding
 
+    /// Searches teams near a location during onboarding.
     func searchTeamsByLocation(query: String) async throws -> [TeamSearchResult] {
         return try await fetch("/api/me/teams/by-location", query: ["q": query])
     }
 
+    /// Searches teams by name during onboarding and preference editing.
     func searchTeams(query: String) async throws -> [TeamSearchResult] {
         return try await fetch("/api/me/teams/search", query: ["q": query])
     }
 
+    /// Submits onboarding preferences and favorite teams for the current user.
     func submitOnboarding(_ submission: OnboardingSubmission) async throws -> OnboardingResponse {
         return try await postEncodable("/api/me/onboarding", body: submission)
     }
 
     // MARK: - Preferences
 
+    /// Fetches saved user preferences, favorite teams, and sport affinities.
     func fetchPreferences() async throws -> PreferencesResponse {
         return try await fetch("/api/me/preferences")
     }
 
+    /// Removes a favorite-team relation from the current user's preferences.
     func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
         return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
     }
 
+    /// Updates per-sport affinity weights used for personalization.
     func updateSportAffinities(_ affinities: [String: Double]) async throws -> StatusResponse {
         let body = SportAffinitiesUpdate(sportAffinities: affinities)
         return try await putEncodable("/api/me/preferences/sport-affinities", body: body)
@@ -538,86 +571,103 @@ actor APIClient {
 
     // MARK: - Pins
 
+    /// Fetches the current user's pinned events and futures.
     func fetchPins() async throws -> PinsResponse {
         return try await fetch("/api/me/pins")
     }
 
     // MARK: - Team Futures
 
+    /// Fetches futures related to the current user's favorite teams.
     func fetchMyTeamFutures(limit: Int = 100) async throws -> TeamFuturesResponse {
         return try await fetch("/api/me/team-futures", query: ["limit": "\(limit)"], cacheTTL: 300)
     }
 
     // MARK: - Championship Grids
 
+    /// Fetches a championship-grid page by playoff or league slug.
     func fetchChampionshipGrid(slug: String) async throws -> ChampionshipGridResponse {
         return try await fetch("/api/playoffs/\(slug)", cacheTTL: 300)
     }
 
     // MARK: - Golf
 
+    /// Fetches golf landing-page markets and tournament summaries.
     func fetchGolfLanding() async throws -> GolfLandingResponse {
         return try await fetch("/api/golf", cacheTTL: 120)
     }
 
+    /// Fetches the live golf leaderboard and win probabilities for a tour.
     func fetchGolfLeaderboard(tour: String = "pga") async throws -> GolfLeaderboardResponse {
         return try await fetch("/api/golf/leaderboard", query: ["tour": tour], cacheTTL: 30)
     }
 
+    /// Pins an event or futures market for the current user.
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))
     }
 
+    /// Removes an event or futures-market pin for the current user.
     func removePin(type: String, id: Int) async throws -> StatusResponse {
         return try await delete("/api/me/pins/\(type)/\(id)")
     }
 
     // MARK: - Predictions
 
+    /// Submits a Higher/Lower prediction for a Discover market.
     func submitPrediction(_ body: PredictionRequest) async throws -> StatusResponse {
         return try await postEncodable("/api/predictions", body: body)
     }
 
+    /// Fetches summary prediction stats for the current session or user.
     func fetchPredictionStats() async throws -> PredictionStats {
         return try await fetch("/api/predictions/stats")
     }
 
+    /// Fetches detailed prediction performance stats for the stats screen.
     func fetchDetailedPredictionStats() async throws -> DetailedPredictionStats {
         return try await fetch("/api/predictions/detailed-stats")
     }
 
+    /// Fetches recently resolved predictions for result review.
     func fetchResolutions() async throws -> ResolutionsResponse {
         return try await fetch("/api/predictions/resolutions")
     }
 
+    /// Records a Discover card interaction for feed personalization.
     func recordDiscoverInteraction(_ event: DiscoverInteractionEvent) async throws -> StatusResponse {
         return try await postEncodable("/api/feed/interactions", body: DiscoverInteractionRequest(interactions: [event]))
     }
 
     // MARK: - Bug Reports
 
+    /// Uploads a rage-shake bug report with screenshot and app state.
     func submitBugReport(_ body: BugReportSubmission) async throws -> BugReportResponse {
         return try await postEncodable("/api/feedback/bug-report", body: body, timeout: 120)
     }
 
     // MARK: - Calibration
 
+    /// Fetches public calibration buckets and error metrics.
     func fetchCalibration() async throws -> CalibrationData {
         return try await fetch("/api/calibration", cacheTTL: 300)
     }
 
     // MARK: - Friend Challenges
 
+    /// Fetches a friend challenge by share code.
     func fetchChallenge(code: String) async throws -> ChallengeResponse {
         return try await fetch("/api/challenges/\(code)")
     }
 
+    /// Accepts a friend challenge with the user's Higher/Lower guess.
     func acceptChallenge(code: String, guess: String) async throws -> AcceptChallengeResponse {
         return try await postEncodable("/api/challenges/\(code)/accept", body: AcceptChallengeRequest(guess: guess))
     }
 
     // MARK: - Notifications
 
+    /// Registers an APNs device token for push notifications.
     func registerDeviceToken(deviceToken: String, platform: String, userId: Int?) async throws -> NotificationRegisterResponse {
         var body: [String: String?] = [
             "device_token": deviceToken,

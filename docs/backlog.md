@@ -1299,7 +1299,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-12 | Create ViewModels/ directory | Move `PreferencesViewModel.swift`, `OnboardingViewModel.swift`, and newly extracted VMs | Consistent location for all ViewModels |
+| CQ-12 | Create ViewModels/ directory — partial | Moved `PreferencesViewModel.swift` and `OnboardingViewModel.swift`; newly extracted VMs still remaining | Consistent location for all ViewModels |
 | CQ-13 | Extract EventDetailViewModel | New `ViewModels/EventDetailViewModel.swift` | Move out of `EventDetailView.swift` (~150 lines) |
 | CQ-14 | Split Extensions.swift | New `Utils/ColorExtensions.swift`, `Utils/ProbabilityFormatting.swift`, `Utils/SportDisplayNames.swift` | The current file is a grab bag of unrelated utilities |
 
@@ -1321,6 +1321,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | ~~CQ-21~~ | ~~Remove dead code~~ | `EventDetailView.swift` | ✅ DONE May 17 — removed disabled tag placeholder views and now-unused tag helpers. |
 
 - CQ-20 slice done May 17: tightened public method doc comments in `NavigationCoordinator.swift`.
+- CQ-20 slice done May 17: documented `AuthManager` session responsibilities and auth entry points.
+- CQ-20 slice done May 17: added endpoint-purpose doc comments to callable methods in `APIClient.swift`.
 
 ### What NOT to do
 

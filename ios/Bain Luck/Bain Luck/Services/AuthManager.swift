@@ -14,14 +14,20 @@ private let logger = Logger(subsystem: "com.bainluck", category: "auth")
 private let keychainTokenKey = "com.bainluck.sessionToken"
 private let keychainAppleUserIdKey = "com.bainluck.appleUserId"
 
+/// Owns the app's authenticated session state and exchanges provider
+/// credentials for Bain Luck backend session tokens stored in Keychain.
 @MainActor
 final class AuthManager: ObservableObject {
+    /// The signed-in Bain Luck profile, or nil when the app is anonymous.
     @Published var user: AuthUser?
+    /// True while launch-time Keychain restore or token validation is running.
     @Published var isLoading = true
+    /// Last user-facing sign-in error for auth screens to present.
     @Published var error: String?
 
     private var appleSignInCoordinator: AppleSignInCoordinator?
 
+    /// True when a backend session has been restored or established.
     var isAuthenticated: Bool { user != nil }
 
     init() {
@@ -72,6 +78,8 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Apple Sign-In
 
+    /// Starts native Apple Sign-In and exchanges the Apple identity token with
+    /// the backend for a Bain Luck session token.
     func signInWithApple() {
         let coordinator = AppleSignInCoordinator { [weak self] result in
             Task { @MainActor [weak self] in
@@ -91,6 +99,8 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Google Sign-In
 
+    /// Starts Google Sign-In and exchanges the Google access token with the
+    /// backend for a Bain Luck session token.
     func signInWithGoogle() {
         Task {
             await handleGoogleSignIn()
@@ -99,6 +109,7 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Sign Out
 
+    /// Clears local session state, provider state, and analytics identity.
     func signOut() {
         clearStoredAuth()
         GIDSignIn.sharedInstance.signOut()
@@ -124,6 +135,7 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Refresh Profile
 
+    /// Reloads the current backend profile without changing stored credentials.
     func refreshProfile() async {
         guard isAuthenticated else { return }
         do {
@@ -136,6 +148,8 @@ final class AuthManager: ObservableObject {
 
     // MARK: - Credential State Check
 
+    /// Checks whether the stored Apple credential was revoked and signs out if
+    /// Apple no longer considers it valid.
     func checkCredentialState() {
         guard let appleUserIdData = KeychainHelper.load(key: keychainAppleUserIdKey),
               let appleUserId = String(data: appleUserIdData, encoding: .utf8) else {
@@ -305,6 +319,8 @@ final class AuthManager: ObservableObject {
     // MARK: - Shared Helpers
 
     #if os(iOS)
+    /// Returns the foreground scene's root view controller for native auth UI
+    /// presentation, preferring the key window under iPad multi-window modes.
     @MainActor
     static func findRootViewController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes
@@ -318,6 +334,7 @@ final class AuthManager: ObservableObject {
     }
     #endif
 
+    /// Maps low-level auth and API failures to short messages safe for display.
     static func userFacingAuthError(_ error: Error) -> String {
         if let apiError = error as? APIError {
             switch apiError {
