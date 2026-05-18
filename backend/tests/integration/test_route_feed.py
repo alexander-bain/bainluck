@@ -122,6 +122,150 @@ class TestFeedQueryParams:
         resp = await client.get("/api/feed?offset=-1")
         assert resp.status_code == 422
 
+    async def test_limit_validation_not_integer(self, client):
+        resp = await client.get("/api/feed?limit=abc")
+        assert resp.status_code == 422
+
+    async def test_include_events_validation_not_boolean(self, client):
+        resp = await client.get("/api/feed?include_events=maybe")
+        assert resp.status_code == 422
+
+    async def test_malformed_tags_are_ignored(self, client):
+        resp = await client.get("/api/feed?tags=not-json")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["items"] == []
+
+    async def test_non_list_tags_are_ignored(self, client):
+        resp = await client.get("/api/feed?tags=%7B%22sport%22%3A%22basketball%22%7D")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["items"] == []
+
+    async def test_include_both_false_skips_all_scorers(self, client, monkeypatch):
+        from app.routes import feed
+
+        called = {"events": False, "futures": False, "golf": False}
+
+        async def fake_score_events(*args, **kwargs):
+            called["events"] = True
+            return []
+
+        async def fake_score_futures(*args, **kwargs):
+            called["futures"] = True
+            return []
+
+        async def fake_score_golf(*args, **kwargs):
+            called["golf"] = True
+            return []
+
+        monkeypatch.setattr(feed, "_score_events", fake_score_events)
+        monkeypatch.setattr(feed, "_score_futures", fake_score_futures)
+        monkeypatch.setattr(feed, "_score_golf_tournaments", fake_score_golf)
+
+        resp = await client.get("/api/feed?include_events=false&include_futures=false")
+
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+        assert called == {"events": False, "futures": False, "golf": False}
+
+
+class TestFeedMockedDataContract:
+    async def test_mocked_futures_response_envelope_and_item_shape(self, client, monkeypatch):
+        from app.routes import feed
+
+        async def fake_score_futures(*args, **kwargs):
+            return [
+                {
+                    "type": "futures",
+                    "score": 84,
+                    "reason": "Leader moved higher",
+                    "headline": "Acme leads at 64%",
+                    "context_summary": "Acme is the current leader.",
+                    "data": {
+                        "id": 101,
+                        "name": "Who will win the launch race?",
+                        "source": "kalshi",
+                        "source_count": 1,
+                        "sources": ["kalshi"],
+                        "market_tier": 3,
+                        "status": "open",
+                        "top_outcomes": [
+                            {"id": 1, "name": "Acme", "probability": 0.64, "rank": 1, "movement": 0.08},
+                        ],
+                        "outcome_count": 2,
+                        "market_tags": ["category:tech", "source:kalshi"],
+                    },
+                    "_sort_time": 1000,
+                    "_quality_class": "keep",
+                    "_quality_family_key": "launch",
+                    "_quality_story_key": "launch-race",
+                }
+            ]
+
+        async def fake_apply_review_decisions(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(feed, "_score_futures", fake_score_futures)
+        monkeypatch.setattr(feed, "_apply_manual_review_decisions", fake_apply_review_decisions)
+        monkeypatch.setattr(feed, "diversify_discover_first_page", lambda items, **kwargs: items)
+
+        resp = await client.get("/api/feed?include_events=false")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert set(body) == {"items", "total", "limit", "offset", "has_more"}
+        assert body["total"] == 1
+        assert body["has_more"] is False
+        assert len(body["items"]) == 1
+
+        item = body["items"][0]
+        assert item["type"] == "futures"
+        assert item["score"] == 84
+        assert item["reason"] == "Leader moved higher"
+        assert item["headline"] == "Acme leads at 64%"
+        assert item["context_summary"] == "Acme is the current leader."
+        assert "_sort_time" not in item
+        assert "_quality_class" not in item
+        assert "_quality_family_key" not in item
+        assert "_quality_story_key" not in item
+
+        data = item["data"]
+        assert data["id"] == 101
+        assert data["source"] == "kalshi"
+        assert data["sources"] == ["kalshi"]
+        assert data["top_outcomes"][0]["probability"] == 0.64
+        assert data["market_tags"] == ["category:tech", "source:kalshi"]
+
+    async def test_mocked_items_are_sorted_and_paginated_after_scoring(self, client, monkeypatch):
+        from app.routes import feed
+
+        async def fake_score_futures(*args, **kwargs):
+            return [
+                {"type": "futures", "score": 10, "reason": "low", "headline": "Low", "data": {"id": 1}},
+                {"type": "futures", "score": 90, "reason": "high", "headline": "High", "data": {"id": 2}},
+                {"type": "futures", "score": 50, "reason": "mid", "headline": "Mid", "data": {"id": 3}},
+            ]
+
+        async def fake_apply_review_decisions(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(feed, "_score_futures", fake_score_futures)
+        monkeypatch.setattr(feed, "_apply_manual_review_decisions", fake_apply_review_decisions)
+        monkeypatch.setattr(feed, "diversify_discover_first_page", lambda items, **kwargs: items)
+
+        resp = await client.get("/api/feed?include_events=false&limit=1&offset=1")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["total"] == 3
+        assert body["limit"] == 1
+        assert body["offset"] == 1
+        assert body["has_more"] is True
+        assert [item["data"]["id"] for item in body["items"]] == [3]
+
 
 class TestFeedDebug:
     async def test_debug_requires_admin_secret(self, client, monkeypatch):

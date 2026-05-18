@@ -1179,14 +1179,15 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-~~110~~ ~~158~~ ~~210~~ ~~218~~ 390+ contract tests shipped. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, and related futures coverage. Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ ~~218~~ 440+ contract tests shipped. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, and playoffs coverage. Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
 - ✅ Related futures: market grouping, dedup, gender filtering, debug counters
 - ✅ Category/futures routes: mocked non-empty contracts, envelope shape, filtering/sorting/pagination behavior
+- ✅ Feed/events/playoffs routes: parameter validation, empty envelopes, mocked scored items, live-odds provider errors, playoff grid and league-futures contracts
 
-**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`
+**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`
 **Parallel Safety:** Green
 
 ---

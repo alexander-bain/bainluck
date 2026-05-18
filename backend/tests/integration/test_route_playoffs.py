@@ -7,9 +7,13 @@ Tests:
 - GET /api/events/search/trending — trending search queries
 """
 
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.config.league_configs import get_all_league_slugs
+from app.models import FuturesMarket, FuturesOutcome
 
 
 # All configured league slugs — tests run against each
@@ -25,6 +29,62 @@ LEAGUE_SPORT_KEYS = [
     "americanfootball_nfl",
     "basketball_wnba",
 ]
+
+
+def _mock_result(rows=None):
+    """Create a SQLAlchemy-ish Result mock for deterministic route contracts."""
+    rows = rows or []
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    result.scalars.return_value.first.return_value = rows[0] if rows else None
+    result.scalars.return_value.unique.return_value.all.return_value = rows
+    result.scalar_one_or_none.return_value = rows[0] if rows else None
+    result.scalar.return_value = rows[0] if rows else None
+    result.fetchall.return_value = rows
+    result.all.return_value = rows
+    result.first.return_value = rows[0] if rows else None
+    return result
+
+
+def _playoff_market(
+    *,
+    market_id=101,
+    name="NBA Championship 2025-26",
+    source="odds_api",
+    external_id="basketball_nba_championship_2025",
+    market_tier=1,
+    outcomes=None,
+):
+    market = FuturesMarket(
+        id=market_id,
+        source=source,
+        external_id=external_id,
+        name=name,
+        category="championship",
+        llm_sport_category="basketball",
+        market_tier=market_tier,
+        status="open",
+        volume_24h=250,
+    )
+    market.outcomes = outcomes or [
+        FuturesOutcome(
+            id=201,
+            market_id=market_id,
+            external_id="los-angeles-lakers",
+            name="Los Angeles Lakers",
+            current_probability=0.35,
+            last_updated=datetime.now(timezone.utc),
+        ),
+        FuturesOutcome(
+            id=202,
+            market_id=market_id,
+            external_id="boston-celtics",
+            name="Boston Celtics",
+            current_probability=0.25,
+            last_updated=datetime.now(timezone.utc),
+        ),
+    ]
+    return market
 
 
 # ============================================================================
@@ -147,6 +207,118 @@ class TestPlayoffGridShape:
         body = resp.json()
         assert isinstance(body["last_updated"], str)
         assert "T" in body["last_updated"]
+
+    async def test_empty_db_returns_empty_grid_contract(self, client):
+        resp = await client.get("/api/playoffs/nba")
+        body = resp.json()
+        assert body["columns"] == []
+        assert body["teams"] == []
+        assert body["movers"] == []
+        assert body["sources_available"] == []
+        assert body["grouped_teams"] is None
+        assert body["championship_market_id"] is None
+        assert body["team_count"] == 0
+        assert body["trend_chart"]["timeline"] == []
+        assert body["trend_chart"]["outcomes"] == []
+
+
+class TestPlayoffGridMockedData:
+    """Focused non-empty grid contracts using local mocked market data."""
+
+    async def test_mocked_championship_market_builds_team_rows(
+        self,
+        client,
+        mock_db,
+        monkeypatch,
+    ):
+        market = _playoff_market()
+        mock_db.execute.side_effect = [
+            _mock_result(),          # SET LOCAL statement_timeout
+            _mock_result([]),        # matching overrides
+            _mock_result([market]),  # futures markets
+            _mock_result([]),        # resolved-market backfill
+        ]
+        monkeypatch.setattr(
+            "app.routes.playoffs._get_team_metadata",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._compute_movers",
+            AsyncMock(return_value={201: 0.30, 202: 0.20}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._build_trend_chart",
+            AsyncMock(return_value={"timeline": [], "outcomes": []}),
+        )
+
+        resp = await client.get("/api/playoffs/nba?top=1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["team_count"] == 2
+        assert body["sources_available"] == ["odds_api"]
+        assert body["championship_market_id"] == 101
+        assert body["trend_chart"]["column"] == "championship"
+        assert body["trend_chart"]["top"] == 1
+
+        team_names = {team["name"] for team in body["teams"]}
+        assert team_names == {"Los Angeles Lakers", "Boston Celtics"}
+        for team in body["teams"]:
+            assert set(team["cells"]) == {"championship"}
+            cell = team["cells"]["championship"]
+            assert 0 < cell["merged_probability"] < 1
+            assert cell["sources"] == [
+                {
+                    "source": "odds_api",
+                    "probability": cell["merged_probability"],
+                    "market_name": "NBA Championship 2025-26",
+                }
+            ]
+
+    async def test_debug_true_includes_column_market_diagnostics(
+        self,
+        client,
+        mock_db,
+        monkeypatch,
+    ):
+        market = _playoff_market()
+        mock_db.execute.side_effect = [
+            _mock_result(),
+            _mock_result([]),
+            _mock_result([market]),
+            _mock_result([]),
+        ]
+        monkeypatch.setattr(
+            "app.routes.playoffs._get_team_metadata",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._compute_movers",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._build_trend_chart",
+            AsyncMock(return_value={"timeline": [], "outcomes": []}),
+        )
+
+        resp = await client.get("/api/playoffs/nba?debug=true")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "_debug_column_markets" in body
+        assert body["_debug_column_markets"]["championship"] == [
+            {
+                "market_id": 101,
+                "source": "odds_api",
+                "name": "NBA Championship 2025-26",
+                "external_id": "basketball_nba_championship_2025",
+                "outcome_count": 2,
+                "sample_outcomes": [
+                    {"name": "Los Angeles Lakers", "prob": 0.35},
+                    {"name": "Boston Celtics", "prob": 0.25},
+                ],
+            }
+        ]
 
 
 class TestPlayoffGridAllLeagues:
@@ -369,6 +541,56 @@ class TestPlayoffGridQueryParams:
         resp = await client.get("/api/playoffs/nba?top=0")
         assert resp.status_code == 422
 
+    async def test_top_param_non_integer_returns_422(self, client):
+        resp = await client.get("/api/playoffs/nba?top=abc")
+        assert resp.status_code == 422
+
+    async def test_hours_param_non_integer_returns_422(self, client):
+        resp = await client.get("/api/playoffs/nba?hours=soon")
+        assert resp.status_code == 422
+
+    async def test_debug_false_omits_debug_payload(self, client):
+        resp = await client.get("/api/playoffs/nba?debug=false")
+        body = resp.json()
+        assert resp.status_code == 200
+        assert "_debug_column_markets" not in body
+
+
+class TestPlayoffGridLeagueSlugBehavior:
+    """League slug parameter behavior stays explicit and deterministic."""
+
+    async def test_slug_matching_is_case_sensitive(self, client):
+        resp = await client.get("/api/playoffs/NBA")
+        assert resp.status_code == 404
+
+    async def test_known_golf_slug_uses_empty_grid_when_datagolf_unconfigured(
+        self,
+        client,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("DATAGOLF_API_KEY", raising=False)
+        resp = await client.get("/api/playoffs/golf")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["league"] == "golf"
+        assert body["teams"] == []
+        assert body["team_count"] == 0
+
+
+class TestPlayoffGolfScheduleErrors:
+    """External golf schedule errors should be explicit and network-free."""
+
+    async def test_golf_schedule_without_datagolf_key_returns_503(
+        self,
+        client,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("DATAGOLF_API_KEY", raising=False)
+        resp = await client.get("/api/playoffs/golf/schedule")
+        body = resp.json()
+        assert resp.status_code == 503
+        assert body["detail"] == "DataGolf API not configured"
+
 
 class TestPlayoffGridMovers:
     """Movers structure validation."""
@@ -499,6 +721,99 @@ class TestLeagueFuturesEndpoint:
             assert section_name in valid_sections, (
                 f"Unknown section '{section_name}', expected one of {valid_sections}"
             )
+
+    async def test_empty_db_returns_empty_sections_contract(self, client):
+        resp = await client.get("/api/leagues/basketball_nba")
+        body = resp.json()
+        assert body == {
+            "sport_key": "basketball_nba",
+            "sections": {},
+            "total_markets": 0,
+        }
+
+    async def test_mocked_award_market_is_grouped_with_outcome_shape(
+        self,
+        client,
+        mock_db,
+    ):
+        market = FuturesMarket(
+            id=301,
+            source="kalshi",
+            external_id="KXNBAMVP-26",
+            name="NBA MVP 2026",
+            category="award",
+            llm_sport_category="basketball",
+            llm_league="nba",
+            market_tier=3,
+            status="open",
+            canonical_market_key="basketball_nba_mvp_2026",
+        )
+        market.outcomes = [
+            FuturesOutcome(
+                id=401,
+                market_id=301,
+                external_id="nikola-jokic",
+                name="Nikola Jokic",
+                current_probability=0.42,
+                opening_probability=0.30,
+                probability_change_24h=0.04,
+                rank=1,
+                team_id=15,
+            ),
+            FuturesOutcome(
+                id=402,
+                market_id=301,
+                external_id="shai-gilgeous-alexander",
+                name="Shai Gilgeous-Alexander",
+                current_probability=0.26,
+                opening_probability=0.22,
+                probability_change_24h=-0.01,
+                rank=2,
+                team_id=25,
+            ),
+        ]
+        mock_db.execute.return_value = _mock_result([market])
+
+        resp = await client.get("/api/leagues/basketball_nba")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sport_key"] == "basketball_nba"
+        assert body["total_markets"] == 1
+        assert set(body["sections"]) == {"awards"}
+        assert body["sections"]["awards"] == [
+            {
+                "id": 301,
+                "name": "NBA MVP 2026",
+                "source": "kalshi",
+                "market_tier": 3,
+                "category": "award",
+                "resolution_date": None,
+                "outcome_count": 2,
+                "top_outcomes": [
+                    {
+                        "id": 401,
+                        "name": "Nikola Jokic",
+                        "probability": 0.42,
+                        "opening_probability": 0.3,
+                        "rank": 1,
+                        "movement_24h": 0.04,
+                        "team_id": 15,
+                    },
+                    {
+                        "id": 402,
+                        "name": "Shai Gilgeous-Alexander",
+                        "probability": 0.26,
+                        "opening_probability": 0.22,
+                        "rank": 2,
+                        "movement_24h": -0.01,
+                        "team_id": 25,
+                    },
+                ],
+                "canonical_market_key": "basketball_nba_mvp_2026",
+                "section": "awards",
+            }
+        ]
 
 
 class TestLeagueFuturesMarketItemShape:
