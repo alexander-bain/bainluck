@@ -380,7 +380,7 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     if has_exception_keyword and has_major_league_context:
         return True
 
-    return item.get("score", 0) >= 90 and ei_score >= 50
+    return item.get("score", 0) >= 90 and ei_score >= 50 and has_major_league_context
 
 
 def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:

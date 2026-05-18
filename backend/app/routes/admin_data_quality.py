@@ -109,6 +109,73 @@ async def get_snapshot_stats(
     }
 
 
+@router.get("/snapshots/distribution")
+async def get_snapshot_distribution(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    status_filter: str = Query("open", description="Market status filter: open, resolved, all"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Snapshot count distribution per outcome by source.
+
+    Shows how many outcomes fall into each snapshot-count bucket,
+    revealing sparse-data problems beyond just zero-snapshot counts.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    status_clause = ""
+    if status_filter == "open":
+        status_clause = "AND fm.status IN ('open', 'active')"
+    elif status_filter == "resolved":
+        status_clause = "AND fm.status = 'resolved'"
+
+    rows = (await db.execute(text(f"""
+        WITH outcome_snap_counts AS (
+            SELECT fo.id AS outcome_id,
+                   fm.source,
+                   COUNT(fos.id) AS snap_count
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            LEFT JOIN futures_odds_snapshots fos ON fos.outcome_id = fo.id
+            WHERE 1=1 {status_clause}
+            GROUP BY fo.id, fm.source
+        )
+        SELECT source,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE snap_count = 0) AS zero,
+               COUNT(*) FILTER (WHERE snap_count BETWEEN 1 AND 5) AS bucket_1_5,
+               COUNT(*) FILTER (WHERE snap_count BETWEEN 6 AND 20) AS bucket_6_20,
+               COUNT(*) FILTER (WHERE snap_count BETWEEN 21 AND 50) AS bucket_21_50,
+               COUNT(*) FILTER (WHERE snap_count BETWEEN 51 AND 100) AS bucket_51_100,
+               COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
+               ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
+        FROM outcome_snap_counts
+        GROUP BY source
+        ORDER BY source
+    """))).all()
+
+    return {
+        "status_filter": status_filter,
+        "sources": [
+            {
+                "source": r.source,
+                "total_outcomes": r.total,
+                "zero_snapshots": r.zero,
+                "1_to_5": r.bucket_1_5,
+                "6_to_20": r.bucket_6_20,
+                "21_to_50": r.bucket_21_50,
+                "51_to_100": r.bucket_51_100,
+                "100_plus": r.bucket_100_plus,
+                "avg_snapshots": float(r.avg_snaps) if r.avg_snaps else 0,
+                "median_snapshots": float(r.median_snaps) if r.median_snaps else 0,
+                "sparse_pct": round(100 * (r.zero + r.bucket_1_5) / max(r.total, 1), 1),
+            }
+            for r in rows
+        ],
+    }
+
+
 # =============================================================================
 # Prediction Market → Event Matching
 # =============================================================================
