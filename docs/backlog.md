@@ -319,9 +319,11 @@ Instead of blocklisting obscure elections (whack-a-mole), define `_MAJOR_ELECTIO
 
 **Files:** `backend/app/utils/futures_highlights.py`
 
-**0u-R5. Soccer league allowlist: penalize non-top-tier soccer futures**
+**~~0u-R5. Soccer league allowlist: penalize non-top-tier soccer futures~~** — SHIPPED May 18
 
 Define `_TOP_TIER_SOCCER_RE` — EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa League, MLS, FIFA World Cup, Copa Libertadores, Copa America, Liga MX. Soccer futures not matching this AND not already caught by `_MINOR_LEAGUE_PATTERNS` get `OBSCURE_SOCCER_PENALTY = -20`. Add story keys and caps: `story:foreign_local_elections` (cap 1), `story:minor_soccer_leagues` (cap 1).
+
+**Fix shipped:** Futures highlight scoring now applies `OBSCURE_SOCCER_PENALTY = -20` to soccer futures that are neither minor-pattern matches nor top-tier allowlist matches. Feed market quality now groups non-top-tier soccer into `story:minor_soccer_leagues` with a cap of 1. Focused tests cover the top-tier allowlist, Chilean Primera Division penalty, story key, and cap.
 
 **Files:** `backend/app/utils/futures_highlights.py`, `backend/app/utils/feed_market_quality.py`
 
@@ -333,9 +335,11 @@ Current max category penalty is -0.40 (0.60x multiplier). A 100-score market bec
 
 **Files:** `backend/app/utils/personalization.py`, `backend/app/routes/feed.py` (`_build_discover_category_affinities()`)
 
-**0u-R7. Story-key propagation of dismiss signal**
+**~~0u-R7. Story-key propagation of dismiss signal~~** — SHIPPED May 18
 
 Currently dismissing market #12345 only suppresses that exact ID. Add `recent_dismissed_story_keys` and `recent_dismissed_group_ids` to `PersonalizationContext`. Compute `_story_key()` from each dismissed market's `item_name` during context loading. Suppress all markets matching a dismissed story_key or group_id.
+
+**Fix shipped:** Discover personalization context now records recently dismissed story keys and grouped futures IDs. `_score_futures()` skips candidates sharing a dismissed group_id or story_key outside My Teams mode. Tests cover group propagation, story-key propagation, and My Teams bypass behavior.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/personalization.py`
 
@@ -343,7 +347,7 @@ Currently dismissing market #12345 only suppresses that exact ID. Add `recent_di
 
 Unit tests for: league-gated event demotion (Ligue 2 upset demoted, NBA upset kept), Russia-war story key matching and cap, election/soccer allowlists, escalated penalty tiers, story-key dismiss propagation.
 
-**May 18 coverage shipped:** R1, R2, R3, and R6 have focused tests/build coverage. Remaining test work tracks R4, R5, and R7 after those items are implemented.
+**May 18 coverage shipped:** R1, R2, R3, R5, R6, and R7 have focused tests/build coverage. Remaining test work tracks R4 after it is implemented.
 
 **Files:** `backend/tests/test_feed_market_quality.py`, `backend/tests/test_personalization.py`, new test files as needed
 

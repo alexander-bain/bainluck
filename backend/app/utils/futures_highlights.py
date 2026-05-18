@@ -68,6 +68,17 @@ _MINOR_LEAGUE_PATTERNS = re.compile(
 
 # Penalty applied to minor league futures (offsets the major_league bonus)
 MINOR_LEAGUE_PENALTY = -15
+OBSCURE_SOCCER_PENALTY = -20
+
+_TOP_TIER_SOCCER_RE = re.compile(
+    r"\b("
+    r"premier league|epl|la liga|bundesliga|serie a|ligue 1|"
+    r"champions league|ucl|europa league|mls|major league soccer|"
+    r"world cup|fifa|copa america|copa libertadores|liga mx|"
+    r"euro 20\d{2}|euros 20\d{2}|european championship"
+    r")\b",
+    re.IGNORECASE,
+)
 
 # Category base scores — calibrated against Polymarket ground truth (April 30, 2026).
 # Non-sports categories need a floor score because they lack the signals
@@ -131,6 +142,30 @@ _OBSCURE_ELECTION_PATTERNS = re.compile(
     r"|(andalusia|bavaria|saxony|thuringia|hesse).*(election|winner))",
     re.IGNORECASE,
 )
+
+_MAJOR_ELECTION_RE = re.compile(
+    r"("
+    r"\b(u\.?s\.?|united states|american)\b.*\b(president|presidential|senate|house|congress|governor|gubernatorial)\b|"
+    r"\b(president|presidential|senate|house|congress|governor|gubernatorial)\b.*\b(u\.?s\.?|united states|american|20\d{2})\b|"
+    r"\b(uk|united kingdom|british|french|france|german|germany|canadian|canada|"
+    r"mexican|mexico|brazilian|brazil|indian|india|japanese|japan|australian|australia|"
+    r"south korea|italian|italy|spanish|spain|chilean|chile|argentin|colombian|colombia|"
+    r"nigerian|nigeria|south africa|turkish|turkey|polish|poland|ukrainian|ukraine|"
+    r"israeli|israel|iranian|iran|taiwan|philippine|indonesia|egyptian|egypt)\b"
+    r".*\b(general election|presidential|prime minister|parliament|chancellor|bundestag|"
+    r"election winner|win the election)\b|"
+    r"\b(general election|presidential|prime minister|parliament)\b"
+    r".*\b(uk|united kingdom|british|french|france|german|germany|canadian|canada|"
+    r"mexican|mexico|brazilian|brazil|indian|india|japanese|japan|australian|australia|"
+    r"south korea|italian|italy|spanish|spain|chilean|chile|argentin|colombian|colombia|"
+    r"nigerian|nigeria|south africa|turkish|turkey|polish|poland|ukrainian|ukraine|"
+    r"israeli|israel|iranian|iran|taiwan|philippine|indonesia|egyptian|egypt)\b|"
+    r"\b(eu parliament|european parliament|un secretary|nato)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+FOREIGN_LOCAL_ELECTION_PENALTY = -30
 
 # Compelling market patterns — genuinely interesting content
 _COMPELLING_PATTERNS = [
@@ -229,6 +264,11 @@ def is_minor_league_market(market_name: str) -> bool:
     return bool(_MINOR_LEAGUE_PATTERNS.search(market_name))
 
 
+def is_top_tier_soccer_market(market_name: str) -> bool:
+    """Check if a soccer futures market has broad/top-tier audience interest."""
+    return bool(_TOP_TIER_SOCCER_RE.search(market_name or ""))
+
+
 def compute_futures_highlight(
     # Market metadata
     market_tier: Optional[int] = None,
@@ -300,6 +340,17 @@ def compute_futures_highlight(
         result.score += OBSCURE_ELECTION_PENALTY
         result.reasons.append("obscure_election")
 
+    # === Non-major election penalty (allowlist inversion) ===
+    if (
+        _sport_lower == "politics"
+        and _market_name
+        and re.search(r"\b(election|winner|nominee|primary|caucus)\b", _market_name, re.IGNORECASE)
+        and not _MAJOR_ELECTION_RE.search(_market_name)
+        and "obscure_election" not in result.reasons
+    ):
+        result.score += FOREIGN_LOCAL_ELECTION_PENALTY
+        result.reasons.append("non_major_election")
+
     # === Compelling market boost (skip if boring) ===
     if "boring_pattern" not in result.reasons and _market_name:
         compelling_hits = sum(1 for p in _COMPELLING_PATTERNS if p.search(_market_name))
@@ -322,6 +373,12 @@ def compute_futures_highlight(
 
     # === League/sport scoring ===
     _is_minor = market_name and is_minor_league_market(market_name)
+    _is_obscure_soccer = (
+        bool(market_name)
+        and _sport_lower == "soccer"
+        and not _is_minor
+        and not is_top_tier_soccer_market(market_name or "")
+    )
     if sport_category:
         sport_lower = sport_category.lower()
         league_tier = FUTURES_LEAGUE_TIERS.get(sport_lower, 3)
@@ -331,6 +388,9 @@ def compute_futures_highlight(
             # An AHL championship is NOT as interesting as an NBA game.
             result.score += MINOR_LEAGUE_PENALTY
             result.reasons.append("minor_league")
+        elif _is_obscure_soccer:
+            result.score += OBSCURE_SOCCER_PENALTY
+            result.reasons.append("obscure_soccer")
         elif league_tier == 1:
             result.score += FUTURES_WEIGHTS["major_league"]
             result.reasons.append("major_league")

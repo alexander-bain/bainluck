@@ -6,6 +6,7 @@ from app.utils.futures_highlights import (
     compute_futures_highlight,
     should_highlight_futures,
     is_minor_league_market,
+    is_top_tier_soccer_market,
     MAJOR_MOVEMENT_THRESHOLD,
     MODERATE_MOVEMENT_THRESHOLD,
 )
@@ -500,6 +501,11 @@ class TestMinorLeagueDetection:
     def test_epl_not_minor(self):
         assert is_minor_league_market("English Premier League Winner") is False
 
+    def test_top_tier_soccer_allowlist(self):
+        assert is_top_tier_soccer_market("Premier League winner") is True
+        assert is_top_tier_soccer_market("UEFA Champions League winner") is True
+        assert is_top_tier_soccer_market("Chilean Primera Division winner") is False
+
     def test_minor_league_gets_score_penalty(self):
         """Minor league futures should score significantly lower."""
         nhl = compute_futures_highlight(
@@ -539,6 +545,23 @@ class TestMinorLeagueDetection:
         # category_base (18.5) + tier 1 (15) + minor penalty (-15) + resolving_soon (15) + multi_source (10) = 43.5
         # Still much lower than NHL championship (55+)
         assert result.score <= 45
+
+    def test_obscure_soccer_gets_penalty_without_minor_pattern(self):
+        top_tier = compute_futures_highlight(
+            market_tier=1,
+            sport_category="soccer",
+            market_name="UEFA Champions League Winner",
+        )
+        obscure = compute_futures_highlight(
+            market_tier=1,
+            sport_category="soccer",
+            market_name="Chilean Primera Division Winner",
+        )
+
+        assert "secondary_league" in top_tier.reasons
+        assert "obscure_soccer" in obscure.reasons
+        assert "secondary_league" not in obscure.reasons
+        assert obscure.score < top_tier.score
 
 
 class TestFeedReasons:

@@ -373,6 +373,19 @@ class TestMarketQualityClassification:
         assert {quality.story_key for quality in qualities} == {"story:russia_ukraine"}
         assert all(quality.quality_class != "suppress" for quality in qualities)
 
+    def test_story_key_groups_minor_soccer_leagues(self):
+        minor = classify_market_quality(
+            "Who will win the Chilean Primera Division?",
+            sport_category="soccer",
+        )
+        major = classify_market_quality(
+            "Who will win the Premier League?",
+            sport_category="soccer",
+        )
+
+        assert minor.story_key == "story:minor_soccer_leagues"
+        assert major.story_key != "story:minor_soccer_leagues"
+
     def test_story_key_groups_repeated_company_stake_and_tournament_props(self):
         stake = classify_market_quality(
             "Will the US federal government take a stake in Lockheed Martin Corporation?",
@@ -1252,6 +1265,38 @@ class TestQualityFamilyDiversity:
         assert len(russia_war) == 2
         assert [i["score"] for i in russia_war] == [100, 99]
         assert any(i["_quality_story_key"] == "story:ai" for i in capped)
+
+    def test_diversify_caps_minor_soccer_story_to_one(self):
+        items = [
+            {
+                "score": 100,
+                "_quality_class": "compelling",
+                "_quality_family_key": "chilean primera division",
+                "_quality_story_key": "story:minor_soccer_leagues",
+            },
+            {
+                "score": 95,
+                "_quality_class": "compelling",
+                "_quality_family_key": "peruvian liga 1",
+                "_quality_story_key": "story:minor_soccer_leagues",
+            },
+            {
+                "score": 90,
+                "_quality_class": "compelling",
+                "_quality_family_key": "premier league",
+                "_quality_story_key": None,
+            },
+        ]
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        minor_soccer = [
+            item for item in capped
+            if item["_quality_story_key"] == "story:minor_soccer_leagues"
+        ]
+        assert len(minor_soccer) == 1
+        assert minor_soccer[0]["score"] == 100
+        assert any(item["_quality_family_key"] == "premier league" for item in capped)
 
     def test_diversify_hard_caps_regional_and_niche_low_signal_stories(self):
         items = [

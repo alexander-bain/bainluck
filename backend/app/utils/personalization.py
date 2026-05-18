@@ -96,6 +96,8 @@ class PersonalizationContext:
     recent_seen_futures_ids: set[int] = field(default_factory=set)
     recent_dismissed_event_ids: set[int] = field(default_factory=set)
     recent_dismissed_futures_ids: set[int] = field(default_factory=set)
+    recent_dismissed_story_keys: set[str] = field(default_factory=set)
+    recent_dismissed_group_ids: set[str] = field(default_factory=set)
     # Whether this is a real user context (vs anonymous)
     is_authenticated: bool = False
 

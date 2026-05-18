@@ -42,6 +42,7 @@ from app.utils import (
 from app.utils.highlights import parse_game_progress
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_market_quality import (
+    _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
     cap_low_quality_families,
@@ -388,6 +389,32 @@ def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
             continue
         if not _is_discover_event_demotion_exception(item):
             item["score"] = min(item["score"], 35)
+
+
+def _should_skip_futures_for_recent_dismissal(
+    *,
+    market,
+    quality=None,
+    ctx: PersonalizationContext,
+    my_teams_only: bool,
+) -> bool:
+    """Propagate recent negative feedback across grouped/story-related futures."""
+    if my_teams_only:
+        return False
+
+    if (
+        ctx.recent_dismissed_group_ids
+        and getattr(market, "group_id", None)
+        and str(market.group_id) in ctx.recent_dismissed_group_ids
+    ):
+        return True
+
+    return bool(
+        quality
+        and ctx.recent_dismissed_story_keys
+        and quality.story_key
+        and quality.story_key in ctx.recent_dismissed_story_keys
+    )
 
 
 def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
@@ -1689,6 +1716,8 @@ async def _load_personalization_context(
             DiscoverInteraction.item_id,
             DiscoverInteraction.action,
             func.max(DiscoverInteraction.created_at).label("last_seen"),
+            func.max(DiscoverInteraction.item_name).label("item_name"),
+            func.max(DiscoverInteraction.category).label("category"),
         )
         .where(
             interaction_identity_clause,
@@ -1726,8 +1755,10 @@ async def _load_personalization_context(
     recent_seen_futures_ids: set[int] = set()
     recent_dismissed_event_ids: set[int] = set()
     recent_dismissed_futures_ids: set[int] = set()
+    recent_dismissed_story_keys: set[str] = set()
+    recent_dismissed_group_ids: set[str] = set()
     if interaction_suppression_enabled:
-        for item_type, item_id_raw, action, last_seen in recent_items_result.all():
+        for item_type, item_id_raw, action, last_seen, item_name, category in recent_items_result.all():
             try:
                 item_id = int(item_id_raw)
             except (TypeError, ValueError):
@@ -1738,11 +1769,25 @@ async def _load_personalization_context(
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
                     recent_dismissed_futures_ids.add(item_id)
+                if item_name:
+                    sk = compute_story_key(item_name, category or "")
+                    if sk:
+                        recent_dismissed_story_keys.add(sk)
             elif action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff:
                 if item_type == "event":
                     recent_seen_event_ids.add(item_id)
                 elif item_type == "futures":
                     recent_seen_futures_ids.add(item_id)
+
+    if recent_dismissed_futures_ids:
+        gid_result = await db.execute(
+            select(FuturesMarket.group_id).where(
+                FuturesMarket.id.in_(recent_dismissed_futures_ids),
+                FuturesMarket.group_id.isnot(None),
+            )
+        )
+        for (gid,) in gid_result.all():
+            recent_dismissed_group_ids.add(str(gid))
 
     # Load roster player names from followed teams for player-futures matching
     roster_player_names: set[str] = set()
@@ -1782,6 +1827,8 @@ async def _load_personalization_context(
         recent_seen_futures_ids=recent_seen_futures_ids,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
         recent_dismissed_futures_ids=recent_dismissed_futures_ids,
+        recent_dismissed_story_keys=recent_dismissed_story_keys,
+        recent_dismissed_group_ids=recent_dismissed_group_ids,
         is_authenticated=bool(user),
     )
 
@@ -1828,7 +1875,11 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         # Escalate penalty when negative swipes dominate: 3+ dismiss/unlike
         # actions with a strongly negative raw score unlock a deeper floor.
         n_negative = negative_counts.get(category, 0)
-        if n_negative >= 3 and score < -4.0:
+        if n_negative >= 8 and score < -12.0:
+            floor = -0.80
+        elif n_negative >= 5 and score < -8.0:
+            floor = -0.60
+        elif n_negative >= 3 and score < -4.0:
             floor = -0.40
         else:
             floor = -0.15
@@ -2721,6 +2772,12 @@ async def _score_futures(
                 continue
             if market.id in ctx.recent_seen_futures_ids:
                 continue
+            if _should_skip_futures_for_recent_dismissal(
+                market=market,
+                ctx=ctx,
+                my_teams_only=my_teams_only,
+            ):
+                continue
 
         # Prepare outcome data for scoring
         outcomes_data = []
@@ -2894,6 +2951,13 @@ async def _score_futures(
             outcome_names=[o.name for o in market.outcomes if o.name],
         )
         if quality.quality_class == "suppress":
+            continue
+        if _should_skip_futures_for_recent_dismissal(
+            market=market,
+            quality=quality,
+            ctx=ctx,
+            my_teams_only=my_teams_only,
+        ):
             continue
 
         base_score = apply_quality_score(highlight_result.score, quality)

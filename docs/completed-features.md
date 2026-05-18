@@ -33,6 +33,8 @@
 - ✅ **Russia-war story cap** — Ukraine-omitted Russia territory/capture markets now share the capped `story:russia_ukraine` diversity family.
 - ✅ **Discover dismiss persistence** — web Discover dismissals now persist to localStorage so refreshed anonymous sessions do not immediately replay dismissed cards.
 - ✅ **Swipe penalty escalation** — category dislikes now escalate at 5+ and 8+ negative swipes, feature dislike caps are stronger, and the personalization multiplier lower bound is 0.15.
+- ✅ **Minor soccer futures suppression** — non-top-tier soccer futures now receive an obscure-soccer penalty and share a capped minor-soccer story family.
+- ✅ **Dismiss story/group propagation** — recent Discover dismiss/unlike feedback now suppresses related futures that share a group_id or story key, with My Teams mode exempted.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

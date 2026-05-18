@@ -145,6 +145,16 @@ _LOW_SIGNAL_SPORT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TOP_TIER_SOCCER_RE = re.compile(
+    r"\b("
+    r"premier league|epl|la liga|bundesliga|serie a|ligue 1|"
+    r"champions league|ucl|europa league|mls|major league soccer|"
+    r"world cup|copa america|copa libertadores|liga mx|"
+    r"euro 20\d{2}|euros 20\d{2}|european championship"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _SPORTS_PERSONNEL_RE = re.compile(
     r"\b("
     r"fired|fire|resign|resignation|step down|retire|retirement|"
@@ -1027,6 +1037,7 @@ def diversify_quality_families(
         "story:basketball_finals_path": 4,
         "story:regional_us_elections": 1,
         "story:niche_low_signal_sports": 1,
+        "story:minor_soccer_leagues": 1,
     }
 
     for item in sorted_items:
