@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from scripts.snapshot_discover_ground_truth_diagnostics import (
+from app.utils.discover_ground_truth_diagnostics import (
     build_diagnostic_rows_from_debug_payload,
 )
 

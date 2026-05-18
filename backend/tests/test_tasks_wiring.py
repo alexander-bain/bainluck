@@ -201,6 +201,7 @@ class TestBeatScheduleCompleteness:
         "enrich-discover-llm-metadata",
         "generate-discover-comparison-candidates",
         "evaluate-discover-with-llm-daily",
+        "snapshot-discover-ground-truth-diagnostics-daily",
         "enrich-market-images",
         "merge-duplicate-events",
         "check-aggregation-quality",

@@ -414,6 +414,28 @@ async def list_discover_ground_truth_diagnostic_runs(
     return {"runs": list(runs.values())}
 
 
+@router.post("/discover-ground-truth-diagnostics/snapshot")
+async def trigger_discover_ground_truth_diagnostic_snapshot(
+    secret: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Queue a Discover ground-truth diagnostic snapshot."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    task = celery_app.send_task(
+        "app.tasks.snapshot_discover_ground_truth_diagnostics",
+        kwargs={"limit": limit},
+    )
+    return {
+        "queued": True,
+        "task_id": task.id,
+        "limit": limit,
+    }
+
+
 @router.get("/discover-engagement")
 async def discover_engagement_summary(
     secret: str = Query(..., description="Admin secret for authorization"),

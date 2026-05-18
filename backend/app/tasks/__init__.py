@@ -533,6 +533,39 @@ def evaluate_discover_with_llm(self, limit: int = 50):
     return _tracked_run("discover_llm_eval", _evaluate(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.snapshot_discover_ground_truth_diagnostics")
+def snapshot_discover_ground_truth_diagnostics(self, limit: int = 50):
+    """Persist advisory Discover ground-truth hit/miss diagnostics."""
+    from app.utils.discover_ground_truth_diagnostics import (
+        DEFAULT_FEED_URL,
+        build_diagnostic_rows_from_debug_payload,
+        fetch_debug_payload,
+        persist_diagnostic_rows,
+    )
+
+    admin_secret = os.getenv("ADMIN_TOKEN")
+    if not admin_secret:
+        return {"status": "skipped", "reason": "ADMIN_TOKEN missing"}
+
+    feed_url = os.getenv("DISCOVER_GROUND_TRUTH_SNAPSHOT_FEED_URL", DEFAULT_FEED_URL)
+    payload = fetch_debug_payload(
+        feed_url=feed_url,
+        admin_secret=admin_secret,
+        limit=limit,
+    )
+    rows = build_diagnostic_rows_from_debug_payload(payload)
+    inserted = _tracked_run(
+        "discover_gt_diagnostics",
+        persist_diagnostic_rows(rows),
+    )
+    return {
+        "status": "ok",
+        "inserted": inserted,
+        "limit": limit,
+        "feed_url": feed_url,
+    }
+
+
 @celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
 def check_aggregation_quality(self):
     """Daily: sample events, measure source diversity, alert on single-source spikes."""
@@ -997,6 +1030,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.evaluate_discover_with_llm",
         "schedule": crontab(minute=35, hour=9),
         "kwargs": {"limit": 50},
+    },
+    "snapshot-discover-ground-truth-diagnostics-daily": {
+        "task": "app.tasks.snapshot_discover_ground_truth_diagnostics",
+        "schedule": crontab(minute=50, hour=9),
+        "kwargs": {"limit": 50},
+        "options": {"queue": "background"},
     },
     "enrich-market-images": {
         "task": "app.tasks.enrich_market_images",
