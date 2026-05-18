@@ -41,6 +41,7 @@
 - ✅ **Auth/preferences resilience guardrails** — added backend tests for Apple Sign-In web/native audience handling, Redis quota-state fail-open/malformed cache behavior, onboarding category-interest round trips, and stale bookmaker outlier filtering.
 - ✅ **Calibration and identity guardrails** — added backend tests for calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching.
 - ✅ **Provider parser guardrails** — added backend tests for DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience.
+- ✅ **Retention and taxonomy guardrails** — added backend tests for snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 

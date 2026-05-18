@@ -117,6 +117,25 @@ class TestCollapseAlgorithm:
         assert len(keepers) == 4
         assert len(deleted) == 0
 
+    def test_same_value_after_boundary_starts_new_run(self):
+        """A value returning after a change must not merge with the earlier run."""
+        rows = [
+            FakeSnapshot(1, _ts(0), 0.50),
+            FakeSnapshot(2, _ts(1), 0.50),
+            FakeSnapshot(3, _ts(2), 0.60),
+            FakeSnapshot(4, _ts(3), 0.50),
+            FakeSnapshot(5, _ts(4), 0.50),
+        ]
+        keepers, deleted = collapse_rows(rows)
+
+        assert [k.id for k in keepers] == [1, 3, 4]
+        assert deleted == [2, 5]
+        assert keepers[0].reading_count == 2
+        assert keepers[0].valid_until == _ts(1)
+        assert keepers[1].valid_until == _ts(3)
+        assert keepers[2].reading_count == 2
+        assert keepers[2].valid_until == _ts(4)
+
     def test_runs_of_different_values(self):
         """Two distinct runs: 3×0.50 then 3×0.60."""
         rows = [

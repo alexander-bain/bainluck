@@ -8,7 +8,7 @@ Covers:
 """
 
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
@@ -235,6 +235,83 @@ class TestEnrichMarketTaxonomy:
 # ══════════════════════════════════════════════════════════════════════
 
 class TestLifecycleCaching:
+    @pytest.mark.asyncio
+    async def test_enrichment_task_skips_when_llm_unavailable(self):
+        """Task returns before opening a DB session when live LLM is unavailable."""
+        from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
+
+        with (
+            patch("app.services.llm.is_available", return_value=False),
+            patch(
+                "app.tasks.taxonomy.get_task_session",
+                side_effect=AssertionError("DB session should not be opened"),
+            ),
+        ):
+            result = await _enrich_taxonomy_llm_impl(event_limit=5, market_limit=5)
+
+        assert result == {
+            "skipped": True,
+            "reason": "LLM unavailable (no OPENAI_API_KEY)",
+        }
+
+    @pytest.mark.asyncio
+    async def test_enrichment_task_uses_valid_event_cache_without_llm_call(self):
+        """Fresh same-stage event cache avoids a live LLM call and preserves tags."""
+        from app.tasks import taxonomy
+
+        now = datetime.now(timezone.utc)
+        cached = {
+            "stage": "live",
+            "llm_tags": ["stakes:playoff_race"],
+            "expires_at": (now + timedelta(minutes=15)).isoformat(),
+        }
+
+        class MockEvent:
+            id = 42
+            status = "live"
+            event_tags = ["sport:basketball", "stakes:playoff_race"]
+
+        class MockSessionContext:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.commit = AsyncMock()
+                return session
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        event = MockEvent()
+
+        with (
+            patch("app.services.llm.is_available", return_value=True),
+            patch("app.tasks.taxonomy.get_task_session", return_value=MockSessionContext()),
+            patch(
+                "app.tasks.taxonomy._fetch_enrichment_candidates",
+                new=AsyncMock(return_value=[event]),
+            ),
+            patch(
+                "app.tasks.taxonomy._load_taxonomy_caches",
+                new=AsyncMock(return_value={event.id: cached}),
+            ),
+            patch(
+                "app.tasks.taxonomy._batch_fetch_championship_odds",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.tasks.taxonomy._fetch_market_enrichment_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.llm.enrich_event_taxonomy") as enrich_event,
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await taxonomy._enrich_taxonomy_llm_impl(event_limit=5, market_limit=0)
+
+        assert result["events_skipped_cached"] == 1
+        assert result["events_enriched"] == 0
+        assert result["events_no_tags"] == 0
+        assert event.event_tags == ["sport:basketball", "stakes:playoff_race"]
+        enrich_event.assert_not_called()
+
     def test_lifecycle_stage_live(self):
         from app.tasks.taxonomy import _lifecycle_stage
         assert _lifecycle_stage("live") == "live"

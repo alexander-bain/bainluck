@@ -7,7 +7,7 @@ Covers:
 
 import pytest
 
-from app.routes.events import extract_scoring_plays
+from app.routes.events import _assign_wall_clock_timestamps, extract_scoring_plays
 
 
 class TestExtractScoringPlays:
@@ -110,3 +110,52 @@ class TestExtractScoringPlays:
         ]
         result = extract_scoring_plays(plays)
         assert len(result) == 0
+
+
+class TestAssignWallClockTimestamps:
+    """Tests for mapping ESPN score states to chart timestamps."""
+
+    def test_preserves_order_and_duplicate_score_state(self):
+        """Duplicate score states should keep both plays in source order."""
+        espn_plays = [
+            {
+                "description": "Made free throw",
+                "type": "Free Throw",
+                "home_score": "10",
+                "away_score": "8",
+                "period": 1,
+                "clock": "3:14",
+            },
+            {
+                "description": "Technical free throw",
+                "type": "Free Throw",
+                "home_score": "10",
+                "away_score": "8",
+                "period": 1,
+                "clock": "3:14",
+            },
+        ]
+        espn_history = [
+            {
+                "timestamp": "2026-02-25T20:10:00+00:00",
+                "home_score": 10,
+                "away_score": 8,
+            },
+            {
+                "timestamp": "2026-02-25T20:11:00+00:00",
+                "home_score": 10,
+                "away_score": 8,
+            },
+        ]
+
+        result = _assign_wall_clock_timestamps(espn_plays, espn_history)
+
+        assert [play["description"] for play in result] == [
+            "Made free throw",
+            "Technical free throw",
+        ]
+        assert [play["timestamp"] for play in result] == [
+            "2026-02-25T20:10:00+00:00",
+            "2026-02-25T20:10:00+00:00",
+        ]
+        assert [play["period"] for play in result] == ["1", "1"]
