@@ -1179,13 +1179,14 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
 
-~~110~~ ~~158~~ ~~210~~ ~~218~~ 335+ contract tests shipped (124 new tests added May 13: playoffs, league futures, related futures, team progression). Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ ~~218~~ 390+ contract tests shipped. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, and related futures coverage. Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
-- Related futures: market grouping, dedup, gender filtering
+- ✅ Related futures: market grouping, dedup, gender filtering, debug counters
+- ✅ Category/futures routes: mocked non-empty contracts, envelope shape, filtering/sorting/pagination behavior
 
-**Files:** `tests/integration/test_route_feed_scoring.py` (new), `tests/integration/test_route_events_seeded.py` (new)
+**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`
 **Parallel Safety:** Green
 
 ---

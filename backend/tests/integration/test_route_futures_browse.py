@@ -11,7 +11,57 @@ Tests:
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
+
+
+def _count_result(total):
+    result = MagicMock()
+    result.scalar.return_value = total
+    return result
+
+
+def _markets_result(markets):
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = markets
+    return result
+
+
+def _market(
+    market_id,
+    *,
+    name="World Series Winner",
+    llm_sport_category="baseball",
+    source="kalshi",
+    resolution_date=None,
+    outcomes=None,
+):
+    return SimpleNamespace(
+        id=market_id,
+        name=name,
+        llm_sport_category=llm_sport_category,
+        source=source,
+        resolution_date=resolution_date,
+        outcomes=outcomes or [],
+    )
+
+
+def _outcome(
+    outcome_id,
+    name,
+    *,
+    current_probability,
+    probability_change_24h=None,
+):
+    return SimpleNamespace(
+        id=outcome_id,
+        name=name,
+        current_probability=current_probability,
+        probability_change_24h=probability_change_24h,
+    )
 
 
 # ============================================================================
@@ -61,6 +111,11 @@ class TestFuturesBrowseEndpoint:
         assert body["total"] == 0
         assert body["has_more"] is False
 
+    async def test_empty_db_response_envelope_exact_shape(self, client):
+        resp = await client.get("/api/futures/browse")
+        body = resp.json()
+        assert set(body) == {"items", "total", "limit", "offset", "has_more"}
+
     async def test_category_filter_accepted(self, client):
         resp = await client.get("/api/futures/browse?category=politics")
         assert resp.status_code == 200
@@ -75,6 +130,111 @@ class TestFuturesBrowseEndpoint:
         body = resp.json()
         assert body["limit"] == 10
         assert body["offset"] == 5
+
+    async def test_mocked_page_sets_has_more_from_total_and_offset(self, client, mock_db):
+        mock_db.execute.side_effect = [
+            _count_result(12),
+            _markets_result([_market(1)]),
+        ]
+
+        resp = await client.get("/api/futures/browse?limit=5&offset=5")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 12
+        assert body["limit"] == 5
+        assert body["offset"] == 5
+        assert body["has_more"] is True
+
+    async def test_mocked_last_page_has_more_false(self, client, mock_db):
+        mock_db.execute.side_effect = [
+            _count_result(12),
+            _markets_result([_market(3)]),
+        ]
+
+        resp = await client.get("/api/futures/browse?limit=5&offset=10")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 12
+        assert body["has_more"] is False
+
+    async def test_mocked_item_shape_sorts_top_outcomes_and_filters_garbage(
+        self,
+        client,
+        mock_db,
+    ):
+        resolution_date = datetime(2026, 10, 31, tzinfo=timezone.utc)
+        market = _market(
+            42,
+            name="World Series Winner",
+            llm_sport_category="baseball",
+            source="polymarket",
+            resolution_date=resolution_date,
+            outcomes=[
+                _outcome(1, "Dodgers", current_probability=0.32, probability_change_24h=0.04),
+                _outcome(2, "Yankees", current_probability=0.41, probability_change_24h=-0.02),
+                _outcome(3, "Player A", current_probability=0.99, probability_change_24h=0.10),
+                _outcome(4, "Mets", current_probability=0.18, probability_change_24h=None),
+                _outcome(5, "Braves", current_probability=None, probability_change_24h=None),
+            ],
+        )
+        mock_db.execute.side_effect = [
+            _count_result(1),
+            _markets_result([market]),
+        ]
+
+        resp = await client.get("/api/futures/browse")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"] == [
+            {
+                "id": 42,
+                "name": "World Series Winner",
+                "llm_sport_category": "baseball",
+                "source": "polymarket",
+                "resolution_date": "2026-10-31T00:00:00+00:00",
+                "top_outcomes": [
+                    {"id": 2, "name": "Yankees", "probability": 0.41, "movement": -0.02},
+                    {"id": 1, "name": "Dodgers", "probability": 0.32, "movement": 0.04},
+                    {"id": 4, "name": "Mets", "probability": 0.18, "movement": None},
+                ],
+                "outcome_count": 4,
+            }
+        ]
+
+    async def test_category_and_search_params_are_applied_to_count_and_page_queries(
+        self,
+        client,
+        mock_db,
+    ):
+        mock_db.execute.side_effect = [
+            _count_result(0),
+            _markets_result([]),
+        ]
+
+        resp = await client.get("/api/futures/browse?category=politics&q=Senate")
+
+        assert resp.status_code == 200
+        assert mock_db.execute.call_count == 2
+        for call in mock_db.execute.call_args_list:
+            compiled = call.args[0].compile()
+            assert "politics" in compiled.params.values()
+            assert "%Senate%" in compiled.params.values()
+
+    async def test_page_query_orders_by_resolution_date_ascending(self, client, mock_db):
+        mock_db.execute.side_effect = [
+            _count_result(0),
+            _markets_result([]),
+        ]
+
+        resp = await client.get("/api/futures/browse")
+
+        assert resp.status_code == 200
+        page_query = mock_db.execute.call_args_list[1].args[0]
+        compiled_sql = str(page_query.compile()).lower()
+        assert "order by futures_markets.resolution_date asc nulls last" in compiled_sql
 
     async def test_limit_too_high_returns_422(self, client):
         resp = await client.get("/api/futures/browse?limit=999")

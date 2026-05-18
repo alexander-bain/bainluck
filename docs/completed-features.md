@@ -25,6 +25,7 @@
 
 ### Backend Cleanup
 - ✅ **Playoff conference maps made data-driven** — removed large static conference fallback maps from `routes/playoffs.py`; playoff grouping now uses `Team.standings_data` with tolerant label parsing and tests for string/object standings payloads.
+- ✅ **Route contract coverage expanded** — added deterministic mocked-data tests for category pages, futures detail/list, futures browse, and related futures, covering response envelopes, filtering/sorting/pagination, dedup/grouping, and placeholder filtering.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 

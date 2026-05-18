@@ -12,6 +12,7 @@ from test_route_events_seeded patterns for populated responses.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -113,6 +114,196 @@ def _make_seeded_session(event=None):
     return session
 
 
+class _MockResult:
+    """Small SQLAlchemy result stand-in for route-level contract tests."""
+
+    def __init__(
+        self,
+        *,
+        scalar=None,
+        rows=None,
+        first=None,
+        scalar_rows=None,
+    ):
+        self._scalar = scalar
+        self._rows = rows or []
+        self._first = first
+        self._scalar_rows = scalar_rows if scalar_rows is not None else self._rows
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def scalar(self):
+        return self._scalar
+
+    def all(self):
+        return self._rows
+
+    def fetchall(self):
+        return self._rows
+
+    def first(self):
+        return self._first
+
+    def scalars(self):
+        result = MagicMock()
+        result.all.return_value = self._scalar_rows
+        result.first.return_value = self._scalar_rows[0] if self._scalar_rows else None
+        result.unique.return_value.all.return_value = self._scalar_rows
+        return result
+
+
+def _make_market(
+    *,
+    id: int,
+    name: str,
+    source: str,
+    bookmaker_count: int = 1,
+):
+    market = MagicMock()
+    market.id = id
+    market.name = name
+    market.source = source
+    market.status = "open"
+    market.category = "championship"
+    market.market_tier = 1
+    market.event_id = None
+    market.external_id = None
+    market.commence_time = None
+    market.resolution_date = datetime.now(timezone.utc) + timedelta(days=120)
+    market.bookmaker_count = bookmaker_count
+    return market
+
+
+def _make_outcome(
+    *,
+    id: int,
+    market,
+    name: str,
+    probability: float,
+    probability_change_24h: float,
+):
+    outcome = MagicMock()
+    outcome.id = id
+    outcome.market_id = market.id
+    outcome.market = market
+    outcome.name = name
+    outcome.current_probability = probability
+    outcome.current_american_odds = None
+    outcome.probability_change_24h = probability_change_24h
+    outcome.opening_probability = probability - probability_change_24h
+    outcome.rank = None
+    outcome.team_id = None
+    outcome.last_updated = datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc)
+    return outcome
+
+
+def _make_related_futures_session(event):
+    """Mock DB session with duplicate cross-source futures for one event."""
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    kalshi_champ = _make_market(
+        id=101,
+        name="2026 NBA Champion",
+        source="kalshi",
+        bookmaker_count=1,
+    )
+    polymarket_champ = _make_market(
+        id=102,
+        name="NBA Champion",
+        source="polymarket",
+        bookmaker_count=4,
+    )
+    away_champ = _make_market(
+        id=103,
+        name="NBA Champion",
+        source="kalshi",
+        bookmaker_count=2,
+    )
+    outcomes = [
+        _make_outcome(
+            id=201,
+            market=kalshi_champ,
+            name="Boston Celtics",
+            probability=0.42,
+            probability_change_24h=0.03,
+        ),
+        _make_outcome(
+            id=202,
+            market=polymarket_champ,
+            name="Boston Celtics",
+            probability=0.44,
+            probability_change_24h=0.02,
+        ),
+        _make_outcome(
+            id=203,
+            market=away_champ,
+            name="Philadelphia 76ers",
+            probability=0.08,
+            probability_change_24h=-0.01,
+        ),
+    ]
+    bookmaker_rows = [
+        SimpleNamespace(outcome_id=201, bm_count=1),
+        SimpleNamespace(outcome_id=202, bm_count=4),
+        SimpleNamespace(outcome_id=203, bm_count=2),
+    ]
+    state = {"market_id_selects": 0}
+
+    async def mock_execute(stmt, *args, **kwargs):
+        stmt_str = str(stmt).lower() if hasattr(stmt, "__str__") else ""
+
+        if "from events" in stmt_str:
+            return _MockResult(scalar=event)
+
+        if "select sports.id" in stmt_str:
+            return _MockResult(rows=[SimpleNamespace(id=1)])
+
+        if "group by futures_markets.market_tier" in stmt_str:
+            return _MockResult(rows=[(1, 3)])
+
+        if "from teams" in stmt_str and "roster_players" in stmt_str:
+            return _MockResult(rows=[], first=None)
+
+        if "from futures_outcomes" in stmt_str:
+            return _MockResult(scalar_rows=outcomes)
+
+        if "from futures_odds_snapshots" in stmt_str:
+            return _MockResult(rows=bookmaker_rows)
+
+        if "from line_movement_analyses" in stmt_str:
+            return _MockResult(scalar=None)
+
+        if "select futures_markets.id" in stmt_str:
+            state["market_id_selects"] += 1
+            # Four season-tier queries run first; only tier 1 is populated.
+            if state["market_id_selects"] == 1:
+                return _MockResult(
+                    rows=[
+                        SimpleNamespace(id=101),
+                        SimpleNamespace(id=102),
+                        SimpleNamespace(id=103),
+                    ]
+                )
+            # Keep the gender filter from accidentally dropping the mocked markets.
+            if state["market_id_selects"] >= 7:
+                return _MockResult(
+                    rows=[
+                        SimpleNamespace(id=101),
+                        SimpleNamespace(id=102),
+                        SimpleNamespace(id=103),
+                    ]
+                )
+            return _MockResult(rows=[])
+
+        return _MockResult()
+
+    session.execute = AsyncMock(side_effect=mock_execute)
+    return session
+
+
 @pytest.fixture
 async def seeded_client(monkeypatch):
     """Client with a seeded live NBA event for sub-endpoint tests."""
@@ -133,6 +324,51 @@ async def seeded_client(monkeypatch):
     app.dependency_overrides[get_optional_user] = _mock_get_optional_user
 
     with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def populated_related_futures_client(monkeypatch):
+    """Client with related futures rows that exercise dedup/grouping."""
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
+    from app.main import app
+
+    event = _make_event(
+        id=77,
+        home_team="Boston Celtics",
+        away_team="Philadelphia 76ers",
+        status="scheduled",
+    )
+    mock_session = _make_related_futures_session(event)
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with (
+        patch("app.main.init_db", new_callable=AsyncMock),
+        patch(
+            "app.services.llm.generate_related_futures_summary",
+            return_value="Celtics and 76ers futures are active.",
+        ),
+        patch(
+            "app.services.league_context.enrich_event_with_context",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -169,6 +405,10 @@ class TestRelatedFuturesQueryParams:
     async def test_debug_false_accepted(self, client):
         resp = await client.get("/api/events/1/related-futures?debug=false")
         assert resp.status_code in (200, 404)
+
+    async def test_invalid_debug_param_rejected(self, client):
+        resp = await client.get("/api/events/1/related-futures?debug=definitely")
+        assert resp.status_code == 422
 
 
 class TestRelatedFuturesSeededShape:
@@ -253,6 +493,95 @@ class TestRelatedFuturesSeededShape:
             assert body["game_period"] is None or isinstance(body["game_period"], (int, str))
         if "game_clock" in body:
             assert body["game_clock"] is None or isinstance(body["game_clock"], str)
+
+
+class TestRelatedFuturesPopulatedContract:
+    """Populated related futures contract without external services."""
+
+    async def test_populated_response_has_full_top_level_shape(
+        self,
+        populated_related_futures_client,
+    ):
+        resp = await populated_related_futures_client.get("/api/events/77/related-futures")
+        assert resp.status_code == 200
+
+        body = resp.json()
+        assert body["event_id"] == 77
+        assert body["home_team"] == "Boston Celtics"
+        assert body["away_team"] == "Philadelphia 76ers"
+        assert body["event_status"] == "scheduled"
+        assert body["summary"] == "Celtics and 76ers futures are active."
+        assert body["series_markets"] == []
+        assert body["league_context"] is None
+        assert body["total_count"] == 2
+
+    async def test_cross_source_duplicates_are_grouped_by_merge_group(
+        self,
+        populated_related_futures_client,
+    ):
+        resp = await populated_related_futures_client.get("/api/events/77/related-futures")
+        body = resp.json()
+
+        assert len(body["home_team_futures"]) == 1
+        item = body["home_team_futures"][0]
+        assert item["market_id"] == 102
+        assert item["source"] == "polymarket"
+        assert item["outcome_name"] == "Boston Celtics"
+        assert item["clean_label"] == "NBA Champion"
+        assert item["display_category"] == "playoff_path"
+        assert item["merge_group"] == "nba_champion"
+        assert item["bookmaker_count"] == 4
+        assert set(item["all_sources"]) == {"kalshi", "polymarket"}
+
+    async def test_same_merge_group_keeps_distinct_team_outcomes(
+        self,
+        populated_related_futures_client,
+    ):
+        resp = await populated_related_futures_client.get("/api/events/77/related-futures")
+        body = resp.json()
+
+        assert len(body["away_team_futures"]) == 1
+        away_item = body["away_team_futures"][0]
+        assert away_item["market_id"] == 103
+        assert away_item["outcome_name"] == "Philadelphia 76ers"
+        assert away_item["merge_group"] == "nba_champion"
+        assert "all_sources" not in away_item
+
+    async def test_futures_item_value_contract(
+        self,
+        populated_related_futures_client,
+    ):
+        resp = await populated_related_futures_client.get("/api/events/77/related-futures")
+        body = resp.json()
+        item = body["home_team_futures"][0]
+
+        assert item["probability"] == 0.44
+        assert item["probability_change_24h"] == 0.02
+        assert item["opening_probability"] == 0.42
+        assert item["market_tier"] == 1
+        assert item["category"] == "championship"
+        assert item["relevance_reason"]
+        assert item["last_updated"] == "2026-05-17T12:00:00+00:00"
+        assert item["next_update_expected"]
+        assert item["resolution_date"]
+
+    async def test_debug_response_exposes_related_futures_counters(
+        self,
+        populated_related_futures_client,
+    ):
+        resp = await populated_related_futures_client.get(
+            "/api/events/77/related-futures?debug=true"
+        )
+        assert resp.status_code == 200
+
+        debug = resp.json()["_debug"]
+        assert debug["season_market_count"] == 3
+        assert debug["game_prop_count"] == 0
+        assert debug["series_market_count"] == 0
+        assert debug["sport_prefix"] == "basketball"
+        assert debug["llm_category"] == "basketball"
+        assert "Boston Celtics" in debug["home_patterns"]
+        assert "Philadelphia 76ers" in debug["away_patterns"]
 
 
 class TestRelatedFuturesItemShape:

@@ -5,7 +5,89 @@ top-level keys, nested structure, and field types — even when the DB is empty.
 Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
 import pytest
+
+
+class _MockScalars:
+    def __init__(self, items):
+        self._items = items
+
+    def all(self):
+        return self._items
+
+    def first(self):
+        return self._items[0] if self._items else None
+
+    def unique(self):
+        return self
+
+
+class _MockResult:
+    def __init__(self, items):
+        self._scalars = _MockScalars(items)
+
+    def scalars(self):
+        return self._scalars
+
+    def all(self):
+        return self._scalars.all()
+
+    def first(self):
+        return self._scalars.first()
+
+
+def _query_result(items):
+    return _MockResult(items)
+
+
+def _outcome(name, probability, *, outcome_id=1, rank=1, change_24h=0):
+    return SimpleNamespace(
+        id=outcome_id,
+        name=name,
+        current_probability=probability,
+        probability_change_24h=change_24h,
+        rank=rank,
+    )
+
+
+def _market(
+    *,
+    market_id=1,
+    name="Will the event happen?",
+    external_id="kxmock",
+    source="kalshi",
+    category="news",
+    llm_sport_category="politics",
+    outcomes=None,
+    resolution_date=None,
+    updated_at=None,
+    volume_24h=1000,
+    image_url=None,
+    hook_description=None,
+    status="open",
+):
+    now = datetime.now(timezone.utc)
+    return SimpleNamespace(
+        id=market_id,
+        name=name,
+        external_id=external_id,
+        source=source,
+        category=category,
+        llm_sport_category=llm_sport_category,
+        outcomes=outcomes or [
+            _outcome("Yes", 0.55, outcome_id=market_id * 10, rank=1),
+            _outcome("No", 0.45, outcome_id=market_id * 10 + 1, rank=2),
+        ],
+        resolution_date=resolution_date or now + timedelta(days=30),
+        updated_at=updated_at or now,
+        volume_24h=volume_24h,
+        image_url=image_url,
+        hook_description=hook_description,
+        status=status,
+    )
 
 
 # ============================================================================
@@ -574,3 +656,208 @@ class TestWeatherCrossSource:
         resp = await client.get("/api/weather/cross-source")
         body = resp.json()
         assert isinstance(body, list)
+
+
+# ============================================================================
+# Mocked-data contracts — route code with deterministic in-memory markets
+# ============================================================================
+
+
+class TestCategoryMockedDataContracts:
+    """Contract checks for non-empty responses without real DB or services."""
+
+    async def test_weather_featured_market_item_shape(self, client, mock_db):
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=101,
+                name="Will a hurricane make landfall in Florida?",
+                source="polymarket",
+                llm_sport_category="weather",
+                outcomes=[
+                    _outcome("Yes", 0.62, outcome_id=1010),
+                    _outcome("No", 0.38, outcome_id=1011),
+                ],
+            )
+        ])
+
+        resp = await client.get("/api/weather/featured")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == [
+            {
+                "q": "Will a hurricane make landfall in Florida?",
+                "prob": 62,
+                "src": "polymarket",
+                "tag": "Hurricane",
+                "closes": body[0]["closes"],
+                "market_id": 101,
+            }
+        ]
+        assert isinstance(body[0]["closes"], str)
+
+    async def test_politics_presidential_candidates_are_normalized(
+        self, client, mock_db
+    ):
+        mock_db.execute.side_effect = [
+            _query_result([
+                _market(
+                    market_id=201,
+                    name="Who will win the 2028 presidential election?",
+                    external_id="kxpresident2028",
+                    source="kalshi",
+                    llm_sport_category="politics",
+                    outcomes=[
+                        _outcome("Donald Trump", 0.80, outcome_id=2010),
+                        _outcome("Kamala Harris", 0.70, outcome_id=2011),
+                        _outcome("Gavin Newsom", 0.50, outcome_id=2012),
+                    ],
+                )
+            ]),
+            _query_result([]),
+        ]
+
+        resp = await client.get("/api/politics")
+
+        assert resp.status_code == 200
+        pres = resp.json()["themes"]["presidential"]
+        assert pres["count"] == 1
+        assert pres["headline_q"] == "Who will win the 2028 presidential election?"
+        assert pres["kalshi_market_id"] == 201
+        assert pres["poly_market_id"] is None
+        assert pres["has_dual_source"] is False
+        assert [c["name"] for c in pres["candidates"]] == [
+            "Donald Trump",
+            "Kamala Harris",
+            "Gavin Newsom",
+        ]
+        assert round(sum(c["kalshi"] for c in pres["candidates"]), 1) == 100.0
+        assert all(c["history"] == [] for c in pres["candidates"])
+
+    async def test_entertainment_music_market_populates_expected_sections(
+        self, client, mock_db
+    ):
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=301,
+                name="Who will be #1 on Spotify next week?",
+                external_id="kxspotify-weekly",
+                source="kalshi",
+                llm_sport_category="entertainment",
+                outcomes=[
+                    _outcome("Taylor Swift", 0.52, outcome_id=3010),
+                    _outcome("Bad Bunny", 0.31, outcome_id=3011),
+                    _outcome("SZA", 0.17, outcome_id=3012),
+                ],
+                image_url="https://example.test/spotify.jpg",
+                hook_description="A close streaming race.",
+            )
+        ])
+
+        resp = await client.get("/api/entertainment")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_markets"] == 1
+        assert body["by_source"] == {"kalshi": 1, "polymarket": 0}
+        assert body["themes"]["music"]["count"] == 1
+        assert len(body["themes"]["music"]["spotify_race"]) == 1
+        row = body["themes"]["music"]["spotify_race"][0]
+        assert row["q"] == "Who will be #1 on Spotify next week?"
+        assert row["kind"] == "spotify"
+        assert row["market_id"] == 301
+        assert len(row["top_outcomes"]) == 3
+        assert body["trending"][0]["market_id"] == 301
+
+    async def test_economics_fed_distribution_market_populates_rate_cuts(
+        self, client, mock_db
+    ):
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=401,
+                name="How many Fed rate cuts in 2026?",
+                external_id="kxfedcuts-2026",
+                source="polymarket",
+                llm_sport_category="economics",
+                outcomes=[
+                    _outcome("0 cuts", 0.20, outcome_id=4010, rank=1),
+                    _outcome("1 cut", 0.45, outcome_id=4011, rank=2),
+                    _outcome("2+ cuts", 0.35, outcome_id=4012, rank=3),
+                ],
+            )
+        ])
+
+        resp = await client.get("/api/economics")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_markets"] == 1
+        assert body["by_source"] == {"kalshi": 0, "polymarket": 1}
+        assert body["themes"]["fed"]["count"] == 1
+        assert body["themes"]["fed"]["rate_cuts"] == [
+            [20.0, "0 cuts"],
+            [45.0, "1 cut"],
+            [35.0, "2+ cuts"],
+        ]
+
+
+# ============================================================================
+# Empty-data defaults and HTTP behavior
+# ============================================================================
+
+
+class TestCategoryEmptyDataDefaults:
+    """Empty DB responses should keep stable, frontend-safe defaults."""
+
+    async def test_empty_entertainment_counts_and_sections_are_zeroed(self, client):
+        resp = await client.get("/api/entertainment")
+        body = resp.json()
+
+        assert body["total_markets"] == 0
+        assert body["trending"] == []
+        assert body["cultural_moments"] == []
+        assert body["themes"]["music"]["count"] == 0
+        assert body["themes"]["movies_tv"]["count"] == 0
+        assert body["themes"]["tech_culture"]["count"] == 0
+        assert body["by_source"] == {"kalshi": 0, "polymarket": 0}
+
+    async def test_empty_weather_grouped_endpoints_return_empty_groups(self, client):
+        rain = (await client.get("/api/weather/rain")).json()
+        events = (await client.get("/api/weather/events")).json()
+
+        assert rain == {"daily": [], "monthly": []}
+        assert events == {"hurricane": [], "earthquake": [], "tornadoes": []}
+
+
+class TestCategoryParameterAndErrorBehavior:
+    """Routes do not expose pagination/filter parameters today."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/politics",
+            "/api/entertainment",
+            "/api/economics",
+            "/api/weather/featured",
+        ],
+    )
+    async def test_unexpected_query_params_are_ignored(self, client, path):
+        plain = await client.get(path)
+        with_params = await client.get(f"{path}?limit=not-an-int&source=kalshi")
+
+        assert with_params.status_code == 200
+        plain_body = plain.json()
+        param_body = with_params.json()
+        if isinstance(plain_body, dict):
+            assert isinstance(param_body, dict)
+            assert param_body.keys() == plain_body.keys()
+        else:
+            assert isinstance(param_body, list)
+
+    async def test_unknown_weather_subroute_returns_404(self, client):
+        resp = await client.get("/api/weather/not-a-real-category")
+        assert resp.status_code == 404
+
+    async def test_category_get_endpoints_reject_post(self, client):
+        resp = await client.post("/api/economics")
+        assert resp.status_code == 405
