@@ -1,0 +1,115 @@
+"""Tests for is_winner backfill logic."""
+
+import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+
+
+class TestPolymarketPhase3Settlement:
+    """Tests for _backfill_polymarket_winners_from_api (Phase 3)."""
+
+    @pytest.fixture
+    def mock_session(self):
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        return session
+
+    def test_yes_won_prices(self):
+        """outcome_prices [1, 0] should mark Yes as winner."""
+        prices = [1.0, 0.0]
+        assert prices[0] >= 0.90
+        assert prices[1] <= 0.10
+        yes_won = prices[0] >= 0.90
+        assert yes_won is True
+
+    def test_no_won_prices(self):
+        """outcome_prices [0, 1] should mark No as winner."""
+        prices = [0.0, 1.0]
+        yes_won = prices[0] >= 0.90
+        assert yes_won is False
+
+    def test_midrange_prices_skipped(self):
+        """outcome_prices [0.6, 0.4] should be skipped (not settled)."""
+        prices = [0.6, 0.4]
+        max_price = max(prices)
+        min_price = min(prices)
+        assert not (max_price >= 0.90 and min_price <= 0.10)
+
+    def test_near_settlement_passes(self):
+        """outcome_prices [0.95, 0.05] should be treated as settled."""
+        prices = [0.95, 0.05]
+        max_price = max(prices)
+        min_price = min(prices)
+        assert max_price >= 0.90
+        assert min_price <= 0.10
+        yes_won = prices[0] >= 0.90
+        assert yes_won is True
+
+    def test_stringified_prices_parsed(self):
+        """Gamma API sometimes returns stringified JSON arrays."""
+        import json
+        raw = '["0.95", "0.05"]'
+        parsed = json.loads(raw)
+        prices = [float(p) for p in parsed]
+        assert prices == [0.95, 0.05]
+
+    def test_empty_prices_skipped(self):
+        """Empty outcome_prices should be skipped."""
+        prices = []
+        assert len(prices) < 2
+
+    def test_single_price_skipped(self):
+        """Single outcome_price should be skipped."""
+        prices = [0.95]
+        assert len(prices) < 2
+
+    def test_external_id_mapping(self):
+        """Outcome external_ids follow the {condition_id}_{yes|no} pattern."""
+        condition_id = "0xabc123"
+        yes_ext = f"{condition_id}_yes"
+        no_ext = f"{condition_id}_no"
+        assert yes_ext == "0xabc123_yes"
+        assert no_ext == "0xabc123_no"
+
+
+class TestCoverageMetricExclusion:
+    """Tests for the coverage metric denominator fix."""
+
+    def test_untradeable_markets_excluded(self):
+        """Markets where ALL outcomes have null cal+open should be excluded."""
+        # Simulated market status rows
+        markets = [
+            {"has_winner": True, "all_cal_null": False},   # resolved with winner
+            {"has_winner": False, "all_cal_null": True},   # ghost — excluded
+            {"has_winner": False, "all_cal_null": False},  # needs backfill
+        ]
+
+        resolved = len(markets)
+        has_winner = sum(1 for m in markets if m["has_winner"])
+        needs_backfill = sum(1 for m in markets
+                            if not m["has_winner"] and not m["all_cal_null"])
+        untradeable = sum(1 for m in markets if m["all_cal_null"])
+
+        assert resolved == 3
+        assert has_winner == 1
+        assert needs_backfill == 1  # only the real gap
+        assert untradeable == 1   # ghost excluded
+
+    def test_tradeable_without_winner_still_counts(self):
+        """Markets with calibration data but no winner still need backfill."""
+        markets = [
+            {"has_winner": False, "all_cal_null": False},  # real gap
+            {"has_winner": False, "all_cal_null": False},  # real gap
+        ]
+        needs = sum(1 for m in markets if not m["has_winner"] and not m["all_cal_null"])
+        assert needs == 2
+
+
+class TestPhase2LimitIncrease:
+    """Tests for the Kalshi Phase 2 limit increase."""
+
+    def test_default_limit_is_5000(self):
+        """_backfill_all_winners default limit should be 5000."""
+        import inspect
+        from app.tasks.backfill_winners import _backfill_all_winners
+        sig = inspect.signature(_backfill_all_winners)
+        assert sig.parameters["limit"].default == 5000

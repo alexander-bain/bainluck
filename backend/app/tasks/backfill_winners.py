@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, update, text, func
 
+from app.models import FuturesMarket, FuturesOutcome
 from app.tasks.base import get_task_session
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,6 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
     """
     import asyncio
     from app.services.kalshi_api import KalshiAPIService
-    from app.models import FuturesMarket, FuturesOutcome
 
     stats = {
         "tickers_queried": 0, "events_found": 0,
@@ -647,7 +647,153 @@ async def _backfill_polymarket_group_ids_from_api():
     return stats
 
 
-async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
+async def _backfill_polymarket_winners_from_api(limit: int = 500):
+    """Phase 3: Fetch settlement prices from Polymarket Gamma API.
+
+    For stuck Polymarket markets where current_probability didn't reach
+    settlement extremes (0/1), fetches the market from the Gamma API and
+    uses outcome_prices for resolution. Sets is_winner directly.
+    """
+    import asyncio
+    from app.services.polymarket_api import PolymarketAPIService
+
+    stats = {
+        "markets_checked": 0, "winners_set": 0, "losers_set": 0,
+        "api_miss": 0, "not_settled": 0, "errors": [],
+    }
+
+    async with get_task_session() as session:
+        stuck = await session.execute(
+            text("""
+                SELECT fm.id, fm.external_id,
+                       fm.market_metadata->>'polymarket_event_id' AS poly_event_id
+                FROM futures_markets fm
+                JOIN futures_outcomes fo ON fo.market_id = fm.id
+                WHERE fm.source = 'polymarket'
+                  AND fm.status = 'resolved'
+                  AND fo.current_probability IS NOT NULL
+                GROUP BY fm.id
+                HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                   AND MAX(fo.current_probability) BETWEEN 0.05 AND 0.95
+                LIMIT :limit
+            """),
+            {"limit": limit},
+        )
+        markets = stuck.all()
+
+    if not markets:
+        logger.info("Polymarket API winner backfill: nothing to do")
+        return stats
+
+    logger.info("Polymarket API winner backfill: %d markets to check", len(markets))
+
+    service = PolymarketAPIService()
+    try:
+        batch_size = 50
+        for batch_start in range(0, len(markets), batch_size):
+            batch = markets[batch_start:batch_start + batch_size]
+
+            async with get_task_session() as session:
+                for row in batch:
+                    stats["markets_checked"] += 1
+                    condition_id = row.external_id
+                    event_id = row.poly_event_id or row.external_id
+
+                    market_data = await service.get_market_by_condition(condition_id)
+
+                    if not market_data:
+                        event_data = await service.get_event_by_id(event_id)
+                        if event_data:
+                            api_markets = event_data.get("markets") or []
+                            market_data = next(
+                                (m for m in api_markets
+                                 if m.get("condition_id") == condition_id
+                                 or str(m.get("conditionId", "")) == condition_id),
+                                None,
+                            )
+
+                    if not market_data:
+                        stats["api_miss"] += 1
+                        continue
+
+                    outcome_prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
+                    if isinstance(outcome_prices_raw, str):
+                        import json as _json
+                        try:
+                            outcome_prices_raw = _json.loads(outcome_prices_raw)
+                        except (ValueError, TypeError):
+                            outcome_prices_raw = []
+
+                    try:
+                        prices = [float(p) for p in outcome_prices_raw]
+                    except (ValueError, TypeError):
+                        prices = []
+
+                    if len(prices) < 2:
+                        stats["not_settled"] += 1
+                        continue
+
+                    max_price = max(prices)
+                    min_price = min(prices)
+                    if max_price < 0.90 or min_price > 0.10:
+                        stats["not_settled"] += 1
+                        continue
+
+                    yes_won = prices[0] >= 0.90
+                    yes_ext = f"{condition_id}_yes"
+                    no_ext = f"{condition_id}_no"
+
+                    r1 = await session.execute(
+                        update(FuturesOutcome)
+                        .where(
+                            FuturesOutcome.market_id == row.id,
+                            FuturesOutcome.external_id == yes_ext,
+                        )
+                        .values(is_winner=yes_won)
+                    )
+                    r2 = await session.execute(
+                        update(FuturesOutcome)
+                        .where(
+                            FuturesOutcome.market_id == row.id,
+                            FuturesOutcome.external_id == no_ext,
+                        )
+                        .values(is_winner=(not yes_won))
+                    )
+
+                    updated = r1.rowcount + r2.rowcount
+                    if updated > 0:
+                        if yes_won:
+                            stats["winners_set"] += r1.rowcount
+                            stats["losers_set"] += r2.rowcount
+                        else:
+                            stats["losers_set"] += r1.rowcount
+                            stats["winners_set"] += r2.rowcount
+
+                await session.commit()
+
+            logger.info(
+                "Polymarket API backfill: %d/%d checked, %d winners, %d losers, %d miss",
+                min(batch_start + batch_size, len(markets)), len(markets),
+                stats["winners_set"], stats["losers_set"], stats["api_miss"],
+            )
+            await asyncio.sleep(0.3)
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Polymarket API winner backfill error: %s", e)
+    finally:
+        await service.close()
+
+    logger.info(
+        "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
+        "%d api_miss, %d not_settled, %d errors",
+        stats["markets_checked"], stats["winners_set"], stats["losers_set"],
+        stats["api_miss"], stats["not_settled"], len(stats["errors"]),
+    )
+    return stats
+
+
+async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     """Run all winner backfill tasks."""
     # Phase 0-pre: Fix commence_time for golf + hockey (DB-only, no API calls).
     # Must run BEFORE calibration price computation so closing lines use correct dates.
@@ -690,6 +836,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
     # fully resolve their probabilities)
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
 
+    # Phase 3: Polymarket API settlement data (fills in markets where
+    # current_probability is stale and didn't reach 0/1)
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=500)
+
     return {
         "commence_time_fixes": commence_stats,
         "polymarket_group_id": group_stats,
@@ -700,6 +850,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 2000):
         "polymarket_api_group_id": api_group_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
+        "polymarket_api": poly_api_stats,
     }
 
 

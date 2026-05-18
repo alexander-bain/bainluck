@@ -226,6 +226,20 @@ class PolymarketAPIService:
         response.raise_for_status()
         return response.json()
 
+    async def get_market_by_condition(self, condition_id: str) -> Optional[dict]:
+        """Fetch a single market by condition_id from Gamma API.
+
+        Returns raw dict with outcome_prices reflecting settlement for
+        resolved markets. Returns None on 404 or error.
+        """
+        try:
+            response = await self.gamma_client.get(f"/markets/{condition_id}")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.debug("Failed to get market %s: %s", condition_id, e)
+            return None
+
     # =========================================================================
     # CLOB API — Prices & History
     # =========================================================================

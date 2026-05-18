@@ -1924,17 +1924,23 @@ async def backfill_winners_status(
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     result = await db.execute(text("""
-        SELECT fm.source,
-            COUNT(DISTINCT fm.id) AS resolved_markets,
-            COUNT(DISTINCT fm.id) FILTER (
-                WHERE EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.is_winner = true)
-            ) AS has_winner,
-            COUNT(DISTINCT fm.id) FILTER (
-                WHERE NOT EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id AND fo.is_winner = true)
-            ) AS needs_backfill
-        FROM futures_markets fm
-        WHERE fm.status = 'resolved'
-        GROUP BY fm.source
+        WITH market_status AS (
+            SELECT fm.id, fm.source,
+                BOOL_OR(fo.is_winner) AS has_winner,
+                BOOL_AND(fo.calibration_probability IS NULL
+                         AND fo.opening_probability IS NULL) AS all_cal_null
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            GROUP BY fm.id, fm.source
+        )
+        SELECT source,
+            COUNT(*) AS resolved_markets,
+            COUNT(*) FILTER (WHERE has_winner) AS has_winner,
+            COUNT(*) FILTER (WHERE NOT has_winner AND NOT all_cal_null) AS needs_backfill,
+            COUNT(*) FILTER (WHERE all_cal_null) AS untradeable_excluded
+        FROM market_status
+        GROUP BY source
     """))
     # Sample Polymarket soccer outcomes in the 40-50% bucket that LOST
     sample_diag = await db.execute(text("""
@@ -1996,7 +2002,8 @@ async def backfill_winners_status(
     return {
         "sources": [
             {"source": r.source, "resolved": r.resolved_markets,
-             "has_winner": r.has_winner, "needs_backfill": r.needs_backfill}
+             "has_winner": r.has_winner, "needs_backfill": r.needs_backfill,
+             "untradeable_excluded": r.untradeable_excluded}
             for r in result.all()
         ],
         "calibration_probability_coverage": {
