@@ -1,6 +1,7 @@
 """Contract tests for health and utility endpoints."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -74,3 +75,30 @@ class TestSportsEndpoint:
                 }
             ]
         }
+
+
+class TestSportsAdminEndpointGuards:
+    """Quota-burning sports admin endpoints reject bad secrets before side effects."""
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("get", "/api/sports/available?secret=bad"),
+            ("post", "/api/sports/sync?secret=bad"),
+        ],
+    )
+    async def test_invalid_secret_rejects_before_odds_api_call(
+        self, client, method, path
+    ):
+        with patch("app.routes.sports.OddsAPIService") as service_cls:
+            resp = await getattr(client, method)(path)
+
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": "Invalid admin secret"}
+        service_cls.assert_not_called()
+
+    async def test_sync_invalid_secret_does_not_commit(self, client, mock_db):
+        resp = await client.post("/api/sports/sync?secret=bad")
+
+        assert resp.status_code == 403
+        mock_db.commit.assert_not_awaited()

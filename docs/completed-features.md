@@ -23,7 +23,7 @@
 - ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.
 - ✅ **Shared native utilities** — extracted clipboard, share URL, formatting, sport display, flag URL, flow layout, and color helpers. Share links now avoid force-unwrapped URLs.
 - ✅ **Native model/service docs** — added concise doc comments across native model types and key API/auth/navigation service methods.
-- ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches.
+- ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches. Current package-resolution blocker is tracked in `docs/backlog.md`.
 
 ### Backend Cleanup
 - ✅ **Playoff conference maps made data-driven** — removed large static conference fallback maps from `routes/playoffs.py`; playoff grouping now uses `Team.standings_data` with tolerant label parsing and tests for string/object standings payloads.
@@ -42,8 +42,10 @@
 - ✅ **Calibration and identity guardrails** — added backend tests for calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching.
 - ✅ **Provider parser guardrails** — added backend tests for DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience.
 - ✅ **Retention and taxonomy guardrails** — added backend tests for snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries.
+- ✅ **May 18 documentation sync** — verified the recent guardrail commits were already pushed, mirrored gotchas 71-75 into `CLAUDE.md`, and corrected the extended gotchas header.
+- ✅ **GA4 Admin setup script** — added idempotent `backend/scripts/setup_ga4.py` for custom dimensions, key events, and audiences, with focused config/planning tests.
 
-**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
+**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `backend/tests/`, `backend/tests/integration/`, `backend/app/utils/league_classification.py`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 
 ## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
 

@@ -179,7 +179,7 @@ The GA Admin API can create dimensions, key events, and audiences in one script 
    GA4_ADMIN_CREDENTIALS=/path/to/service-account-key.json
    ```
 
-4. **Run the setup script** (Claude will write `backend/scripts/setup_ga4.py`):
+4. **Run the setup script** (`backend/scripts/setup_ga4.py` shipped May 18):
    - Uses `google-analytics-admin` Python SDK
    - Creates all 11 custom dimensions:
      - Event-scoped: sport, league, event_id, event_status, source_section, position_index, is_live, is_close_game
@@ -193,6 +193,7 @@ The GA Admin API can create dimensions, key events, and audiences in one script 
      - Discover Browsers (page_view where page = "/" or "/discover", count >= 5 in 7 days)
    - Idempotent — skips dimensions/events/audiences that already exist
    - Prints a summary of what was created vs skipped
+   - Focused tests cover config validation and idempotent planning in `backend/tests/test_setup_ga4.py`
 
 5. **Manual console steps (API doesn't support):**
    - Funnel exploration: session_start → page_view → event_detail_view → prediction_submit → sign_up
@@ -205,7 +206,7 @@ If the API setup is too much overhead, the prompt at `docs/ga4-setup-prompt.md` 
 **Fallback approach: Manual**
 Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
-**Files:** `docs/ga4-setup-guide.md`, `docs/ga4-setup-prompt.md`, `backend/scripts/setup_ga4.py` (to be written)
+**Files:** `docs/ga4-setup-guide.md`, `docs/ga4-setup-prompt.md`, `backend/scripts/setup_ga4.py`
 **Pip dependency:** `google-analytics-admin>=0.22.0`
 **Parallel Safety:** Green (no runtime code changes)
 
@@ -373,10 +374,10 @@ Normalization pushed OKC above 100%. Fixed: post-normalization cap at 100% in pl
 
 **Problem:** Charts terminate prematurely (e.g., 8th inning cutoff in baseball). Missing game state markers for AFL. Charts start too early for some events.
 
-**Status:** Being fixed by another agent. Do not start parallel work on these files.
+**Status:** Fixed May 16; no active parallel work remains on this audit item.
 
 **Files:** `frontend/components/OddsChart.tsx`, `backend/app/routes/events.py` (chart data)
-**Parallel Safety:** Red (active work)
+**Parallel Safety:** Green
 
 ### ~~MS15-6. MLS Page Infinite Loading~~ — NOT REPRODUCIBLE, CLOSED
 
@@ -1179,9 +1180,9 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 **Files:** `backend/app/config/league_configs.py`, `backend/app/utils/tournament_stages.py`, `backend/app/routes/playoffs.py`, `backend/app/routes/events.py`
 **Parallel Safety:** Yellow
 
-### 6. API Route Contract Tests — Expand Coverage (PARTIALLY DONE May 8)
+### 6. API Route + Guardrail Test Coverage — ONGOING
 
-~~110~~ ~~158~~ ~~210~~ ~~218~~ 470+ contract tests shipped. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, and seeded feed coverage. Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ ~~218~~ 590+ integration/route contract tests and 4,450+ backend tests collected. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, seeded feed coverage, and broad root-level guardrail suites. Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - Playoffs: column data, probability sums, monotonicity
@@ -1201,8 +1202,9 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ Calibration/identity guardrails: calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching
 - ✅ Provider parser guardrails: DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience
 - ✅ Retention/taxonomy guardrails: snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries
+- ✅ May 18 docs sync: verified the guardrail commits were already pushed, carried gotchas 71-75 into `CLAUDE.md`, and fixed the stale gotchas-reference range header.
 
-**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`
+**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`, plus focused backend guardrail tests under `backend/tests/` and `backend/app/utils/league_classification.py`
 **Parallel Safety:** Green
 
 ---

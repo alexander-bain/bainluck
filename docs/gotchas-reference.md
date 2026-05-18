@@ -4,14 +4,14 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 ---
 
-## Items 16-62 (overflow from CLAUDE.md)
+## Items 16-75 (overflow and deep-dive notes)
 
 16. **Deleting events requires FK cleanup** — must delete from 8+ tables before removing the event row. Use raw SQL, not ORM `db.delete()`, to avoid autoflush FK violations.
 17. **Kalshi auto-creates pm_ events** when no matching event exists. Guard added to prevent new duplicates, but historical orphans need cleanup via admin endpoints.
 18. **Quota guard expiry date** must be updated monthly in `redis_state.py` (`QUOTA_GUARD_EXPIRY`).
 19. **Name normalization** — ALL team name matching goes through `utils/name_normalization.py`. City abbreviations (LA->Los Angeles, NY->New York, etc.) are expanded before token overlap scoring.
 20. **Championship grid data quality** — Kalshi 0.45-0.65 noise filter, monotonicity enforcement (P(round N) >= P(round N+1)), esports "Masters" pattern can leak into golf.
-21. **Frontend-only changes don't need Heroku push** — Only `git push origin master` needed. Vercel auto-deploys. Heroku push is only required when backend code changes.
+21. **Frontend-only changes don't need Heroku work** — Only `git push origin master` is needed. Vercel deploys frontend from GitHub, and backend Heroku deploys are handled by CI after tests for backend changes.
 22. **Never show 100%/0% probabilities for finished events** — Post-game completion probabilities (winner=100%) must be filtered. Use opening odds or aggregate probability instead.
 23. **Chart domain must derive from game timeline** — Use `commenceTime` + last ESPN/score data timestamp. Never constrain chart domain solely from odds data (which may be sparse during API outages).
 24. **`classifyPlayoffStage()` order matters** — Conference patterns must be checked BEFORE championship patterns in `RelatedFutures.tsx`. "Eastern Conference Champion" contains "champion" and will misclassify as "Championship" if checked in wrong order.
@@ -46,11 +46,11 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 46. **ORM attribute assignment lost when mixed with Core SQL updates** — Setting `event.field = value` via ORM, then doing `session.execute(update(Event).where(...).values(...))` via Core SQL in the same session can cause the ORM change to silently not persist. Found 3 times: `espn_id` (varchar), `box_score_data` (JSONB), and the original `win_probability_sources` (JSONB, gotcha #8). **Safe pattern for Celery tasks:** use Core SQL (or raw text SQL) for ALL writes, then sync the ORM object afterward (`event.field = value`) to prevent the ORM flush from reverting the DB state. For JSONB specifically, raw text SQL with `cast(:val AS jsonb)` is most reliable.
 
+47. **Admin auth env var is `ADMIN_TOKEN`, not `ADMIN_SECRET`** — Heroku has `ADMIN_TOKEN` set. The code checks `ADMIN_TOKEN` first, with `ADMIN_SECRET` as fallback. When referencing the admin secret in code, documentation, or curl commands, use `ADMIN_TOKEN`. This mismatch caused a production lockout on April 21, 2026 when a security fix defaulted to False on missing `ADMIN_SECRET` (which was never set — only `ADMIN_TOKEN` existed).
+
 48. **`box_score_data` must be exposed in the event detail API** — The `GET /api/events/{id}` response must include `box_score_data` for the frontend `PlayerPropsDashboard` to show actual stats on completed games. Without it, the component falls back to "pre" mode (showing probabilities). The related-futures endpoint already used `box_score_data` internally but the event detail endpoint did not return it until April 30, 2026.
 
 49. **Never delete a migration file that has already run on Heroku** — The `alembic_version` table stores the current revision. If the corresponding `.py` file is missing, `alembic upgrade heads` fails with "Can't locate revision," blocking ALL subsequent migrations. This caused a site-wide outage on May 1-2, 2026: the `add_user_seen_markets.py` file was deleted, the `Team.slug` migration couldn't run, and every endpoint loading Teams 500'd. Fix: restore the file, then clean up any stale `alembic_version` entries if the migration originally ran as a separate branch. The Procfile's `|| echo` makes migration failures non-fatal, which masks this class of bug.
-
-47. **Admin auth env var is `ADMIN_TOKEN`, not `ADMIN_SECRET`** — Heroku has `ADMIN_TOKEN` set. The code checks `ADMIN_TOKEN` first, with `ADMIN_SECRET` as fallback. When referencing the admin secret in code, documentation, or curl commands, use `ADMIN_TOKEN`. This mismatch caused a production lockout on April 21, 2026 when a security fix defaulted to False on missing `ADMIN_SECRET` (which was never set — only `ADMIN_TOKEN` existed).
 
 50. **Vercel runs `next build` (ESLint + TS), not just `tsc`** — `tsc --noEmit` passing does NOT mean the frontend will deploy. `next build` includes ESLint rules-of-hooks checks. React hooks called after conditional early returns will compile but fail the build. Always run `npm run build` locally. CI now catches this (May 7, 2026). This caused 20+ consecutive failed Vercel deploys.
 
@@ -70,7 +70,7 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 58. **Feed probability normalization for independent binary markets** — Kalshi creates separate "Will X win?" binary markets for each candidate in a multi-outcome race. Each has its own 0-100% probability that includes vig/overround. When displaying top outcomes on Discover cards, the probabilities can sum well over 100%. Must normalize: `if sum > 1.05: divide each by sum`. Applied in `feed.py` after building `top_outcomes_data`. Same pattern as the Spotify race fix in `entertainment.py`.
 
-59. **Feed staleness threshold: 95% not 97%** — The "effectively resolved" filter in `_score_futures()` originally used leader ≥ 97%. This missed sports futures where a team is eliminated but the market leader is at 90-94%. Lowered to 95% (May 12). Markets with leader ≥ 95% and opening ≥ 85% (no interesting journey) are excluded from the feed.
+59. **Sports futures staleness threshold is 90%+ with journey guard** — Discover treats sports futures with a 90%+ leader as effectively resolved unless the leader had a real underdog/surprise journey. This catches eliminated-team markets that remain open for settlement while preserving genuinely interesting surprises.
 
 60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS and vice versa. Fixed May 13: hooks now call server API on every pin/unpin when authenticated, and fetch server pins on mount.
 

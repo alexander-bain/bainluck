@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 3,500+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 4,450+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -75,16 +75,16 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 ## Development Workflow
 
-- **Both auto-deploy from GitHub**: `git push origin master` deploys backend (Heroku) and frontend (Vercel)
+- **Deployments from GitHub**: `git push origin master` triggers CI; Vercel deploys frontend from GitHub, and Heroku deploy runs through the serialized CI `deploy` job after tests pass.
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (3,500+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (4,450+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
-- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (335+ contract tests)
+- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (590+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
 - **Frontend build (MANDATORY before push)**: `cd frontend && npm run build` — catches BOTH TypeScript AND ESLint errors. Vercel runs this exact command; `tsc --noEmit` alone is NOT sufficient.
 - **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPattern=DiscoverCard`)
 - **Procfile validates imports**: Release phase runs `python3 -c "from app.main import app"` before Alembic. If the app can't import, the release fails and the broken code never reaches the web dyno.
-- **CI runs both**: GitHub Actions runs backend pytest + frontend `npm run build` on every push to master.
+- **CI runs both**: GitHub Actions runs backend pytest + frontend `npm run build` on every push to master, then serializes Heroku deploys with deploy-job concurrency.
 
 ### Key Admin URLs
 ```
@@ -109,7 +109,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 3,500+ pytest items
+│   └── tests/                   # 4,450+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
@@ -280,7 +280,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 37. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers.
 38. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
 58. **Feed probability normalization for independent binary markets** — Kalshi creates separate "Will X win?" binary markets for each candidate. Probabilities can sum well over 100%. Must normalize: `if sum > 1.05: divide each by sum`. Applied in `feed.py` after building `top_outcomes_data`.
-59. **Feed staleness threshold: 95% not 97%** — The "effectively resolved" filter originally used leader >= 97%. Lowered to 95% to catch sports futures where a team is eliminated but the market leader is at 90-94%.
+59. **Sports futures staleness threshold is 90%+ with journey guard** — Discover treats sports futures with a 90%+ leader as effectively resolved unless the leader had a real underdog/surprise journey. This catches eliminated-team markets that remain open for settlement.
 60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS. Fixed: hooks now call server API on every pin/unpin when authenticated.
 61. **Celery beat schedule test has an allowlist** — `tests/test_tasks_wiring.py` has `EXPECTED_ENTRIES` set that must include every entry in `celery_app.conf.beat_schedule`. Adding a new scheduled task without updating this set causes CI failure.
 62. **Gmail API OAuth refresh tokens via Google Workspace** — Using OAuth2 refresh token (not service account) to send email as `bugs@bainluck.com`. The OAuth Playground redirect URI must NOT have a trailing slash. Config vars: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL`.
@@ -290,8 +290,13 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 66. **Polymarket placeholder outcomes have `outcomePrices=["1","0"]`** — Polymarket creates reserved-slot sub-markets ("Player B", "Player S") before real candidates are announced. These have 100% probability and zero trading activity. Filter with `_is_placeholder_outcome()`: name matches "Player [A-Z]" single letter, OR price ≥0.995 with no bestBid and no lastTradePrice.
 67. **iOS Decodable models must use `Double` for probability fields** — Backend `round(prob * 100, 1)` returns floats like `72.5`, not integers. Using `Int` in the iOS Decodable model causes the entire response to fail to decode. Always use `Double` (or `Double?` for nullable fields) for any probability, percentage, or numeric score from the API.
 68. **PKCanvasView annotation coordinates require explicit frame sizing** — Using `.frame(maxHeight: 300)` without width constraint makes the canvas wider than the rendered image. Touch coordinates then include dead space, and flattening uses wrong scale factors. Always size the canvas to match the image's aspect ratio exactly, disable scroll, and use independent scaleX/scaleY with `UIScreen.main.scale` for retina.
-69. **Rapid git pushes crash Heroku** — Each push to master triggers a separate Heroku deploy. Overlapping release phases (import validation + Alembic) can exhaust resources and crash the dyno. Batch commits into single pushes, or use the CI deploy job (`concurrency: cancel-in-progress: true`) which serializes deploys. Caused a 30-minute outage May 15.
+69. **Rapid direct Heroku deploys can crash the dyno** — The old flow let rapid pushes trigger overlapping Heroku release phases, exhausting resources and causing a 30-minute outage May 15. Current CI deploys are serialized with Heroku deploy-job concurrency; avoid bypassing that with manual overlapping Heroku pushes.
 70. **Swift file extraction changes visibility/import boundaries** — Moving native view models or helpers out of view files can expose hidden dependencies. Add required imports (`Foundation` for `localizedDescription`, string splitting/trimming, `Date`, etc.) and make shared helpers module-visible when extracted view models need them. Do not leave duplicated class definitions in both `Views/` and `ViewModels/`.
+71. **Polymarket API `group_id` scan takes 10+ minutes** — `_backfill_polymarket_group_ids_from_api` paginates through ~200K Polymarket events. Short-circuit before the API scan when no `group_id IS NULL` rows remain.
+72. **CI deploy job cannot use `secrets.*` in step-level `if`** — GitHub Actions rejects the workflow YAML before running it. Put secret-dependent checks inside the shell `run` block instead.
+73. **Cross-game Polymarket market contamination** — Game-market grouped sub-market queries need the same commence-time window as unlinked fallbacks; otherwise playoff series with the same teams leak Game 1 props into Game 2.
+74. **Bug report submissions need optional auth dependency** — Anonymous reports must stay allowed, but authenticated submissions need `get_optional_user` so `user_id` is populated for follow-up emails.
+75. **Extracted Swift files need their own imports and module-visible helpers** — Moving view models/helpers out of views changes visibility. Add imports such as `Foundation`, `Combine`, and `os` as needed, and remove duplicated class definitions from the original view file.
 
 ---
 
@@ -310,6 +315,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/integration/test_route_market_moves.py` | Market moves endpoint response shape and param validation | May 15 |
 | `tests/test_politics_normalization.py` | Politics probability normalization for independent binary markets | May 15 |
 | `tests/test_rate_limit.py` | Rate limiting middleware: thresholds, auth exemption, Redis fallback | May 15 |
+| `backend/tests/test_*` guardrail suites | Discover scoring/personalization, matching, ingestion/quota, display, auth/preferences, calibration/identity, provider parsers, retention/taxonomy | May 17 |
 
 ---
 

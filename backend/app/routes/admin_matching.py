@@ -2,7 +2,7 @@
 
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -24,6 +24,35 @@ from app.routes.admin_utils import _check_admin_secret
 
 
 router = APIRouter()
+
+
+_CLOSED_GAME_STATUSES = {"closed", "completed", "final"}
+
+
+def _is_closed_past_event_candidate(candidate: Any, now: datetime) -> bool:
+    """Return True when a matched event row represents a finished past game."""
+    status = (getattr(candidate, "status", None) or "").lower()
+    if status not in _CLOSED_GAME_STATUSES:
+        return False
+
+    reference_time = getattr(candidate, "completed_at", None) or getattr(
+        candidate, "commence_time", None
+    )
+    if reference_time is None:
+        return True
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    return reference_time <= now
+
+
+def _should_exclude_tier1_gap_for_closed_game(
+    candidates: Sequence[Any], now: datetime
+) -> bool:
+    """Exclude settlement-open Kalshi markets when every matching event is already closed."""
+    return bool(candidates) and all(
+        _is_closed_past_event_candidate(candidate, now)
+        for candidate in candidates
+    )
 
 
 @router.post("/prediction-markets/match")
@@ -208,6 +237,7 @@ async def prediction_market_status(
         "win_prob_snapshots": snapshots_by_source,
         "recent_linked": recent_linked,
     }
+
 
 
 @router.post("/prediction-markets/fix-sport-categories")
@@ -948,6 +978,7 @@ async def prediction_market_tier1_gaps(
 
     now = datetime.now(timezone.utc)
     gaps = []
+    excluded_closed_games = []
 
     for market in markets:
         entry = {
@@ -992,7 +1023,7 @@ async def prediction_market_tier1_gaps(
 
         event_result = await db.execute(
             select(Event.id, Event.home_team_name, Event.away_team_name,
-                   Event.commence_time, Event.status)
+                   Event.commence_time, Event.status, Event.completed_at)
             .where(
                 or_(*ilike_conditions),
                 Event.commence_time.between(time_start, time_end),
@@ -1005,7 +1036,7 @@ async def prediction_market_tier1_gaps(
         if not candidates:
             event_any = await db.execute(
                 select(Event.id, Event.home_team_name, Event.away_team_name,
-                       Event.commence_time, Event.status)
+                       Event.commence_time, Event.status, Event.completed_at)
                 .where(or_(*ilike_conditions))
                 .order_by(Event.commence_time.desc())
                 .limit(3)
@@ -1023,6 +1054,20 @@ async def prediction_market_tier1_gaps(
                 entry["failure"] = "no_event_with_matching_teams"
                 entry["search_terms"] = teams_to_search
         else:
+            if _should_exclude_tier1_gap_for_closed_game(candidates, now):
+                entry["excluded_reason"] = "closed_game_settlement_market"
+                entry["candidates"] = [
+                    {
+                        "id": c.id,
+                        "teams": f"{c.home_team_name} vs {c.away_team_name}",
+                        "time": c.commence_time.isoformat() if c.commence_time else None,
+                        "status": c.status,
+                    }
+                    for c in candidates
+                ]
+                excluded_closed_games.append(entry)
+                continue
+
             entry["failure"] = "event_found_but_scoring_rejected"
             entry["candidates"] = [
                 {"id": c.id, "teams": f"{c.home_team_name} vs {c.away_team_name}",
@@ -1040,6 +1085,8 @@ async def prediction_market_tier1_gaps(
 
     return {
         "total_tier1_gaps": len(gaps),
+        "excluded_closed_game_markets": len(excluded_closed_games),
+        "excluded_closed_game_samples": excluded_closed_games[:5],
         "by_failure": {k: {"count": len(v), "samples": v[:5]} for k, v in by_failure.items()},
         "all_gaps": gaps,
     }
@@ -3497,4 +3544,3 @@ async def sawtooth_fix(
         "total_snapshots_deleted": total_snapshots_deleted,
         "results": results,
     }
-

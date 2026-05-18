@@ -140,9 +140,9 @@ def get_league_class(sport_key: str) -> str:
 def is_power_4_team(team_name: str) -> bool:
     """Check if a team name matches a Power 4 school.
 
-    Uses case-insensitive substring matching to handle team name variations
+    Uses case-insensitive token-boundary matching to handle team name variations
     like "Alabama Crimson Tide" matching "Alabama", or "Ohio State Buckeyes"
-    matching "Ohio State".
+    matching "Ohio State", while avoiding ambiguous non-Power 4 names.
     """
     if not team_name:
         return False
