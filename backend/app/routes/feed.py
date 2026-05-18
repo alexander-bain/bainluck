@@ -250,6 +250,38 @@ DISCOVER_SPORTS_CATEGORIES = (
     "esports", "rugby", "lacrosse",
 )
 
+_DISCOVER_EDITORIAL_RECALL_PATTERNS = (
+    "%aliens%",
+    "%ufo%",
+    "%extraterrestrial%",
+    "%openai%",
+    "%anthropic%",
+    "%claude%",
+    "%gpt%",
+    "%gemini%",
+    "%deepseek%",
+    "%eurovision%",
+    "%oscars%",
+    "%academy award%",
+    "%grammy%",
+    "%emmy%",
+    "%survivor%",
+    "%netflix%",
+    "%hurricane%",
+    "%earthquake%",
+    "%wildfire%",
+    "%outbreak%",
+    "%pandemic%",
+    "%hantavirus%",
+)
+
+
+def _discover_editorial_recall_filter():
+    """SQL filter for high-texture Discover candidates that can be low volume."""
+    return or_(
+        *(FuturesMarket.name.ilike(pattern) for pattern in _DISCOVER_EDITORIAL_RECALL_PATTERNS)
+    )
+
 # Sport keys allowed in My Stuff feed (Tier 1 + Tier 2 from SPORT_POLLING_TIERS).
 # Excludes Tier 3 sports (NCAA hockey, esports, minor soccer leagues, etc.) that
 # cause false positives — e.g., a Red Sox follower seeing "Boston College" hockey
@@ -1243,6 +1275,16 @@ async def _discover_candidate_pool_trace(
                 FuturesMarket.updated_at.desc().nulls_last(),
             ],
             160,
+        ),
+        (
+            "nonsports_editorial_recall",
+            and_(non_sports_filter, _discover_editorial_recall_filter()),
+            [
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.volume_24h.desc().nulls_last(),
+                FuturesMarket.updated_at.desc().nulls_last(),
+            ],
+            120,
         ),
         (
             "nonsports_timely",
@@ -2755,7 +2797,24 @@ async def _score_futures(
         .limit(160)
     )
 
-    # Pool 2d: soon-resolving markets. Timeliness matters, but this pool is
+    # Pool 2d: high-texture editorial recall. Some public-interest or fun
+    # markets are low-volume and not yet enriched, but should still be scored.
+    nonsports_editorial_recall_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            non_sports_filter,
+            _discover_editorial_recall_filter(),
+        )
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(120)
+    )
+
+    # Pool 2e: soon-resolving markets. Timeliness matters, but this pool is
     # still scored and quality-capped later, so routine ladders do not get a
     # free pass.
     nonsports_timely_query = (
@@ -2783,6 +2842,8 @@ async def _score_futures(
     mark_timing("pool_nonsports_movement")
     nonsports_enriched_result = await db.execute(nonsports_enriched_query)
     mark_timing("pool_nonsports_enriched")
+    nonsports_editorial_recall_result = await db.execute(nonsports_editorial_recall_query)
+    mark_timing("pool_nonsports_editorial_recall")
     nonsports_timely_result = await db.execute(nonsports_timely_query)
     mark_timing("pool_nonsports_timely")
     mark_timing("candidate_queries", since_at=candidate_queries_started_at, update_previous=False)
@@ -2793,6 +2854,7 @@ async def _score_futures(
         + list(nonsports_result.scalars().all())
         + list(nonsports_movement_result.scalars().all())
         + list(nonsports_enriched_result.scalars().all())
+        + list(nonsports_editorial_recall_result.scalars().all())
         + list(nonsports_timely_result.scalars().all())
     )
     seen_market_ids: set[int] = set()
