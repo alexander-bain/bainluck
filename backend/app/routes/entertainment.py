@@ -11,8 +11,6 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Sequence
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +18,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket
 from app.services import get_db
+from app.utils.cross_source_matching import (
+    clean_outcomes as _clean_outcomes,
+    find_cross_source_markets,
+    is_resolved as _is_resolved,
+    source as _source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,25 +123,6 @@ def _classify_kind(market: FuturesMarket, outcome_count: int) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_GARBAGE_OUTCOME_RE = re.compile(
-    r"^(?:player|person|candidate|option|party)\s+[A-Z]{1,3}$", re.I
-)
-
-
-def _source(market: FuturesMarket) -> str:
-    return (market.source or "").lower()
-
-
-def _is_resolved(market: FuturesMarket) -> bool:
-    for o in market.outcomes:
-        if float(o.current_probability or 0) >= 0.99:
-            return True
-    return False
-
-
-def _clean_outcomes(outcomes: list) -> list:
-    return [o for o in outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")]
 
 
 def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
@@ -270,49 +255,13 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
 # Cross-source matching — find markets on both Kalshi & Polymarket
 # ---------------------------------------------------------------------------
 
-def _normalize_q(q: str) -> str:
-    """Normalize a question for cross-source matching."""
-    return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
-
-
-def _find_cross_source(
-    all_markets: Sequence[FuturesMarket],
-) -> list[dict]:
-    """Find markets that exist on both platforms, ranked by disagreement."""
-    by_norm: dict[str, dict[str, dict]] = defaultdict(dict)
-
-    for m in all_markets:
-        if _is_resolved(m):
-            continue
-        row = _market_row(m)
-        if not row or not _is_interesting(row):
-            continue
-        src = _source(m)
-        if src not in ("kalshi", "polymarket"):
-            continue
-        norm = _normalize_q(row["q"])
-        if norm and src not in by_norm[norm]:
-            by_norm[norm][src] = {**row, "theme": _classify_theme(m)}
-
-    matches = []
-    for norm, sources in by_norm.items():
-        if "kalshi" not in sources or "polymarket" not in sources:
-            continue
-        k = sources["kalshi"]
-        p = sources["polymarket"]
-        delta = round(abs(k["prob"] - p["prob"]), 1)
-        matches.append({
-            "q": k["q"],
-            "kalshi": k["prob"],
-            "poly": p["prob"],
-            "delta": delta,
-            "category": k["theme"],
-            "kalshi_market_id": k["market_id"],
-            "poly_market_id": p["market_id"],
-        })
-
-    matches.sort(key=lambda x: -x["delta"])
-    return matches[:8]
+def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
+    """Build a row for cross-source matching (entertainment-specific)."""
+    row = _market_row(market)
+    if not row or not _is_interesting(row):
+        return None
+    row["theme"] = _classify_theme(market)
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +494,9 @@ async def get_entertainment(db: AsyncSession = Depends(get_db)):
     )
 
     # Cross-source spotlight
-    cross_source = _find_cross_source(list(all_markets))
+    cross_source = find_cross_source_markets(
+        list(all_markets), market_row_fn=_cross_source_row_fn
+    )
 
     total = sum(len(v) for v in themed.values())
 
