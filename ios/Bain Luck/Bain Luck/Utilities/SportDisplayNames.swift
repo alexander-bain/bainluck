@@ -1,3 +1,5 @@
+import Foundation
+
 func sportDisplayName(for key: String?) -> String {
     guard let key else { return "" }
     let map: [String: String] = [

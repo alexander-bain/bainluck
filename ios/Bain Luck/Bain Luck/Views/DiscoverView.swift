@@ -1,8 +1,6 @@
 import SwiftUI
 import Combine
 
-private let discoverFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
-
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
     case group(title: String, items: [FeedItem])
@@ -827,61 +825,41 @@ struct DiscoverView: View {
     @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         if let e = item.event {
-            let url = eventShareURL(e)
+            let url = eventShareURL(e.id, style: .nativeCard)
             if let prob = e.currentOdds?.homeProbability {
                 Button {
                     let text = "\(e.homeTeam): \(Int(prob * 100))%"
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    #else
-                    UIPasteboard.general.string = text
-                    #endif
+                    copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
             }
             Button {
                 recordInteraction(for: item, action: .share, source: "copy_link")
-                #if os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-                #else
-                UIPasteboard.general.string = url
-                #endif
+                copyToClipboard(url)
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: url) ?? discoverFallbackURL) {
+            ShareLink(item: URL(string: url) ?? bainLuckFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         } else if let f = item.futures {
-            let url = futuresShareURL(f)
+            let url = futuresShareURL(f.id, style: .nativeCard)
             if let leader = f.topOutcomes?.first, let prob = leader.probability {
                 Button {
                     let text = "\(leader.name): \(Int(prob * 100))%"
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    #else
-                    UIPasteboard.general.string = text
-                    #endif
+                    copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
             }
             Button {
                 recordInteraction(for: item, action: .share, source: "copy_link")
-                #if os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-                #else
-                UIPasteboard.general.string = url
-                #endif
+                copyToClipboard(url)
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: url) ?? discoverFallbackURL) {
+            ShareLink(item: URL(string: url) ?? bainLuckFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }
@@ -894,13 +872,6 @@ struct DiscoverView: View {
         }
     }
 
-    private func eventShareURL(_ event: FeedEventData) -> String {
-        "https://bainluck.com/events/\(event.id)?utm_source=share&utm_medium=native&utm_campaign=card&content_type=event&item_id=\(event.id)"
-    }
-
-    private func futuresShareURL(_ market: FeedFuturesData) -> String {
-        "https://bainluck.com/futures/\(market.id)?utm_source=share&utm_medium=native&utm_campaign=card&content_type=futures&item_id=\(market.id)"
-    }
 }
 
 // MARK: - ViewModel
@@ -2388,8 +2359,7 @@ private struct ShareSheet: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                copyToClipboard(text)
             }
         }
         .padding()

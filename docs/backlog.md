@@ -1279,8 +1279,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-4 | Extract clipboard utility | New `Utils/Clipboard.swift` | Single `copyToClipboard(_:)` function. Replace 8 copy-paste blocks in `DiscoverView.swift` + `FeedView.swift` |
-| CQ-5 | Extract share URL builders | New `Utils/ShareURLs.swift` | `eventShareURL(_:)` and `futuresShareURL(_:)`. Replace inline URL construction in 4+ files |
+| CQ-4 | Extract clipboard utility — partial | `Utilities/Clipboard.swift`, `DiscoverView.swift`, `FeedView.swift` | ✅ Discover/Feed slice done May 17 — shared `copyToClipboard(_:)` replaces duplicated pasteboard blocks in these views. Other files remain for later slices. |
+| CQ-5 | Extract share URL builders — partial | `Utilities/ShareURLs.swift`, `DiscoverView.swift`, `FeedView.swift` | ✅ Discover/Feed slice done May 17 — shared `eventShareURL(_:)` and `futuresShareURL(_:)` preserve Discover native-card UTM links and Feed plain links. Other files remain for later slices. |
 | CQ-6 | Unify guess cards | New `Components/GuessCardView.swift` | `NativeGuessCard` and `NativeEventGuessCard` are 90% identical. Merge into one generic component. Deletes ~400 lines from DiscoverView |
 | CQ-7 | Shared context menu | New `Components/CardContextMenu.swift` | `FeedView.cardContextMenu()` and `DiscoverView.discoverCardMenu()` are the same. Extract once |
 
@@ -1300,7 +1300,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | CQ-12 | Create ViewModels/ directory — partial | Moved `PreferencesViewModel.swift` and `OnboardingViewModel.swift`; newly extracted VMs still remaining | Consistent location for all ViewModels |
-| CQ-13 | Extract EventDetailViewModel | New `ViewModels/EventDetailViewModel.swift` | Move out of `EventDetailView.swift` (~150 lines) |
+| ~~CQ-13~~ | ~~Extract EventDetailViewModel~~ | ✅ DONE May 17 — added `ViewModels/EventDetailViewModel.swift`; `EventDetailView.swift` now owns view rendering only. | Public API and behavior preserved. |
 | ~~CQ-14~~ | ~~Split Extensions.swift~~ | ✅ DONE May 17 — split into `Utilities/ColorExtensions.swift`, `Utilities/FormattingUtilities.swift`, `Utilities/SportDisplayNames.swift`, `Utilities/FlagUtilities.swift`, `Utilities/FlowLayout.swift` | APIs preserved; existing filesystem-synchronized Xcode project picked up new files without pbxproj edits. |
 
 ### Wave 5: Access Control + Naming (1 hour, ongoing)
@@ -1324,6 +1324,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 - CQ-20 slice done May 17: documented `AuthManager` session responsibilities and auth entry points.
 - CQ-20 slice done May 17: added endpoint-purpose doc comments to callable methods in `APIClient.swift`.
 - CQ-19 slice done May 17: added concise model type doc comments in `AuthModels.swift` and `CommonTypes.swift`.
+- CQ-19 slice done May 17: added concise model type doc comments in `EventModels.swift` and `FeedModels.swift`.
 - CQ-14 done May 17: split `Components/Extensions.swift` into focused utility files under the existing `Utilities/` directory.
 
 ### What NOT to do

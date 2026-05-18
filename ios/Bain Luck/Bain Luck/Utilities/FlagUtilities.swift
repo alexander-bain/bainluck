@@ -1,3 +1,5 @@
+import Foundation
+
 /// Country/region name to ISO 3166-1 alpha-2 code for flagcdn.com.
 private let countryCodes: [String: String] = [
     "united states": "us", "usa": "us", "america": "us",

@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Event Detail
 
+/// Full event-detail payload for the iOS game detail screen.
 nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
@@ -29,6 +30,7 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
 
 // MARK: - Standings Context
 
+/// Short standings and stakes summary shown alongside an event matchup.
 nonisolated struct StandingsContext: Decodable, Sendable {
     let home: String?
     let away: String?
@@ -37,12 +39,14 @@ nonisolated struct StandingsContext: Decodable, Sendable {
 
 // MARK: - EI Rankings
 
+/// Response containing the highest- and lowest-interest events for EI rankings.
 nonisolated struct EIRankingsResponse: Decodable, Sendable {
     let highest: [EIRankedEvent]
     let lowest: [EIRankedEvent]
     let filters: EIRankingsFilters?
 }
 
+/// Compact event row used in EI ranking lists.
 nonisolated struct EIRankedEvent: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
@@ -59,6 +63,7 @@ nonisolated struct EIRankedEvent: Decodable, Identifiable, Sendable {
     let rank: Int
 }
 
+/// Filters echoed by the EI rankings endpoint.
 nonisolated struct EIRankingsFilters: Decodable, Sendable {
     let sport: String?
     let limit: Int?

@@ -2,8 +2,10 @@ import Foundation
 
 // MARK: - Feed Response
 
+/// Empty decode target used to skip malformed feed items without failing the whole response.
 private nonisolated struct SkipOne: Decodable, Sendable {}
 
+/// Paginated Discover feed response containing event and futures cards.
 nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
     let total: Int
@@ -37,10 +39,12 @@ nonisolated struct FeedResponse: Decodable, Sendable {
 
 // MARK: - Discover Interaction Capture
 
+/// Batched request body for sending Discover feed interaction events.
 nonisolated struct DiscoverInteractionRequest: Encodable, Sendable {
     let interactions: [DiscoverInteractionEvent]
 }
 
+/// Analytics-style interaction event captured from a Discover feed card.
 nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
     let action: String
     let itemType: String
@@ -55,6 +59,7 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 
 // MARK: - Feed Item (Polymorphic)
 
+/// Polymorphic feed card wrapper for either a sports event or a futures market.
 nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let type: String
     let score: Int
@@ -126,6 +131,7 @@ private extension String {
 
 // MARK: - Feed Event Data
 
+/// Event payload embedded inside an event-type feed card.
 nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
@@ -151,6 +157,7 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
 
 // MARK: - Feed Futures Data
 
+/// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
@@ -183,6 +190,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     var id: String { name }
 }
 
+/// Top outcome summary shown on a futures feed card.
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
@@ -193,6 +201,7 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
 
 // MARK: - Pins Response
 
+/// Server response listing pinned event and futures identifiers.
 nonisolated struct PinsResponse: Decodable, Sendable {
     let events: [Int]
     let futures: [Int]
@@ -200,6 +209,7 @@ nonisolated struct PinsResponse: Decodable, Sendable {
 
 // MARK: - Pin Request Body
 
+/// Request body for pinning or unpinning an event or futures market.
 nonisolated struct PinRequest: Encodable, Sendable {
     let pinType: String
     let targetId: Int
@@ -207,6 +217,7 @@ nonisolated struct PinRequest: Encodable, Sendable {
 
 // MARK: - Grouped Feed Response
 
+/// Paginated response for grouped feed sections such as props and playoff paths.
 nonisolated struct GroupedFeedResponse: Decodable, Sendable {
     let feed: [GroupedFeedItem]
     let total: Int
@@ -216,6 +227,7 @@ nonisolated struct GroupedFeedResponse: Decodable, Sendable {
 
 // MARK: - Grouped Feed Item (Polymorphic)
 
+/// Grouped feed entry representing either related prop lines or progression stages.
 nonisolated struct GroupedFeedItem: Decodable, Identifiable, Sendable {
     let type: String
     let groupKey: String
@@ -241,6 +253,7 @@ nonisolated struct GroupedFeedItem: Decodable, Identifiable, Sendable {
 
 // MARK: - Stat Prop Line
 
+/// Single threshold line within a grouped player-stat prop card.
 nonisolated struct StatPropLine: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
@@ -252,6 +265,7 @@ nonisolated struct StatPropLine: Decodable, Identifiable, Sendable {
 
 // MARK: - Progression Stage
 
+/// One stage in a playoff or season-progression probability ladder.
 nonisolated struct ProgressionStage: Decodable, Identifiable, Sendable {
     let id: Int
     let label: String
@@ -261,6 +275,7 @@ nonisolated struct ProgressionStage: Decodable, Identifiable, Sendable {
 
 // MARK: - Team Colors
 
+/// Team color pair supplied for grouped progression cards.
 nonisolated struct TeamColors: Decodable, Sendable {
     let primary: String?
     let secondary: String?

@@ -6,7 +6,6 @@ import UIKit
 #endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "feed")
-private let feedFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
 
 // MARK: - ViewModel
 
@@ -486,29 +485,18 @@ struct FeedView: View {
             if let prob = event.currentOdds?.homeProbability {
                 Button {
                     let text = "\(event.homeTeam): \(Int(prob * 100))%"
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    #else
-                    UIPasteboard.general.string = text
-                    #endif
+                    copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
             }
             Divider()
             Button {
-                let url = "https://bainluck.com/events/\(event.id)"
-                #if os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-                #else
-                UIPasteboard.general.string = url
-                #endif
+                copyToClipboard(eventShareURL(event.id))
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/events/\(event.id)") ?? feedFallbackURL) {
+            ShareLink(item: URL(string: eventShareURL(event.id)) ?? bainLuckFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
             #if os(macOS)
@@ -522,29 +510,18 @@ struct FeedView: View {
             if let leader = futures.topOutcomes?.first, let prob = leader.probability {
                 Button {
                     let text = "\(leader.name): \(Int(prob * 100))%"
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    #else
-                    UIPasteboard.general.string = text
-                    #endif
+                    copyToClipboard(text)
                 } label: {
                     Label("Copy Probability", systemImage: "doc.on.doc")
                 }
             }
             Divider()
             Button {
-                let url = "https://bainluck.com/futures/\(futures.id)"
-                #if os(macOS)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-                #else
-                UIPasteboard.general.string = url
-                #endif
+                copyToClipboard(futuresShareURL(futures.id))
             } label: {
                 Label("Copy Link", systemImage: "link")
             }
-            ShareLink(item: URL(string: "https://bainluck.com/futures/\(futures.id)") ?? feedFallbackURL) {
+            ShareLink(item: URL(string: futuresShareURL(futures.id)) ?? bainLuckFallbackURL) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }
