@@ -25,15 +25,15 @@ from app.services.database import Base
 
 class Sport(Base):
     """Sports we track (NBA, NFL, etc.)."""
-    
+
     __tablename__ = "sports"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     group: Mapped[Optional[str]] = mapped_column(String(50))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    
+
     # Relationships
     teams: Mapped[list["Team"]] = relationship(back_populates="sport")
     events: Mapped[list["Event"]] = relationship(back_populates="sport")
@@ -54,35 +54,43 @@ class Team(Base):
 
     # ESPN enrichment fields
     espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
-    primary_color: Mapped[Optional[str]] = mapped_column(String(7))  # Hex color e.g. #552583
+    primary_color: Mapped[Optional[str]] = mapped_column(
+        String(7)
+    )  # Hex color e.g. #552583
     secondary_color: Mapped[Optional[str]] = mapped_column(String(7))
     logo_url_small: Mapped[Optional[str]] = mapped_column(String(512))
     logo_url_large: Mapped[Optional[str]] = mapped_column(String(512))
-    alternate_names: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers"]
+    alternate_names: Mapped[Optional[dict]] = mapped_column(
+        JSONB
+    )  # ["Lakers", "LA Lakers"]
     current_record: Mapped[Optional[str]] = mapped_column(String(20))  # "34-18"
-    location: Mapped[Optional[str]] = mapped_column(String(100))  # ESPN "location" field (city/region/school)
-    roster_players: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Jayson Tatum", "Jaylen Brown", ...]
+    location: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )  # ESPN "location" field (city/region/school)
+    roster_players: Mapped[Optional[dict]] = mapped_column(
+        JSONB
+    )  # ["Jayson Tatum", "Jaylen Brown", ...]
 
     # StatPal enrichment
     statpal_team_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
     standings_data: Mapped[Optional[dict]] = mapped_column(JSONB)
-    standings_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    standings_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
     season_stats: Mapped[Optional[dict]] = mapped_column(JSONB)
-    season_stats_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    season_stats_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")
     home_events: Mapped[list["Event"]] = relationship(
-        back_populates="home_team",
-        foreign_keys="Event.home_team_id"
+        back_populates="home_team", foreign_keys="Event.home_team_id"
     )
     away_events: Mapped[list["Event"]] = relationship(
-        back_populates="away_team",
-        foreign_keys="Event.away_team_id"
+        back_populates="away_team", foreign_keys="Event.away_team_id"
     )
-    favorited_by: Mapped[list["UserFavorite"]] = relationship(
-        back_populates="team"
-    )
+    favorited_by: Mapped[list["UserFavorite"]] = relationship(back_populates="team")
 
 
 class Event(Base):
@@ -112,7 +120,9 @@ class Event(Base):
     opening_away_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     opening_home_spread: Mapped[Optional[float]] = mapped_column(Numeric(4, 1))
     opening_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
-    opening_favorite: Mapped[Optional[str]] = mapped_column(String(10))  # 'home', 'away', 'even'
+    opening_favorite: Mapped[Optional[str]] = mapped_column(
+        String(10)
+    )  # 'home', 'away', 'even'
 
     # Closing line (last odds before commence_time, pre-computed by backfill)
     closing_home_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
@@ -120,19 +130,31 @@ class Event(Base):
 
     # Excitement Index (EI) — standard GEI: cumulative probability travel distance
     raw_ei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
-    ei_metadata: Mapped[Optional[str]] = mapped_column(Text)  # JSON: {raw_ei, lead_changes, comeback_factor}
+    ei_metadata: Mapped[Optional[str]] = mapped_column(
+        Text
+    )  # JSON: {raw_ei, lead_changes, comeback_factor}
     ei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # LLM metadata enrichment
-    llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
-    llm_level: Mapped[Optional[str]] = mapped_column(String(20))  # professional/college/amateur/youth
+    llm_gender: Mapped[Optional[str]] = mapped_column(
+        String(20)
+    )  # men/women/mixed/unknown
+    llm_level: Mapped[Optional[str]] = mapped_column(
+        String(20)
+    )  # professional/college/amateur/youth
     llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NCAAF/NBA/etc
-    llm_importance: Mapped[Optional[str]] = mapped_column(String(30))  # playoff/championship/regular_season
+    llm_importance: Mapped[Optional[str]] = mapped_column(
+        String(30)
+    )  # playoff/championship/regular_season
 
     # Normalized team names for better matching (ESPN, search, etc.)
-    home_team_normalized: Mapped[Optional[str]] = mapped_column(String(200))  # Full canonical name
+    home_team_normalized: Mapped[Optional[str]] = mapped_column(
+        String(200)
+    )  # Full canonical name
     away_team_normalized: Mapped[Optional[str]] = mapped_column(String(200))
-    home_team_alt_names: Mapped[Optional[list]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers", etc.]
+    home_team_alt_names: Mapped[Optional[list]] = mapped_column(
+        JSONB
+    )  # ["Lakers", "LA Lakers", etc.]
     away_team_alt_names: Mapped[Optional[list]] = mapped_column(JSONB)
 
     # ESPN enrichment
@@ -140,14 +162,24 @@ class Event(Base):
     venue_id: Mapped[Optional[int]] = mapped_column(ForeignKey("venues.id"))
     broadcast_info: Mapped[Optional[str]] = mapped_column(String(255))  # "ESPN, ESPN+"
     game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32"
-    period: Mapped[Optional[str]] = mapped_column(String(100))  # "Q4", "2nd Half", "OT", or schedule info
-    espn_win_prob_home: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # ESPN's model
-    win_probability_sources: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"espn": 0.65, "betting": 0.60}
+    period: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )  # "Q4", "2nd Half", "OT", or schedule info
+    espn_win_prob_home: Mapped[Optional[float]] = mapped_column(
+        Numeric(5, 4)
+    )  # ESPN's model
+    win_probability_sources: Mapped[Optional[dict]] = mapped_column(
+        JSONB
+    )  # {"espn": 0.65, "betting": 0.60}
 
     # StatPal enrichment
     statpal_fixture_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
-    statpal_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    commence_time_source: Mapped[Optional[str]] = mapped_column(String(20))  # 'odds_api', 'espn', 'statpal'
+    statpal_end_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    commence_time_source: Mapped[Optional[str]] = mapped_column(
+        String(20)
+    )  # 'odds_api', 'espn', 'statpal'
 
     # Authoritative game end time — set when any source confirms the game is over.
     # Sources (in priority): statpal_end_time > ESPN "post"/"final" > Odds API completed > staleness.
@@ -162,36 +194,34 @@ class Event(Base):
     # March Madness / NCAA tournament fields (nullable — only set for tournament games)
     tournament_seed_home: Mapped[Optional[int]] = mapped_column()
     tournament_seed_away: Mapped[Optional[int]] = mapped_column()
-    tournament_region: Mapped[Optional[str]] = mapped_column(String(30))  # "East", "West", "Midwest", "South"
-    tournament_round: Mapped[Optional[str]] = mapped_column(String(30))  # "First Four", "Round of 64", etc.
-    tournament_type: Mapped[Optional[str]] = mapped_column(String(10))  # "mens" or "womens"
+    tournament_region: Mapped[Optional[str]] = mapped_column(
+        String(30)
+    )  # "East", "West", "Midwest", "South"
+    tournament_round: Mapped[Optional[str]] = mapped_column(
+        String(30)
+    )  # "First Four", "Round of 64", etc.
+    tournament_type: Mapped[Optional[str]] = mapped_column(
+        String(10)
+    )  # "mens" or "womens"
     is_tournament_game: Mapped[Optional[bool]] = mapped_column(default=False)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="events")
     home_team: Mapped[Optional["Team"]] = relationship(
-        back_populates="home_events",
-        foreign_keys=[home_team_id]
+        back_populates="home_events", foreign_keys=[home_team_id]
     )
     away_team: Mapped[Optional["Team"]] = relationship(
-        back_populates="away_events",
-        foreign_keys=[away_team_id]
+        back_populates="away_events", foreign_keys=[away_team_id]
     )
     venue: Mapped[Optional["Venue"]] = relationship(back_populates="events")
-    odds_snapshots: Mapped[list["OddsSnapshot"]] = relationship(
-        back_populates="event"
-    )
+    odds_snapshots: Mapped[list["OddsSnapshot"]] = relationship(back_populates="event")
     espn_snapshots: Mapped[list["ESPNSnapshot"]] = relationship(
-        back_populates="event",
-        cascade="all, delete-orphan"
+        back_populates="event", cascade="all, delete-orphan"
     )
     scoring_plays: Mapped[list["ScoringPlay"]] = relationship(
-        back_populates="event",
-        cascade="all, delete-orphan"
+        back_populates="event", cascade="all, delete-orphan"
     )
 
 
@@ -212,12 +242,16 @@ class ScoringPlay(Base):
     source: Mapped[str] = mapped_column(String(20))  # "statpal" or "espn"
 
     # Game context
-    period: Mapped[Optional[str]] = mapped_column(String(30))  # "Q1", "1st Half", "Inning 5"
+    period: Mapped[Optional[str]] = mapped_column(
+        String(30)
+    )  # "Q1", "1st Half", "Inning 5"
     game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32", "02:15"
 
     # Play description
     description: Mapped[str] = mapped_column(Text)
-    play_type: Mapped[Optional[str]] = mapped_column(String(50))  # "field_goal", "turnover"
+    play_type: Mapped[Optional[str]] = mapped_column(
+        String(50)
+    )  # "field_goal", "turnover"
     team_name: Mapped[Optional[str]] = mapped_column(String(100))
     player_name: Mapped[Optional[str]] = mapped_column(String(100))
 
@@ -242,32 +276,30 @@ class ScoringPlay(Base):
 
 class OddsSnapshot(Base):
     """Raw odds readings (high frequency, pruned after aggregation)."""
-    
+
     __tablename__ = "odds_snapshots"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
-        server_default=func.now(),
-        index=True
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     bookmaker: Mapped[str] = mapped_column(String(50))
-    
+
     # Moneyline
     home_moneyline: Mapped[Optional[int]] = mapped_column(Integer)
     away_moneyline: Mapped[Optional[int]] = mapped_column(Integer)
-    
+
     # Spread
     home_spread: Mapped[Optional[float]] = mapped_column(Numeric(4, 1))
     home_spread_odds: Mapped[Optional[int]] = mapped_column(Integer)
     away_spread_odds: Mapped[Optional[int]] = mapped_column(Integer)
-    
+
     # Totals
     over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     over_odds: Mapped[Optional[int]] = mapped_column(Integer)
     under_odds: Mapped[Optional[int]] = mapped_column(Integer)
-    
+
     # Calculated fields (denormalized for query speed)
     home_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     away_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
@@ -301,9 +333,7 @@ class OddsAggregated(Base):
     avg_projected_total: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     snapshot_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("event_id", "period_start", name="uq_event_period"),
@@ -316,11 +346,11 @@ class ESPNSnapshot(Base):
     __tablename__ = "espn_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        index=True
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
 
     # Win probability from ESPN's model
@@ -343,12 +373,14 @@ class WinProbSnapshot(Base):
     __tablename__ = "win_prob_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
-    source: Mapped[str] = mapped_column(String(30))  # "espn", "stat_model", "kalshi", etc.
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(
+        String(30)
+    )  # "espn", "stat_model", "kalshi", etc.
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        index=True
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
 
     # Win probabilities
@@ -377,20 +409,14 @@ class User(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(100))
     photo_url: Mapped[Optional[str]] = mapped_column(String(512))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # Relationships
-    favorites: Mapped[list["UserFavorite"]] = relationship(
-        back_populates="user"
-    )
+    favorites: Mapped[list["UserFavorite"]] = relationship(back_populates="user")
     preferences: Mapped[Optional["UserPreference"]] = relationship(
         back_populates="user", uselist=False
     )
-    pins: Mapped[list["UserPin"]] = relationship(
-        back_populates="user"
-    )
+    pins: Mapped[list["UserPin"]] = relationship(back_populates="user")
 
 
 class UserFavorite(Base):
@@ -401,15 +427,19 @@ class UserFavorite(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
-    relation_type: Mapped[str] = mapped_column(String(20), default="follow")  # follow, local, alma_mater, rival
-    source: Mapped[str] = mapped_column(String(20), default="manual")  # manual, onboarding, inferred
+    relation_type: Mapped[str] = mapped_column(
+        String(20), default="follow"
+    )  # follow, local, alma_mater, rival
+    source: Mapped[str] = mapped_column(
+        String(20), default="manual"
+    )  # manual, onboarding, inferred
     weight: Mapped[float] = mapped_column(Numeric(3, 2), default=1.0)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("user_id", "team_id", "relation_type", name="uq_user_team_relation"),
+        UniqueConstraint(
+            "user_id", "team_id", "relation_type", name="uq_user_team_relation"
+        ),
     )
 
     # Relationships
@@ -423,7 +453,9 @@ class UserPreference(Base):
     __tablename__ = "user_preferences"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
     home_location: Mapped[Optional[str]] = mapped_column(String(100))
     sport_affinities: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -446,7 +478,9 @@ class UserPin(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    pin_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'event' or 'future'
+    pin_type: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # 'event' or 'future'
     target_id: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -462,19 +496,17 @@ class UserPin(Base):
 
 class Tournament(Base):
     """Tournaments and championships."""
-    
+
     __tablename__ = "tournaments"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"))
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     year: Mapped[Optional[int]] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), default="active")
-    
+
     # Relationships
-    odds: Mapped[list["TournamentOdds"]] = relationship(
-        back_populates="tournament"
-    )
+    odds: Mapped[list["TournamentOdds"]] = relationship(back_populates="tournament")
 
 
 class TournamentOdds(Base):
@@ -486,8 +518,7 @@ class TournamentOdds(Base):
     tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
     odds: Mapped[Optional[int]] = mapped_column(Integer)
     win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
@@ -504,9 +535,7 @@ class ScoreSnapshot(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        index=True
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     home_score: Mapped[int] = mapped_column(Integer)
     away_score: Mapped[int] = mapped_column(Integer)
@@ -521,13 +550,16 @@ class EIPercentile(Base):
     __tablename__ = "ei_percentiles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    scope: Mapped[str] = mapped_column(String(50), nullable=False)  # 'global', 'basketball_nba', etc.
+    scope: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'global', 'basketball_nba', etc.
     percentile: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-100
-    raw_ei_threshold: Mapped[float] = mapped_column(Numeric(6, 4))  # Raw EI value at this percentile
+    raw_ei_threshold: Mapped[float] = mapped_column(
+        Numeric(6, 4)
+    )  # Raw EI value at this percentile
     sample_size: Mapped[int] = mapped_column(Integer)  # Number of events in this scope
     computed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now()
+        DateTime(timezone=True), server_default=func.now()
     )
 
     __table_args__ = (
@@ -561,21 +593,39 @@ class FuturesMarket(Base):
     __tablename__ = "futures_markets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # 'odds_api', 'kalshi'
-    external_id: Mapped[str] = mapped_column(String(200), nullable=False)  # sport_key or event_ticker
+    source: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # 'odds_api', 'kalshi'
+    external_id: Mapped[str] = mapped_column(
+        String(200), nullable=False
+    )  # sport_key or event_ticker
     sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"), index=True)
-    event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("events.id"), index=True)  # Game-level market → event link
+    event_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("events.id"), index=True
+    )  # Game-level market → event link
 
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
-    llm_sport_category: Mapped[Optional[str]] = mapped_column(String(50))  # LLM-assigned sport category
-    market_tier: Mapped[Optional[int]] = mapped_column(Integer)  # 1=championship, 2=conference, 3=awards, 4=division, 5=props/other
-    market_type: Mapped[Optional[str]] = mapped_column(String(30))  # Pattern-classified type (championship, conference, award, division, game, stat_prop, other)
+    category: Mapped[str] = mapped_column(
+        String(50), default="championship"
+    )  # championship, mvp, division, prop
+    llm_sport_category: Mapped[Optional[str]] = mapped_column(
+        String(50)
+    )  # LLM-assigned sport category
+    market_tier: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # 1=championship, 2=conference, 3=awards, 4=division, 5=props/other
+    market_type: Mapped[Optional[str]] = mapped_column(
+        String(30)
+    )  # Pattern-classified type (championship, conference, award, division, game, stat_prop, other)
 
     # LLM metadata enrichment
-    llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
-    llm_level: Mapped[Optional[str]] = mapped_column(String(20))  # professional/college/amateur/youth
+    llm_gender: Mapped[Optional[str]] = mapped_column(
+        String(20)
+    )  # men/women/mixed/unknown
+    llm_level: Mapped[Optional[str]] = mapped_column(
+        String(20)
+    )  # professional/college/amateur/youth
     llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NBA/EPL/etc
 
     # Cross-source matching key: {sport}:{league}:{category}:{season}
@@ -590,7 +640,9 @@ class FuturesMarket(Base):
     market_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
 
     # Flexible metadata (leaderboard state, round history, source-specific data)
-    market_metadata: Mapped[Optional[dict]] = mapped_column("market_metadata", JSONB, nullable=True)
+    market_metadata: Mapped[Optional[dict]] = mapped_column(
+        "market_metadata", JSONB, nullable=True
+    )
 
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -599,25 +651,45 @@ class FuturesMarket(Base):
     commence_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     # When the market resolves (e.g., when the champion is crowned)
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open, suspended, resolved
+    status: Mapped[str] = mapped_column(
+        String(20), default="open", index=True
+    )  # open, suspended, resolved
 
     # Cross-source event grouping (e.g., "NBA Championship 2025-26" from multiple sources)
     group_id: Mapped[Optional[str]] = mapped_column(String(200), index=True)
-    group_type: Mapped[Optional[str]] = mapped_column(String(50))  # championship, conference, division, award, game, prop
-    group_position: Mapped[Optional[int]] = mapped_column(Integer)  # Display order within group (e.g., by liquidity)
+    group_type: Mapped[Optional[str]] = mapped_column(
+        String(50)
+    )  # championship, conference, division, award, game, prop
+    group_position: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # Display order within group (e.g., by liquidity)
 
     # Discover feed enrichment
-    image_url: Mapped[Optional[str]] = mapped_column(String(500))  # Unsplash/Pexels photo URL
-    hook_description: Mapped[Optional[str]] = mapped_column(String(500))  # LLM-generated context blurb
-    hook_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    image_url: Mapped[Optional[str]] = mapped_column(
+        String(500)
+    )  # Unsplash/Pexels photo URL
+    hook_description: Mapped[Optional[str]] = mapped_column(
+        String(500)
+    )  # LLM-generated context blurb
+    hook_generated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
     hook_leader_at_generation: Mapped[Optional[str]] = mapped_column(String(200))
 
     # Volume/liquidity from prediction markets (internal signal, never user-facing)
-    volume: Mapped[Optional[int]] = mapped_column(Integer)  # Lifetime volume in contracts/dollars
+    volume: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # Lifetime volume in contracts/dollars
     volume_24h: Mapped[Optional[int]] = mapped_column(Integer)  # 24-hour trading volume
-    open_interest: Mapped[Optional[int]] = mapped_column(Integer)  # Currently open contracts (Kalshi)
-    liquidity: Mapped[Optional[float]] = mapped_column(Numeric(14, 2))  # Available liquidity in USD (Polymarket)
-    volume_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    open_interest: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # Currently open contracts (Kalshi)
+    liquidity: Mapped[Optional[float]] = mapped_column(
+        Numeric(14, 2)
+    )  # Available liquidity in USD (Polymarket)
+    volume_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -651,7 +723,9 @@ class FuturesOutcome(Base):
     team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
 
     # Current consensus odds (denormalized for quick display)
-    current_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))  # 0.0-1.0
+    current_probability: Mapped[Optional[float]] = mapped_column(
+        Numeric(7, 6)
+    )  # 0.0-1.0
     current_american_odds: Mapped[Optional[int]] = mapped_column(Integer)
 
     # For Kalshi: store bid/ask spread (nullable for traditional books)
@@ -661,7 +735,9 @@ class FuturesOutcome(Base):
     # Opening odds (for detecting movement)
     opening_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
     opening_american_odds: Mapped[Optional[int]] = mapped_column(Integer)
-    opening_captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    opening_captured_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     # Pre-computed calibration price (closing line or settled price)
     calibration_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
@@ -696,14 +772,20 @@ class FuturesOddsSnapshot(Base):
     __tablename__ = "futures_odds_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    outcome_id: Mapped[int] = mapped_column(ForeignKey("futures_outcomes.id"), index=True)
-    bookmaker: Mapped[str] = mapped_column(String(50))  # 'draftkings', 'fanduel', 'kalshi'
+    outcome_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_outcomes.id"), index=True
+    )
+    bookmaker: Mapped[str] = mapped_column(
+        String(50)
+    )  # 'draftkings', 'fanduel', 'kalshi'
 
     # Normalized probability (always calculated)
     probability: Mapped[float] = mapped_column(Numeric(7, 6))
 
     # Source-specific raw data
-    american_odds: Mapped[Optional[int]] = mapped_column(Integer)  # For traditional books
+    american_odds: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # For traditional books
     yes_bid: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
     yes_ask: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
     last_price: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
@@ -767,14 +849,20 @@ class TeamIdentityMapping(Base):
     __tablename__ = "team_identity_mapping"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), index=True
+    )
     source: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     source_id: Mapped[Optional[str]] = mapped_column(String(200))
     source_name: Mapped[Optional[str]] = mapped_column(String(300), index=True)
     source_abbreviation: Mapped[Optional[str]] = mapped_column(String(20))
     sport_key: Mapped[Optional[str]] = mapped_column(String(50), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     # Relationships
     team: Mapped["Team"] = relationship()
@@ -787,7 +875,9 @@ class OscarsPool(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False, index=True)
+    code: Mapped[str] = mapped_column(
+        String(8), unique=True, nullable=False, index=True
+    )
     ceremony_year: Mapped[int] = mapped_column(Integer, default=2026)
     created_by_name: Mapped[str] = mapped_column(String(50), nullable=False)
     picks_locked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -817,7 +907,9 @@ class OscarsPoolMember(Base):
     display_name: Mapped[str] = mapped_column(String(50), nullable=False)
     avatar_emoji: Mapped[str] = mapped_column(String(10), default="🎬")
     member_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -899,7 +991,9 @@ class MatchingOverride(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("league_slug", "override_type", "source_name", name="uq_override_key"),
+        UniqueConstraint(
+            "league_slug", "override_type", "source_name", name="uq_override_key"
+        ),
     )
 
 
@@ -929,7 +1023,9 @@ class GolfLeaderboardSnapshot(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tour", "snapshot_date", "snapshot_type", name="uq_golf_snapshot"),
+        UniqueConstraint(
+            "tour", "snapshot_date", "snapshot_type", name="uq_golf_snapshot"
+        ),
     )
 
 
@@ -988,7 +1084,13 @@ class DiscoverInteraction(Base):
     )
 
     __table_args__ = (
-        Index("ix_discover_interactions_rollup", "created_at", "surface", "category", "action"),
+        Index(
+            "ix_discover_interactions_rollup",
+            "created_at",
+            "surface",
+            "category",
+            "action",
+        ),
         Index("ix_discover_interactions_item", "item_type", "item_id", "created_at"),
     )
 
@@ -1014,7 +1116,58 @@ class DiscoverReviewDecision(Base):
     )
 
     __table_args__ = (
-        Index("ix_discover_review_decisions_item", "item_type", "item_id", "created_at"),
+        Index(
+            "ix_discover_review_decisions_item", "item_type", "item_id", "created_at"
+        ),
+    )
+
+
+class DiscoverGroundTruthDiagnostic(Base):
+    """Persisted Discover ground-truth hit/miss diagnostics."""
+
+    __tablename__ = "discover_ground_truth_diagnostics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_group: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    source: Mapped[Optional[str]] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    item_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    feed_name: Mapped[Optional[str]] = mapped_column(String(500))
+    category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    probability: Mapped[Optional[str]] = mapped_column(String(250))
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+    published_at: Mapped[Optional[str]] = mapped_column(String(50))
+    rank: Mapped[Optional[int]] = mapped_column(Integer)
+    score: Mapped[Optional[int]] = mapped_column(Integer)
+    quality_class: Mapped[Optional[str]] = mapped_column(String(40))
+    archetype: Mapped[Optional[str]] = mapped_column(String(80))
+    family_key: Mapped[Optional[str]] = mapped_column(String(300))
+    story_key: Mapped[Optional[str]] = mapped_column(String(300))
+    triage_bucket: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    recommended_action: Mapped[Optional[str]] = mapped_column(Text)
+    matched_market_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    trace_status: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    trace_summary: Mapped[Optional[str]] = mapped_column(Text)
+    db_match_count: Mapped[Optional[int]] = mapped_column(Integer)
+    raw: Mapped[Optional[dict]] = mapped_column(JSONB)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_discover_gt_diag_run_group",
+            "run_id",
+            "source_group",
+            "status",
+        ),
+        Index(
+            "ix_discover_gt_diag_captured",
+            "captured_at",
+            "source_group",
+            "triage_bucket",
+        ),
     )
 
 
@@ -1035,7 +1188,9 @@ class BugReport(Base):
     admin_notes: Mapped[Optional[str]] = mapped_column(Text)
     backlog_ref: Mapped[Optional[str]] = mapped_column(String(20))
     resolution_summary: Mapped[Optional[str]] = mapped_column(Text)
-    notification_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    notification_sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -1079,18 +1234,20 @@ class DeviceToken(Base):
     """APNS/FCM device tokens for push notifications."""
 
     __tablename__ = "device_tokens"
-    __table_args__ = (
-        UniqueConstraint("device_token", name="uq_device_tokens_token"),
-    )
+    __table_args__ = (UniqueConstraint("device_token", name="uq_device_tokens_token"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     device_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    platform: Mapped[str] = mapped_column(String(10), nullable=False)  # "ios" or "macos"
+    platform: Mapped[str] = mapped_column(
+        String(10), nullable=False
+    )  # "ios" or "macos"
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id"), index=True
     )
     session_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
