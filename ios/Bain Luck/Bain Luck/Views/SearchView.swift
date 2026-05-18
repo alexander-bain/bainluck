@@ -471,8 +471,8 @@ struct SearchView: View {
                             if suggestion.type == "event", let status = suggestion.status {
                                 HStack(spacing: 4) {
                                     StatusBadge(status: status)
-                                    if let ct = suggestion.commenceTime {
-                                        RelativeTimeText(dateString: ct)
+                                    if let commenceTime = suggestion.commenceTime {
+                                        RelativeTimeText(dateString: commenceTime)
                                     }
                                 }
                             }
@@ -691,8 +691,8 @@ struct SearchView: View {
                             .foregroundStyle(.secondary)
                     }
                     StatusBadge(status: event.status)
-                    if event.status == "scheduled", let ct = event.commenceTime {
-                        RelativeTimeText(dateString: ct)
+                    if event.status == "scheduled", let commenceTime = event.commenceTime {
+                        RelativeTimeText(dateString: commenceTime)
                     }
                 }
             }

@@ -41,7 +41,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Verified:** Tonight's Game 6 SAS-MIN market linked successfully (score 29.625, guard passed). Tier-1 gaps are all PAST games — current/upcoming games link correctly.
 
-**Remaining:** Tier-1 gaps endpoint denominator should exclude markets for closed games (these are open on Kalshi for settlement but the game has ended).
+**May 18 follow-up shipped:** Tier-1 gaps already excludes settlement-open Kalshi markets for closed games, and the headline link-rate endpoint now also excludes stale open/unlinked Kalshi game markets using the game date embedded in the ticker plus a 36-hour grace window.
 
 **Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
@@ -49,7 +49,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem (discovered May 18 health check):** The link rate endpoint reports misleadingly low rates for several sport/source combinations because the denominator includes markets that *cannot* be linked (season futures, non-game markets) and because league classification errors put markets under the wrong sport.
 
-**May 18 first slice shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. Guardrail tests cover unsupported esports, season/futures name filters, and the exact impossible pairs from this item (`esports/PGA`, `esports/MLB`, `cricket/EPL`, `cricket/FIFA_WC`, `cricket/UCL`, `tennis/PGA`).
+**May 18 slices shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. It also excludes stale open/unlinked Kalshi game markets whose ticker game date is more than 36 hours old, preventing settlement-open closed games from depressing the headline health rate. Guardrail tests cover unsupported esports, season/futures name filters, stale settlement-open game markets, and the exact impossible pairs from this item (`esports/PGA`, `esports/MLB`, `cricket/EPL`, `cricket/FIFA_WC`, `cricket/UCL`, `tennis/PGA`).
 
 **Four distinct issues:**
 
@@ -284,6 +284,122 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Friend challenge landing page shipped at `/challenge/[id]`: loads existing challenge codes, handles Higher/Lower acceptance, participants/results states, and share/copy affordances.
 - ✅ Shareable prediction scorecards shipped (May 17): OG image generation via Next.js `ImageResponse`, share button on `/discover/stats`, scorecard page at `/discover/scorecard`.
 - ✅ Onboarding category selections now persist to server via `useCategoryInterests` hook (May 17). Previously selections were lost on completion.
+
+**Immediate priority — Discover ranking fixes (May 18 health check findings):**
+
+The following 8 items address three interconnected problems discovered in the May 18 health check: (a) foreign soccer events dominate the feed because the "upset" headline bypasses Discover event demotion regardless of league tier, (b) geopolitics floods futures slots with near-identical Russia-war markets, pushing entertainment to position 69+, and (c) left-swipe personalization is too weak to suppress high-scoring items.
+
+**0u-R1. Gate "upset" event demotion bypass on league tier** (HIGHEST IMPACT)
+
+The `is_exceptional` check in `feed.py:626` lets any event with "upset" in its headline keep its full score in Discover mode. The headline generator labels nearly every recently-completed game as "Recent upset" — including Ligue 2, Brazilian Série B, and Chilean Primera División. This causes 17 of 50 Discover items to be foreign soccer events, crowding out entertainment/politics/tech.
+
+**Fix:** Require league tier <= 2 for the "upset"/"comeback"/"historic" keywords to count as exceptional. Also tighten the `score >= 90` gate to require `ei_score >= 50` alongside it, so a routine minor-league game can't qualify on base signals alone.
+
+**Files:** `backend/app/routes/feed.py` (~line 626)
+
+**0u-R2. Fix Russia-war story key to catch territory markets**
+
+10 near-identical "Will Russia capture [village]?" markets all score 100 and consume ~10 of ~20 futures slots. They don't share the existing `story:russia_ukraine` key because they only mention "Russia" (the key requires both "Russia" AND "Ukraine"). Add a broader `story:russia_war` key that matches Russia + capture/territory/advance/offensive keywords. Cap at 2.
+
+**Files:** `backend/app/utils/feed_market_quality.py` (`_story_key()`, `per_story_caps`)
+
+**0u-R3. Fix frontend localStorage dismiss persistence**
+
+`handleDismiss` in `discover/page.tsx:537` calls `setDismissed()` but never writes to localStorage. Dismissed items reappear on every page refresh. One-line fix: persist the updated set to localStorage inside the callback.
+
+**Files:** `frontend/app/discover/page.tsx` (~line 537)
+
+**0u-R4. Election allowlist: penalize non-major elections**
+
+Instead of blocklisting obscure elections (whack-a-mole), define `_MAJOR_ELECTION_RE` — an allowlist of elections that deserve the full politics base score (US federal, UK/French/German/Canadian/Brazilian/Indian national, EU Parliament). Markets containing "election/winner/nominee" that don't match get `FOREIGN_LOCAL_ELECTION_PENALTY = -30`.
+
+**Files:** `backend/app/utils/futures_highlights.py`
+
+**0u-R5. Soccer league allowlist: penalize non-top-tier soccer futures**
+
+Define `_TOP_TIER_SOCCER_RE` — EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa League, MLS, FIFA World Cup, Copa Libertadores, Copa America, Liga MX. Soccer futures not matching this AND not already caught by `_MINOR_LEAGUE_PATTERNS` get `OBSCURE_SOCCER_PENALTY = -20`. Add story keys and caps: `story:foreign_local_elections` (cap 1), `story:minor_soccer_leagues` (cap 1).
+
+**Files:** `backend/app/utils/futures_highlights.py`, `backend/app/utils/feed_market_quality.py`
+
+**0u-R6. Steeper swipe penalty escalation**
+
+Current max category penalty is -0.40 (0.60x multiplier). A 100-score market becomes 60 — still prominent after 20+ swipes. Add escalation tiers: 5+ swipes → -0.60 (0.40x), 8+ swipes → -0.80 (0.20x). Lower `MIN_MULTIPLIER` from 0.30 to 0.15 (only reachable after 8+ negative swipes). Increase `FEATURE_DISLIKE_MAX_PENALTY` from -0.12 to -0.25.
+
+**Files:** `backend/app/utils/personalization.py`, `backend/app/routes/feed.py` (`_build_discover_category_affinities()`)
+
+**0u-R7. Story-key propagation of dismiss signal**
+
+Currently dismissing market #12345 only suppresses that exact ID. Add `recent_dismissed_story_keys` and `recent_dismissed_group_ids` to `PersonalizationContext`. Compute `_story_key()` from each dismissed market's `item_name` during context loading. Suppress all markets matching a dismissed story_key or group_id.
+
+**Files:** `backend/app/routes/feed.py`, `backend/app/utils/personalization.py`
+
+**0u-R8. Tests for all ranking fixes**
+
+Unit tests for: league-gated event demotion (Ligue 2 upset demoted, NBA upset kept), Russia-war story key matching and cap, election/soccer allowlists, escalated penalty tiers, story-key dismiss propagation.
+
+**Files:** `backend/tests/test_feed_market_quality.py`, `backend/tests/test_personalization.py`, new test files as needed
+
+---
+
+**Next-wave ranking improvements (after R1-R8 ship):**
+
+These items go deeper into ranking quality. They're ordered by expected impact and should be tackled after the immediate fixes land and we can measure the improved baseline.
+
+**0u-N1. Wire `market_interestingness.py` into feed ranking**
+
+The interestingness scoring scaffold (`utils/market_interestingness.py`, shipped May 18) has 8 calibrated signals (decisiveness, multi-source, recency, movement, resolution proximity, category novelty, volume, LLM quality) but is not yet consumed by the feed. Steps:
+1. Export ground-truth labels from Polymarket email highlights + admin review decisions to CSV
+2. Run `scripts/calibrate_interestingness.py` against labels, hill-climb weights for Precision@20/Recall@50
+3. Add `interestingness_score` column to `FuturesMarket` (nullable float, backfilled by Celery task)
+4. In `_score_futures()`, blend interestingness score with existing futures highlight score (e.g., `final = 0.6 * highlight + 0.4 * interestingness`)
+5. A/B compare old vs blended ranking via admin Discover viewer
+
+**Depends on:** Ground-truth labels (item 5 in existing next phases), calibration script (shipped)
+
+**0u-N2. Strengthen LLM metadata consumption**
+
+The `discover_llm` enrichment already produces `audience_scope` (broad/mainstream/niche/local/specialist) and `junk_flags` (local_election, low_tier_sports, etc.) but the penalty in `_discover_llm_score_adjustment()` is too small (-4 for niche scope, -4 to -16 for junk flags). Steps:
+1. Increase `audience_scope` penalties: niche → -15, local → -25, specialist → -20
+2. Increase `junk_flags` penalties: `local_election` → -20, `low_tier_sports` → -15
+3. Add new junk flags to the LLM prompt: `minor_soccer`, `procedural_politics`, `commodity_ladder`
+4. Re-run enrichment for feed-shaped candidates and measure impact on `audit_feed_quality.py`
+
+**Files:** `backend/app/routes/feed.py` (`_discover_llm_score_adjustment()`), LLM enrichment prompt
+
+**0u-N3. Category-aware event-vs-futures balancing**
+
+Currently events and futures compete on raw score, and events dominate because live games score 80-100 from basic signals. The first-page diversity caps `sports_culture` events at 3, but this only applies to the first 20 items. Steps:
+1. Add a per-category event budget beyond the first page (e.g., max 5 soccer events, max 5 baseball events in the full feed)
+2. Allow high-scoring futures to "promote" into event slots when available events are low-tier (score < 50 after demotion)
+3. Add a "category hunger" signal: categories with zero items in the top 20 get a +15 urgency bonus for their best candidate
+4. Enforce the entertainment cap of 3 is treated as a *floor* (guarantee at least 1 entertainment item in top 20 if any score >= 80)
+
+**Files:** `backend/app/routes/feed.py` (post-scoring ranking), `backend/app/utils/feed_market_quality.py` (first-page diversity)
+
+**0u-N4. Semantic similarity for dismiss propagation**
+
+Story-key propagation (R7) handles cases where dismissed markets share an explicit key. For the long tail, add lightweight semantic similarity so dismissing "Chilean Primera Division champion" also suppresses "Who wins the Chilean league?" Steps:
+1. Extract entity/topic tokens from dismissed market names (reuse existing `_discover_feature_tokens()`)
+2. For each candidate market, compute Jaccard similarity of feature tokens against dismissed items
+3. If similarity > 0.6, apply a -0.30 soft penalty (not a hard filter)
+4. Cap computation cost: only compare against the 50 most recent dismisses
+
+**Files:** `backend/app/routes/feed.py` (scoring loop), `backend/app/utils/personalization.py`
+
+**0u-N5. Engagement-calibrated ranking weights**
+
+Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights instead of hand-tuning. Steps:
+1. Build a nightly export of Discover interactions joined with market metadata (category, score, position, interestingness components)
+2. Compute engagement rate by score bucket and category — identify where the ranking over/under-values content
+3. Use the interestingness calibration script to hill-climb weights against engagement as ground truth (complement email highlights)
+4. Add an admin panel showing engagement-rate-by-category and score-vs-engagement scatterplot
+5. Only apply engagement-derived weight changes after human review (no auto-tuning initially)
+
+**Depends on:** GA4 data accumulation (2+ weeks), interestingness scaffold (shipped), admin review queue (shipped)
+
+**Files:** `backend/scripts/calibrate_interestingness.py`, new export script, admin panel
+
+---
 
 **Next phases:**
 1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
@@ -794,7 +910,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, Celery task registration, multipart plain-text+HTML Gmail messages, sender/recipient validation, and CR/LF header-injection rejection. Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
+**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, Celery task registration, multipart plain-text+HTML Gmail messages, sender/recipient validation, CR/LF header-injection rejection, and automated-email suppression headers (`Auto-Submitted`, `Precedence`, `X-Auto-Response-Suppress`). Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
 
 **Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
@@ -1376,7 +1492,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, Search, Futures Detail, League Grid, and Sport Category views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
+| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, Search, Futures Detail, League Grid, and Sport Category views. Additional low-risk local abbreviation cleanup landed in Menu Bar, Search, Market Map, Discover Event Card, and Related-by-Tag components. Remaining: broader `ct`, `ap`/`hp`, `gm`, and similar cleanup in small low-conflict slices. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)
@@ -1505,7 +1621,7 @@ Items 4, 5, 6, 8 remain (item 2 web x-axis alignment is done via `sharedChartDom
 
 **May 18 first slice shipped:** Added pure scoring utilities in `backend/app/utils/market_interestingness.py` and a local-input calibration scaffold in `backend/scripts/calibrate_interestingness.py`. It accepts CSV/JSON/JSONL rows, scores deterministic component signals, and reports optional labeled precision/recall metrics. No runtime feed ranking or database integration yet.
 
-**Phases:** (1) Ground truth collection (Gmail → Apps Script → Sheet, 50-100 labeled markets), (2) Scoring formula (8 weighted features: decisiveness, multi-source, recency, movement, resolution proximity, category novelty, volume, LLM quality), (3) Calibration (hill-climb weights, Precision@20/Recall@50/NDCG), (4) Integration (explore page, feed ranking, trending, push, featured hero).
+**Phases:** (1) Ground truth collection (Gmail → Apps Script → Sheet, 50-100 labeled markets), (2) Scoring formula (8 weighted features: decisiveness, multi-source, recency, movement, resolution proximity, category novelty, volume, LLM quality) — ✅ shipped May 18, (3) Calibration (hill-climb weights, Precision@20/Recall@50/NDCG), (4) Integration (explore page, feed ranking, trending, push, featured hero). **Feed integration plan:** see 0u-N1 in the Discover Feed Quality section for the step-by-step wiring into `_score_futures()`.
 
 **Files:** `utils/market_interestingness.py` (new), `scripts/calibrate_interestingness.py` (new), Google Sheet
 **Parallel Safety:** Green

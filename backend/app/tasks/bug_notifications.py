@@ -100,6 +100,9 @@ def _build_gmail_message(to_email: str, subject: str, body_html: str) -> EmailMe
     message["To"] = recipient
     message["From"] = formataddr(("Bain Luck", sender_email))
     message["Subject"] = _safe_header_value(subject, "subject")
+    message["Auto-Submitted"] = "auto-generated"
+    message["Precedence"] = "bulk"
+    message["X-Auto-Response-Suppress"] = "All"
     message.set_content(_html_to_plain_text(body_html))
     message.add_alternative(body_html, subtype="html")
     return message

@@ -18,7 +18,7 @@ Shipped:
 - CQ-6 shipped: `NativeGuessCard` now handles both futures and event Higher/Lower questions.
 - CQ-7 shipped: shared Feed/Discover context menu moved into `Components/CardContextMenu.swift`.
 - iOS-7 hidden Futures browser rebuild is partial: grouped category rail, polished rows, reusable browse components, and loading/error/empty states are in place.
-- CQ-16/CQ-17 cleanup advanced: common view-model names now use `viewModel`, short market/local variables were expanded in touched views, and newly extracted helpers use module-visible boundaries where needed.
+- CQ-16/CQ-17 cleanup advanced: common view-model names now use `viewModel`, short market/local variables were expanded in touched views, `MenuBarGame` is file-private, and newly extracted helpers use module-visible boundaries where needed.
 
 Still open:
 - CQ-16: final helper-method `private` sweep across untouched views.
@@ -30,7 +30,7 @@ Still open:
 |------|-------|-----------|
 | Models | A- | Consistent Decodable/Sendable, resilient decoding, model doc comments added. |
 | Comments/MARK usage | B+ | Model/service docs added; remaining view-level comments are pragmatic. |
-| Naming | B | Broad `vm`/market abbreviation cleanup has started; older untouched views still contain local shorthand. |
+| Naming | B | Broad `vm`/market abbreviation cleanup has started, plus targeted `ct`/`ap`/`hp` score/probability cleanup in touched views. Older untouched views still contain local shorthand. |
 | SwiftUI | B- | URL crash risks fixed; large Discover UI components still need extraction. |
 | File organization | B+ | ViewModels and utilities are now organized; DiscoverView remains oversized. |
 | Architecture | C | No consistent pattern, no DI, no testability |

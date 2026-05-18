@@ -32,6 +32,7 @@ router = APIRouter()
 
 
 _CLOSED_GAME_STATUSES = {"closed", "completed", "final"}
+_STALE_OPEN_GAME_MARKET_GRACE = timedelta(hours=36)
 _LINK_RATE_SPORT_CATEGORIES = (
     "basketball", "football", "baseball", "hockey", "soccer",
     "golf", "tennis", "mma", "boxing", "cricket", "rugby",
@@ -121,6 +122,30 @@ def _should_exclude_tier1_gap_for_closed_game(
         _is_closed_past_event_candidate(candidate, now)
         for candidate in candidates
     )
+
+
+def _should_exclude_stale_open_unlinked_game_market(
+    *,
+    source: str | None,
+    external_id: str | None,
+    status: str | None,
+    event_id: int | None,
+    now: datetime,
+) -> bool:
+    """Exclude old settlement-open game markets from headline link-rate denominators."""
+    if (source or "").lower() != "kalshi" or event_id is not None:
+        return False
+    if (status or "").lower() != "open":
+        return False
+
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    game_time = extract_game_date_from_ticker(external_id or "")
+    if game_time is None:
+        return False
+    if game_time.tzinfo is None:
+        game_time = game_time.replace(tzinfo=timezone.utc)
+    return game_time < now - _STALE_OPEN_GAME_MARKET_GRACE
 
 
 @router.post("/prediction-markets/match")
@@ -379,15 +404,16 @@ async def prediction_market_link_rate(
     _kalshi_game_filter = or_(*_kalshi_ticker_conditions)
     _game_name_filter = _link_rate_game_name_filter()
 
-    # Kalshi: game-level markets only (ticker prefix match)
+    # Kalshi: game-level markets only (ticker prefix match). Aggregate in
+    # Python so old settlement-open unlinked markets can be excluded using the
+    # game date embedded in the ticker.
     kalshi_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),
             FuturesMarket.llm_league.label("league"),
-            func.count().label("total"),
-            func.count(FuturesMarket.event_id).label("linked"),
-            func.count().filter(FuturesMarket.status == "open").label("open_total"),
-            func.count(FuturesMarket.event_id).filter(FuturesMarket.status == "open").label("open_linked"),
+            FuturesMarket.event_id,
+            FuturesMarket.status,
+            FuturesMarket.external_id,
         )
         .where(
             FuturesMarket.source == "kalshi",
@@ -396,25 +422,58 @@ async def prediction_market_link_rate(
             _kalshi_game_filter,
             _game_name_filter,
         )
-        .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
-        .order_by(func.count().desc())
     )
-    kalshi_by_sport = []
-    kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    now = datetime.now(timezone.utc)
+    kalshi_rows_by_bucket = {}
+    excluded_stale_open_unlinked = 0
     for row in kalshi_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
             continue
-        sport_data = {
-            "sport": row.sport,
-            "league": row.league,
-            "total": row.total,
-            "linked": row.linked,
-            "link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
-            "open_total": row.open_total,
-            "open_linked": row.open_linked,
-            "link_rate_all": round(row.linked / row.total * 100, 1) if row.total else 0,
-        }
-        kalshi_by_sport.append(sport_data)
+        if _should_exclude_stale_open_unlinked_game_market(
+            source="kalshi",
+            external_id=row.external_id,
+            status=row.status,
+            event_id=row.event_id,
+            now=now,
+        ):
+            excluded_stale_open_unlinked += 1
+            continue
+
+        bucket = (row.sport, row.league)
+        sport_data = kalshi_rows_by_bucket.setdefault(
+            bucket,
+            {
+                "sport": row.sport,
+                "league": row.league,
+                "total": 0,
+                "linked": 0,
+                "open_total": 0,
+                "open_linked": 0,
+            },
+        )
+        sport_data["total"] += 1
+        if row.event_id is not None:
+            sport_data["linked"] += 1
+        if (row.status or "").lower() == "open":
+            sport_data["open_total"] += 1
+            if row.event_id is not None:
+                sport_data["open_linked"] += 1
+
+    kalshi_by_sport = sorted(
+        kalshi_rows_by_bucket.values(),
+        key=lambda item: item["total"],
+        reverse=True,
+    )
+    kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    for sport_data in kalshi_by_sport:
+        sport_data["link_rate"] = (
+            round(sport_data["open_linked"] / sport_data["open_total"] * 100, 1)
+            if sport_data["open_total"] else 0
+        )
+        sport_data["link_rate_all"] = (
+            round(sport_data["linked"] / sport_data["total"] * 100, 1)
+            if sport_data["total"] else 0
+        )
         for k in kalshi_totals:
             kalshi_totals[k] += sport_data[k]
 
@@ -475,12 +534,14 @@ async def prediction_market_link_rate(
             "open_total": grand_open_total,
             "open_linked": grand_open_linked,
             "denominator_note": "Headline rate uses open markets only. link_rate_all_pct includes all statuses.",
+            "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
         },
         "kalshi": {
             "totals": {
                 **kalshi_totals,
                 "link_rate_pct": round(kalshi_totals["open_linked"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
                 "link_rate_all_pct": round(kalshi_totals["linked"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
+                "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
             },
             "by_sport": kalshi_by_sport,
         },

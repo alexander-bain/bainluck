@@ -1,9 +1,12 @@
 """Tests for prediction-market link-rate denominator guards."""
 
+from datetime import datetime, timezone
+
 from app.routes.admin_matching import (
     _LINK_RATE_SPORT_CATEGORIES,
     _is_obvious_non_game_market_name,
     _should_include_link_rate_bucket,
+    _should_exclude_stale_open_unlinked_game_market,
 )
 
 
@@ -22,3 +25,42 @@ def test_obvious_non_game_market_name_detection():
     assert _is_obvious_non_game_market_name("Who will win the NBA Championship?") is True
     assert _is_obvious_non_game_market_name("Celtics vs Knicks") is False
     assert _is_obvious_non_game_market_name("Will Celtics win the game vs Knicks?") is False
+
+
+def test_stale_open_unlinked_kalshi_game_market_excluded_from_link_rate():
+    now = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
+
+    assert _should_exclude_stale_open_unlinked_game_market(
+        source="kalshi",
+        external_id="KXNBAGAME-26MAY16BOSNYK",
+        status="open",
+        event_id=None,
+        now=now,
+    ) is True
+
+
+def test_active_or_linked_game_markets_stay_in_link_rate():
+    now = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
+    recent_external_id = "KXNBAGAME-26MAY18BOSNYK"
+
+    assert _should_exclude_stale_open_unlinked_game_market(
+        source="kalshi",
+        external_id=recent_external_id,
+        status="open",
+        event_id=None,
+        now=now,
+    ) is False
+    assert _should_exclude_stale_open_unlinked_game_market(
+        source="kalshi",
+        external_id="KXNBAGAME-26MAY16BOSNYK",
+        status="open",
+        event_id=123,
+        now=now,
+    ) is False
+    assert _should_exclude_stale_open_unlinked_game_market(
+        source="polymarket",
+        external_id="KXNBAGAME-26MAY16BOSNYK",
+        status="open",
+        event_id=None,
+        now=now,
+    ) is False

@@ -113,19 +113,19 @@ struct MenuBarView: View {
         do {
             let feed = try await APIClient.shared.fetchFeed(limit: 10, includeFutures: false)
             liveGames = feed.items.compactMap { item -> MenuBarGame? in
-                guard let e = item.event, e.status == "live",
-                      let hp = e.currentOdds?.homeProbability else { return nil }
-                let ap = 1.0 - hp
+                guard let event = item.event, event.status == "live",
+                      let homeProbability = event.currentOdds?.homeProbability else { return nil }
+                let awayProbability = 1.0 - homeProbability
                 return MenuBarGame(
-                    id: e.id,
-                    homeAbbrev: e.homeTeamData?.abbreviation ?? String(e.homeTeam.split(separator: " ").last ?? ""),
-                    awayAbbrev: e.awayTeamData?.abbreviation ?? String(e.awayTeam.split(separator: " ").last ?? ""),
-                    homeScore: e.homeScore,
-                    awayScore: e.awayScore,
-                    homeProb: Int((hp * 100).rounded()),
-                    awayProb: Int((ap * 100).rounded()),
-                    period: [e.espn?.period, e.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "),
-                    sport: e.sportName ?? e.sport ?? ""
+                    id: event.id,
+                    homeAbbrev: event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? ""),
+                    awayAbbrev: event.awayTeamData?.abbreviation ?? String(event.awayTeam.split(separator: " ").last ?? ""),
+                    homeScore: event.homeScore,
+                    awayScore: event.awayScore,
+                    homeProb: Int((homeProbability * 100).rounded()),
+                    awayProb: Int((awayProbability * 100).rounded()),
+                    period: [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "),
+                    sport: event.sportName ?? event.sport ?? ""
                 )
             }
         } catch {}
@@ -133,7 +133,7 @@ struct MenuBarView: View {
     }
 }
 
-struct MenuBarGame: Identifiable {
+private struct MenuBarGame: Identifiable {
     let id: Int
     let homeAbbrev: String
     let awayAbbrev: String

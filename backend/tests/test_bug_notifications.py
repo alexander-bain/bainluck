@@ -74,6 +74,9 @@ def test_build_gmail_message_includes_plain_text_and_html_parts():
     assert message["To"] == "jane.doe@example.com"
     assert message["From"] == "Bain Luck <bugs@bainluck.com>"
     assert message["Subject"] == BUG_FIXED_EMAIL_SUBJECT
+    assert message["Auto-Submitted"] == "auto-generated"
+    assert message["Precedence"] == "bulk"
+    assert message["X-Auto-Response-Suppress"] == "All"
     assert message.is_multipart()
 
     plain_body = message.get_body(preferencelist=("plain",)).get_content()

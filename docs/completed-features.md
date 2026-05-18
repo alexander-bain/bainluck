@@ -26,6 +26,9 @@
 - ✅ **Native naming cleanup slice 4** — continued `vm` to `viewModel` cleanup in Futures Detail, League Grid, and Sport Category views.
 - ✅ **Sport/league taxonomy guardrails** — added regression tests for the exact impossible sport/league pairs that polluted link-rate diagnostics.
 - ✅ **Durable docs deep sync** — refreshed `CLAUDE.md`, architecture, feature reference, quality audit, gotchas, completed features, and iOS quality docs with the May 18 search, bug notification, link-rate, interestingness, notification-test, and native cleanup details.
+- ✅ **Link-rate stale settlement exclusion** — headline link-rate metrics now exclude stale open/unlinked Kalshi game markets when the ticker game date is more than 36 hours old, matching the Tier-1 gaps closed-game exclusion.
+- ✅ **Bug-fixed email auto-reply suppression headers** — Gmail bug-fix notifications now include standard automated-email suppression headers and focused MIME tests.
+- ✅ **Native naming/access cleanup slice 5** — cleaned low-risk local abbreviations in Menu Bar, Search, Market Map, Discover Event Card, and Related-by-Tag components; native build passed.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

@@ -131,24 +131,28 @@ struct MarketMapView: View {
 
         // Headline: favored team + win %
         let headline: String = {
-            guard let hp = homeWinProb, let ap = awayWinProb else { return "" }
-            let favored = hp > 0.5
-            return "\(favored ? hAbbr : aAbbr) \(Int(((favored ? hp : ap) * 100).rounded()))%"
+            guard let homeProbability = homeWinProb, let awayProbability = awayWinProb else { return "" }
+            let favored = homeProbability > 0.5
+            return "\(favored ? hAbbr : aAbbr) \(Int(((favored ? homeProbability : awayProbability) * 100).rounded()))%"
         }()
 
         // Markers
         var markers: [MapMarker] = []
         let projValue = homeSpread != nil ? -(homeSpread!) : closestToEvenMargin(parsed)
         if isDone {
-            if let hs = gameMarkets.homeScore ?? homeScore, let as_ = gameMarkets.awayScore ?? awayScore {
-                markers.append(MapMarker(id: "final", value: Double(hs - as_), type: .final_, label: "FINAL", displayValue: "\(hs - as_ > 0 ? hAbbr : aAbbr) +\(abs(hs - as_))"))
+            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
+               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+                let margin = homeScoreValue - awayScoreValue
+                markers.append(MapMarker(id: "final", value: Double(margin), type: .final_, label: "FINAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
             }
             if let pv = projValue {
                 markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
             }
         } else if isLive {
-            if let hs = gameMarkets.homeScore ?? homeScore, let as_ = gameMarkets.awayScore ?? awayScore {
-                markers.append(MapMarker(id: "actual", value: Double(hs - as_), type: .actual, label: "ACTUAL", displayValue: "\(hs - as_ > 0 ? hAbbr : aAbbr) +\(abs(hs - as_))"))
+            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
+               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+                let margin = homeScoreValue - awayScoreValue
+                markers.append(MapMarker(id: "actual", value: Double(margin), type: .actual, label: "ACTUAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
             }
             if let pv = projValue {
                 markers.append(MapMarker(id: "proj", value: pv, type: .proj, label: "PROJECTION", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
@@ -199,16 +203,20 @@ struct MarketMapView: View {
         var markers: [MapMarker] = []
         let ouLine = overUnder ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
         if isDone {
-            if let hs = gameMarkets.homeScore ?? homeScore, let as_ = gameMarkets.awayScore ?? awayScore {
-                markers.append(MapMarker(id: "final", value: Double(hs + as_), type: .final_, label: "FINAL", displayValue: "\(hs + as_) \(vocab.unit)"))
+            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
+               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+                let totalScore = homeScoreValue + awayScoreValue
+                markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: "\(totalScore) \(vocab.unit)"))
             }
             if let ou = ouLine {
                 markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
             }
         } else if isLive {
-            if let hs = gameMarkets.homeScore ?? homeScore, let as_ = gameMarkets.awayScore ?? awayScore,
+            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
+               let awayScoreValue = gameMarkets.awayScore ?? awayScore,
                let pace = gameMarkets.pace, let proj = pace.projectedTotal {
-                markers.append(MapMarker(id: "actual", value: Double(hs + as_), type: .actual, label: "ACTUAL", displayValue: "\(hs + as_)"))
+                let totalScore = homeScoreValue + awayScoreValue
+                markers.append(MapMarker(id: "actual", value: Double(totalScore), type: .actual, label: "ACTUAL", displayValue: "\(totalScore)"))
                 markers.append(MapMarker(id: "proj", value: proj, type: .proj, label: "PROJECTED", displayValue: "\(Int(proj.rounded()))"))
             }
             if let ou = ouLine {

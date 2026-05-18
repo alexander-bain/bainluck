@@ -93,8 +93,9 @@ struct NativeEventDiscoverCard: View {
                 )
             }
 
-            if let hp = event.currentOdds?.homeProbability, let ap = event.currentOdds?.awayProbability {
-                probabilityBar(awayProbability: ap, homeProbability: hp)
+            if let homeProbability = event.currentOdds?.homeProbability,
+               let awayProbability = event.currentOdds?.awayProbability {
+                probabilityBar(awayProbability: awayProbability, homeProbability: homeProbability)
             }
 
             if let contextText {

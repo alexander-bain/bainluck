@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct RelatedByTagView: View {
-    let tags: [String]
-    let excludeEventId: Int?
-    let title: String
-    let limit: Int
+    private let tags: [String]
+    private let excludeEventId: Int?
+    private let title: String
+    private let limit: Int
 
     @State private var items: [FeedItem] = []
     @State private var loaded = false
@@ -76,15 +76,17 @@ struct RelatedByTagView: View {
                         .fontWeight(.medium)
                         .lineLimit(1)
                 }
-                if data.status == "live", let hs = data.homeScore, let as_ = data.awayScore {
-                    Text("\(as_) - \(hs)")
+                if data.status == "live", let homeScore = data.homeScore, let awayScore = data.awayScore {
+                    Text("\(awayScore) - \(homeScore)")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if let odds = data.currentOdds, let hp = odds.homeProbability, let ap = odds.awayProbability {
-                Text("\(formatProbability(ap)) / \(formatProbability(hp))")
+            if let odds = data.currentOdds,
+               let homeProbability = odds.homeProbability,
+               let awayProbability = odds.awayProbability {
+                Text("\(formatProbability(awayProbability)) / \(formatProbability(homeProbability))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
