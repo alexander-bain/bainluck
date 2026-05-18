@@ -1301,7 +1301,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | CQ-12 | Create ViewModels/ directory — partial | Moved `PreferencesViewModel.swift` and `OnboardingViewModel.swift`; newly extracted VMs still remaining | Consistent location for all ViewModels |
 | CQ-13 | Extract EventDetailViewModel | New `ViewModels/EventDetailViewModel.swift` | Move out of `EventDetailView.swift` (~150 lines) |
-| CQ-14 | Split Extensions.swift | New `Utils/ColorExtensions.swift`, `Utils/ProbabilityFormatting.swift`, `Utils/SportDisplayNames.swift` | The current file is a grab bag of unrelated utilities |
+| ~~CQ-14~~ | ~~Split Extensions.swift~~ | ✅ DONE May 17 — split into `Utilities/ColorExtensions.swift`, `Utilities/FormattingUtilities.swift`, `Utilities/SportDisplayNames.swift`, `Utilities/FlagUtilities.swift`, `Utilities/FlowLayout.swift` | APIs preserved; existing filesystem-synchronized Xcode project picked up new files without pbxproj edits. |
 
 ### Wave 5: Access Control + Naming (1 hour, ongoing)
 
@@ -1323,6 +1323,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 - CQ-20 slice done May 17: tightened public method doc comments in `NavigationCoordinator.swift`.
 - CQ-20 slice done May 17: documented `AuthManager` session responsibilities and auth entry points.
 - CQ-20 slice done May 17: added endpoint-purpose doc comments to callable methods in `APIClient.swift`.
+- CQ-19 slice done May 17: added concise model type doc comments in `AuthModels.swift` and `CommonTypes.swift`.
+- CQ-14 done May 17: split `Components/Extensions.swift` into focused utility files under the existing `Utilities/` directory.
 
 ### What NOT to do
 

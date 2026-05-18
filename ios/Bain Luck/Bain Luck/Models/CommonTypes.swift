@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Team Data
 
+/// Shared team branding, record, and standings data used across event views.
 nonisolated struct TeamData: Decodable, Sendable {
     let primaryColor: String?
     let secondaryColor: String?
@@ -12,6 +13,7 @@ nonisolated struct TeamData: Decodable, Sendable {
     let abbreviation: String?
 }
 
+/// League standings snapshot for a team, including record and rank context.
 nonisolated struct StandingsData: Decodable, Sendable {
     let pct: String?
     let wins: Int?
@@ -29,6 +31,7 @@ nonisolated struct StandingsData: Decodable, Sendable {
 
 // MARK: - Odds
 
+/// Current consensus odds and derived probabilities for an event.
 nonisolated struct CurrentOdds: Decodable, Sendable {
     let capturedAt: String?
     let homeProbability: Double?
@@ -42,11 +45,13 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     let probabilityRange: ProbabilityRange?
 }
 
+/// Bookmaker spread around the lowest and highest observed probabilities.
 nonisolated struct ProbabilityRange: Decodable, Sendable {
     let min: Double?
     let max: Double?
 }
 
+/// Opening market probabilities and favorite metadata for an event.
 nonisolated struct OpeningOdds: Decodable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
@@ -55,6 +60,7 @@ nonisolated struct OpeningOdds: Decodable, Sendable {
 
 // MARK: - Excitement Index
 
+/// Excitement Index score and presentation metadata for an event.
 nonisolated struct EIData: Decodable, Sendable {
     let score: Int?
     let rawScore: Int?
@@ -64,6 +70,7 @@ nonisolated struct EIData: Decodable, Sendable {
     let metadata: EIMetadata?
 }
 
+/// Raw factors used to explain or debug an Excitement Index score.
 nonisolated struct EIMetadata: Decodable, Sendable {
     let rawEi: Double?
     let leadChanges: Int?
@@ -73,12 +80,14 @@ nonisolated struct EIMetadata: Decodable, Sendable {
 
 // MARK: - Highlight
 
+/// Short event highlight label surfaced in compact cards and summaries.
 nonisolated struct Highlight: Decodable, Sendable {
     let label: String?
 }
 
 // MARK: - Event Metadata
 
+/// Supplemental event classification fields such as league, level, and importance.
 nonisolated struct EventMetadata: Decodable, Sendable {
     let gender: String?
     let level: String?
@@ -88,6 +97,7 @@ nonisolated struct EventMetadata: Decodable, Sendable {
 
 // MARK: - ESPN
 
+/// ESPN-specific live game context and win probability payload.
 nonisolated struct ESPNData: Decodable, Sendable {
     let espnId: String?
     let gameClock: String?
@@ -101,6 +111,7 @@ nonisolated struct ESPNData: Decodable, Sendable {
 
 // MARK: - Win Probability Sources
 
+/// One source's win probability value and display metadata.
 nonisolated struct WinProbSource: Decodable, Sendable {
     let value: WinProbValue?
     let displayName: String?
@@ -159,6 +170,7 @@ nonisolated enum WinProbValue: Decodable, Sendable {
 
 // MARK: - Bookmaker Odds
 
+/// Per-bookmaker odds snapshot with moneyline, probability, spread, and total data.
 nonisolated struct BookmakerOdds: Decodable, Sendable {
     let bookmaker: String?
     let homeMoneyline: Int?

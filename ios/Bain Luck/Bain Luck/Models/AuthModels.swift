@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Auth User
 
+/// Signed-in Bain Luck account details returned with auth session responses.
 nonisolated struct AuthUser: Codable, Sendable {
     let id: Int
     let email: String?
@@ -13,7 +14,7 @@ nonisolated struct AuthUser: Codable, Sendable {
 
 // MARK: - Apple Auth Response
 
-/// Response from POST /api/auth/apple
+/// Backend-issued session payload returned after Apple sign-in succeeds.
 nonisolated struct AppleAuthResponse: Decodable, Sendable {
     let customToken: String?
     let idToken: String       // Backend session token (PyJWT, 8hr TTL)
@@ -27,7 +28,7 @@ nonisolated struct AppleAuthResponse: Decodable, Sendable {
 
 // MARK: - Auth Status Response
 
-/// Response from GET /api/auth/status
+/// Server auth configuration and available sign-in providers for the client.
 nonisolated struct AuthStatusResponse: Decodable, Sendable {
     let authConfigured: Bool
     let providers: [String]
