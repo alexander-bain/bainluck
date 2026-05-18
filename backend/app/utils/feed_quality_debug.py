@@ -157,7 +157,10 @@ def diagnose_stale_card_root_cause(
             return stale_root_cause_for_reason("past_resolution")
 
         updated_at = _parse_datetime(data.get("updated_at"))
-        if updated_at and (now - updated_at).total_seconds() / 86400 > stale_no_movement_days:
+        if (
+            updated_at
+            and (now - updated_at).total_seconds() / 86400 > stale_no_movement_days
+        ):
             return stale_root_cause_for_reason("stale_updated_at")
 
     if item_type == "event":
@@ -206,9 +209,13 @@ def _snippet_quality_issues(name: str, context: str) -> list[str]:
             issues.append("repeats_title")
 
     lower = compact.lower()
-    if re.search(r"\bresolving (soon|this month)\b", lower) and not re.search(r"\d", compact):
+    if re.search(r"\bresolving (soon|this month)\b", lower) and not re.search(
+        r"\d", compact
+    ):
         issues.append("generic_resolution")
-    if len(context_tokens) > 18 and not re.search(r"\d|up|down|new favorite|tracked by|leads at|movement|source", lower):
+    if len(context_tokens) > 18 and not re.search(
+        r"\d|up|down|new favorite|tracked by|leads at|movement|source", lower
+    ):
         issues.append("no_concrete_signal")
     return issues
 
@@ -232,19 +239,24 @@ def load_default_ground_truth_items() -> list[dict[str, Any]]:
             name = (item.get("market_name") or "").strip()
             if not item.get("trending") or not name:
                 continue
-            items.append({
-                "source": source,
-                "category": item.get("category") or "?",
-                "name": name,
-                "probability": item.get("probability"),
-                "sub_page": item.get("sub_page"),
-            })
+            items.append(
+                {
+                    "source": source,
+                    "category": item.get("category") or "?",
+                    "name": name,
+                    "probability": item.get("probability"),
+                    "sub_page": item.get("sub_page"),
+                }
+            )
     return items
 
 
 def load_default_ground_truth_names() -> set[str]:
     """Load local Kalshi/Polymarket ground-truth market names when present."""
-    return {_normalize_match_name(item["name"]) for item in load_default_ground_truth_items()}
+    return {
+        _normalize_match_name(item["name"])
+        for item in load_default_ground_truth_items()
+    }
 
 
 def matches_ground_truth(name: str, ground_truth: set[str]) -> bool:
@@ -266,15 +278,64 @@ def _names_match(a: str, b: str) -> bool:
         return True
 
     stopwords = {
-        "will", "the", "to", "of", "in", "on", "by", "at", "for", "and",
-        "or", "win", "wins", "winner", "advance", "make", "reach",
+        "will",
+        "the",
+        "to",
+        "of",
+        "in",
+        "on",
+        "by",
+        "at",
+        "for",
+        "and",
+        "or",
+        "win",
+        "wins",
+        "winner",
+        "advance",
+        "make",
+        "reach",
     }
     left_tokens = {token for token in left.split() if token not in stopwords}
     right_tokens = {token for token in right.split() if token not in stopwords}
     if len(left_tokens) < 3 or len(right_tokens) < 3:
         return False
     overlap = left_tokens & right_tokens
-    return len(overlap) >= 3 and len(overlap) / min(len(left_tokens), len(right_tokens)) >= 0.6
+    return (
+        len(overlap) >= 3
+        and len(overlap) / min(len(left_tokens), len(right_tokens)) >= 0.6
+    )
+
+
+def _world_cup_intent(text: str) -> str | None:
+    """Return the World Cup question shape when intent affects equivalence."""
+    if "world cup" not in text:
+        return None
+    if re.search(r"\b(squad|roster)\b", text):
+        return "squad"
+    if re.search(r"\b(knockout|advance)\b", text):
+        return "advance"
+    if re.search(r"\b(reach|make).*\bfinal\b|\bfinal\b", text):
+        return "final"
+    if re.search(r"\b(win|wins|winner|champion|championship)\b", text):
+        return "winner"
+    return None
+
+
+def _is_strong_db_trace_match(missing_name: str, match_name: str) -> bool:
+    """Distinguish source-equivalent DB matches from loose related markets."""
+    missing = _normalize_match_name(missing_name)
+    matched = _normalize_match_name(match_name)
+    if not missing or not matched:
+        return False
+
+    missing_world_cup_intent = _world_cup_intent(missing)
+    matched_world_cup_intent = _world_cup_intent(matched)
+    if missing_world_cup_intent or matched_world_cup_intent:
+        if missing_world_cup_intent != matched_world_cup_intent:
+            return False
+
+    return _names_match(missing, matched)
 
 
 def _equivalent_recession_story(left: str, right: str) -> bool:
@@ -360,14 +421,8 @@ def find_missing_ground_truth_items(
 ) -> list[dict[str, Any]]:
     """Find curated examples that are not present in the diagnosed feed page."""
     feed_names = [item.get("name") or "" for item in diagnosed]
-    feed_story_keys = {
-        item["story_key"] for item in diagnosed
-        if item.get("story_key")
-    }
-    feed_archetypes = {
-        item["archetype"] for item in diagnosed
-        if item.get("archetype")
-    }
+    feed_story_keys = {item["story_key"] for item in diagnosed if item.get("story_key")}
+    feed_archetypes = {item["archetype"] for item in diagnosed if item.get("archetype")}
     seen: set[str] = set()
     missing: list[dict[str, Any]] = []
 
@@ -398,24 +453,26 @@ def find_missing_ground_truth_items(
             feed_archetypes=feed_archetypes,
         )
 
-        missing.append({
-            "name": name,
-            "source": item.get("source") or "?",
-            "category": item.get("category") or "?",
-            "probability": item.get("probability"),
-            "email_subject": item.get("email_subject"),
-            "hook": item.get("hook"),
-            "interestingness": item.get("interestingness"),
-            "timeliness": item.get("timeliness"),
-            "shareability": item.get("shareability"),
-            "quality_class": quality.quality_class,
-            "archetype": archetype,
-            "reasons": quality.reasons,
-            "family_key": quality.family_key,
-            "story_key": quality.story_key,
-            "triage_bucket": triage_bucket,
-            "recommended_action": recommended_action,
-        })
+        missing.append(
+            {
+                "name": name,
+                "source": item.get("source") or "?",
+                "category": item.get("category") or "?",
+                "probability": item.get("probability"),
+                "email_subject": item.get("email_subject"),
+                "hook": item.get("hook"),
+                "interestingness": item.get("interestingness"),
+                "timeliness": item.get("timeliness"),
+                "shareability": item.get("shareability"),
+                "quality_class": quality.quality_class,
+                "archetype": archetype,
+                "reasons": quality.reasons,
+                "family_key": quality.family_key,
+                "story_key": quality.story_key,
+                "triage_bucket": triage_bucket,
+                "recommended_action": recommended_action,
+            }
+        )
         if len(missing) >= limit:
             break
 
@@ -440,11 +497,14 @@ def summarize_missing_ground_truth_db_trace(
 
     summarized_matches: list[dict[str, Any]] = []
     eligible_matches: list[dict[str, Any]] = []
+    loose_matches: list[dict[str, Any]] = []
     blocked_reasons: Counter[str] = Counter()
+    missing_name = str(missing_item.get("name") or "")
 
     for match in matches:
         reasons: list[str] = []
         name = match.get("name") or ""
+        strong_match = _is_strong_db_trace_match(missing_name, name)
         resolution = match.get("resolution_date")
         if isinstance(resolution, str):
             try:
@@ -462,6 +522,8 @@ def summarize_missing_ground_truth_db_trace(
             reasons.append("past_resolution")
         if re.search(r"\bvs\.?\b", name, re.IGNORECASE):
             reasons.append("game_name_filtered")
+        if not strong_match:
+            reasons.append("loose_related_market")
 
         summarized = {
             "id": match.get("id"),
@@ -478,7 +540,9 @@ def summarize_missing_ground_truth_db_trace(
         }
         summarized_matches.append(summarized)
 
-        if reasons:
+        if not strong_match:
+            loose_matches.append(summarized)
+        elif reasons:
             blocked_reasons.update(reasons)
         else:
             eligible_matches.append(summarized)
@@ -491,7 +555,17 @@ def summarize_missing_ground_truth_db_trace(
             "matches": summarized_matches,
         }
 
-    top_reason = blocked_reasons.most_common(1)[0][0] if blocked_reasons else "unknown_blocker"
+    if loose_matches and not blocked_reasons:
+        return {
+            "trace_status": "related_market_only",
+            "trace_summary": "Similar markets exist, but they are related variants rather than the exact curated question.",
+            "recommended_action": "No ranking fix until the exact or source-equivalent market is ingested; update ground-truth grouping only if a related variant should count.",
+            "matches": summarized_matches,
+        }
+
+    top_reason = (
+        blocked_reasons.most_common(1)[0][0] if blocked_reasons else "unknown_blocker"
+    )
     action_by_reason = {
         "not_open": "No ranking fix; source marks the market non-open.",
         "event_linked_game_market": "No Discover ranking fix; this belongs in game/event market surfaces.",
@@ -501,7 +575,9 @@ def summarize_missing_ground_truth_db_trace(
     return {
         "trace_status": f"blocked:{top_reason}",
         "trace_summary": f"Similar market found, but blocked by {top_reason}.",
-        "recommended_action": action_by_reason.get(top_reason, "Inspect the matched market eligibility flags."),
+        "recommended_action": action_by_reason.get(
+            top_reason, "Inspect the matched market eligibility flags."
+        ),
         "matches": summarized_matches,
     }
 
@@ -547,7 +623,9 @@ def diagnose_feed_items(
                     "context": context,
                     "snippet_issues": _snippet_quality_issues(name, context),
                     "hook": False,
-                    "image": bool(data.get("home_team_data") or data.get("away_team_data")),
+                    "image": bool(
+                        data.get("home_team_data") or data.get("away_team_data")
+                    ),
                     "explanation_ok": bool(item.get("headline") or item.get("reason")),
                     "quality_class": "normal",
                     "family_key": f"event:{data.get('id') or name.lower()}",
@@ -562,7 +640,12 @@ def diagnose_feed_items(
             continue
 
         outcomes = data.get("top_outcomes") or []
-        category = data.get("llm_sport_category") or data.get("sport_name") or data.get("sport") or "?"
+        category = (
+            data.get("llm_sport_category")
+            or data.get("sport_name")
+            or data.get("sport")
+            or "?"
+        )
         quality = classify_market_quality(
             market_name=name,
             sport_category=category,
@@ -631,7 +714,8 @@ def summarize_feed_diagnostics(
         if issue != "missing"
     )
     snippet_issue_cards = [
-        c for c in top
+        c
+        for c in top
         if any(issue != "missing" for issue in c.get("snippet_issues", []))
     ]
 
@@ -640,24 +724,23 @@ def summarize_feed_diagnostics(
         "tech_frontier": any(c["archetype"] == "tech_frontier" for c in top),
         "macro_signal": any(c["archetype"] == "macro_signal" for c in top),
         "culture_moment": any(c["archetype"] == "culture_moment" for c in top),
-        "health_weather_risk": any(c["archetype"] == "health_weather_risk" for c in top),
+        "health_weather_risk": any(
+            c["archetype"] == "health_weather_risk" for c in top
+        ),
         "sports_story": any(c["archetype"] == "sports_story" for c in top),
     }
     top10_non_politics = [
-        c for c in top10
-        if c["category"] not in {"politics", "geopolitics"}
+        c for c in top10 if c["category"] not in {"politics", "geopolitics"}
     ]
-    top10_fun = [
-        c for c in top10
-        if c["archetype"] in _FUN_ARCHETYPES
-    ]
+    top10_fun = [c for c in top10 if c["archetype"] in _FUN_ARCHETYPES]
     strict_targets = {
         "top10_non_politics_geopolitics>=4": len(top10_non_politics) >= 4,
         "top10_has_fun_item": bool(top10_fun),
         "top20_world_event<=4": archetypes.get("world_event", 0) <= 4,
         "top20_has_weird_or_absurd": (
             archetypes.get("weird_news", 0) + archetypes.get("absurd_but_real", 0)
-        ) >= 1,
+        )
+        >= 1,
         "top20_max_category<=5": max(categories.values(), default=0) <= 5,
     }
 
@@ -696,7 +779,9 @@ def build_feed_quality_debug(
 ) -> dict[str, Any]:
     """Return summary and per-item diagnostics for a feed response."""
     if ground_truth is None and ground_truth_items is not None:
-        ground_truth = {_normalize_match_name(item["name"]) for item in ground_truth_items}
+        ground_truth = {
+            _normalize_match_name(item["name"]) for item in ground_truth_items
+        }
     diagnosed = diagnose_feed_items(items, ground_truth=ground_truth, now=now)
     missing = find_missing_ground_truth_items(
         diagnosed,

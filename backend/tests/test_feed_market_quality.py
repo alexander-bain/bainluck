@@ -3,7 +3,12 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _outcomes_overlap, _trace_search_tokens
+from app.routes.feed import (
+    _market_base_trace,
+    _market_runtime_filter_trace,
+    _outcomes_overlap,
+    _trace_search_tokens,
+)
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
@@ -197,8 +202,12 @@ class TestMarketQualityClassification:
         assert q2.quality_class == "normal"
 
     def test_spotify_song_rank_markets_get_distinct_family_keys(self):
-        q1 = classify_market_quality("#1 Global Spotify Song: May 12-18", "entertainment")
-        q2 = classify_market_quality("#2 Global Spotify Song: May 12-18", "entertainment")
+        q1 = classify_market_quality(
+            "#1 Global Spotify Song: May 12-18", "entertainment"
+        )
+        q2 = classify_market_quality(
+            "#2 Global Spotify Song: May 12-18", "entertainment"
+        )
 
         assert q1.family_key != q2.family_key
         assert q1.quality_class == "normal"
@@ -283,8 +292,7 @@ class TestMarketQualityClassification:
         ]
 
         qualities = [
-            classify_market_quality(name, sport_category="sports")
-            for name in examples
+            classify_market_quality(name, sport_category="sports") for name in examples
         ]
 
         assert all(q.quality_class == "low_quality" for q in qualities)
@@ -316,7 +324,7 @@ class TestMarketQualityClassification:
     def test_compelling_non_sports_stories_get_explanation_path(self):
         examples = [
             ("Will OpenAI release GPT-5 before 2027?", "tech", "story:ai"),
-            ("Will SpaceX IPO in 2026?", "tech", None),
+            ("Will SpaceX IPO in 2026?", "tech", "story:spacex_ipo"),
             ("Will Taylor Swift be pregnant in 2026?", "entertainment", None),
         ]
 
@@ -366,10 +374,13 @@ class TestMarketQualityClassification:
         )
 
         assert "sports_personnel_story" not in quality.reasons
-        assert editorial_archetype(
-            "When will The Last of Us Season 3 be released?",
-            "entertainment",
-        ) == "culture_moment"
+        assert (
+            editorial_archetype(
+                "When will The Last of Us Season 3 be released?",
+                "entertainment",
+            )
+            == "culture_moment"
+        )
 
     def test_major_geopolitics_not_suppressed(self):
         quality = classify_market_quality(
@@ -452,6 +463,19 @@ class TestMarketQualityClassification:
 
         assert stake.story_key == "story:us_government_stakes"
         assert golf.story_key == "story:golf_truist_championship"
+
+    def test_story_key_groups_music_chart_variants(self):
+        spotify = classify_market_quality(
+            "Who will have a #1 song on Spotify USA in May?",
+            sport_category="entertainment",
+        )
+        billboard = classify_market_quality(
+            "Where will BULLY by Ye rank on the Billboard 200?",
+            sport_category="entertainment",
+        )
+
+        assert spotify.story_key == "story:music_charts"
+        assert billboard.story_key == "story:music_charts"
 
     def test_story_key_groups_oil_ladder_variants(self):
         monthly_high = classify_market_quality(
@@ -721,7 +745,9 @@ class TestFeedQualityDebug:
         assert debug["missing_ground_truth"] == []
 
     def test_trace_search_tokens_ignore_win_for_advance_markets(self):
-        tokens = _trace_search_tokens("Will the Boston Celtics win the 2026 NBA Finals?")
+        tokens = _trace_search_tokens(
+            "Will the Boston Celtics win the 2026 NBA Finals?"
+        )
 
         assert tokens[:3] == ["boston", "celtics", "nba"]
         assert "win" not in tokens
@@ -817,6 +843,48 @@ class TestFeedQualityDebug:
         assert trace["trace_status"] == "eligible_but_not_top_50"
         assert trace["matches"][0]["blocked_reasons"] == []
 
+    def test_missing_ground_truth_db_trace_distinguishes_related_world_cup_props(self):
+        trace = summarize_missing_ground_truth_db_trace(
+            {"name": "Will Germany win the 2026 FIFA World Cup?"},
+            [
+                {
+                    "id": 125,
+                    "name": "2026 FIFA World Cup: Player to make Germany Squad",
+                    "source": "kalshi",
+                    "status": "open",
+                    "event_id": None,
+                    "llm_sport_category": "soccer",
+                    "volume_24h": 2000,
+                    "resolution_date": None,
+                }
+            ],
+        )
+
+        assert trace["trace_status"] == "related_market_only"
+        assert trace["matches"][0]["blocked_reasons"] == ["loose_related_market"]
+
+    def test_missing_ground_truth_db_trace_distinguishes_world_cup_final_from_winner(
+        self,
+    ):
+        trace = summarize_missing_ground_truth_db_trace(
+            {"name": "Will France win the 2026 FIFA World Cup?"},
+            [
+                {
+                    "id": 126,
+                    "name": "Will France reach the 2026 FIFA World Cup final?",
+                    "source": "kalshi",
+                    "status": "open",
+                    "event_id": None,
+                    "llm_sport_category": "soccer",
+                    "volume_24h": 2000,
+                    "resolution_date": None,
+                }
+            ],
+        )
+
+        assert trace["trace_status"] == "related_market_only"
+        assert trace["matches"][0]["blocked_reasons"] == ["loose_related_market"]
+
     def test_missing_ground_truth_db_trace_explains_game_market_block(self):
         trace = summarize_missing_ground_truth_db_trace(
             {"name": "Pistons vs. Magic"},
@@ -860,8 +928,18 @@ class TestFeedQualityDebug:
                 commence_time=now - timedelta(days=30),
             ),
             [
-                {"name": "Yes", "probability": 0.45, "probability_change_24h": 0, "opening_probability": 0.4},
-                {"name": "No", "probability": 0.55, "probability_change_24h": 0, "opening_probability": 0.6},
+                {
+                    "name": "Yes",
+                    "probability": 0.45,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.4,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.55,
+                    "probability_change_24h": 0,
+                    "opening_probability": 0.6,
+                },
             ],
             "No",
             0.55,
@@ -1166,12 +1244,15 @@ class TestFeedQualityDebug:
         hook = "A surprise acquisition would reshape the meme-stock story and signal a much bigger retail strategy."
 
         assert has_strong_hook(hook)
-        assert apply_explanation_quality_score(
-            88,
-            hook_description=hook,
-            headline="Multi-source",
-            quality=quality,
-        ) == 93
+        assert (
+            apply_explanation_quality_score(
+                88,
+                hook_description=hook,
+                headline="Multi-source",
+                quality=quality,
+            )
+            == 93
+        )
 
     def test_generic_explanation_caps_normal_market(self):
         quality = classify_market_quality(
@@ -1184,12 +1265,15 @@ class TestFeedQualityDebug:
             headline="New favorite",
             quality=quality,
         )
-        assert apply_explanation_quality_score(
-            94,
-            hook_description=None,
-            headline="New favorite",
-            quality=quality,
-        ) == 90
+        assert (
+            apply_explanation_quality_score(
+                94,
+                hook_description=None,
+                headline="New favorite",
+                quality=quality,
+            )
+            == 90
+        )
 
     def test_health_outbreak_counts_as_specific_without_hook(self):
         quality = classify_market_quality(
@@ -1202,21 +1286,40 @@ class TestFeedQualityDebug:
             headline="Multi-source",
             quality=quality,
         )
-        assert apply_explanation_quality_score(
-            100,
-            hook_description=None,
-            headline="Multi-source",
-            quality=quality,
-        ) == 100
+        assert (
+            apply_explanation_quality_score(
+                100,
+                hook_description=None,
+                headline="Multi-source",
+                quality=quality,
+            )
+            == 100
+        )
 
 
 class TestLowQualityFamilyCap:
     def test_cap_keeps_only_best_low_quality_family_member(self):
         items = [
-            {"score": 82, "_quality_class": "low_quality", "_quality_family_key": "oil <range>"},
-            {"score": 75, "_quality_class": "low_quality", "_quality_family_key": "oil <range>"},
-            {"score": 70, "_quality_class": "low_quality", "_quality_family_key": "oil <range>"},
-            {"score": 65, "_quality_class": "compelling", "_quality_family_key": "vrabel fired"},
+            {
+                "score": 82,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "oil <range>",
+            },
+            {
+                "score": 75,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "oil <range>",
+            },
+            {
+                "score": 70,
+                "_quality_class": "low_quality",
+                "_quality_family_key": "oil <range>",
+            },
+            {
+                "score": 65,
+                "_quality_class": "compelling",
+                "_quality_family_key": "vrabel fired",
+            },
         ]
 
         capped = cap_low_quality_families(items, cap=1)
@@ -1229,8 +1332,16 @@ class TestLowQualityFamilyCap:
 
     def test_cap_does_not_limit_compelling_same_family(self):
         items = [
-            {"score": 90, "_quality_class": "compelling", "_quality_family_key": "ai regulation"},
-            {"score": 80, "_quality_class": "compelling", "_quality_family_key": "ai regulation"},
+            {
+                "score": 90,
+                "_quality_class": "compelling",
+                "_quality_family_key": "ai regulation",
+            },
+            {
+                "score": 80,
+                "_quality_class": "compelling",
+                "_quality_family_key": "ai regulation",
+            },
         ]
 
         capped = cap_low_quality_families(items, cap=1)
@@ -1291,7 +1402,9 @@ class TestQualityFamilyDiversity:
             },
         ]
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         assert len(capped) == 2
         assert capped[0]["score"] == 100
@@ -1307,18 +1420,21 @@ class TestQualityFamilyDiversity:
             }
             for i in range(6)
         ]
-        items.append({
-            "score": 80,
-            "_quality_class": "compelling",
-            "_quality_family_key": "openai valuation",
-            "_quality_story_key": "story:ai",
-        })
+        items.append(
+            {
+                "score": 80,
+                "_quality_class": "compelling",
+                "_quality_family_key": "openai valuation",
+                "_quality_story_key": "story:ai",
+            }
+        )
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=3)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=3
+        )
 
         middle_east = [
-            i for i in capped
-            if i["_quality_story_key"] == "story:middle_east_conflict"
+            i for i in capped if i["_quality_story_key"] == "story:middle_east_conflict"
         ]
         assert len(middle_east) == 3
         assert any(i["_quality_story_key"] == "story:ai" for i in capped)
@@ -1333,25 +1449,27 @@ class TestQualityFamilyDiversity:
             }
             for i in range(4)
         ]
-        items.extend([
-            {
-                "score": 90 - i,
-                "_quality_class": "normal",
-                "_quality_family_key": f"government stake variant {i}",
-                "_quality_story_key": "story:us_government_stakes",
-            }
-            for i in range(4)
-        ])
+        items.extend(
+            [
+                {
+                    "score": 90 - i,
+                    "_quality_class": "normal",
+                    "_quality_family_key": f"government stake variant {i}",
+                    "_quality_story_key": "story:us_government_stakes",
+                }
+                for i in range(4)
+            ]
+        )
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         election = [
-            i for i in capped
-            if i["_quality_story_key"] == "story:us_2028_election"
+            i for i in capped if i["_quality_story_key"] == "story:us_2028_election"
         ]
         stakes = [
-            i for i in capped
-            if i["_quality_story_key"] == "story:us_government_stakes"
+            i for i in capped if i["_quality_story_key"] == "story:us_government_stakes"
         ]
         assert len(election) == 2
         assert len(stakes) == 2
@@ -1366,24 +1484,29 @@ class TestQualityFamilyDiversity:
         items = []
         for idx, name in enumerate(names):
             quality = classify_market_quality(name, sport_category="geopolitics")
-            items.append({
-                "score": 100 - idx,
-                "_quality_class": quality.quality_class,
-                "_quality_family_key": quality.family_key,
-                "_quality_story_key": quality.story_key,
-            })
-        items.append({
-            "score": 80,
-            "_quality_class": "compelling",
-            "_quality_family_key": "openai release gpt 5",
-            "_quality_story_key": "story:ai",
-        })
+            items.append(
+                {
+                    "score": 100 - idx,
+                    "_quality_class": quality.quality_class,
+                    "_quality_family_key": quality.family_key,
+                    "_quality_story_key": quality.story_key,
+                }
+            )
+        items.append(
+            {
+                "score": 80,
+                "_quality_class": "compelling",
+                "_quality_family_key": "openai release gpt 5",
+                "_quality_story_key": "story:ai",
+            }
+        )
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         russia_war = [
-            i for i in capped
-            if i["_quality_story_key"] == "story:russia_ukraine"
+            i for i in capped if i["_quality_story_key"] == "story:russia_ukraine"
         ]
         assert len(russia_war) == 2
         assert [i["score"] for i in russia_war] == [100, 99]
@@ -1411,10 +1534,13 @@ class TestQualityFamilyDiversity:
             },
         ]
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         minor_soccer = [
-            item for item in capped
+            item
+            for item in capped
             if item["_quality_story_key"] == "story:minor_soccer_leagues"
         ]
         assert len(minor_soccer) == 1
@@ -1431,23 +1557,30 @@ class TestQualityFamilyDiversity:
         items = []
         for idx, name in enumerate(names):
             quality = classify_market_quality(name, sport_category="culture")
-            items.append({
-                "score": 100 - idx,
-                "_quality_class": quality.quality_class,
-                "_quality_family_key": quality.family_key,
-                "_quality_story_key": quality.story_key,
-            })
-        items.append({
-            "score": 80,
-            "_quality_class": "compelling",
-            "_quality_family_key": "fed rates",
-            "_quality_story_key": "story:macro_rates",
-        })
+            items.append(
+                {
+                    "score": 100 - idx,
+                    "_quality_class": quality.quality_class,
+                    "_quality_family_key": quality.family_key,
+                    "_quality_story_key": quality.story_key,
+                }
+            )
+        items.append(
+            {
+                "score": 80,
+                "_quality_class": "compelling",
+                "_quality_family_key": "fed rates",
+                "_quality_story_key": "story:macro_rates",
+            }
+        )
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         aliens = [
-            item for item in capped
+            item
+            for item in capped
             if item["_quality_story_key"] == "story:aliens_disclosure"
         ]
         assert len(aliens) == 2
@@ -1464,24 +1597,30 @@ class TestQualityFamilyDiversity:
             }
             for i in range(4)
         ]
-        items.extend([
-            {
-                "score": 90 - i,
-                "_quality_class": "low_quality",
-                "_quality_family_key": f"table tennis {i}",
-                "_quality_story_key": "story:niche_low_signal_sports",
-            }
-            for i in range(3)
-        ])
+        items.extend(
+            [
+                {
+                    "score": 90 - i,
+                    "_quality_class": "low_quality",
+                    "_quality_family_key": f"table tennis {i}",
+                    "_quality_story_key": "story:niche_low_signal_sports",
+                }
+                for i in range(3)
+            ]
+        )
 
-        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
 
         regional = [
-            i for i in capped
+            i
+            for i in capped
             if i["_quality_story_key"] == "story:regional_us_elections"
         ]
         niche = [
-            i for i in capped
+            i
+            for i in capped
             if i["_quality_story_key"] == "story:niche_low_signal_sports"
         ]
         assert len(regional) == 1
@@ -1489,7 +1628,14 @@ class TestQualityFamilyDiversity:
 
 
 class TestDiscoverFirstPageMixer:
-    def _item(self, idx: int, category: str, score: int = 100, name: str | None = None, story_key: str | None = None):
+    def _item(
+        self,
+        idx: int,
+        category: str,
+        score: int = 100,
+        name: str | None = None,
+        story_key: str | None = None,
+    ):
         return {
             "type": "futures",
             "score": score,
@@ -1502,31 +1648,36 @@ class TestDiscoverFirstPageMixer:
         }
 
     def test_mixer_caps_politics_in_first_page_without_dropping_items(self):
-        items = [
-            self._item(i, "politics", 100 - i)
-            for i in range(8)
-        ] + [
+        items = [self._item(i, "politics", 100 - i) for i in range(8)] + [
             self._item(100 + i, category, 80 - i)
-            for i, category in enumerate([
-                "tech",
-                "entertainment",
-                "weather",
-                "economics",
-                "geopolitics",
-                "golf",
-            ])
+            for i, category in enumerate(
+                [
+                    "tech",
+                    "entertainment",
+                    "weather",
+                    "economics",
+                    "geopolitics",
+                    "golf",
+                ]
+            )
         ]
 
         mixed = diversify_discover_first_page(items, first_page_size=8)
         first_page = mixed[:8]
 
         assert len(mixed) == len(items)
-        assert sum(
-            1 for item in first_page
-            if item["data"]["llm_sport_category"] == "politics"
-        ) <= 5
+        assert (
+            sum(
+                1
+                for item in first_page
+                if item["data"]["llm_sport_category"] == "politics"
+            )
+            <= 5
+        )
         assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
-        assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
+        assert any(
+            item["data"]["llm_sport_category"] == "entertainment" for item in first_page
+        )
 
     def test_mixer_fills_when_category_caps_are_tighter_than_available_categories(self):
         items = [self._item(i, "politics", 100 - i) for i in range(7)]
@@ -1547,32 +1698,41 @@ class TestDiscoverFirstPageMixer:
             for i in range(8)
         ] + [
             self._item(100, "tech", 80, name="OpenAI $1T+ valuation in 2026?"),
-            self._item(101, "entertainment", 79, name='Will "Super Bowl" be said on ICEMAN?'),
+            self._item(
+                101, "entertainment", 79, name='Will "Super Bowl" be said on ICEMAN?'
+            ),
             self._item(102, "weather", 78, name="Hantavirus pandemic in 2026?"),
             self._item(103, "economics", 77, name="How many Fed rate cuts in 2026?"),
             self._item(104, "golf", 76, name="PGA Tour: Truist Championship Top 20"),
-            self._item(105, "politics", 75, name="2028 U.S. Presidential Election winner?"),
+            self._item(
+                105, "politics", 75, name="2028 U.S. Presidential Election winner?"
+            ),
         ]
 
         mixed = diversify_discover_first_page(items, first_page_size=8)
         first_page = mixed[:8]
 
         world_events = [
-            item for item in first_page
+            item
+            for item in first_page
             if editorial_archetype(
                 item["data"]["name"],
                 item["data"]["llm_sport_category"],
-            ) == "world_event"
+            )
+            == "world_event"
         ]
         middle_east = [
-            item for item in first_page
+            item
+            for item in first_page
             if item.get("_quality_story_key") == "story:middle_east_conflict"
         ]
 
         assert len(world_events) <= 4
         assert len(middle_east) <= 2
         assert any(item["data"]["llm_sport_category"] == "tech" for item in first_page)
-        assert any(item["data"]["llm_sport_category"] == "entertainment" for item in first_page)
+        assert any(
+            item["data"]["llm_sport_category"] == "entertainment" for item in first_page
+        )
 
     def test_mixer_repairs_top_10_non_political_texture(self):
         items = [
@@ -1588,10 +1748,14 @@ class TestDiscoverFirstPageMixer:
         mixed = diversify_discover_first_page(items, first_page_size=11)
         top10 = mixed[:10]
 
-        assert sum(
-            1 for item in top10
-            if item["data"]["llm_sport_category"] not in {"politics", "geopolitics"}
-        ) >= 4
+        assert (
+            sum(
+                1
+                for item in top10
+                if item["data"]["llm_sport_category"] not in {"politics", "geopolitics"}
+            )
+            >= 4
+        )
 
     def test_mixer_pulls_strong_weird_news_into_first_page(self):
         items = [
@@ -1599,10 +1763,17 @@ class TestDiscoverFirstPageMixer:
             for i in range(5)
         ] + [
             self._item(100, "economics", 94, name="Fed Decision in July?"),
-            self._item(101, "entertainment", 93, name='Will "Super Bowl" be said on ICEMAN?'),
+            self._item(
+                101, "entertainment", 93, name='Will "Super Bowl" be said on ICEMAN?'
+            ),
             self._item(102, "weather", 92, name="Hantavirus pandemic in 2026?"),
             self._item(103, "golf", 91, name="PGA Tour: Truist Championship Top 20"),
-            self._item(104, "tech", 90, name="Will the U.S. confirm that aliens exist before 2027?"),
+            self._item(
+                104,
+                "tech",
+                90,
+                name="Will the U.S. confirm that aliens exist before 2027?",
+            ),
         ]
 
         mixed = diversify_discover_first_page(items, first_page_size=8)
@@ -1612,7 +1783,8 @@ class TestDiscoverFirstPageMixer:
             editorial_archetype(
                 item["data"]["name"],
                 item["data"]["llm_sport_category"],
-            ) == "absurd_but_real"
+            )
+            == "absurd_but_real"
             for item in first_page
         )
 
@@ -1622,11 +1794,18 @@ class TestDiscoverFirstPageMixer:
             for i in range(5)
         ] + [
             self._item(100, "economics", 95, name="How many Fed rate cuts in 2026?"),
-            self._item(101, "basketball", 94, name="Will Cleveland Cavaliers advance to the 2026 NBA Finals?"),
+            self._item(
+                101,
+                "basketball",
+                94,
+                name="Will Cleveland Cavaliers advance to the 2026 NBA Finals?",
+            ),
             self._item(102, "geopolitics", 93, name="US-Iran nuclear deal by May 31?"),
             self._item(103, "tech", 92, name="GPT-5.6 released by...?"),
             self._item(104, "economics", 91, name="Fed Decision in July?"),
-            self._item(105, "entertainment", 90, name="Will Taylor Swift be pregnant in 2026?"),
+            self._item(
+                105, "entertainment", 90, name="Will Taylor Swift be pregnant in 2026?"
+            ),
         ]
 
         mixed = diversify_discover_first_page(items, first_page_size=11)
@@ -1636,7 +1815,14 @@ class TestDiscoverFirstPageMixer:
             editorial_archetype(
                 item["data"]["name"],
                 item["data"]["llm_sport_category"],
-            ) in {"culture_moment", "absurd_but_real", "big_name", "sports_drama", "weird_news"}
+            )
+            in {
+                "culture_moment",
+                "absurd_but_real",
+                "big_name",
+                "sports_drama",
+                "weird_news",
+            }
             for item in top10
         )
 
@@ -1645,10 +1831,14 @@ class TestDiscoverFirstPageMixer:
             self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
             for i in range(55)
         ]
-        items.extend([
-            self._item(1000, "entertainment", 99, name="Who will win Survivor Season 50?"),
-            self._item(1001, "geopolitics", 93, name="Xi Jinping out before 2027?"),
-        ])
+        items.extend(
+            [
+                self._item(
+                    1000, "entertainment", 99, name="Who will win Survivor Season 50?"
+                ),
+                self._item(1001, "geopolitics", 93, name="Xi Jinping out before 2027?"),
+            ]
+        )
 
         mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
 
@@ -1662,13 +1852,27 @@ class TestDiscoverFirstPageMixer:
             self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
             for i in range(55)
         ]
-        items.extend([
-            self._item(1000, "entertainment", 99, name="Who will win Survivor Season 50?"),
-            self._item(1001, "entertainment", 99, name='"In the Grey" Rotten Tomatoes score?'),
-            self._item(1002, "geopolitics", 93, name="Xi Jinping out before 2027?"),
-            self._item(1003, "politics", 100, name="2028 U.S. Presidential Election winner?"),
-            self._item(1004, "soccer", 99, name="World Cup Group A Winner"),
-        ])
+        items.extend(
+            [
+                self._item(
+                    1000, "entertainment", 99, name="Who will win Survivor Season 50?"
+                ),
+                self._item(
+                    1001,
+                    "entertainment",
+                    99,
+                    name='"In the Grey" Rotten Tomatoes score?',
+                ),
+                self._item(1002, "geopolitics", 93, name="Xi Jinping out before 2027?"),
+                self._item(
+                    1003,
+                    "politics",
+                    100,
+                    name="2028 U.S. Presidential Election winner?",
+                ),
+                self._item(1004, "soccer", 99, name="World Cup Group A Winner"),
+            ]
+        )
 
         mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
         top50_names = [item["data"]["name"] for item in mixed[:50]]
@@ -1685,7 +1889,9 @@ class TestDiscoverFirstPageMixer:
             for i in range(50)
         ]
         items.append(
-            self._item(1000, "soccer", 70, name="2026 FIFA World Cup: Nation to Reach Final")
+            self._item(
+                1000, "soccer", 70, name="2026 FIFA World Cup: Nation to Reach Final"
+            )
         )
 
         mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
@@ -1708,8 +1914,7 @@ class TestDiscoverFirstPageMixer:
 
         mixed = balance_discover_event_category_mix(items)
         entertainment_index = next(
-            idx for idx, item in enumerate(mixed)
-            if item["type"] == "futures"
+            idx for idx, item in enumerate(mixed) if item["type"] == "futures"
         )
 
         assert entertainment_index == 5
@@ -1729,10 +1934,17 @@ class TestDiscoverFirstPageMixer:
 
     def test_mixer_gives_entertainment_floor_to_strong_candidate(self):
         items = [
-            self._item(i, "geopolitics", 100 - i, name=f"Will Russia conflict variant {i} happen?")
+            self._item(
+                i,
+                "geopolitics",
+                100 - i,
+                name=f"Will Russia conflict variant {i} happen?",
+            )
             for i in range(6)
         ] + [
-            self._item(100, "politics", 93, name="2028 U.S. Presidential Election winner?"),
+            self._item(
+                100, "politics", 93, name="2028 U.S. Presidential Election winner?"
+            ),
             self._item(101, "economics", 92, name="How many Fed rate cuts in 2026?"),
             self._item(102, "tech", 91, name="GPT-5.6 released by...?"),
             self._item(103, "entertainment", 80, name="Eurovision Winner 2026?"),
@@ -1742,20 +1954,35 @@ class TestDiscoverFirstPageMixer:
         first_page = mixed[:8]
 
         assert any(
-            item["data"]["llm_sport_category"] == "entertainment"
-            for item in first_page
+            item["data"]["llm_sport_category"] == "entertainment" for item in first_page
         )
 
     def test_category_hunger_preserves_required_archetype_singletons(self):
         items = [
-            self._item(1, "politics", 100, name="2028 U.S. Presidential Election winner?"),
-            self._item(2, "politics", 99, name="Will China invade Taiwan by June 30, 2026?"),
-            self._item(3, "politics", 98, name="Will Elon Musk announce Presidential run before 2027?"),
+            self._item(
+                1, "politics", 100, name="2028 U.S. Presidential Election winner?"
+            ),
+            self._item(
+                2, "politics", 99, name="Will China invade Taiwan by June 30, 2026?"
+            ),
+            self._item(
+                3,
+                "politics",
+                98,
+                name="Will Elon Musk announce Presidential run before 2027?",
+            ),
             self._item(4, "tech", 97, name="Anthropic IPO Closing Market Cap"),
             self._item(5, "tech", 96, name="SpaceX IPO Closing Market Cap"),
             self._item(6, "economics", 95, name="How many Fed rate cuts in 2026?"),
-            self._item(7, "entertainment", 94, name="Taylor Swift pregnant before marriage?"),
-            self._item(8, "basketball", 93, name="Will New York Knicks advance to the 2026 NBA Finals?"),
+            self._item(
+                7, "entertainment", 94, name="Taylor Swift pregnant before marriage?"
+            ),
+            self._item(
+                8,
+                "basketball",
+                93,
+                name="Will New York Knicks advance to the 2026 NBA Finals?",
+            ),
             self._item(9, "tech", 92, name="Gemini 3.5 released by...?"),
             self._item(10, "weather", 91, name="Hantavirus pandemic in 2026?"),
         ]

@@ -12,7 +12,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 QualityClass = Literal["compelling", "normal", "low_quality", "suppress"]
 EditorialArchetype = Literal[
     "world_event",
@@ -43,8 +42,16 @@ _NUMBER_RE = re.compile(r"[-+]?\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
 # Mapping for #N ranking placeholders — word form prevents the <num> pass
 # from collapsing distinct rankings (e.g., #1 vs #2) into the same token.
 _RANK_WORDS = {
-    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
-    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
 }
 
 _PRICE_BUCKET_RE = re.compile(
@@ -108,9 +115,7 @@ _WEATHER_BUCKET_RE = re.compile(
 _SOCIAL_FILLER_RE = re.compile(
     r"(# ?(posts|tweets|truths|views|likes|comments)"
     r"|photographed every"
-    r"|(posts|tweets)\s+("
-    + _MONTH_RE +
-    r")"
+    r"|(posts|tweets)\s+(" + _MONTH_RE + r")"
     r"|white house #"
     r"|what will .+ (say|post) (during|this week|on truth)"
     r"|will .+ (say|post) \".+\""
@@ -118,9 +123,7 @@ _SOCIAL_FILLER_RE = re.compile(
     r"|how many people will .+ endorse"
     r"|weekly streams"
     r"|runner-up .+ on spotify"
-    r"|net worth on ("
-    + _MONTH_RE +
-    r")"
+    r"|net worth on (" + _MONTH_RE + r")"
     r")",
     re.IGNORECASE,
 )
@@ -279,9 +282,34 @@ _RUSSIA_WAR_TERRITORY_RE = re.compile(
 )
 
 _STOPWORDS = {
-    "will", "the", "a", "an", "to", "of", "in", "on", "by", "at", "for",
-    "be", "is", "are", "and", "or", "with", "between", "above", "below",
-    "over", "under", "than", "next", "this", "month", "week", "day",
+    "will",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "in",
+    "on",
+    "by",
+    "at",
+    "for",
+    "be",
+    "is",
+    "are",
+    "and",
+    "or",
+    "with",
+    "between",
+    "above",
+    "below",
+    "over",
+    "under",
+    "than",
+    "next",
+    "this",
+    "month",
+    "week",
+    "day",
 }
 
 _GENERIC_HEADLINES = {
@@ -317,7 +345,15 @@ def _normalized_text(text: str) -> str:
     # Show") so that different rankings get distinct family keys. Without
     # this, both collapse to "<num> netflix show" and dedup kills one.
     # Use a non-numeric placeholder so the subsequent <num> pass won't eat it.
-    text = re.sub(r"#(\d{1,2})\b", lambda m: f"<rank{_RANK_WORDS[int(m.group(1))]}>" if int(m.group(1)) in _RANK_WORDS else "<rankother>", text)
+    text = re.sub(
+        r"#(\d{1,2})\b",
+        lambda m: (
+            f"<rank{_RANK_WORDS[int(m.group(1))]}>"
+            if int(m.group(1)) in _RANK_WORDS
+            else "<rankother>"
+        ),
+        text,
+    )
     text = re.sub(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?", "<num>", text)
     text = re.sub(rf"\b({_MONTH_RE})\b", "<month>", text)
     text = re.sub(r"\b\d{4}\b", "<year>", text)
@@ -370,16 +406,24 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:middle_east_conflict"
 
-    if ("russia" in lower and "ukraine" in lower) or _RUSSIA_WAR_TERRITORY_RE.search(name):
+    if ("russia" in lower and "ukraine" in lower) or _RUSSIA_WAR_TERRITORY_RE.search(
+        name
+    ):
         return "story:russia_ukraine"
 
-    if "russia" in lower and re.search(r"\b(putin|president|regime|fall|collapse)\b", lower):
+    if "russia" in lower and re.search(
+        r"\b(putin|president|regime|fall|collapse)\b", lower
+    ):
         return "story:russia_ukraine"
 
-    if "2028" in lower and re.search(r"\b(president|presidential|nominee|election)\b", lower):
+    if "2028" in lower and re.search(
+        r"\b(president|presidential|nominee|election)\b", lower
+    ):
         return "story:us_2028_election"
 
-    if _REGIONAL_US_ELECTION_RE.search(name) and not re.search(r"\bpresidential\b", lower):
+    if _REGIONAL_US_ELECTION_RE.search(name) and not re.search(
+        r"\bpresidential\b", lower
+    ):
         return "story:regional_us_elections"
 
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
@@ -390,6 +434,12 @@ def _story_key(name: str, category: str) -> str | None:
 
     if re.search(r"\b(aliens?|ufo|extraterrestrial)\b", lower):
         return "story:aliens_disclosure"
+
+    if "spacex" in lower and "ipo" in lower:
+        return "story:spacex_ipo"
+
+    if re.search(r"\b(spotify|billboard)\b", lower):
+        return "story:music_charts"
 
     if _DAILY_EQUITY_DIRECTION_RE.search(name):
         return "story:daily_equity_direction"
@@ -488,16 +538,18 @@ def classify_market_quality(
 
     # Outcome-only ladders: many numeric outcomes with the same market shell.
     numeric_outcomes = sum(1 for o in outcome_names if _NUMBER_RE.search(o or ""))
-    if (
-        len(outcome_names) >= 4
-        and numeric_outcomes / max(len(outcome_names), 1) >= 0.7
-    ):
+    if len(outcome_names) >= 4 and numeric_outcomes / max(len(outcome_names), 1) >= 0.7:
         ladder_or_bucket = True
         reasons.append("numeric_outcome_ladder")
 
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
-    elif daily_equity_direction or entertainment_metric or regional_election or low_signal_sport:
+    elif (
+        daily_equity_direction
+        or entertainment_metric
+        or regional_election
+        or low_signal_sport
+    ):
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
@@ -565,31 +617,72 @@ def editorial_archetype(
 
     if _ABSURD_BUT_REAL_RE.search(text):
         return "absurd_but_real"
-    if _OUTBREAK_RE.search(text) or re.search(r"\b(hurricane|tornado|earthquake|wildfire|flood|rain|snow)\b", text, re.I):
+    if _OUTBREAK_RE.search(text) or re.search(
+        r"\b(hurricane|tornado|earthquake|wildfire|flood|rain|snow)\b", text, re.I
+    ):
         return "health_weather_risk"
     if _has_sports_personnel_context(name, category):
         return "sports_drama"
-    if _BREAKING_NEWS_RE.search(text) and re.search(r"\b(iran|israel|russia|ukraine|china|trump|gaza|taiwan|nuclear)\b", text, re.I):
+    if _BREAKING_NEWS_RE.search(text) and re.search(
+        r"\b(iran|israel|russia|ukraine|china|trump|gaza|taiwan|nuclear)\b", text, re.I
+    ):
         return "breaking_news"
-    if re.search(r"\b(war|invade|invasion|ceasefire|peace|regime|taiwan|ukraine|israel|iran|russia|china|cuba|venezuela)\b", text, re.I):
+    if re.search(
+        r"\b(war|invade|invasion|ceasefire|peace|regime|taiwan|ukraine|israel|iran|russia|china|cuba|venezuela)\b",
+        text,
+        re.I,
+    ):
         return "world_event"
-    if _COMPANY_DRAMA_RE.search(text) and (_PUBLIC_COMPANY_RE.search(text) or re.search(r"\b(openai|spacex|anthropic|tesla|apple|google|meta|amazon|nvidia)\b", text, re.I)):
+    if _COMPANY_DRAMA_RE.search(text) and (
+        _PUBLIC_COMPANY_RE.search(text)
+        or re.search(
+            r"\b(openai|spacex|anthropic|tesla|apple|google|meta|amazon|nvidia)\b",
+            text,
+            re.I,
+        )
+    ):
         return "company_drama"
-    if re.search(r"\b(openai|anthropic|claude|gpt|ai model|frontiermath|deepseek|gemini|nvidia|compute)\b", text, re.I):
+    if re.search(
+        r"\b(openai|anthropic|claude|gpt|ai model|frontiermath|deepseek|gemini|nvidia|compute)\b",
+        text,
+        re.I,
+    ):
         return "tech_frontier"
-    if re.search(r"\b(fed|rate cut|recession|inflation|cpi|ppi|earnings|oil|wti|treasury|yield)\b", text, re.I):
+    if re.search(
+        r"\b(fed|rate cut|recession|inflation|cpi|ppi|earnings|oil|wti|treasury|yield)\b",
+        text,
+        re.I,
+    ):
         return "macro_signal"
     if _CULTURE_RE.search(text) or category == "entertainment":
         return "culture_moment"
-    if category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash"}:
+    if category in {
+        "golf",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "tennis",
+        "chess",
+        "squash",
+    }:
         return "sports_story"
-    if re.search(r"\b(pga|tour|championship|top 20|world cup|champions league|nba|nfl|mlb|nhl|ufc)\b", text, re.I):
+    if re.search(
+        r"\b(pga|tour|championship|top 20|world cup|champions league|nba|nfl|mlb|nhl|ufc)\b",
+        text,
+        re.I,
+    ):
         return "sports_story"
     if _PUBLIC_COMPANY_RE.search(text):
         return "big_public_company"
     if _BIG_NAME_RE.search(text) and category not in {"politics", "geopolitics"}:
         return "big_name"
-    if category in {"politics", "geopolitics"} or re.search(r"\b(president|senate|house|governor|mayor|election|nominee|confirmed)\b", text, re.I):
+    if category in {"politics", "geopolitics"} or re.search(
+        r"\b(president|senate|house|governor|mayor|election|nominee|confirmed)\b",
+        text,
+        re.I,
+    ):
         return "political_power"
     if _WEIRD_NEWS_RE.search(text):
         return "weird_news"
@@ -602,21 +695,46 @@ def _has_sports_personnel_context(name: str, category: str) -> bool:
     if not _SPORTS_PERSONNEL_RE.search(text):
         return False
     return category in {
-        "golf", "football", "basketball", "baseball", "hockey",
-        "soccer", "tennis", "chess", "squash", "mma",
+        "golf",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "tennis",
+        "chess",
+        "squash",
+        "mma",
     } or bool(_SPORTS_CONTEXT_RE.search(text))
 
 
 def _discover_category_group(item: dict) -> str:
     data = item.get("data") or {}
-    category = (data.get("llm_sport_category") or data.get("sport_name") or data.get("sport") or "").lower()
+    category = (
+        data.get("llm_sport_category")
+        or data.get("sport_name")
+        or data.get("sport")
+        or ""
+    ).lower()
     if item.get("type") == "event":
         return "sports_culture"
     if category in {"weather", "health"}:
         return "weather_health"
     if category in {"politics", "geopolitics", "economics", "tech", "entertainment"}:
         return category
-    if category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash", "mma", "cricket"}:
+    if category in {
+        "golf",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "soccer",
+        "tennis",
+        "chess",
+        "squash",
+        "mma",
+        "cricket",
+    }:
         return "sports_culture"
     return "other"
 
@@ -756,12 +874,16 @@ def diversify_discover_first_page(
 
     def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
         group = _discover_category_group(item)
-        if category_counts.get(group, 0) >= _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3):
+        if category_counts.get(group, 0) >= _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(
+            group, 3
+        ):
             return False
 
         if enforce_archetype:
             archetype = _discover_archetype_group(item)
-            if archetype_counts.get(archetype, 0) >= _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS.get(archetype, 3):
+            if archetype_counts.get(
+                archetype, 0
+            ) >= _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS.get(archetype, 3):
                 return False
 
         if enforce_story:
@@ -783,14 +905,20 @@ def diversify_discover_first_page(
     selected: list[dict] = []
     selected_keys: set[tuple] = set()
 
-    for enforce_archetype, enforce_story in ((True, True), (True, False), (False, False)):
+    for enforce_archetype, enforce_story in (
+        (True, True),
+        (True, False),
+        (False, False),
+    ):
         for item in items:
             if len(selected) >= target_size:
                 break
             key = _feed_item_key(item)
             if key in selected_keys:
                 continue
-            if not can_select(item, enforce_archetype=enforce_archetype, enforce_story=enforce_story):
+            if not can_select(
+                item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
+            ):
                 continue
             selected.append(item)
             selected_keys.add(key)
@@ -800,10 +928,7 @@ def diversify_discover_first_page(
 
     if len(selected) < target_size:
         needed = target_size - len(selected)
-        fallback = [
-            item for item in items
-            if _feed_item_key(item) not in selected_keys
-        ]
+        fallback = [item for item in items if _feed_item_key(item) not in selected_keys]
         selected.extend(fallback[:needed])
 
     _ensure_required_archetypes(selected, items)
@@ -812,9 +937,9 @@ def diversify_discover_first_page(
 
     selected_keys = {_feed_item_key(item) for item in selected}
     remainder = [
-        item for item in items
-        if _feed_item_key(item) not in selected_keys
-        and item not in selected
+        item
+        for item in items
+        if _feed_item_key(item) not in selected_keys and item not in selected
     ]
     return selected + remainder
 
@@ -825,7 +950,13 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("film_tv_scores", re.compile(r"\brotten tomatoes\b", re.IGNORECASE), 88),
     ("macro_recession", re.compile(r"\brecession\b", re.IGNORECASE), 88),
     ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
-    ("us_2028_presidential", re.compile(r"\b2028\b.*\b(presidential|president|nominee|election)\b", re.IGNORECASE), 90),
+    (
+        "us_2028_presidential",
+        re.compile(
+            r"\b2028\b.*\b(presidential|president|nominee|election)\b", re.IGNORECASE
+        ),
+        90,
+    ),
     ("fifa_world_cup", re.compile(r"\b(fifa\s+)?world cup\b", re.IGNORECASE), 82),
 )
 
@@ -859,7 +990,9 @@ def backfill_discover_editorial_tail(
 
     def is_recall_item(item: dict) -> bool:
         name = item_name(item)
-        return any(pattern.search(name) for _, pattern, _ in _DISCOVER_TAIL_RECALL_RULES)
+        return any(
+            pattern.search(name) for _, pattern, _ in _DISCOVER_TAIL_RECALL_RULES
+        )
 
     def can_replace(item: dict, candidate: dict) -> bool:
         if is_recall_item(item):
@@ -876,7 +1009,8 @@ def backfill_discover_editorial_tail(
 
         candidate_idx = next(
             (
-                idx for idx, item in enumerate(remainder)
+                idx
+                for idx, item in enumerate(remainder)
                 if matches_rule(item, pattern)
                 and item.get("_quality_class") not in {"low_quality", "suppress"}
                 and float(item.get("score") or 0) >= min_score
@@ -889,7 +1023,8 @@ def backfill_discover_editorial_tail(
 
         replacement_idx = next(
             (
-                idx for idx in range(window_size - 1, preserve_top - 1, -1)
+                idx
+                for idx in range(window_size - 1, preserve_top - 1, -1)
                 if can_replace(selected[idx], candidate)
             ),
             None,
@@ -926,7 +1061,8 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
 
         candidate = next(
             (
-                item for item in all_items
+                item
+                for item in all_items
                 if _feed_item_key(item) not in selected_keys
                 and _discover_category_group(item) == target
                 and item.get("score", 0) >= min_score
@@ -940,10 +1076,12 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
         archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
         replacement_idx = next(
             (
-                idx for idx in range(len(selected) - 1, -1, -1)
+                idx
+                for idx in range(len(selected) - 1, -1, -1)
                 if category_counts[_discover_category_group(selected[idx])] > 1
                 and not (
-                    _discover_archetype_group(selected[idx]) in _DISCOVER_REQUIRED_ARCHETYPES
+                    _discover_archetype_group(selected[idx])
+                    in _DISCOVER_REQUIRED_ARCHETYPES
                     and archetype_counts[_discover_archetype_group(selected[idx])] <= 1
                 )
                 and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
@@ -969,7 +1107,8 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
 
         candidate = next(
             (
-                item for item in all_items
+                item
+                for item in all_items
                 if _feed_item_key(item) not in selected_keys
                 and _discover_archetype_group(item) == target
                 and item.get("score", 0) >= 90
@@ -986,7 +1125,10 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
             item = selected[idx]
             archetype = _discover_archetype_group(item)
             category = _discover_category_group(item)
-            if archetype in _DISCOVER_REQUIRED_ARCHETYPES and archetype_counts[archetype] <= 1:
+            if (
+                archetype in _DISCOVER_REQUIRED_ARCHETYPES
+                and archetype_counts[archetype] <= 1
+            ):
                 continue
             if archetype_counts[archetype] <= 1 and category_counts[category] <= 1:
                 continue
@@ -1026,7 +1168,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     while top10_size >= 4:
         top10 = selected[:top10_size]
         non_political_count = sum(
-            1 for item in top10
+            1
+            for item in top10
             if _discover_category_group(item) not in {"politics", "geopolitics"}
         )
         if non_political_count >= 4:
@@ -1034,15 +1177,19 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
 
         replacement_idx = next(
             (
-                idx for idx in range(top10_size - 1, -1, -1)
-                if _discover_category_group(selected[idx]) in {"politics", "geopolitics"}
+                idx
+                for idx in range(top10_size - 1, -1, -1)
+                if _discover_category_group(selected[idx])
+                in {"politics", "geopolitics"}
             ),
             None,
         )
         candidate_idx = next(
             (
-                idx for idx in range(top10_size, first_page_size)
-                if _discover_category_group(selected[idx]) not in {"politics", "geopolitics"}
+                idx
+                for idx in range(top10_size, first_page_size)
+                if _discover_category_group(selected[idx])
+                not in {"politics", "geopolitics"}
                 and selected[idx].get("score", 0) >= 90
             ),
             None,
@@ -1058,7 +1205,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     if not any(_discover_archetype_group(item) in fun_archetypes for item in top10):
         candidate_idx = next(
             (
-                idx for idx in range(top10_size, first_page_size)
+                idx
+                for idx in range(top10_size, first_page_size)
                 if _discover_archetype_group(selected[idx]) in fun_archetypes
                 and selected[idx].get("score", 0) >= 88
             ),
@@ -1067,8 +1215,10 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
         if candidate_idx is not None:
             replacement_idx = next(
                 (
-                    idx for idx in range(top10_size - 1, -1, -1)
-                    if _discover_archetype_group(selected[idx]) not in {
+                    idx
+                    for idx in range(top10_size - 1, -1, -1)
+                    if _discover_archetype_group(selected[idx])
+                    not in {
                         "breaking_news",
                         "health_weather_risk",
                     }
@@ -1080,7 +1230,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
             selected_keys = {_feed_item_key(item) for item in selected}
             candidate = next(
                 (
-                    item for item in all_items
+                    item
+                    for item in all_items
                     if _feed_item_key(item) not in selected_keys
                     and _discover_archetype_group(item) in fun_archetypes
                     and item.get("score", 0) >= 88
@@ -1097,15 +1248,15 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     while True:
         first_page = selected[:first_page_size]
         world_count = sum(
-            1 for item in first_page
-            if _discover_archetype_group(item) == "world_event"
+            1 for item in first_page if _discover_archetype_group(item) == "world_event"
         )
         if world_count <= 4:
             break
 
         replacement_idx = next(
             (
-                idx for idx in range(first_page_size - 1, -1, -1)
+                idx
+                for idx in range(first_page_size - 1, -1, -1)
                 if _discover_archetype_group(selected[idx]) == "world_event"
             ),
             None,
@@ -1116,7 +1267,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
         selected_keys = {_feed_item_key(item) for item in selected}
         candidate_idx = next(
             (
-                idx for idx in range(first_page_size, len(selected))
+                idx
+                for idx in range(first_page_size, len(selected))
                 if _discover_archetype_group(selected[idx]) != "world_event"
                 and selected[idx].get("score", 0) >= 88
             ),
@@ -1128,7 +1280,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
 
         candidate = next(
             (
-                item for item in all_items
+                item
+                for item in all_items
                 if _feed_item_key(item) not in selected_keys
                 and _discover_archetype_group(item) != "world_event"
                 and item.get("score", 0) >= 88
@@ -1210,7 +1363,10 @@ def has_specific_explanation(
     """Return whether a card has enough explanation to stand on its own."""
     if has_strong_hook(hook_description):
         return True
-    if "health_outbreak" in quality.reasons or "sports_personnel_story" in quality.reasons:
+    if (
+        "health_outbreak" in quality.reasons
+        or "sports_personnel_story" in quality.reasons
+    ):
         return True
     return headline not in _GENERIC_HEADLINES
 
