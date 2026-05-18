@@ -20,6 +20,19 @@ class TestSearchEndpoint:
         resp = await client.get("/api/events/search?q=test")
         assert resp.status_code == 200
 
+    async def test_empty_db_response_top_level_shape(self, client):
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        assert set(body.keys()) == {
+            "query",
+            "teams",
+            "results",
+            "futures",
+            "pagination",
+            "sports",
+            "filters",
+        }
+
     async def test_response_has_query_field(self, client):
         resp = await client.get("/api/events/search?q=test")
         body = resp.json()
@@ -86,6 +99,32 @@ class TestSearchEndpoint:
         body = resp.json()
         assert body["pagination"]["page"] == 1
         assert body["pagination"]["per_page"] == 25
+        assert body["pagination"]["total_results"] == 0
+        assert body["pagination"]["total_pages"] == 0
+        assert body["pagination"]["has_next"] is False
+        assert body["pagination"]["has_prev"] is False
+
+    async def test_pagination_params_reflected(self, client):
+        resp = await client.get("/api/events/search?q=test&page=3&per_page=10")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pagination"]["page"] == 3
+        assert body["pagination"]["per_page"] == 10
+        assert body["pagination"]["has_prev"] is True
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "q=test&page=0",
+            "q=test&per_page=0",
+            "q=test&per_page=101",
+            "q=test&days_back=0",
+            "q=test&days_back=366",
+        ],
+    )
+    async def test_invalid_bounded_params_return_422(self, client, query):
+        resp = await client.get(f"/api/events/search?{query}")
+        assert resp.status_code == 422
 
     async def test_empty_results_on_no_match(self, client):
         """Mock DB returns empty results, so all lists should be empty."""
@@ -93,12 +132,67 @@ class TestSearchEndpoint:
         body = resp.json()
         assert body["results"] == []
         assert body["futures"] == []
+        assert body["teams"] == []
+        assert body["sports"] == []
 
     async def test_sport_filter_accepted(self, client):
         resp = await client.get("/api/events/search?q=test&sport=basketball_nba")
         assert resp.status_code == 200
         body = resp.json()
         assert body["filters"]["sport"] == "basketball_nba"
+
+    async def test_filter_params_reflected(self, client):
+        resp = await client.get(
+            "/api/events/search?q=test&days_back=7&include_upcoming=false"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["filters"] == {
+            "sport": None,
+            "days_back": 7,
+            "include_upcoming": False,
+        }
+
+    async def test_tags_filter_accepts_json_array(self, client):
+        resp = await client.get(
+            "/api/events/search",
+            params={"q": "test", "tags": '["importance:playoff"]'},
+        )
+        assert resp.status_code == 200
+
+    async def test_invalid_tags_filter_is_ignored(self, client):
+        resp = await client.get(
+            "/api/events/search",
+            params={"q": "test", "tags": "not-json"},
+        )
+        assert resp.status_code == 200
+
+    async def test_result_item_shape_if_present(self, client):
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        for item in body["results"]:
+            assert "id" in item
+            assert "home_team" in item
+            assert "away_team" in item
+            assert "sport" in item
+            assert "status" in item
+
+    async def test_futures_item_shape_if_present(self, client):
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        for item in body["futures"]:
+            assert "id" in item
+            assert "name" in item
+            assert "outcomes" in item
+            assert isinstance(item["outcomes"], list)
+
+    async def test_team_item_shape_if_present(self, client):
+        resp = await client.get("/api/events/search?q=test")
+        body = resp.json()
+        for item in body["teams"]:
+            assert "id" in item
+            assert "name" in item
+            assert "sport_key" in item
 
 
 # ============================================================================
@@ -125,6 +219,11 @@ class TestTypeaheadEndpoint:
         assert "query" in body
         assert body["query"] == "test"
 
+    async def test_empty_db_response_top_level_shape(self, client):
+        resp = await client.get("/api/events/typeahead?q=test")
+        body = resp.json()
+        assert set(body.keys()) == {"suggestions", "query"}
+
     async def test_missing_q_returns_422(self, client):
         resp = await client.get("/api/events/typeahead")
         assert resp.status_code == 422
@@ -145,6 +244,11 @@ class TestTypeaheadEndpoint:
         resp = await client.get("/api/events/typeahead?q=xyznonexistent")
         body = resp.json()
         assert body["suggestions"] == []
+
+    async def test_at_most_7_suggestions(self, client):
+        resp = await client.get("/api/events/typeahead?q=test")
+        body = resp.json()
+        assert len(body["suggestions"]) <= 7
 
     async def test_suggestion_item_shape_if_present(self, client):
         """If suggestions exist, each should have type and text."""
@@ -184,6 +288,15 @@ class TestTrendingEndpoint:
         body = resp.json()
         assert "error" not in body
 
+    async def test_trending_item_shape_if_present(self, client):
+        resp = await client.get("/api/events/search/trending")
+        body = resp.json()
+        for item in body["trending"]:
+            assert "query" in item
+            assert "count" in item
+            assert isinstance(item["query"], str)
+            assert isinstance(item["count"], int)
+
 
 # ============================================================================
 # Search Suggestions — GET /api/events/search-suggestions
@@ -201,6 +314,7 @@ class TestSearchSuggestionsEndpoint:
         """Response has a 'suggestions' key containing a list."""
         resp = await client.get("/api/events/search-suggestions")
         body = resp.json()
+        assert set(body.keys()) == {"suggestions"}
         assert "suggestions" in body
         assert isinstance(body["suggestions"], list)
 

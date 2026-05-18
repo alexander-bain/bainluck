@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/user/odds-tracker/backend && pip install -q -r requirements.txt 2>&1 | tail -1; cd /home/user/odds-tracker/frontend && npm install --silent 2>&1 | tail -1; echo 'Dependencies installed: backend (pip) + frontend (npm)'"
+            "command": "cd /Users/bain/bainluck/backend && python3 -m pip install -q -r requirements.txt 2>&1 | tail -1; cd /Users/bain/bainluck/frontend && npm install --silent 2>&1 | tail -1; echo 'Dependencies installed: backend (pip) + frontend (npm)'"
           }
         ]
       }
