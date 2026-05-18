@@ -24,7 +24,7 @@ private enum NativeDiscoverAction {
 
 private struct NativeDiscoverProfile {
     private static let storageKey = "discover_interaction_profile_native_v1"
-    var categoryScores: [String: Double]
+    private var categoryScores: [String: Double]
 
     static func load() -> NativeDiscoverProfile {
         let raw = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: Double] ?? [:]
@@ -1113,9 +1113,9 @@ private enum NativeGuessCardContent {
 
 struct NativeGuessCard: View {
     private let content: NativeGuessCardContent
-    var onNextQuestion: (() -> Void)? = nil
-    var nextButtonLabel: String = "Next"
-    var onGuessCompleted: (() -> Void)? = nil
+    private var onNextQuestion: (() -> Void)? = nil
+    private var nextButtonLabel: String = "Next"
+    private var onGuessCompleted: (() -> Void)? = nil
     @State private var guess: String? = nil
     @State private var threshold: Int = 50
     @State private var streak: Int? = nil

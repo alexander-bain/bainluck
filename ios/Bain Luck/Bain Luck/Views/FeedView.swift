@@ -11,8 +11,8 @@ struct FeedView: View {
     @State private var selectedCategory: String = "all"
     @State private var landscapeColumns = false
     @State private var hoveredItemId: String?
-    @EnvironmentObject var navCoordinator: NavigationCoordinator
-    @EnvironmentObject var pinManager: PinManager
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow

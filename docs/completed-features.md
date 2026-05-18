@@ -1,5 +1,14 @@
 # Completed Features (Shipped)
 
+## May 18, 2026 — Backlog Parallel Sweep
+
+- ✅ **Golf tour metadata classification** — DataGolf event-level `tour` is preserved in market metadata and used before generic PGA fallback, with a Hainan Open Asian Tour regression test.
+- ✅ **Bug report auto-categorization** — rage-shake submissions now get deterministic first-pass categories (`ui`, `data_quality`, `performance`, `feature_request`, `ios`, `other`) without LLM latency.
+- ✅ **Bug fixed email task foundation** — `send_bug_fixed_email` has email/notification gates, OpenAI/Gmail seams, Celery task registration, and focused tests; admin enqueue wiring remains a later slice.
+- ✅ **Native line movement explainer** — iOS/macOS event detail fetches the existing line-movement endpoint and renders a compact "Why the Line Moved" card when explanation content exists.
+- ✅ **Line Movement Explainer v2 backend prompt** — prompt/context now anchors on the largest movement, before/after probabilities, beneficiary, and nearest scoring context while avoiding unsupported generic filler.
+- ✅ **Additional guardrails** — playoff championship overround normalization, StatPal raw-period preservation into `Event.period`, and native access-control tightening for obvious view-local properties.
+
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 
 ### Rage Shake / Native Discover Fixes

@@ -320,6 +320,68 @@ class TestPlayoffGridMockedData:
             }
         ]
 
+    async def test_mocked_championship_column_normalizes_probability_sum(
+        self,
+        client,
+        mock_db,
+        monkeypatch,
+    ):
+        market = _playoff_market(
+            outcomes=[
+                FuturesOutcome(
+                    id=201,
+                    market_id=101,
+                    external_id="los-angeles-lakers",
+                    name="Los Angeles Lakers",
+                    current_probability=0.72,
+                    last_updated=datetime.now(timezone.utc),
+                ),
+                FuturesOutcome(
+                    id=202,
+                    market_id=101,
+                    external_id="boston-celtics",
+                    name="Boston Celtics",
+                    current_probability=0.48,
+                    last_updated=datetime.now(timezone.utc),
+                ),
+            ],
+        )
+        mock_db.execute.side_effect = [
+            _mock_result(),
+            _mock_result([]),
+            _mock_result([market]),
+            _mock_result([]),
+        ]
+        monkeypatch.setattr(
+            "app.routes.playoffs._get_team_metadata",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._compute_movers",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "app.routes.playoffs._build_trend_chart",
+            AsyncMock(return_value={"timeline": [], "outcomes": []}),
+        )
+
+        resp = await client.get("/api/playoffs/nba")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        championship_sum = sum(
+            team["cells"]["championship"]["merged_probability"]
+            for team in body["teams"]
+        )
+        assert championship_sum == pytest.approx(1.0)
+        assert {
+            team["name"]: team["cells"]["championship"]["merged_probability"]
+            for team in body["teams"]
+        } == {
+            "Los Angeles Lakers": 0.6,
+            "Boston Celtics": 0.4,
+        }
+
 
 class TestPlayoffGridAllLeagues:
     """Every configured league slug returns 200 with valid shape."""

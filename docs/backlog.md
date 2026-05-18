@@ -8,7 +8,7 @@ The product's magic depends on **perfectly understanding every event, market, an
 
 **Matching health dashboard:** `GET /api/admin/prediction-markets/link-rate` + `GET /api/admin/prediction-markets/tier1-compliance`
 
-**Current state (May 17, 2026):** Overall Kalshi open link rate: **82.3%** (denominator now excludes unsupported leagues). Sawtooth oscillation fixed: 32 markets unlinked, 16,477 bad snapshots deleted. Date-only ticker window widened (-6h/+30h) to fix 49 tier-1 gaps from UTC/US timezone mismatch. Soccer/WNBA abbreviations added. Unsupported leagues excluded from link rate. StatPal playoff parser bug fixed. Event merge task fixed.
+**Current state (May 18, 2026):** Overall Kalshi open link rate: **85.9%**, Polymarket: **60.7%**. Sawtooth oscillation fixed: 32 markets unlinked, 16,477 bad snapshots deleted. Date-only ticker window widened (-6h/+30h) to fix 49 tier-1 gaps from UTC/US timezone mismatch. Soccer/WNBA abbreviations added. Unsupported leagues excluded from link rate. StatPal playoff parser bug fixed. Event merge task fixed. **Next hill-climb target:** link rate denominator accuracy — season futures miscounted as game markets inflate the denominator, and cross-sport league misclassification pollutes per-sport breakdowns.
 
 **Target: 100%** Tier 1 compliance — every MLB/NBA/NHL/NFL/PGA event with all sources linked.
 
@@ -44,6 +44,43 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 **Remaining:** Tier-1 gaps endpoint denominator should exclude markets for closed games (these are open on Kalshi for settlement but the game has ended).
 
 **Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
+
+### Link Rate Denominator Accuracy & League Misclassification
+
+**Problem (discovered May 18 health check):** The link rate endpoint reports misleadingly low rates for several sport/source combinations because the denominator includes markets that *cannot* be linked (season futures, non-game markets) and because league classification errors put markets under the wrong sport.
+
+**Four distinct issues:**
+
+**1. Kalshi basketball link rate inflated denominator (open rate 53.4%)**
+- 247 open markets, only 132 linked. The unlinked 115 likely include season futures (MVP, division winners, playoff qualifiers) that Kalshi labels `category="game_prop"` but are season-level markets with no corresponding event to link to.
+- **Diagnosis:** Query unlinked Kalshi basketball markets and classify each as `game_level` (should be linked — real gap) vs `season_level` (should not be in the game-market denominator). If most are season-level, this is a denominator fix in the link rate endpoint, not a matching fix.
+- **Fix path:** Either (a) exclude markets whose ticker matches known season-level patterns from the link rate denominator, or (b) fix `compute_market_tier()` so these markets aren't categorized as `game_prop` in the first place (see gotcha #16).
+
+**2. Kalshi baseball link rate inflated denominator (open rate 30.8%)**
+- Only 13 open markets total, 4 linked. Tiny sample magnifies the percentage. Same root cause as basketball — season futures likely counted as game markets.
+- **Fix path:** Same as #1. Verify by inspecting the 9 unlinked markets.
+
+**3. Polymarket esports near-zero link rate (open rate 0.9%, 2,310 open / 21 linked)**
+- Breakdown: LOL (526 open, 0 linked), DOTA (339 open, 0 linked), VALORANT (80 open, 22 linked), generic esports (2,310 open, 21 linked).
+- **Root cause:** No Odds API events exist for LoL, DOTA, or most esports tournaments. These markets *cannot* be linked because there's no event to link to — this is an upstream coverage gap, not a matching bug.
+- **Fix path:** Either (a) exclude esports leagues without Odds API coverage from the link rate denominator (add to `_UNSUPPORTED_LEAGUE_PREFIXES`), or (b) create events from Kalshi/Polymarket data directly so linking can happen (larger scope, lower priority).
+
+**4. Cross-sport league misclassification (taxonomy pollution)**
+- The link rate endpoint shows impossible combinations: `esports` league `PGA`, `cricket` league `EPL`, `cricket` league `FIFA_WC`, `cricket` league `UCL`, `tennis` league `PGA`, `esports` league `MLB`.
+- **Root cause:** `league_classification.py` or the LLM taxonomy enrichment task (`enrich_taxonomy_llm`) is assigning wrong `llm_sport_category` or league values. Likely a regex/ticker-prefix ordering issue similar to gotcha #32 (greedy ticker prefix matching).
+- **Fix path:** Audit `league_classification.py` classification logic. For each misclassified league combo, trace back to the market's ticker prefix and fix the classification rule. Add a CI test that asserts no impossible sport/league combinations exist.
+
+**Impact:** These issues don't affect users directly (the markets still display correctly). They make the link rate dashboard unreliable as a health metric — we can't tell real matching gaps from denominator noise. Fixing the denominator is prerequisite to the next hill-climb iteration.
+
+**Hill-climb approach:**
+1. Query all unlinked open markets per source/sport, classify each as `game_level` vs `season_level` vs `unsupported_league`
+2. Fix league misclassification rules in `league_classification.py`
+3. Update link rate endpoint denominator to exclude season-level and unsupported-league markets
+4. Re-measure — the corrected rate should be significantly higher, and any remaining gaps are real matching bugs to fix
+
+**Audit endpoint:** `GET /api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN`
+
+**Files:** `backend/app/routes/admin_matching.py` (link rate endpoint), `backend/app/utils/league_classification.py`, `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
 
 ### ~~Kalshi Sawtooth Oscillation~~ — FIXED (May 14)
 
@@ -291,11 +328,11 @@ Shipped across web and native. Discover is default landing page (`/`). Sports at
 
 **Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueGridView.swift`
 
-### 0r. Golf Data Quality Issues
+### ~~0r. Golf Data Quality Issues~~ — FIXED May 18
 
-**Problem:** Tour misclassification (Hainan = Asian Tour, not PGA Tour) — seasonal, not reproducible. Other 6 bugs fixed (April 17-19).
+**Problem:** Tour misclassification (Hainan = Asian Tour, not PGA Tour) — fixed by preserving DataGolf event-level `tour` metadata and using it before defaulting generic tournament names to PGA Tour.
 
-**Action:** Monitor during next Asian Tour event. If reproducible, investigate DataGolf tournament metadata parsing.
+**Guardrail:** `Hainan Open` with `tour="asian"` now classifies as Asian Tour even if an external ID looks like PGA.
 
 **Files:** `backend/app/tasks/datagolf.py`, `backend/app/routes/golf.py`
 **Parallel Safety:** Green
@@ -755,11 +792,13 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
+**May 18 first slice shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, and Celery task registration. Focused tests cover skip/send/update behavior. Remaining integration: enqueue the Celery task from the admin lifecycle transition and finalize production delivery/compliance settings.
+
 **Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
 **Implementation steps:**
 1. Create a Google Cloud service account with domain-wide delegation, grant it the `https://www.googleapis.com/auth/gmail.send` scope for `bugs@bainluck.com` (or your chosen sender). Add the service account JSON key as a Heroku config var (`GOOGLE_SERVICE_ACCOUNT_JSON`).
-2. Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`
+2. ~~Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`~~ — ✅ first task slice shipped May 18
 3. In the admin PATCH endpoint (`routes/admin.py`), when `status` changes to `"fixed"` and `resolution_summary` is provided:
    - Look up the bug report's `user_email` and `description`
    - If `user_email` exists and `notification_sent_at` is NULL, enqueue the Celery task
@@ -1119,6 +1158,8 @@ TradeWatch redesigned with improved layout and data presentation.
 
 **May 11 fix:** StatPal livescores now writes `raw_status` (e.g., "Q3", "1H", "HT") to `Event.period` every 30 seconds during live games. This gives period markers for all StatPal-covered sports (NBA, NHL, MLB, NFL, soccer). Previously this data was normalized to "live" and discarded.
 
+**May 18 guardrails:** Added tests proving StatPal preserves live raw period statuses (`Q3`, `1H`, `HT`) and `_sync_statpal_livescores()` writes `fixture.raw_status` into `Event.period`. No production change needed.
+
 **Remaining gap:** Non-ESPN, non-StatPal events (KBO/NPB baseball, some tennis) still have no period source. Soccer synthetic halftime fallback (`commence_time + 47min`) still exists as a backup for non-live games.
 
 **Files:** `backend/app/services/statpal_api.py` (raw_status), `backend/app/tasks/statpal_sync.py` (write to Event.period)
@@ -1163,9 +1204,9 @@ TradeWatch redesigned with improved layout and data presentation.
 
 **Parallel Safety:** Yellow
 
-### 3. Golf Data Quality
+### ~~3. Golf Data Quality~~ — FIXED May 18
 
-1 remaining bug: Tour misclassification (Hainan = Asian Tour, not PGA Tour) — seasonal, not reproducible. All other 6 bugs fixed (April 17-19).
+All known golf data-quality bugs fixed. May 18 fix preserves DataGolf event-level `tour` metadata and uses it for generic tournament names such as Hainan Open before falling back to PGA Tour.
 
 ### ~~4. Site Navigation Hierarchy (B1)~~ — SHIPPED May 17
 
@@ -1185,7 +1226,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 ~~110~~ ~~158~~ ~~210~~ ~~218~~ 590+ integration/route contract tests and 4,450+ backend tests collected. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, seeded feed coverage, and broad root-level guardrail suites. Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
-- Playoffs: column data, probability sums, monotonicity
+- ✅ Playoffs: column data, probability sums, monotonicity, and overround normalization guardrails
 - ✅ Related futures: market grouping, dedup, gender filtering, debug counters
 - ✅ Category/futures routes: mocked non-empty contracts, envelope shape, filtering/sorting/pagination behavior
 - ✅ Feed/events/playoffs routes: parameter validation, empty envelopes, mocked scored items, live-odds provider errors, playoff grid and league-futures contracts
@@ -1203,6 +1244,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ Provider parser guardrails: DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience
 - ✅ Retention/taxonomy guardrails: snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries
 - ✅ May 18 docs sync: verified the guardrail commits were already pushed, carried gotchas 71-75 into `CLAUDE.md`, and fixed the stale gotchas-reference range header.
+- ✅ May 18 guardrails: playoff championship overround normalization, StatPal raw-period preservation, DataGolf tour metadata classification, bug-report categorization, and line-movement prompt focus.
 
 **Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`, plus focused backend guardrail tests under `backend/tests/` and `backend/app/utils/league_classification.py`
 **Parallel Safety:** Green
@@ -1223,7 +1265,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 | # | Item | What | Depends on | Safety |
 |---|------|------|-----------|--------|
 | 12 | **Evolution Chart: Combined Probability** | Multi-source merged trend line on charts | Nothing | Yellow |
-| 13 | **Line Movement Explainer v2** | Causal analysis, key moment identification | Nothing | Green |
+| ~~13~~ | ~~**Line Movement Explainer v2**~~ | ✅ DONE May 18 — largest-movement focus, before/after probabilities, nearby scoring-play ordering, and anti-filler prompt instructions. | | |
 | 14 | **Freshness-Weighted Blending** | Time-decay for stale prediction market prices | More eval data | Yellow |
 | 15 | **DS/Analytics Infrastructure** | Analytical columns, `v_completed_events` view, Brier scores | Migration slot | Red |
 | 16 | **Golf Tournament Related Futures** | "Bigger Picture" section on tournament detail | Nothing | Yellow |
@@ -1327,7 +1369,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
-| CQ-16 | `private` on view helpers | All View files | Every `func heroSection()` → `private func heroSection()` |
+| CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects and native guess-card/profile stored properties tightened; deeper helper-method sweep remains. |
 | CQ-17 | Stop abbreviating | All files (search-replace) | `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProb`/`homeProb`, `gm` → `gameMarkets` |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
@@ -1487,7 +1529,7 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `
 | Medium | Total Points Spectrum (spread+total viz) | `TotalPointsSpectrum.tsx` | Medium |
 | Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
 | Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |
-| Low | Line Movement Explainer | `LineMovementExplainer.tsx` | Small |
+| ~~Low~~ | ~~Line Movement Explainer~~ | ~~`LineMovementExplainer.tsx`~~ | ✅ SHIPPED May 18 — native event detail fetches `/api/events/{id}/line-movement` and renders a compact explainer when analysis text exists. |
 | ~~Low~~ | ~~Weather page~~ | ~~16 components~~ | ✅ SHIPPED May 6 + polished May 13 |
 | ~~Low~~ | ~~Economics page~~ | ~~`/economics`~~ | ✅ SHIPPED May 6 + polished May 13 |
 | Low | Explore / faceted browser | `/explore` | Medium |

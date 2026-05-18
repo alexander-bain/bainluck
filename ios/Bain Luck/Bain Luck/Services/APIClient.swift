@@ -355,6 +355,11 @@ actor APIClient {
         return try await fetch("/api/events/\(id)", cacheTTL: 15)
     }
 
+    /// Fetches cached line movement analysis and explanation for an event.
+    func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse {
+        return try await fetch("/api/events/\(eventId)/line-movement", cacheTTL: 900)
+    }
+
     // MARK: - Event History
 
     /// Fetches win-probability history for an event over the requested trailing window.

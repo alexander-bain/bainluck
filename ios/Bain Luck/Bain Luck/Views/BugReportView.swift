@@ -9,8 +9,8 @@ import PencilKit
 
 struct BugReportView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var navCoordinator: NavigationCoordinator
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var authManager: AuthManager
 
     let screenshot: PlatformImage?
     @State private var description = ""

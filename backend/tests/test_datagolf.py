@@ -530,6 +530,17 @@ class TestClassifyTour:
         )
         assert result == "korn_ferry"
 
+    def test_datagolf_tour_metadata_maps_generic_hainan_to_asian(self):
+        result = _classify_tour(
+            "Hainan Open - Winner",
+            "hainan_open",
+            False,
+            False,
+            market_external_ids=["datagolf:pga:321:win"],
+            market_metadata_tours=["asian"],
+        )
+        assert result == "asian"
+
 
 class TestDGTourToKey:
     """Verify _DG_TOUR_TO_KEY mapping correctness."""

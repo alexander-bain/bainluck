@@ -27,7 +27,7 @@ private let relationLabel: [String: String] = [
 ]
 
 struct PreferencesView: View {
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var authManager: AuthManager
     @StateObject private var vm = PreferencesViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showOnboarding = false

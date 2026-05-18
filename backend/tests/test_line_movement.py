@@ -269,6 +269,22 @@ class TestMovementContext:
         assert "Lakers" in result.summary_context
         assert "Basketball" in result.summary_context
 
+    def test_summary_context_identifies_largest_movement(self):
+        """Summary context should make the largest move explicit for the LLM."""
+        snaps = _make_snapshots([0.50, 0.62, 0.62, 0.62, 0.62, 0.50])
+        result = detect_line_movements(
+            snaps,
+            home_team="Celtics",
+            away_team="Lakers",
+            sport_key="basketball_nba",
+        )
+
+        assert "Largest movement:" in result.summary_context
+        assert "toward Celtics" in result.summary_context
+        assert "12.0pp" in result.summary_context
+        assert "18:00 UTC-18:20 UTC" in result.summary_context
+        assert "All significant movements" in result.summary_context
+
 
 # ── build_llm_prompt tests ────────────────────────────────────────────
 
@@ -314,6 +330,31 @@ class TestBuildLLMPrompt:
         assert "LeBron James listed as doubtful" in prompt
         assert "Lakers sign veteran guard" in prompt
         assert "Recent headlines:" in prompt
+
+    def test_prompt_focuses_largest_movement(self):
+        """Prompt should give the model an explicit largest-movement target."""
+        movement = LineMovement(
+            timestamp_start=datetime(2026, 2, 20, 18, 0, tzinfo=timezone.utc),
+            timestamp_end=datetime(2026, 2, 20, 18, 15, tzinfo=timezone.utc),
+            home_prob_before=0.58,
+            home_prob_after=0.46,
+            change=-0.12,
+            magnitude=0.12,
+            direction="evening_out",
+            context="Pre-game: Lakers odds improved by 12.0% (42.0% → 54.0%)",
+            is_major=True,
+        )
+        analysis = _make_analysis(
+            movements=[movement],
+            summary_context="Sport: Basketball Nba\nMatchup: Lakers at Celtics",
+        )
+
+        prompt = build_llm_prompt(analysis, news_headlines=["Celtics starter ruled out"])
+
+        assert "Focus movement: 18:00 UTC-18:15 UTC: 12.0pp toward Lakers (42.0% to 54.0%)" in prompt
+        assert "largest movement first" in prompt
+        assert "before/after probabilities" in prompt
+        assert "generic market language" in prompt
 
     def test_prompt_with_game_context(self):
         """Live game state should appear in the prompt."""
@@ -418,6 +459,45 @@ class TestBuildLLMPrompt:
         assert "15 - 12" in prompt
         # Should use the scoring-plays-aware instructions
         assert "scoring plays" in prompt.lower()
+
+    def test_prompt_orders_timed_scoring_plays_near_focus_movement(self):
+        """Timed scoring plays should be ordered by proximity to the largest movement."""
+        movement = LineMovement(
+            timestamp_start=datetime(2026, 2, 20, 18, 10, tzinfo=timezone.utc),
+            timestamp_end=datetime(2026, 2, 20, 18, 20, tzinfo=timezone.utc),
+            home_prob_before=0.52,
+            home_prob_after=0.64,
+            change=0.12,
+            magnitude=0.12,
+            direction="pulling_away",
+            context="In-game: Celtics odds improved by 12.0% (52.0% → 64.0%)",
+            is_major=True,
+        )
+        analysis = _make_analysis(
+            movements=[movement],
+            summary_context="Sport: Basketball Nba\nMatchup: Lakers at Celtics",
+        )
+        scoring_plays = [
+            {
+                "timestamp": "2026-02-20T17:40:00+00:00",
+                "period": "Q1",
+                "clock": "7:00",
+                "team": "LAL",
+                "description": "early basket",
+            },
+            {
+                "timestamp": "2026-02-20T18:15:00+00:00",
+                "period": "Q2",
+                "clock": "2:00",
+                "team": "BOS",
+                "description": "three pointer during run",
+            },
+        ]
+
+        prompt = build_llm_prompt(analysis, scoring_plays=scoring_plays)
+
+        assert prompt.find("three pointer during run") < prompt.find("early basket")
+        assert "0 min from focus movement" in prompt
 
     def test_prompt_scoring_plays_capped_at_15(self):
         """More than 15 scoring plays should be capped."""

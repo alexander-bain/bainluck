@@ -319,10 +319,24 @@ TOUR_DISPLAY_NAMES = {
 _DG_TOUR_TO_KEY = {
     "pga": "pga",
     "euro": "dp_world",
+    "dp_world": "dp_world",
     "kft": "korn_ferry",
+    "korn_ferry": "korn_ferry",
     "opp": "pga",         # opposite-field PGA Tour events (same week as majors)
     "alt": "dp_world",    # alternate/co-sanctioned events
+    "asian": "asian",
+    "asian_tour": "asian",
+    "liv": "liv",
+    "lpga": "lpga",
 }
+
+
+def _datagolf_tour_to_key(tour: str | None) -> str | None:
+    """Map a DataGolf tour code or label to our public tour key."""
+    if not tour:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "_", tour.lower()).strip("_")
+    return _DG_TOUR_TO_KEY.get(normalized)
 
 
 def _classify_tour(
@@ -331,6 +345,7 @@ def _classify_tour(
     is_major: bool,
     is_womens: bool,
     market_external_ids: list[str] | None = None,
+    market_metadata_tours: list[str] | None = None,
 ) -> str:
     """Classify a tournament into a tour. Returns tour key."""
     if is_major:
@@ -340,14 +355,24 @@ def _classify_tour(
     for pattern, tour in _TOUR_CLASSIFICATION_PATTERNS:
         if pattern.search(market_name):
             return tour
+    # Prefer DataGolf's explicit tournament tour metadata when present.
+    # Some events have generic names (e.g. Hainan Open) and otherwise fall
+    # through to the PGA default.
+    if market_metadata_tours:
+        for tour in market_metadata_tours:
+            mapped = _datagolf_tour_to_key(tour)
+            if mapped:
+                return mapped
     # Check DataGolf external_id for authoritative tour classification
     # e.g., "datagolf:euro:123:win" → "dp_world"
     if market_external_ids:
         for eid in market_external_ids:
             if eid and eid.startswith("datagolf:"):
                 parts = eid.split(":")
-                if len(parts) >= 2 and parts[1] in _DG_TOUR_TO_KEY:
-                    return _DG_TOUR_TO_KEY[parts[1]]
+                if len(parts) >= 2:
+                    mapped = _datagolf_tour_to_key(parts[1])
+                    if mapped:
+                        return mapped
     # Default to PGA Tour for non-major, non-women's, non-pattern-matched
     return "pga"
 
@@ -1177,10 +1202,16 @@ async def get_golf(
         if tourn_markets:
             tour_name_for_classify = tourn_markets[0].name
         market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
+        market_metadata_tours = [
+            m.market_metadata.get("tour")
+            for m in tourn_markets
+            if m.market_metadata and m.market_metadata.get("tour")
+        ]
         tour = _classify_tour(
             tour_name_for_classify, tourn_key,
             tourn_key in MAJOR_TOURNAMENTS, is_womens,
             market_external_ids=market_ext_ids,
+            market_metadata_tours=market_metadata_tours,
         )
 
         tournaments.append({

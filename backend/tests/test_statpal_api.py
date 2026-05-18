@@ -271,6 +271,39 @@ class TestFixtureParsing:
         assert fixture is not None
         assert fixture.status == "live"
 
+    @pytest.mark.parametrize("raw_status", ["Q3", "1H", "HT"])
+    def test_parse_live_period_status_preserves_raw_status(self, raw_status):
+        from app.services.statpal_api import StatPalAPIService
+
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "100",
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "status": raw_status,
+        }
+        fixture = service._parse_single_fixture(item)
+
+        assert fixture is not None
+        assert fixture.status == "live"
+        assert fixture.raw_status == raw_status
+
+    def test_parse_finished_status_does_not_set_raw_status(self):
+        from app.services.statpal_api import StatPalAPIService
+
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "100",
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "status": "Final",
+        }
+        fixture = service._parse_single_fixture(item)
+
+        assert fixture is not None
+        assert fixture.status == "finished"
+        assert fixture.raw_status is None
+
     def test_parse_venue_dict(self):
         from app.services.statpal_api import StatPalAPIService
         service = StatPalAPIService.__new__(StatPalAPIService)
@@ -985,6 +1018,108 @@ class TestSyncHelpers:
         _set_statpal_id(event, "SP99")
         assert _get_statpal_id(event) == "SP99"
         assert event.win_probability_sources["espn"] == 0.65
+
+    @pytest.mark.asyncio
+    async def test_livescore_sync_writes_raw_status_to_event_period(self, monkeypatch):
+        import app.services.statpal_api as statpal_api
+        import app.tasks.statpal_sync as statpal_sync
+        from app.services.statpal_api import StatPalFixture
+
+        class FakeEvent:
+            id = 10
+            sport_id = 1
+            home_team_name = "Boston Celtics"
+            away_team_name = "Los Angeles Lakers"
+            status = "live"
+            period = None
+            home_score = 88
+            away_score = 85
+            statpal_fixture_id = None
+            win_probability_sources = None
+
+        class FakeSportRow:
+            key = "basketball_nba"
+            id = 1
+
+        class FakeResult:
+            def __init__(self, *, rows=None, scalars=None, first=None):
+                self._rows = rows or []
+                self._scalars = scalars or []
+                self._first = first
+                self._scalar_mode = False
+
+            def all(self):
+                return self._scalars if self._scalar_mode else self._rows
+
+            def scalars(self):
+                self._scalar_mode = True
+                return self
+
+            def first(self):
+                return self._first
+
+        class FakeSession:
+            def __init__(self, event):
+                self.event = event
+                self.execute_calls = 0
+                self.added = []
+
+            async def execute(self, _stmt):
+                self.execute_calls += 1
+                if self.execute_calls == 1:
+                    return FakeResult(rows=[FakeSportRow()])
+                if self.execute_calls == 2:
+                    return FakeResult(scalars=[self.event])
+                return FakeResult(first=None)
+
+            def add(self, obj):
+                self.added.append(obj)
+
+        class FakeSessionContext:
+            def __init__(self, session):
+                self.session = session
+
+            async def __aenter__(self):
+                return self.session
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeStatPalService:
+            async def get_live_scores(self, sport):
+                assert sport == "nba"
+                return [
+                    StatPalFixture(
+                        fixture_id="SP1",
+                        home_team="Boston Celtics",
+                        away_team="Los Angeles Lakers",
+                        status="live",
+                        raw_status="Q3",
+                        home_score=90,
+                        away_score=87,
+                    )
+                ]
+
+            async def close(self):
+                pass
+
+        event = FakeEvent()
+        session = FakeSession(event)
+        monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+        monkeypatch.setattr(statpal_api, "StatPalAPIService", FakeStatPalService)
+        monkeypatch.setattr(
+            statpal_sync,
+            "get_task_session",
+            lambda: FakeSessionContext(session),
+        )
+
+        result = await statpal_sync._sync_statpal_livescores()
+
+        assert event.period == "Q3"
+        assert event.home_score == 90
+        assert event.away_score == 87
+        assert result["events_updated"] == 1
+        assert result["score_snapshots_created"] == 1
 
 
 # =============================================================================

@@ -2,7 +2,7 @@ import Combine
 import SwiftUI
 
 struct OnboardingView: View {
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var authManager: AuthManager
     @StateObject private var vm = OnboardingViewModel()
     @Environment(\.dismiss) private var dismiss
 

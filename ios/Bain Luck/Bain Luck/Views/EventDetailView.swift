@@ -184,6 +184,15 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    if let lineMovement = vm.lineMovement, lineMovement.hasDisplayContent {
+                        LineMovementExplainerView(
+                            analysis: lineMovement,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away
+                        )
+                    }
                     // Score Differential Chart
                     if let history = vm.history, (isLive || isFinished) {
                         ScoreDifferentialChartView(
@@ -878,5 +887,165 @@ struct EventDetailView: View {
             }
             .frame(width: 28, height: 28)
         }
+    }
+}
+
+// MARK: - Line Movement Explainer
+
+private struct LineMovementExplainerView: View {
+    let analysis: LineMovementResponse
+    let homeTeam: String
+    let awayTeam: String
+    let homeColor: Color
+    let awayColor: Color
+
+    private var featuredMovements: [LineMovement] {
+        Array(analysis.movements.prefix(2))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.blue)
+                Text("Why the Line Moved")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            if let explanation = cleanedText(analysis.explanation) {
+                Text(explanation)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let disagreement = analysis.disagreementData,
+               let disagreementText = cleanedText(analysis.disagreementExplanation) {
+                disagreementBlock(disagreement, text: disagreementText)
+            }
+
+            if !featuredMovements.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(featuredMovements, id: \.timestampStart) { movement in
+                        movementRow(movement)
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func disagreementBlock(_ disagreement: LineMovementDisagreement, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("\(sourceName(disagreement.source)) differs by \(formatProbability(disagreement.divergence))")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.orange)
+
+            HStack(spacing: 8) {
+                probabilityPill(
+                    label: "Sportsbooks",
+                    value: disagreement.sportsbookHomeProb,
+                    color: homeColor
+                )
+                probabilityPill(
+                    label: sourceName(disagreement.source),
+                    value: disagreement.predictionMarketHomeProb,
+                    color: .orange
+                )
+            }
+
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func movementRow(_ movement: LineMovement) -> some View {
+        let beneficiary = movement.change >= 0 ? homeTeam : awayTeam
+        let color = movement.change >= 0 ? homeColor : awayColor
+
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: movement.change >= 0 ? "arrow.up.right" : "arrow.down.left")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 18, height: 18)
+                .background(color.opacity(0.12))
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(beneficiary)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text("+\(formatProbability(movement.magnitude))")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(color)
+                    if movement.isMajor {
+                        Text("Major")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
+                }
+
+                if let context = cleanedText(movement.context) {
+                    Text(context)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("\(formatProbability(movement.homeProbBefore)) to \(formatProbability(movement.homeProbAfter)) home win probability")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func probabilityPill(label: String, value: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(formatProbability(value))
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func sourceName(_ source: String) -> String {
+        switch source.lowercased() {
+        case "kalshi": return "Kalshi"
+        case "polymarket": return "Polymarket"
+        default: return source.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func cleanedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

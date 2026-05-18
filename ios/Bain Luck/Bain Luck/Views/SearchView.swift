@@ -70,7 +70,7 @@ private struct QuickSearchItem: Identifiable {
 
 struct SearchView: View {
     @StateObject private var vm = SearchViewModel()
-    @EnvironmentObject var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path = NavigationPath()

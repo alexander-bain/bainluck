@@ -213,6 +213,109 @@ def _build_movement_context(
     )
 
 
+def _format_probability(probability: float) -> str:
+    """Format a probability as a one-decimal percentage."""
+    return f"{round(probability * 100, 1)}%"
+
+
+def _format_movement_window(movement: LineMovement) -> str:
+    """Format movement timing for prompt context."""
+    start = movement.timestamp_start.strftime("%H:%M UTC")
+    end = movement.timestamp_end.strftime("%H:%M UTC")
+    if start == end:
+        return start
+    return f"{start}-{end}"
+
+
+def _movement_beneficiary(movement: LineMovement, home_team: str, away_team: str) -> str:
+    """Return the team whose win probability improved."""
+    if movement.change > 0:
+        return home_team or "home team"
+    return away_team or "away team"
+
+
+def _build_movement_detail(
+    movement: LineMovement,
+    home_team: str,
+    away_team: str,
+) -> str:
+    """Build a compact, factual movement description for LLM context."""
+    beneficiary = _movement_beneficiary(movement, home_team, away_team)
+    magnitude = round(movement.magnitude * 100, 1)
+    time_window = _format_movement_window(movement)
+
+    if movement.change > 0:
+        before = _format_probability(movement.home_prob_before)
+        after = _format_probability(movement.home_prob_after)
+    else:
+        before = _format_probability(1 - movement.home_prob_before)
+        after = _format_probability(1 - movement.home_prob_after)
+
+    return (
+        f"{time_window}: {magnitude}pp toward {beneficiary} "
+        f"({before} to {after})"
+    )
+
+
+def _parse_context_timestamp(value: object) -> Optional[datetime]:
+    """Parse optional context timestamps when source data provides them."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _minutes_from_movement(timestamp: datetime, movement: LineMovement) -> float:
+    """Return distance in minutes from a timestamp to a movement window."""
+    start = movement.timestamp_start
+    end = movement.timestamp_end
+    if start.tzinfo is None and timestamp.tzinfo is not None:
+        start = start.replace(tzinfo=timestamp.tzinfo)
+        end = end.replace(tzinfo=timestamp.tzinfo)
+    elif start.tzinfo is not None and timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=start.tzinfo)
+
+    if start <= timestamp <= end:
+        return 0.0
+    return min(
+        abs((timestamp - start).total_seconds()),
+        abs((timestamp - end).total_seconds()),
+    ) / 60
+
+
+def _rank_scoring_plays(
+    scoring_plays: list[dict],
+    movement: Optional[LineMovement],
+) -> list[tuple[dict, Optional[float]]]:
+    """Prefer scoring plays closest to the largest movement when timestamps exist."""
+    ranked = []
+    untimed = []
+
+    for index, play in enumerate(scoring_plays):
+        timestamp = _parse_context_timestamp(
+            play.get("timestamp") or play.get("captured_at") or play.get("created_at")
+        )
+        if timestamp and movement:
+            ranked.append((play, _minutes_from_movement(timestamp, movement), index))
+        else:
+            untimed.append((play, None, index))
+
+    if not ranked:
+        return [(play, distance) for play, distance, _index in untimed]
+
+    ranked.sort(key=lambda item: (item[1], item[2]))
+    return [(play, distance) for play, distance, _index in ranked + untimed]
+
+
 def _build_summary_context(
     movements: list[LineMovement],
     opening_home_prob: Optional[float],
@@ -248,10 +351,18 @@ def _build_summary_context(
 
     # Movement descriptions
     if movements:
-        parts.append(f"\nSignificant movements detected ({len(movements)}):")
+        largest = movements[0]
+        parts.append(
+            "\nLargest movement: "
+            + _build_movement_detail(largest, home_team, away_team)
+        )
+        parts.append(f"Direction label: {largest.direction}")
+        parts.append(f"Major movement: {'yes' if largest.is_major else 'no'}")
+
+        parts.append(f"\nAll significant movements ({len(movements)}, largest first):")
         for i, m in enumerate(movements[:3], 1):
-            time_str = m.timestamp_start.strftime("%H:%M UTC")
-            parts.append(f"  {i}. At {time_str}: {m.context}")
+            parts.append(f"  {i}. {_build_movement_detail(m, home_team, away_team)}")
+            parts.append(f"     Context label: {m.context}")
 
     return "\n".join(parts)
 
@@ -277,12 +388,22 @@ def build_llm_prompt(
 
     Returns a prompt string ready to send to GPT-4o-mini.
     """
+    largest_movement = analysis.movements[0] if analysis.movements else None
+    if largest_movement:
+        focus_line = _build_movement_detail(
+            largest_movement,
+            _extract_home_team(analysis.summary_context),
+            _extract_away_team(analysis.summary_context),
+        )
+    else:
+        focus_line = "No qualifying movement was detected."
+
     # Build context sections — scoring plays first, then game state, then injuries/news
     context_sections = []
 
     if scoring_plays:
-        lines = ["Key game moments:"]
-        for play in scoring_plays[:15]:  # Cap at 15 most relevant
+        lines = ["Key game moments:", "Nearby source context:"]
+        for play, distance in _rank_scoring_plays(scoring_plays, largest_movement)[:15]:
             period = play.get("period", "")
             clock = play.get("clock", "")
             team = play.get("team", "")
@@ -290,8 +411,13 @@ def build_llm_prompt(
             h_score = play.get("home_score")
             a_score = play.get("away_score")
             time_label = f"{period} {clock}".strip() if period or clock else ""
+            nearby_label = (
+                f"{round(distance)} min from focus movement"
+                if distance is not None
+                else ""
+            )
             score_label = f"({h_score} - {a_score})" if h_score is not None and a_score is not None else ""
-            parts = [p for p in [time_label, team, desc, score_label] if p]
+            parts = [p for p in [nearby_label, time_label, team, desc, score_label] if p]
             lines.append(f"  - {' '.join(parts)}")
         context_sections.append("\n".join(lines))
 
@@ -313,7 +439,7 @@ def build_llm_prompt(
             context_sections.append("Live game state: " + " | ".join(parts))
 
     if injuries:
-        lines = ["Known injury report:"]
+        lines = ["Known injury report:", "Nearby source context:"]
         for inj in injuries[:5]:  # Cap at 5 to focus on most impactful
             parts = [f"  - {inj['player_name']} ({inj['team_name']}): {inj['status']}"]
             if inj.get("injury_type") and inj["injury_type"] != "Unknown":
@@ -324,7 +450,7 @@ def build_llm_prompt(
         context_sections.append("\n".join(lines))
 
     if news_headlines:
-        lines = ["Recent headlines:"]
+        lines = ["Recent headlines:", "Nearby source context:"]
         for headline in news_headlines[:5]:
             lines.append(f"  - {headline}")
         context_sections.append("\n".join(lines))
@@ -359,26 +485,29 @@ def build_llm_prompt(
     # Context-aware instructions:
     # Scoring plays get the richest prompt — correlate odds shifts with game moments.
     if has_scoring_plays:
-        context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
+        context_instructions = """- Write 2-3 concise sentences explaining the largest movement first, then any useful supporting context
 - Reference specific scoring plays and game moments when explaining movements. Correlate timing of odds shifts with plays that happened around the same time.
 - State facts directly. Do NOT use "likely due to", "probably because", or any speculative hedging language.
 - BAD: "likely due to their strong performance leading to a significant lead"
 - GOOD: "A 12-0 run in Q3 pushed Detroit from 55% to 78%. Cade Cunningham hit back-to-back threes."
 - Only mention injuries if they directly relate to an odds movement. Don't list the full injury report — focus on players actually missing from the game.
+- If the provided game moments do not clearly explain the timing, describe them as nearby context instead of forcing a cause.
 - If the game is completed, describe how the odds evolved through the game, not just the final state."""
     elif has_injuries or has_news:
-        context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
-- Focus on the single biggest movement if there are multiple
+        context_instructions = """- Write 2-3 concise sentences explaining the largest movement first
+- Name the team that benefited, the size of the move, and the before/after probabilities
 - Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.
 - State facts directly. Do NOT use "likely due to", "probably because", "has severely impacted", or any speculative hedging language.
 - BAD: "likely due to their strong performance leading to a significant lead"
 - GOOD: "The Hawks lead 75-58 at halftime. Portland is missing Lillard and Williams."
 - BAD: "has severely impacted their ability to compete effectively"
 - GOOD: "With Portland down 3 starters, Atlanta has pulled away."
+- Do not pad with generic market language like "bettors reacted", "market confidence", or "momentum shifted" unless the source context directly supports it.
 - If the movement is during a live game, reference the current score and game state
 - If pre-game, focus on news/injury/lineup factors"""
     elif has_game_state:
-        context_instructions = """- Write 2-3 concise sentences describing the movement and current game state
+        context_instructions = """- Write 2-3 concise sentences describing the largest movement and current game state
+- Name the team that benefited, the size of the move, and the before/after probabilities
 - Reference the current score and period/quarter to give context for the shift
 - State the score and odds factually. No filler, no speculation.
 - BAD: "This movement may reflect momentum changes during the game."
@@ -398,6 +527,8 @@ def build_llm_prompt(
 
 Given the following odds movement data, describe what happened and provide context.
 
+Focus movement: {focus_line}
+
 {analysis.summary_context}{extra_context}
 
 Instructions:
@@ -408,3 +539,19 @@ Instructions:
 - Start directly with the explanation (no preamble)
 
 Explanation:"""
+
+
+def _extract_home_team(summary_context: str) -> str:
+    """Best-effort home team extraction from summary context for manual analyses."""
+    for line in summary_context.splitlines():
+        if line.startswith("Matchup: ") and " at " in line:
+            return line.rsplit(" at ", 1)[1].strip()
+    return "home team"
+
+
+def _extract_away_team(summary_context: str) -> str:
+    """Best-effort away team extraction from summary context for manual analyses."""
+    for line in summary_context.splitlines():
+        if line.startswith("Matchup: ") and " at " in line:
+            return line.removeprefix("Matchup: ").split(" at ", 1)[0].strip()
+    return "away team"

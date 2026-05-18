@@ -9,7 +9,7 @@ struct SportCategoryView: View {
     let categoryKey: String
     let categoryName: String
     @StateObject private var vm: SportCategoryViewModel
-    @EnvironmentObject var pinManager: PinManager
+    @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var iPadGridColumns: [GridItem] {

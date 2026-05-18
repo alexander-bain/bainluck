@@ -589,6 +589,23 @@ def send_daily_digest_task(self):
     return run_async(_send())
 
 
+@celery_app.task(bind=True, max_retries=3, name="app.tasks.send_bug_fixed_email")
+def send_bug_fixed_email_task(self, report_id: int):
+    """Send a fixed-bug notification email for one bug report."""
+
+    async def _send():
+        from app.tasks.base import get_task_session
+        from app.tasks.bug_notifications import send_bug_fixed_email
+
+        async with get_task_session() as db:
+            return await send_bug_fixed_email(report_id, db)
+
+    try:
+        return run_async(_send())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")

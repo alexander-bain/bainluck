@@ -12,6 +12,7 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var relatedFutures: RelatedFuturesResponse?
     @Published private(set) var teamProgression: TeamProgressionResponse?
     @Published private(set) var gameMarkets: GameMarketsResponse?
+    @Published private(set) var lineMovement: LineMovementResponse?
 
     private var refreshTimer: Timer?
     let eventId: Int
@@ -40,6 +41,10 @@ final class EventDetailViewModel: ObservableObject {
         let gameMarketsTask = Task { () -> GameMarketsResponse? in
             do { return try await APIClient.shared.fetchGameMarkets(eventId: eventId) }
             catch { logger.error("Game markets failed for \(self.eventId): \(error)"); return nil }
+        }
+        let lineMovementTask = Task { () -> LineMovementResponse? in
+            do { return try await APIClient.shared.fetchLineMovement(eventId: eventId) }
+            catch { logger.error("Line movement failed for \(self.eventId): \(error)"); return nil }
         }
 
         // Await primary fetch (controls loading state)
@@ -80,6 +85,9 @@ final class EventDetailViewModel: ObservableObject {
             if gameMarkets == nil || hasContent {
                 gameMarkets = gm
             }
+        }
+        if let lm = await lineMovementTask.value {
+            lineMovement = lm
         }
     }
 

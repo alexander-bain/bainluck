@@ -45,6 +45,12 @@ def _external_id(tour: str, event_id: str, market_type: str) -> str:
     return f"datagolf:{tour}:{event_id}:{market_type}"
 
 
+def _event_metadata_tour(requested_tour: str, event) -> str:
+    """Use DataGolf's event-level tour when provided, otherwise the polled tour."""
+    event_tour = getattr(event, "tour", None)
+    return event_tour or requested_tour
+
+
 async def _poll_datagolf_markets() -> dict:
     """Hourly task: sync schedule + pre-tournament predictions."""
     from app.services.datagolf_api import DataGolfAPIService
@@ -156,7 +162,7 @@ async def _poll_datagolf_markets() -> dict:
                             **market.market_metadata,
                             "datagolf_event_id": current_event.event_id,
                             "course": current_event.course,
-                            "tour": tour,
+                            "tour": _event_metadata_tour(tour, current_event),
                         }
 
                         # Upsert outcomes + snapshots
@@ -423,7 +429,7 @@ async def _poll_datagolf_live() -> dict:
                                         **(market.market_metadata or {}),
                                         "datagolf_event_id": current_event.event_id,
                                         "course": current_event.course,
-                                        "tour": tour,
+                                        "tour": _event_metadata_tour(tour, current_event),
                                     }
                                 await session.flush()
                                 # Re-query to get all open markets

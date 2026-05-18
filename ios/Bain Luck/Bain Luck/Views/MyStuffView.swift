@@ -6,9 +6,9 @@ import UIKit
 // MARK: - View
 
 struct MyStuffView: View {
-    @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject var navCoordinator: NavigationCoordinator
-    @EnvironmentObject var pinManager: PinManager
+    @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var pinManager: PinManager
     @StateObject private var vm = MyStuffViewModel()
     @State private var predictionStats: PredictionStats?
     @State private var path = NavigationPath()

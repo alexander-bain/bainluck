@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MainTabView: View {
-    @EnvironmentObject var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
 
