@@ -582,6 +582,37 @@ def summarize_missing_ground_truth_db_trace(
     }
 
 
+def apply_db_trace_missing_ground_truth_triage(
+    missing_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fold DB trace root causes back into missing ground-truth bucket counts."""
+    for item in missing_items:
+        trace = item.get("db_trace") or {}
+        status = str(trace.get("trace_status") or "")
+        if status == "related_market_only":
+            item["triage_bucket"] = "related_market_only"
+            item["recommended_action"] = trace.get("recommended_action") or item.get(
+                "recommended_action"
+            )
+        elif status == "no_db_match":
+            item["triage_bucket"] = "ingestion_gap"
+            item["recommended_action"] = trace.get("recommended_action") or item.get(
+                "recommended_action"
+            )
+        elif status.startswith("blocked:"):
+            reason = status.split(":", 1)[1] or "unknown"
+            item["triage_bucket"] = f"db_blocked_{reason}"
+            item["recommended_action"] = trace.get("recommended_action") or item.get(
+                "recommended_action"
+            )
+
+    missing_bucket_counts = Counter(item["triage_bucket"] for item in missing_items)
+    return {
+        "total": len(missing_items),
+        "bucket_counts": dict(missing_bucket_counts.most_common()),
+    }
+
+
 def diagnose_feed_items(
     items: list[dict[str, Any]],
     *,

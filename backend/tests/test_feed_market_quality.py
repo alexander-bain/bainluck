@@ -23,6 +23,7 @@ from app.utils.feed_market_quality import (
     has_strong_hook,
     quality_score_adjustment,
 )
+from app.utils.feed_quality_debug import apply_db_trace_missing_ground_truth_triage
 from app.utils.feed_quality_debug import build_feed_quality_debug
 from app.utils.feed_quality_debug import diagnose_stale_card_root_cause
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
@@ -889,6 +890,37 @@ class TestFeedQualityDebug:
 
         assert trace["trace_status"] == "related_market_only"
         assert trace["matches"][0]["blocked_reasons"] == ["loose_related_market"]
+
+    def test_db_trace_triage_updates_missing_ground_truth_buckets(self):
+        missing = [
+            {
+                "name": "Will France win the 2026 FIFA World Cup?",
+                "triage_bucket": "candidate_recall_gap",
+                "db_trace": {
+                    "trace_status": "related_market_only",
+                    "recommended_action": "No ranking fix.",
+                },
+            },
+            {
+                "name": "Kehlani: First Week Pure Album Sales",
+                "triage_bucket": "candidate_recall_gap",
+                "db_trace": {
+                    "trace_status": "blocked:not_open",
+                    "recommended_action": "No ranking fix.",
+                },
+            },
+        ]
+
+        summary = apply_db_trace_missing_ground_truth_triage(missing)
+
+        assert summary["bucket_counts"] == {
+            "related_market_only": 1,
+            "db_blocked_not_open": 1,
+        }
+        assert [item["triage_bucket"] for item in missing] == [
+            "related_market_only",
+            "db_blocked_not_open",
+        ]
 
     def test_missing_ground_truth_db_trace_explains_game_market_block(self):
         trace = summarize_missing_ground_truth_db_trace(

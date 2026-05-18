@@ -62,11 +62,12 @@ from app.utils.feed_reasons import (
     humanize_outcome_names_for_feed,
 )
 from app.utils.feed_quality_debug import (
+    apply_db_trace_missing_ground_truth_triage,
     build_feed_quality_debug,
     find_missing_ground_truth_items,
     load_default_ground_truth_items,
+    summarize_missing_ground_truth_db_trace,
 )
-from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
@@ -810,12 +811,20 @@ async def get_feed(
             top_n=min(20, len(paginated)),
         )
         await _attach_missing_ground_truth_traces(db, debug_payload["missing_ground_truth"], now)
+        debug_payload[
+            "missing_ground_truth_summary"
+        ] = apply_db_trace_missing_ground_truth_triage(
+            debug_payload["missing_ground_truth"]
+        )
         email_missing_ground_truth = find_missing_ground_truth_items(
             debug_payload["items"],
             email_ground_truth_items,
             limit=80,
         )
         await _attach_missing_ground_truth_traces(db, email_missing_ground_truth, now)
+        email_missing_ground_truth_summary = apply_db_trace_missing_ground_truth_triage(
+            email_missing_ground_truth
+        )
         email_metadata = email_ground_truth_report["metadata"]
         email_summary = summarize_polymarket_email_ground_truth(
             debug_payload["items"],
@@ -830,6 +839,7 @@ async def get_feed(
             "hit_rate_50": email_summary["hit_rate_50"],
             "hits": email_summary["hits"][:20],
             "missing_items": email_summary["missing_items"][:50],
+            "db_trace_bucket_counts": email_missing_ground_truth_summary["bucket_counts"],
         }
         debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
