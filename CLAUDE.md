@@ -146,6 +146,7 @@ bainluck/
 - Election allowlist: `_MAJOR_ELECTION_RE` in `futures_highlights.py` lists elections that deserve the full politics base score (US federal, 25 major countries, supranational). Elections with "election/winner/nominee" that don't match get `FOREIGN_LOCAL_ELECTION_PENALTY = -30`. Obscure elections (UK boroughs, by-elections) get a separate `-20` penalty via `_OBSCURE_ELECTION_PATTERNS`.
 - Soccer league allowlist: `_TOP_TIER_SOCCER_RE` in `feed_market_quality.py` matches EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa League, MLS, FIFA World Cup, Copa America, Copa Libertadores, Liga MX. Non-matching soccer futures get `story:minor_soccer_leagues` (capped at 1).
 - Geopolitics story caps: `story:russia_ukraine` (cap 2) now catches Russia + capture/enter/advance/territory AND Russia + Putin/president/regime/fall. `story:middle_east_conflict` (cap 4) catches Iran/Israel/Gaza/Hormuz.
+- Category base scores in `futures_highlights.py`: politics 50, geopolitics 55, economics 50, tech 50, entertainment 52, culture 48, health 42, weather 38, crypto 35. Sports get `SPORTS_CATEGORY_BASE = 18.5`. Entertainment has dedicated compelling patterns for awards shows, TV series, and media platforms.
 - LLM enrichment is intentionally bounded and async. `enrich_market_hooks` only targets feed-shaped candidates and Celery runs small batches (`limit=100` every 6h). `enrich_discover_llm_metadata` adds cached structured metadata under `FuturesMarket.market_metadata["discover_llm"]` for feed-shaped candidates (`limit=125` every 6h), and feed ranking consumes only that cached metadata. Never run LLM calls inside `GET /api/feed` or grind through the full open-market backlog (~56K markets).
 - Daily LLM eval is advisory only: `evaluate_discover_with_llm` grades the top 50 Discover futures, compares against Polymarket email highlights, and writes `llm_proposed_*` review rows for admin inspection. These rows do not affect ranking unless a human later records an accepted promote/downrank decision.
 - Offline interestingness calibration has a pure scorer in `utils/market_interestingness.py` and a local-input script at `scripts/calibrate_interestingness.py` for CSV/JSON/JSONL labeled rows. It is a scaffold for review and tuning, not a feed-ranking integration; do not wire it into production ranking without an audit-backed rollout.
@@ -154,9 +155,13 @@ bainluck/
 **Search** (`routes/events.py`):
 `GET /api/events/search` preserves broad ILIKE matching for events, futures markets, and typeahead, but ranks with query-time PostgreSQL full-text search when available. Event/team text is weighted A, futures market names B, and outcome names C via correlated aggregation. There is no stored `ts_vector` migration yet; keep future indexing work Postgres-specific and prove it improves real search traces before adding triggers or table rewrites.
 
+**Cross-Source Market Matching** (`utils/cross_source_matching.py`):
+Shared utility for finding markets that appear on both Kalshi and Polymarket about the same question. `normalize_question()` strips punctuation and lowercases; `find_cross_source_markets()` groups by normalized question, filters to Kalshi+Polymarket pairs, and ranks by probability disagreement (delta). Used by all 4 category pages. Matching is exact-string only — paraphrased questions won't match.
+
 **Themed Dashboard Pages** (politics, entertainment, weather, economics) — all 5 native category pages polished (Politics, Entertainment, Weather, Economics, Preferences):
 Each category page follows the same pattern:
 - Backend route (`routes/politics.py`, `routes/entertainment.py`) queries `FuturesMarket` by `llm_sport_category` + Kalshi ticker prefixes, classifies into sub-themes, builds structured response with enriched market rows
+- Cross-source matching via shared `find_cross_source_markets()` from `utils/cross_source_matching.py`
 - `_classify_kind()` assigns rendering hints (`spotify`, `rt`, `boxoffice`, `reality`, `binary`, `multi`, etc.) based on ticker prefix → name regex → outcome count fallback
 - `_group_threshold_markets()` groups binary markets sharing an entity but differing by threshold (e.g., multiple "Movie X RT score ≥ N" markets) into heatmap-ready groups
 - Frontend: CSS module (`politics.module.css`, `entertainment.module.css`), typed data from `lib/api.ts`, section components with tabbed sub-views
@@ -337,6 +342,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/test_feed_discover_event_demotion.py` | Event demotion bypass: league-tier gating, EI thresholds, headline keyword exceptions | May 18 |
 | `tests/test_feed_dismiss_propagation.py` | Story-key and group_id dismiss propagation in personalization context | May 18 |
 | `tests/test_futures_highlights.py` | Election allowlist, soccer allowlist, non-major election penalty | May 18 |
+| `tests/test_cross_source_matching.py` | Cross-source matching: normalization, pairing, delta computation, dedup | May 18 |
 
 ---
 
