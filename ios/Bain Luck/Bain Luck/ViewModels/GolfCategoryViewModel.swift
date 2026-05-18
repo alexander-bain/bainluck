@@ -8,10 +8,10 @@ final class GolfCategoryViewModel: ObservableObject {
         case error(String)
     }
 
-    @Published var state: State = .loading
-    @Published var currentEvent: GolfCurrentEventData?
-    @Published var liveTournament: GolfTournamentData?
-    @Published var tourSections: [TourSection] = []
+    @Published private(set) var state: State = .loading
+    @Published private(set) var currentEvent: GolfCurrentEventData?
+    @Published private(set) var liveTournament: GolfTournamentData?
+    @Published private(set) var tourSections: [TourSection] = []
 
     private static let tourOrder = ["pga", "euro", "liv", "kft", "lpga", "opp"]
     private static let tourNames: [String: String] = [

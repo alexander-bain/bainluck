@@ -6,10 +6,10 @@ private let logger = Logger(subsystem: "com.bainluck", category: "mystuff")
 
 @MainActor
 final class MyStuffViewModel: ObservableObject {
-    @Published var items: [FeedItem] = []
-    @Published var teamFutures: TeamFuturesResponse?
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var items: [FeedItem] = []
+    @Published private(set) var teamFutures: TeamFuturesResponse?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
 
     private var refreshTimer: Timer?
 

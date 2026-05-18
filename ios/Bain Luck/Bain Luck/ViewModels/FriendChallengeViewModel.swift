@@ -3,12 +3,12 @@ import Foundation
 
 @MainActor
 final class FriendChallengeViewModel: ObservableObject {
-    @Published var challenge: ChallengeResponse?
-    @Published var loading = true
-    @Published var error: String?
-    @Published var submitting = false
-    @Published var submitted = false
-    @Published var submittedGuess: String?
+    @Published private(set) var challenge: ChallengeResponse?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
+    @Published private(set) var submitting = false
+    @Published private(set) var submitted = false
+    @Published private(set) var submittedGuess: String?
 
     func load(code: String) async {
         loading = true

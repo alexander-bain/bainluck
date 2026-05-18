@@ -6,12 +6,12 @@ private let logger = Logger(subsystem: "com.bainluck", category: "sportCategory"
 
 @MainActor
 final class SportCategoryViewModel: ObservableObject {
-    @Published var items: [FeedItem] = []
-    @Published var loading = true
-    @Published var error: String?
-    @Published var loadingMore = false
-    @Published var hasMore = true
-    @Published var leagueMarkets: LeagueMarketsResponse?
+    @Published private(set) var items: [FeedItem] = []
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
+    @Published private(set) var loadingMore = false
+    @Published private(set) var hasMore = true
+    @Published private(set) var leagueMarkets: LeagueMarketsResponse?
 
     let categoryKey: String
     private let pageSize = 50

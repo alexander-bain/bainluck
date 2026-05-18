@@ -1307,7 +1307,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-15 | `private(set)` on ViewModel properties | All ViewModel files | Every `@Published var` → `@Published private(set) var` where views only read |
+| ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | Every `func heroSection()` → `private func heroSection()` |
 | CQ-17 | Stop abbreviating | All files (search-replace) | `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProb`/`homeProb`, `gm` → `gameMarkets` |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |

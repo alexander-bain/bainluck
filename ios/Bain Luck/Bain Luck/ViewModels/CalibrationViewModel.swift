@@ -4,9 +4,9 @@ import SwiftUI
 
 @MainActor
 final class CalibrationViewModel: ObservableObject {
-    @Published var data: CalibrationData?
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var data: CalibrationData?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
     @Published var cohort: CalibrationCohort = .all
 
     private static let nf: NumberFormatter = { let f = NumberFormatter(); f.numberStyle = .decimal; return f }()

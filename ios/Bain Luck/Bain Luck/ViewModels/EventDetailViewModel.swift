@@ -5,13 +5,13 @@ import SwiftUI
 private let logger = Logger(subsystem: "com.bainluck", category: "eventDetail")
 
 final class EventDetailViewModel: ObservableObject {
-    @Published var event: EventDetail?
-    @Published var loading = true
-    @Published var error: String?
-    @Published var history: EventHistoryResponse?
-    @Published var relatedFutures: RelatedFuturesResponse?
-    @Published var teamProgression: TeamProgressionResponse?
-    @Published var gameMarkets: GameMarketsResponse?
+    @Published private(set) var event: EventDetail?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
+    @Published private(set) var history: EventHistoryResponse?
+    @Published private(set) var relatedFutures: RelatedFuturesResponse?
+    @Published private(set) var teamProgression: TeamProgressionResponse?
+    @Published private(set) var gameMarkets: GameMarketsResponse?
 
     private var refreshTimer: Timer?
     let eventId: Int

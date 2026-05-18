@@ -8,44 +8,44 @@ private let logger = Logger(subsystem: "com.bainluck", category: "onboarding")
 final class OnboardingViewModel: ObservableObject {
     // MARK: - Step Navigation
 
-    @Published var currentStep = 1
+    @Published private(set) var currentStep = 1
     let totalSteps = 5
 
     // MARK: - Step 1: Location
 
     @Published var locationQuery = ""
-    @Published var locationResults: [TeamSearchResult] = []
-    @Published var locationTeams: [SelectedTeam] = [] // all selected by default, toggleable
-    @Published var locationSearching = false
+    @Published private(set) var locationResults: [TeamSearchResult] = []
+    @Published private(set) var locationTeams: [SelectedTeam] = [] // all selected by default, toggleable
+    @Published private(set) var locationSearching = false
 
     // MARK: - Step 2: Follow Teams
 
     @Published var followQuery = ""
-    @Published var followResults: [TeamSearchResult] = []
-    @Published var followTeams: [SelectedTeam] = []
-    @Published var followSearching = false
+    @Published private(set) var followResults: [TeamSearchResult] = []
+    @Published private(set) var followTeams: [SelectedTeam] = []
+    @Published private(set) var followSearching = false
 
     // MARK: - Step 3: Alma Maters
 
     @Published var schoolQuery = ""
-    @Published var schoolResults: [TeamSearchResult] = []
-    @Published var schoolTeams: [SelectedTeam] = []
-    @Published var schoolSearching = false
+    @Published private(set) var schoolResults: [TeamSearchResult] = []
+    @Published private(set) var schoolTeams: [SelectedTeam] = []
+    @Published private(set) var schoolSearching = false
 
     // MARK: - Step 4: Sport Affinities
 
-    @Published var sportAffinities: [String: Double] = OnboardingSportsData.defaultAffinities
+    @Published private(set) var sportAffinities: [String: Double] = OnboardingSportsData.defaultAffinities
 
     // MARK: - Step 5: Rivals
 
     @Published var rivalQuery = ""
-    @Published var rivalResults: [TeamSearchResult] = []
-    @Published var rivalTeams: [SelectedTeam] = []
-    @Published var rivalSearching = false
+    @Published private(set) var rivalResults: [TeamSearchResult] = []
+    @Published private(set) var rivalTeams: [SelectedTeam] = []
+    @Published private(set) var rivalSearching = false
 
     // MARK: - Submission
 
-    @Published var submitting = false
+    @Published private(set) var submitting = false
     @Published var error: String?
 
     // MARK: - Debounce

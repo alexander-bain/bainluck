@@ -5,12 +5,12 @@ import os
 private let logger = Logger(subsystem: "com.bainluck", category: "feed")
 
 final class FeedViewModel: ObservableObject {
-    @Published var items: [FeedItem] = []
-    @Published var groupedItems: [GroupedFeedItem] = []
-    @Published var total = 0
-    @Published var loading = true
-    @Published var error: String?
-    @Published var liveCount = 0
+    @Published private(set) var items: [FeedItem] = []
+    @Published private(set) var groupedItems: [GroupedFeedItem] = []
+    @Published private(set) var total = 0
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
+    @Published private(set) var liveCount = 0
 
     private static let supplementalEventLimit = 200
     private var refreshTimer: Timer?

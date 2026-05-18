@@ -5,9 +5,9 @@ import os
 private let logger = Logger(subsystem: "com.bainluck", category: "futuresDetail")
 
 final class FuturesDetailViewModel: ObservableObject {
-    @Published var market: FuturesMarketDetail?
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var market: FuturesMarketDetail?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
 
     let marketId: Int
 

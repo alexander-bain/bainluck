@@ -6,10 +6,10 @@ private let logger = Logger(subsystem: "com.bainluck", category: "preferences")
 
 @MainActor
 final class PreferencesViewModel: ObservableObject {
-    @Published var prefs: PreferencesResponse?
-    @Published var loading = true
-    @Published var error: String?
-    @Published var sportAffinities: [String: Double] = [:]
+    @Published private(set) var prefs: PreferencesResponse?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
+    @Published private(set) var sportAffinities: [String: Double] = [:]
 
     private var affinitySaveTask: Task<Void, Never>?
 

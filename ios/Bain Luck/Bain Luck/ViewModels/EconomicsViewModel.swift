@@ -5,9 +5,9 @@ import os
 private let logger = Logger(subsystem: "com.bainluck", category: "economics")
 
 final class EconomicsViewModel: ObservableObject {
-    @Published var data: EconomicsResponse?
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var data: EconomicsResponse?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
 
     @MainActor
     func load() async {

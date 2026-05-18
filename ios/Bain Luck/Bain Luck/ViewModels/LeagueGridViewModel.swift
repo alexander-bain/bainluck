@@ -24,10 +24,10 @@ private let leagueGridSlugToSportKey: [String: String] = [
 
 final class LeagueGridViewModel: ObservableObject {
     let slug: String
-    @Published var grid: ChampionshipGridResponse?
-    @Published var leagueMarkets: LeagueMarketsResponse?
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var grid: ChampionshipGridResponse?
+    @Published private(set) var leagueMarkets: LeagueMarketsResponse?
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
     @Published var conferenceFilter: String?
 
     init(slug: String) {

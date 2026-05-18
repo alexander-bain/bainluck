@@ -5,13 +5,13 @@ import os
 private let logger = Logger(subsystem: "com.bainluck", category: "futuresList")
 
 final class FuturesListViewModel: ObservableObject {
-    @Published var markets: [FacetedFuturesMarket] = []
-    @Published var facets: [String: [FacetTag]] = [:]
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var markets: [FacetedFuturesMarket] = []
+    @Published private(set) var facets: [String: [FacetTag]] = [:]
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
     @Published var selectedCategory = ""
-    @Published var page = 1
-    @Published var hasMore = true
+    @Published private(set) var page = 1
+    @Published private(set) var hasMore = true
 
     private var totalCount = 0
 

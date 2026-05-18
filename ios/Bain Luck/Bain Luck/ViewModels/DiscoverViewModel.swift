@@ -2,9 +2,9 @@ import Combine
 import Foundation
 
 final class DiscoverViewModel: ObservableObject {
-    @Published var items: [FeedItem] = []
-    @Published var loading = false
-    @Published var error: String?
+    @Published private(set) var items: [FeedItem] = []
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
     @Published private(set) var loadingMore = false
 
     private var hasMore = true

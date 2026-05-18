@@ -3,13 +3,13 @@ import Foundation
 
 @MainActor
 final class DailyChallengeViewModel: ObservableObject {
-    @Published var items: [DailyChallengeItem] = []
-    @Published var currentIndex = 0
-    @Published var loading = true
-    @Published var lastResult: DailyChallengeResult?
-    @Published var completed = false
-    @Published var stats: PredictionStats?
-    @Published var results: [DailyChallengeResult] = []
+    @Published private(set) var items: [DailyChallengeItem] = []
+    @Published private(set) var currentIndex = 0
+    @Published private(set) var loading = true
+    @Published private(set) var lastResult: DailyChallengeResult?
+    @Published private(set) var completed = false
+    @Published private(set) var stats: PredictionStats?
+    @Published private(set) var results: [DailyChallengeResult] = []
     var dismiss: (() -> Void)?
 
     let totalQuestions = 5

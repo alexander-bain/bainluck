@@ -9,11 +9,11 @@ final class SearchViewModel: ObservableObject {
     @Published var suggestions: [TypeaheadSuggestion] = []
     @Published var didYouMean: String?
     @Published var results: SearchResponse?
-    @Published var loading = false
-    @Published var error: String?
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
     @Published var selectedSport = ""
     @Published var recentSearches: [String] = []
-    @Published var trendingSearches: [TrendingQuery] = []
+    @Published private(set) var trendingSearches: [TrendingQuery] = []
 
     private var debounceTask: Task<Void, Never>?
 

@@ -5,10 +5,10 @@ import os
 private let logger = Logger(subsystem: "com.bainluck", category: "weather")
 
 final class WeatherViewModel: ObservableObject {
-    @Published var featured: [WeatherFeaturedItem] = []
-    @Published var cities: [WeatherCity] = []
-    @Published var loading = true
-    @Published var error: String?
+    @Published private(set) var featured: [WeatherFeaturedItem] = []
+    @Published private(set) var cities: [WeatherCity] = []
+    @Published private(set) var loading = true
+    @Published private(set) var error: String?
 
     @MainActor
     func load() async {
