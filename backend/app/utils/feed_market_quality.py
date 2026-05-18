@@ -835,14 +835,14 @@ def backfill_discover_editorial_tail(
     *,
     window_size: int = 50,
     preserve_top: int = 20,
-    max_insertions: int = 4,
+    max_insertions: int = 5,
 ) -> list[dict]:
     """Pull a few high-texture eligible stories into the top-50 tail.
 
     Discover scoring often saturates at 100, so good but slightly less timely
     culture/macro stories can sit at rank 100+ behind many same-score finance
     and politics cards. This pass leaves the first page untouched and only
-    swaps strong recall candidates into positions 21-50.
+    swaps a small number of strong recall candidates into positions 21-50.
     """
     if window_size <= preserve_top or max_insertions <= 0 or len(items) <= window_size:
         return items
