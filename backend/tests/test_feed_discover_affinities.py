@@ -116,6 +116,19 @@ def test_discover_feature_tokens_bridge_boston_teams_to_massachusetts():
     }
 
 
+def test_discover_feature_tokens_bridge_new_england_patriots_to_massachusetts():
+    tokens = _discover_feature_tokens(
+        item_name="Buffalo Bills vs New England Patriots",
+        category="football",
+        item_type="event",
+    )
+
+    assert "team:new_england_patriots" in tokens
+    assert "region:massachusetts" in tokens
+    assert "region:new_england" in tokens
+    assert "region:boston" not in tokens
+
+
 def test_discover_feature_affinity_reacts_to_single_like_quickly():
     rows = [
         ("futures", "Will Noah Kahan be #1 on Spotify this week?", "entertainment", "like", 1),
@@ -127,6 +140,38 @@ def test_discover_feature_affinity_reacts_to_single_like_quickly():
     assert result["entity:noah_kahan"] > 0
 
 
+def test_discover_feature_affinity_liked_red_sox_boosts_regional_bridges():
+    rows = [
+        ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "like", 1),
+    ]
+
+    result = _build_discover_feature_affinities(rows)
+
+    assert result["team:boston_red_sox"] > 0
+    assert result["region:boston"] > 0
+    assert result["region:massachusetts"] > 0
+    assert result["region:new_england"] > 0
+
+
+def test_discover_feature_affinity_region_bridge_can_connect_team_and_local_market():
+    rows = [
+        ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "like", 1),
+        (
+            "futures",
+            "Who will win the Massachusetts Governor election?",
+            "politics",
+            "context_expand",
+            2,
+        ),
+    ]
+
+    result = _build_discover_feature_affinities(rows)
+
+    assert result["region:massachusetts"] > result["team:boston_red_sox"]
+    assert result["region:new_england"] > result["team:boston_red_sox"]
+    assert result["topic:elections"] > 0
+
+
 def test_discover_feature_affinity_uses_unlike_as_soft_downrank():
     rows = [
         ("event", "Red Sox vs Yankees", "baseball", "unlike", 2),
@@ -135,3 +180,27 @@ def test_discover_feature_affinity_uses_unlike_as_soft_downrank():
     result = _build_discover_feature_affinities(rows)
 
     assert result["format:matchup"] < 0
+
+
+def test_discover_feature_affinity_unlike_downranks_team_and_regions_softly():
+    rows = [
+        ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "unlike", 1),
+    ]
+
+    result = _build_discover_feature_affinities(rows)
+
+    assert result["team:boston_red_sox"] == pytest.approx(-1.0 / 18.0)
+    assert result["region:boston"] == pytest.approx(-1.0 / 18.0)
+    assert result["region:massachusetts"] == pytest.approx(-1.0 / 18.0)
+    assert result["region:new_england"] == pytest.approx(-1.0 / 18.0)
+
+
+def test_discover_feature_affinity_repeated_unlikes_are_bounded_downranks():
+    rows = [
+        ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "unlike", 10),
+    ]
+
+    result = _build_discover_feature_affinities(rows)
+
+    assert result["team:boston_red_sox"] == -0.12
+    assert result["region:massachusetts"] == -0.12

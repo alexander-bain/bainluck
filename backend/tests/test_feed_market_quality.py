@@ -175,6 +175,22 @@ class TestMarketQualityClassification:
         assert all("regional_us_election" in q.reasons for q in qualities)
         assert all(q.story_key == "story:regional_us_elections" for q in qualities)
 
+    def test_regional_public_interest_items_are_not_election_noise(self):
+        examples = [
+            ("Will California declare a wildfire emergency before October?", "weather"),
+            ("Will New York City have a subway strike before July?", "politics"),
+        ]
+
+        qualities = [
+            classify_market_quality(name, sport_category=category)
+            for name, category in examples
+        ]
+
+        assert all(q.quality_class == "compelling" for q in qualities)
+        assert all("regional_us_election" not in q.reasons for q in qualities)
+        assert all("social_filler" not in q.reasons for q in qualities)
+        assert all(q.explanation_required for q in qualities)
+
     def test_niche_low_signal_sports_are_low_quality(self):
         quality = classify_market_quality(
             "Women's Table Tennis World Championship winner?",
@@ -184,6 +200,23 @@ class TestMarketQualityClassification:
         assert quality.quality_class == "low_quality"
         assert "low_signal_sport" in quality.reasons
         assert quality.story_key == "story:niche_low_signal_sports"
+
+    def test_more_low_signal_sports_share_single_story_family(self):
+        examples = [
+            "World Snooker Championship winner?",
+            "All England Badminton Championship winner?",
+            "Premier League Darts champion?",
+        ]
+
+        qualities = [
+            classify_market_quality(name, sport_category="sports")
+            for name in examples
+        ]
+
+        assert all(q.quality_class == "low_quality" for q in qualities)
+        assert all("low_signal_sport" in q.reasons for q in qualities)
+        assert {q.story_key for q in qualities} == {"story:niche_low_signal_sports"}
+        assert all(not q.explanation_required for q in qualities)
 
     def test_sports_personnel_story_is_compelling(self):
         quality = classify_market_quality(
@@ -205,6 +238,23 @@ class TestMarketQualityClassification:
         assert quality.quality_class == "compelling"
         assert "health_outbreak" in quality.reasons
         assert quality_score_adjustment(quality) >= 24
+
+    def test_compelling_non_sports_stories_get_explanation_path(self):
+        examples = [
+            ("Will OpenAI release GPT-5 before 2027?", "tech", "story:ai"),
+            ("Will SpaceX IPO in 2026?", "tech", None),
+            ("Will Taylor Swift be pregnant in 2026?", "entertainment", None),
+        ]
+
+        for name, category, expected_story_key in examples:
+            quality = classify_market_quality(name, sport_category=category)
+
+            assert quality.quality_class == "compelling", name
+            assert "compelling_topic" in quality.reasons, name
+            assert quality.explanation_required is True, name
+            assert quality_score_adjustment(quality) > 0, name
+            if expected_story_key is not None:
+                assert quality.story_key == expected_story_key, name
 
     def test_sports_personnel_story_gets_extra_boost(self):
         quality = classify_market_quality(
@@ -352,6 +402,25 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "low_quality"
         assert apply_quality_score(100, quality) <= 70
+
+    def test_repetitive_oil_ranges_collapse_to_one_boring_family(self):
+        qualities = [
+            classify_market_quality(
+                "Will next month's oil price be between $70.20 and $70.80?",
+                sport_category="economics",
+            ),
+            classify_market_quality(
+                "Will next month's oil price be between $70.80 and $71.40?",
+                sport_category="economics",
+            ),
+        ]
+
+        assert all(q.quality_class == "low_quality" for q in qualities)
+        assert all(q.is_ladder_or_bucket for q in qualities)
+        assert all(q.is_narrow_range for q in qualities)
+        assert {q.family_key for q in qualities} == {
+            "will next month s oil price be between <range>"
+        }
 
 
 class TestFeedQualityDebug:

@@ -21,6 +21,8 @@ from app.utils.personalization import (
     NAH_AFFINITY_THRESHOLD,
     CATEGORY_INTEREST_MAX_BONUS,
     CATEGORY_DISMISS_MAX_PENALTY,
+    FEATURE_INTEREST_MAX_BONUS,
+    FEATURE_DISLIKE_MAX_PENALTY,
     MIN_MULTIPLIER,
     MAX_MULTIPLIER,
 )
@@ -772,3 +774,121 @@ class TestDiscoverCategoryAffinity:
         )
         assert result.multiplier == pytest.approx(0.92)
         assert any("discover_feature_dislike" in r for r in result.reasons)
+
+    def test_feature_signal_is_capped(self):
+        ctx = _basic_ctx(discover_feature_affinities={
+            "topic:elections": 0.09,
+            "archetype:public_figure": 0.08,
+            "format:matchup": -0.09,
+            "topic:social_count": -0.08,
+        })
+        boosted = compute_futures_multiplier(
+            ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+            feature_tokens=["topic:elections", "archetype:public_figure"],
+        )
+        downranked = compute_futures_multiplier(
+            ctx,
+            sport_category="culture",
+            outcome_team_ids=[],
+            feature_tokens=["format:matchup", "topic:social_count"],
+        )
+        assert boosted.multiplier == pytest.approx(1.0 + FEATURE_INTEREST_MAX_BONUS)
+        assert downranked.multiplier == pytest.approx(1.0 + FEATURE_DISLIKE_MAX_PENALTY)
+
+    def test_feature_values_below_threshold_are_ignored(self):
+        ctx = _basic_ctx(discover_feature_affinities={"topic:macro": 0.009})
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="economics",
+            outcome_team_ids=[],
+            feature_tokens=["topic:macro"],
+        )
+        assert result.multiplier == 1.0
+        assert result.reasons == []
+
+    def test_regional_feature_interest_boosts_matching_cards(self):
+        ctx = _basic_ctx(discover_feature_affinities={
+            "region:new_england": 0.09,
+            "topic:elections": 0.02,
+        })
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="politics",
+            outcome_team_ids=[],
+            feature_tokens=["region:new_england", "topic:elections"],
+        )
+        assert result.multiplier == pytest.approx(1.11)
+        assert "discover_feature_interest:region:new_england:0.11" in result.reasons
+
+    def test_regional_feature_soft_downrank_does_not_hide_team_market(self):
+        ctx = _basic_ctx(
+            team_relations={10: {"follow"}},
+            team_weights={10: 1.0},
+            discover_feature_affinities={"region:california": -0.12},
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="baseball",
+            outcome_team_ids=[10],
+            feature_tokens=["region:california"],
+        )
+        assert result.multiplier == pytest.approx(1.0 + FOLLOW_BONUS + FEATURE_DISLIKE_MAX_PENALTY)
+        assert any("your_team_futures" in r for r in result.reasons)
+        assert "discover_feature_dislike:region:california:-0.12" in result.reasons
+
+    def test_category_soft_downrank_stacks_with_sport_affinity(self):
+        ctx = _basic_ctx(
+            sport_affinities={"basketball_nba": 1.0},
+            discover_category_affinities={"basketball": -0.30},
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="basketball",
+            outcome_team_ids=[],
+            sport_key="basketball_nba",
+        )
+        assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS - 0.30)
+        assert any("sport_boost" in r for r in result.reasons)
+        assert "discover_dismiss:-0.30" in result.reasons
+
+    def test_category_and_feature_downranks_clamp_at_minimum(self):
+        ctx = _basic_ctx(
+            sport_affinities={"baseball_mlb": 0.0},
+            discover_category_affinities={"baseball": -9.0},
+            discover_feature_affinities={"region:california": -9.0},
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="baseball",
+            outcome_team_ids=[],
+            sport_key="baseball_mlb",
+            feature_tokens=["region:california"],
+        )
+        assert result.multiplier == MIN_MULTIPLIER
+        assert "sport_nah:-0.60" in result.reasons
+        assert "discover_dismiss:-0.40" in result.reasons
+        assert "discover_feature_dislike:region:california:-0.12" in result.reasons
+
+    def test_event_category_and_feature_interest_stack_with_team_and_sport(self):
+        ctx = _basic_ctx(
+            team_relations={10: {"follow"}},
+            team_weights={10: 0.5},
+            sport_affinities={"americanfootball_nfl": 1.0},
+            discover_category_affinities={"football": 0.06},
+            discover_feature_affinities={"topic:macro": 0.05},
+        )
+        result = compute_event_multiplier(
+            ctx,
+            home_team_id=10,
+            away_team_id=20,
+            sport_key="americanfootball_nfl",
+            feature_tokens=["topic:macro"],
+        )
+        expected = 1.0 + (FOLLOW_BONUS * 0.5) + HIGH_AFFINITY_BONUS + 0.06 + 0.05
+        assert result.multiplier == pytest.approx(expected)
+        assert any("your_team" in r for r in result.reasons)
+        assert any("sport_boost" in r for r in result.reasons)
+        assert "discover_interest:0.06" in result.reasons
+        assert "discover_feature_interest:topic:macro:0.05" in result.reasons
