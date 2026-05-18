@@ -127,10 +127,10 @@ Different game statuses show different probability data to users:
 
 ### Search
 - Endpoint: `GET /api/events/search?q=celtics`
-- Searches both events (by team name) and futures markets (by market name)
-- Trigram indexes for fast ILIKE matching on `events.home_team_name`, `events.away_team_name`, and `futures_markets.name`
-- Events ordered: Live → Upcoming → Completed, with secondary sort by relevance
-- Search ranking applies highlight scoring to push interesting results up
+- Searches events, teams, futures markets, and outcome names while preserving broad ILIKE matching for recall
+- Ranking uses query-time PostgreSQL full-text search when available: event/team names are weighted strongest, futures market names next, and outcome names after that
+- No stored `ts_vector` migration exists yet; current ranking is expression-based so deploys do not rewrite large tables or require trigger maintenance
+- Events ordered: Live → Upcoming → Completed, with secondary sort by weighted relevance and highlight/interestingness signals
 - Returns `results` (events) and `futures` (markets) arrays
 - Tag-based filtering via `tags` query parameter (uses GIN indexes when available)
 

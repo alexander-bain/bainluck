@@ -316,6 +316,12 @@ The native app is a shared SwiftUI codebase under `ios/Bain Luck/Bain Luck/` wit
 
 Native view models keep async mutating methods isolated with `@MainActor` rather than class-wide isolation unless the whole type requires it. Published state that only the view model writes is `private(set)`; fields bound directly from views, such as search text and selected filters, remain publicly mutable.
 
+### Bug Reports and Fix Notifications
+
+Native Rage Shake and `Cmd+Shift+F` bug reporting post screenshots plus app state to `POST /api/feedback/bug-report`. The endpoint uses optional auth: anonymous reports stay accepted, while authenticated reports capture `user_id` and `user_email` at submission time for later follow-up.
+
+Admin bug report PATCH actions live behind admin auth. Deterministic categorization fills missing categories during list/read flows, and a transition to `fixed` or `actioned` can enqueue `send_bug_fixed_email` only when a non-empty resolution summary, captured email, and empty `notification_sent_at` are present. The Celery task sends multipart text+HTML via Gmail OAuth and validates sender/recipient headers to reject CR/LF injection.
+
 Navigation uses `NavigationCoordinator` plus `AppTab` and `Route`. The visible iPad/macOS sidebar intentionally keeps the 🍀 Bain Luck title and the Calibration quick link. The unfinished Futures browser can still exist as a route/deep-link target, but its production navigation entry point remains hidden while iOS-7 is rebuilt. The partial iOS-7 rebuild now includes a grouped category rail, polished market rows, reusable browse components, and loading/error/empty states.
 
 ---
@@ -369,6 +375,15 @@ All category pages follow the same architecture:
 1. **Backend route** (`routes/{category}.py`) — queries `futures_markets` by `llm_sport_category`, filters by data quality rules, groups into sub-themes
 2. **Frontend page** (`app/{category}/page.tsx`) — themed hero, SWR data fetch, category-specific styling
 3. **Quality filters** — skip resolved markets (≥95% leader for binary, resolution_date past), filter garbage outcomes (pattern matching), sort by interestingness
+
+### Search Ranking
+
+`GET /api/events/search` lives in `backend/app/routes/events.py`. It keeps broad ILIKE recall for events, teams, futures markets, and outcome names, then ranks with query-time PostgreSQL full-text search when Postgres supports it:
+- Event and team names use the strongest weight.
+- Futures market names use the next weight.
+- Outcome names are aggregated per market and weighted lower, so a candidate match helps but does not dominate the market title.
+
+There is intentionally no stored `ts_vector` migration yet. If search volume or latency requires indexes later, add them as a measured Postgres-only migration rather than embedding trigger complexity before the query traces justify it.
 
 ### Politics Page (`/politics`)
 

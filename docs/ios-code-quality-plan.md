@@ -2,7 +2,7 @@
 
 Honest audit of what a senior iOS engineer would say, and the fix plan.
 
-## Status (May 17, 2026)
+## Status (May 18, 2026)
 
 Shipped:
 - URL force unwraps in share links replaced with fallback URLs.
@@ -18,10 +18,11 @@ Shipped:
 - CQ-6 shipped: `NativeGuessCard` now handles both futures and event Higher/Lower questions.
 - CQ-7 shipped: shared Feed/Discover context menu moved into `Components/CardContextMenu.swift`.
 - iOS-7 hidden Futures browser rebuild is partial: grouped category rail, polished rows, reusable browse components, and loading/error/empty states are in place.
+- CQ-16/CQ-17 cleanup advanced: common view-model names now use `viewModel`, short market/local variables were expanded in touched views, and newly extracted helpers use module-visible boundaries where needed.
 
 Still open:
-- CQ-16: broad helper-method `private` cleanup.
-- CQ-17: broad abbreviation cleanup.
+- CQ-16: final helper-method `private` sweep across untouched views.
+- CQ-17: remaining abbreviation cleanup in untouched files; continue opportunistically rather than doing risky whole-app mechanical renames.
 
 ## Grades
 
@@ -29,12 +30,12 @@ Still open:
 |------|-------|-----------|
 | Models | A- | Consistent Decodable/Sendable, resilient decoding, model doc comments added. |
 | Comments/MARK usage | B+ | Model/service docs added; remaining view-level comments are pragmatic. |
-| Naming | B- | Pervasive abbreviations: `vm`, `ct`, `ap`, `hp`, `gm`, `rf`, `tp` |
+| Naming | B | Broad `vm`/market abbreviation cleanup has started; older untouched views still contain local shorthand. |
 | SwiftUI | B- | URL crash risks fixed; large Discover UI components still need extraction. |
 | File organization | B+ | ViewModels and utilities are now organized; DiscoverView remains oversized. |
 | Architecture | C | No consistent pattern, no DI, no testability |
 | Code duplication | C+ | Clipboard/share duplication fixed; guess cards and context menus remain duplicated. |
-| Access control | B- | ViewModel published state tightened; broad view helper privacy still open. |
+| Access control | B | ViewModel published state tightened and extracted helpers adjusted; broad view helper privacy still open. |
 
 ## Priority 1: Ship-Blocking (fix before App Store review)
 
@@ -142,7 +143,7 @@ Move all ViewModels out of View files:
 
 ### P5a. Stop abbreviating
 Replace throughout: `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProbability`/`homeProbability`, `gm` → `gameMarkets`, `rf` → `relatedFutures`
-**Status:** Open. Broad mechanical rename with high conflict risk.
+**Status:** Partially shipped May 18. Common `viewModel` and market variable cleanup landed in touched files. Continue with small, behavior-preserving patches; avoid a whole-app mechanical rename because it conflicts easily with active native work.
 
 ### P5b. Add `private` everywhere
 - All `@Published` ViewModel properties → `private(set)`

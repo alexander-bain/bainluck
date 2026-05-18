@@ -4,7 +4,7 @@
 
 - ✅ **Golf tour metadata classification** — DataGolf event-level `tour` is preserved in market metadata and used before generic PGA fallback, with a Hainan Open Asian Tour regression test.
 - ✅ **Bug report auto-categorization** — rage-shake submissions now get deterministic first-pass categories (`ui`, `data_quality`, `performance`, `feature_request`, `ios`, `other`) without LLM latency.
-- ✅ **Bug fixed email task foundation** — `send_bug_fixed_email` has email/notification gates, OpenAI/Gmail seams, Celery task registration, and focused tests; admin enqueue wiring remains a later slice.
+- ✅ **Bug fixed email task foundation** — `send_bug_fixed_email` has email/notification gates, OpenAI/Gmail seams, Celery task registration, focused tests, and admin enqueue wiring on eligible fixed/actioned transitions.
 - ✅ **Native line movement explainer** — iOS/macOS event detail fetches the existing line-movement endpoint and renders a compact "Why the Line Moved" card when explanation content exists.
 - ✅ **Line Movement Explainer v2 backend prompt** — prompt/context now anchors on the largest movement, before/after probabilities, beneficiary, and nearest scoring context while avoiding unsupported generic filler.
 - ✅ **Additional guardrails** — playoff championship overround normalization, StatPal raw-period preservation into `Event.period`, and native access-control tightening for obvious view-local properties.
@@ -25,6 +25,7 @@
 - ✅ **Native naming cleanup slice 3** — continued `vm` to `viewModel` cleanup in SearchView.
 - ✅ **Native naming cleanup slice 4** — continued `vm` to `viewModel` cleanup in Futures Detail, League Grid, and Sport Category views.
 - ✅ **Sport/league taxonomy guardrails** — added regression tests for the exact impossible sport/league pairs that polluted link-rate diagnostics.
+- ✅ **Durable docs deep sync** — refreshed `CLAUDE.md`, architecture, feature reference, quality audit, gotchas, completed features, and iOS quality docs with the May 18 search, bug notification, link-rate, interestingness, notification-test, and native cleanup details.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

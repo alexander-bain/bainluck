@@ -95,6 +95,7 @@ Targets:
 - The email ground-truth loader records raw row count, loaded row count, latest email date, and stale status (`>2d` old). `/admin/discover-quality` surfaces those diagnostics when the feed debug endpoint is configured. If the export is private, the audit/admin UI reports the HTTP error instead of failing the whole feed debug request.
 - Keep email ground truth evaluative until the hit/miss profile is understood; email-highlighted markets must not bypass quality filters.
 - Async Discover LLM metadata is also evaluative/supporting: `market_metadata->discover_llm` may nudge ranking within tight deterministic bounds, but no feed request may call OpenAI. The daily `evaluate_discover_with_llm` job writes advisory `llm_proposed_*` review decisions only; those proposals must not affect ranking until accepted by a human.
+- Offline interestingness scoring lives in `backend/app/utils/market_interestingness.py` with local calibration support in `backend/scripts/calibrate_interestingness.py`. Treat it as a review scaffold for labeled CSV/JSON/JSONL rows; it should not change feed ranking until audit output, precision/recall on labels, and qualitative traces are reviewed.
 
 Related admin surfaces:
 - `/admin/discover-quality` for feed audit, hook coverage, timing, ground-truth traces, engagement, and opportunity signals.

@@ -143,7 +143,11 @@ bainluck/
 - Personalization is intentionally bounded and latency-safe: recent Discover interactions produce small category plus feature/entity/archetype affinities for signed-in users and anonymous sessions. Right swipe is `like` / "more like this"; left swipe is `unlike` / "less like this" and should be treated as a soft downrank, not a permanent hard dismissal.
 - LLM enrichment is intentionally bounded and async. `enrich_market_hooks` only targets feed-shaped candidates and Celery runs small batches (`limit=100` every 6h). `enrich_discover_llm_metadata` adds cached structured metadata under `FuturesMarket.market_metadata["discover_llm"]` for feed-shaped candidates (`limit=125` every 6h), and feed ranking consumes only that cached metadata. Never run LLM calls inside `GET /api/feed` or grind through the full open-market backlog (~56K markets).
 - Daily LLM eval is advisory only: `evaluate_discover_with_llm` grades the top 50 Discover futures, compares against Polymarket email highlights, and writes `llm_proposed_*` review rows for admin inspection. These rows do not affect ranking unless a human later records an accepted promote/downrank decision.
+- Offline interestingness calibration has a pure scorer in `utils/market_interestingness.py` and a local-input script at `scripts/calibrate_interestingness.py` for CSV/JSON/JSONL labeled rows. It is a scaffold for review and tuning, not a feed-ranking integration; do not wire it into production ranking without an audit-backed rollout.
 - Current production audit target: `boring-rate@20=0`, `ladder/bucket-rate@20=0`, `duplicate-family-rate@20=0`, `explanation-coverage@20=20/20`. Use `python3 scripts/audit_feed_quality.py` to measure.
+
+**Search** (`routes/events.py`):
+`GET /api/events/search` preserves broad ILIKE matching for events, futures markets, and typeahead, but ranks with query-time PostgreSQL full-text search when available. Event/team text is weighted A, futures market names B, and outcome names C via correlated aggregation. There is no stored `ts_vector` migration yet; keep future indexing work Postgres-specific and prove it improves real search traces before adding triggers or table rewrites.
 
 **Themed Dashboard Pages** (politics, entertainment, weather, economics) — all 5 native category pages polished (Politics, Entertainment, Weather, Economics, Preferences):
 Each category page follows the same pattern:
@@ -167,7 +171,10 @@ Markets that belong to the same real-world question (e.g., "Who wins Best Pictur
 Public endpoint at `GET /api/calibration` (1h cache) returns pre-aggregated calibration buckets across 3 sources (Kalshi, Polymarket, Odds API) with `price_moved` dimension for trading activity analysis. Uses `calibration_probability` (closing line) not `opening_probability`. Virtual market reconstruction via `(is_grouped OR eligible >= 3)`. `backfill_winners` task (every 6h) runs 7 phases: group_id backfill, null untradeable (≤2 snapshots), closing lines, calibration prices (Parts A/B/C), `is_winner`. `backfill_polymarket_history` (every 6h) fetches historical prices from Polymarket's CLOB API for outcomes with sparse snapshots. Frontend page at `/calibration` with ECE metric and "Does Trading Activity Matter?" section. MCE 2.7pp as of May 14. See `docs/architecture-reference.md` for full details.
 
 **Rage Shake Bug Reporting** (`ios/.../Services/ShakeDetector.swift`, `ios/.../Views/BugReportView.swift`, `routes/admin.py`, `frontend/app/admin/bug-reports/`):
-Shake phone or `Cmd+Shift+F` (macOS) → screenshot + app state (page, device, network, user) → `POST /api/feedback/bug-report` → admin page at `/admin/bug-reports`. Auto-diagnosis generates severity (P0-P3), root cause, and a Claude Code prompt with screenshot download command. Status flow: new → reviewed (auto on click) → actioned (added to backlog) / dismissed.
+Shake phone or `Cmd+Shift+F` (macOS) → screenshot + app state (page, device, network, user) → `POST /api/feedback/bug-report` → admin page at `/admin/bug-reports`. Authenticated submissions use optional auth so anonymous reports still work but signed-in reports store `user_id` and `user_email` at submission time. Auto-diagnosis generates severity (P0-P3), root cause, deterministic category, and a Claude Code prompt with screenshot download command. Status flow: new → reviewed (auto on click) → actioned (added to backlog) / dismissed / fixed. Admin PATCH enqueues `send_bug_fixed_email` only when a report transitions to fixed/actioned with a resolution summary, a captured email, and no prior notification. Gmail sends multipart text+HTML through OAuth with header-injection validation.
+
+**Push Notifications Foundation** (`routes/notifications.py`, `services/firebase_push.py`):
+Device-token registration, token listing, and admin send-test are covered with Firebase mocks and admin redaction tests. The current production surface is still foundation/test tooling; do not treat it as a shipped daily notification system until a real scheduling and preference flow lands.
 
 ---
 
@@ -297,6 +304,9 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 73. **Cross-game Polymarket market contamination** — Game-market grouped sub-market queries need the same commence-time window as unlinked fallbacks; otherwise playoff series with the same teams leak Game 1 props into Game 2.
 74. **Bug report submissions need optional auth dependency** — Anonymous reports must stay allowed, but authenticated submissions need `get_optional_user` so `user_id` is populated for follow-up emails.
 75. **Extracted Swift files need their own imports and module-visible helpers** — Moving view models/helpers out of views changes visibility. Add imports such as `Foundation`, `Combine`, and `os` as needed, and remove duplicated class definitions from the original view file.
+76. **Bug fixed emails require captured submission email** — Store `user_email` when the bug report is created. Do not rely on joining to the current user row later; anonymous reports, deleted users, and changed emails make that unreliable.
+77. **Search weighted FTS is query-time only** — Current search ranking uses `websearch_to_tsquery` and weighted vectors in SQL expressions, not a persisted `ts_vector`. Add stored indexes only with a migration plan and regression traces.
+78. **Link-rate denominators must exclude impossible pairs** — Prediction-market health should exclude unsupported event coverage, obvious season/non-game markets, and impossible sport/league combinations. A 100% link rate must be structurally achievable.
 
 ---
 
