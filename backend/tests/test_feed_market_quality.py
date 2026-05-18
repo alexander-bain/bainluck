@@ -1588,6 +1588,33 @@ class TestDiscoverFirstPageMixer:
             for item in first_page
         )
 
+    def test_category_hunger_preserves_required_archetype_singletons(self):
+        items = [
+            self._item(1, "politics", 100, name="2028 U.S. Presidential Election winner?"),
+            self._item(2, "politics", 99, name="Will China invade Taiwan by June 30, 2026?"),
+            self._item(3, "politics", 98, name="Will Elon Musk announce Presidential run before 2027?"),
+            self._item(4, "tech", 97, name="Anthropic IPO Closing Market Cap"),
+            self._item(5, "tech", 96, name="SpaceX IPO Closing Market Cap"),
+            self._item(6, "economics", 95, name="How many Fed rate cuts in 2026?"),
+            self._item(7, "entertainment", 94, name="Taylor Swift pregnant before marriage?"),
+            self._item(8, "basketball", 93, name="Will New York Knicks advance to the 2026 NBA Finals?"),
+            self._item(9, "tech", 92, name="Gemini 3.5 released by...?"),
+            self._item(10, "weather", 91, name="Hantavirus pandemic in 2026?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+        archetypes = {
+            editorial_archetype(
+                item["data"]["name"],
+                item["data"]["llm_sport_category"],
+            )
+            for item in first_page
+        }
+
+        assert "tech_frontier" in archetypes
+        assert "health_weather_risk" in archetypes
+
 
 class TestEditorialArchetypes:
     def test_editorial_archetype_detects_positive_story_roles(self):

@@ -691,6 +691,16 @@ _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
     "other": 3,
 }
 
+_DISCOVER_REQUIRED_ARCHETYPES: tuple[EditorialArchetype, ...] = (
+    "tech_frontier",
+    "culture_moment",
+    "health_weather_risk",
+    "sports_story",
+    "sports_drama",
+    "weird_news",
+    "absurd_but_real",
+)
+
 
 def diversify_discover_first_page(
     items: list[dict],
@@ -807,10 +817,15 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
             continue
 
         category_counts = Counter(_discover_category_group(item) for item in selected)
+        archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
         replacement_idx = next(
             (
                 idx for idx in range(len(selected) - 1, -1, -1)
                 if category_counts[_discover_category_group(selected[idx])] > 1
+                and not (
+                    _discover_archetype_group(selected[idx]) in _DISCOVER_REQUIRED_ARCHETYPES
+                    and archetype_counts[_discover_archetype_group(selected[idx])] <= 1
+                )
                 and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
             ),
             None,
@@ -826,18 +841,9 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
 
 def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> None:
     """Make room for at least one strong card from key first-page textures."""
-    required: tuple[EditorialArchetype, ...] = (
-        "tech_frontier",
-        "culture_moment",
-        "health_weather_risk",
-        "sports_story",
-        "sports_drama",
-        "weird_news",
-        "absurd_but_real",
-    )
     selected_keys = {_feed_item_key(item) for item in selected}
 
-    for target in required:
+    for target in _DISCOVER_REQUIRED_ARCHETYPES:
         if any(_discover_archetype_group(item) == target for item in selected):
             continue
 
@@ -860,7 +866,7 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
             item = selected[idx]
             archetype = _discover_archetype_group(item)
             category = _discover_category_group(item)
-            if archetype in required and archetype_counts[archetype] <= 1:
+            if archetype in _DISCOVER_REQUIRED_ARCHETYPES and archetype_counts[archetype] <= 1:
                 continue
             if archetype_counts[archetype] <= 1 and category_counts[category] <= 1:
                 continue
