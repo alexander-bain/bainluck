@@ -34,6 +34,7 @@
 - ✅ **Matching and categorization guardrails** — added tests for market-label cleanup, futures category/tier classification, name normalization, and team-linking edge cases. Ambiguous same-city futures outcomes now return no team instead of linking to the first matching city team.
 - ✅ **Discovery signal guardrails** — added backend tests for anonymous personalization, bounded repeated unlikes, sport-key routing, Polymarket email ground-truth parsing, and series probability invariants.
 - ✅ **Source matching and quality guardrails** — added backend tests for event-registry duplicate prevention/source claims, Kalshi ticker parsing/category fallbacks, aggregate probability fallbacks/completed-game behavior, and feed-quality suppression/preservation rules.
+- ✅ **Market ingestion and quota guardrails** — added backend tests for prediction-market matching sport gates, Polymarket parsing/placeholders, Odds API quota-sensitive requests/fallbacks, rate-limit behavior, and bookmaker consensus math.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 

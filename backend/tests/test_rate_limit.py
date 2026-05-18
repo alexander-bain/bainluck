@@ -11,6 +11,7 @@ Verifies:
 
 import base64
 import json
+import time
 
 import pytest
 
@@ -211,6 +212,30 @@ class TestRateLimitMiddleware:
             resp = client.get("/api/admin/status")
             assert resp.status_code == 200
 
+    def test_admin_exemption_does_not_touch_limiter(self):
+        """Admin exemption short-circuits before storage is consulted."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        class TrackingLimiter:
+            called = False
+
+            def hit(self, *args, **kwargs):
+                self.called = True
+                return True
+
+        limiter = TrackingLimiter()
+        rl_mod._rate_limiter = limiter
+
+        app = _make_test_app(anon_limit="1/minute")
+        client = TestClient(app)
+
+        for _ in range(3):
+            resp = client.get("/api/admin/status")
+            assert resp.status_code == 200
+
+        assert limiter.called is False
+
     def test_authenticated_gets_higher_limit(self):
         """Authenticated users get a higher rate limit than anonymous."""
         from starlette.testclient import TestClient
@@ -251,6 +276,30 @@ class TestRateLimitMiddleware:
             resp = client.get("/api/feed", headers={"Authorization": f"Bearer {token_b}"})
             assert resp.status_code == 200
 
+    def test_authenticated_user_bucket_independent_from_same_ip_anonymous_bucket(self):
+        """Authenticated and anonymous traffic from one IP do not share quota."""
+        from starlette.testclient import TestClient
+
+        app = _make_test_app(anon_limit="2/minute", auth_limit="2/minute")
+        client = TestClient(app)
+        ip_headers = {"X-Forwarded-For": "10.0.0.50"}
+        auth_headers = {
+            **ip_headers,
+            "Authorization": f"Bearer {_make_jwt({'uid': 'same-ip-user'})}",
+        }
+
+        for _ in range(2):
+            resp = client.get("/api/feed", headers=ip_headers)
+            assert resp.status_code == 200
+
+        assert client.get("/api/feed", headers=ip_headers).status_code == 429
+
+        for _ in range(2):
+            resp = client.get("/api/feed", headers=auth_headers)
+            assert resp.status_code == 200
+
+        assert client.get("/api/feed", headers=auth_headers).status_code == 429
+
     def test_different_ips_independent_buckets(self):
         """Different IPs have independent rate limits."""
         from starlette.testclient import TestClient
@@ -269,6 +318,24 @@ class TestRateLimitMiddleware:
         for _ in range(2):
             resp = client.get("/api/feed", headers={"X-Forwarded-For": "10.0.0.2"})
             assert resp.status_code == 200
+
+    def test_invalid_bearer_token_uses_ip_bucket(self):
+        """Malformed bearer tokens do not bypass anonymous IP limits."""
+        from starlette.testclient import TestClient
+
+        app = _make_test_app(anon_limit="2/minute", auth_limit="10/minute")
+        client = TestClient(app)
+        headers = {
+            "Authorization": "Bearer not-a-jwt",
+            "X-Forwarded-For": "10.0.0.60",
+        }
+
+        for _ in range(2):
+            resp = client.get("/api/feed", headers=headers)
+            assert resp.status_code == 200
+
+        resp = client.get("/api/feed", headers=headers)
+        assert resp.status_code == 429
 
     def test_429_response_format(self):
         """429 response has correct JSON body and Retry-After header."""
@@ -308,3 +375,37 @@ class TestRateLimitMiddleware:
         # 4th request should be rate limited regardless of path
         resp = client.get("/api/events/1", headers={"X-Forwarded-For": "10.0.0.99"})
         assert resp.status_code == 429
+
+    def test_rate_limit_fail_open_when_storage_raises(self):
+        """Storage errors fail open so Redis outages do not block traffic."""
+        import app.utils.rate_limit as rl_mod
+        from starlette.testclient import TestClient
+
+        class FailingLimiter:
+            def hit(self, *args, **kwargs):
+                raise RuntimeError("storage unavailable")
+
+        rl_mod._rate_limiter = FailingLimiter()
+
+        app = _make_test_app(anon_limit="1/minute")
+        client = TestClient(app)
+
+        for _ in range(3):
+            resp = client.get("/api/feed", headers={"X-Forwarded-For": "10.0.0.70"})
+            assert resp.status_code == 200
+
+    def test_fixed_window_resets_after_boundary(self):
+        """A fixed-window limit blocks bursts, then permits after reset."""
+        from starlette.testclient import TestClient
+
+        app = _make_test_app(anon_limit="2/second")
+        client = TestClient(app)
+        headers = {"X-Forwarded-For": "10.0.0.80"}
+
+        assert client.get("/api/feed", headers=headers).status_code == 200
+        assert client.get("/api/events/1", headers=headers).status_code == 200
+        assert client.get("/api/feed", headers=headers).status_code == 429
+
+        time.sleep(1.1)
+
+        assert client.get("/api/feed", headers=headers).status_code == 200

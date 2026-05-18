@@ -9,9 +9,34 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.services.odds_api import OddsAPIService
+
+
+class StubAsyncClient:
+    def __init__(self, response: httpx.Response):
+        self.response = response
+        self.calls: list[dict] = []
+
+    async def get(self, url: str, params: dict):
+        self.calls.append({"url": url, "params": params})
+        return self.response
+
+
+def odds_api_response(
+    payload: list | dict,
+    *,
+    headers: dict | None = None,
+    status_code: int = 200,
+) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        json=payload,
+        headers=headers or {},
+        request=httpx.Request("GET", "https://api.the-odds-api.com/v4/test"),
+    )
 
 
 @pytest.fixture
@@ -98,6 +123,62 @@ class TestParseEvents:
         snapshots = client._parse_events(fixtures["event_h2h_only"], "icehockey_nhl")
         assert snapshots[0].sport_key == "icehockey_nhl"
 
+    def test_incomplete_market_outcomes_leave_only_missing_fields_none(self, client):
+        event = {
+            "id": "partial123",
+            "commence_time": "2026-04-10T23:30:00Z",
+            "home_team": "Boston Celtics",
+            "away_team": "Los Angeles Lakers",
+            "bookmakers": [
+                {
+                    "key": "fanduel",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Boston Celtics", "price": -180},
+                            ],
+                        },
+                        {
+                            "key": "spreads",
+                            "outcomes": [
+                                {
+                                    "name": "Los Angeles Lakers",
+                                    "price": -110,
+                                    "point": 4.5,
+                                },
+                            ],
+                        },
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Under", "price": -105, "point": 215.5},
+                            ],
+                        },
+                        {
+                            "key": "player_points",
+                            "outcomes": [
+                                {"name": "Jayson Tatum", "price": -110, "point": 28.5},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        snapshots = client._parse_events([event], "basketball_nba")
+
+        assert len(snapshots) == 1
+        snapshot = snapshots[0]
+        assert snapshot.home_moneyline == -180
+        assert snapshot.away_moneyline is None
+        assert snapshot.home_spread is None
+        assert snapshot.home_spread_odds is None
+        assert snapshot.away_spread_odds == -110
+        assert snapshot.over_under is None
+        assert snapshot.over_odds is None
+        assert snapshot.under_odds == -105
+
 
 # ── _parse_futures ────────────────────────────────────────────────────
 
@@ -143,3 +224,138 @@ class TestParseFutures:
         for m in markets:
             for o in m.outcomes:
                 assert 0 < o.probability < 1, f"{o.name}: {o.probability}"
+
+    def test_outcomes_without_prices_do_not_create_empty_markets(self, client):
+        api_response = [
+            {
+                "sport_title": "NBA Championship Winner",
+                "bookmakers": [
+                    {
+                        "key": "fanduel",
+                        "markets": [
+                            {
+                                "key": "outrights",
+                                "outcomes": [
+                                    {"name": "Boston Celtics", "price": 350},
+                                    {"name": "Denver Nuggets"},
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "key": "draftkings",
+                        "markets": [
+                            {
+                                "key": "outrights",
+                                "outcomes": [
+                                    {"name": "Los Angeles Lakers", "price": None},
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+
+        markets = client._parse_futures(api_response, "basketball_nba_championship")
+
+        assert len(markets) == 1
+        assert markets[0].bookmaker == "fanduel"
+        assert [outcome.name for outcome in markets[0].outcomes] == ["Boston Celtics"]
+
+
+# ── Request behavior and graceful fallback ─────────────────────────────
+
+
+class TestRequestBehavior:
+    """Guard quota-sensitive request params, quota capture, and fallback paths."""
+
+    @pytest.mark.asyncio
+    async def test_get_odds_uses_full_default_params_and_captures_quota(self, client):
+        response = odds_api_response(
+            [{"id": "event123"}],
+            headers={
+                "x-requests-remaining": "49999",
+                "x-requests-used": "101",
+            },
+        )
+        stub = StubAsyncClient(response)
+        await client.close()
+        client.client = stub
+
+        data = await client.get_odds("basketball_nba")
+
+        assert data == [{"id": "event123"}]
+        assert stub.calls == [
+            {
+                "url": f"{client.BASE_URL}/sports/basketball_nba/odds",
+                "params": {
+                    "apiKey": "test_dummy_key",
+                    "regions": "us,us2",
+                    "markets": "h2h,spreads,totals",
+                    "oddsFormat": "american",
+                },
+            }
+        ]
+        assert client.last_requests_remaining == 49999
+        assert client.last_requests_used == 101
+
+    @pytest.mark.asyncio
+    async def test_get_futures_odds_requests_only_outrights(self, client):
+        response = odds_api_response([])
+        stub = StubAsyncClient(response)
+        await client.close()
+        client.client = stub
+
+        data = await client.get_futures_odds("basketball_nba_championship")
+
+        assert data == []
+        assert stub.calls[0]["params"] == {
+            "apiKey": "test_dummy_key",
+            "regions": "us,us2",
+            "markets": "outrights",
+            "oddsFormat": "american",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_sports_with_outrights_filters_missing_and_false_flags(self, client):
+        async def fake_get_sports():
+            return [
+                {"key": "basketball_nba", "has_outrights": True},
+                {"key": "soccer_epl", "has_outrights": False},
+                {"key": "icehockey_nhl"},
+            ]
+
+        client.get_sports = fake_get_sports
+
+        sports = await client.get_sports_with_outrights()
+
+        assert sports == [{"key": "basketball_nba", "has_outrights": True}]
+
+    @pytest.mark.asyncio
+    async def test_get_all_odds_continues_after_single_sport_http_error(
+        self,
+        client,
+        fixtures,
+    ):
+        calls = []
+
+        async def fake_get_odds(sport_key: str):
+            calls.append(sport_key)
+            if sport_key == "bad_sport":
+                request = httpx.Request("GET", "https://api.the-odds-api.com/v4/bad")
+                response = httpx.Response(500, request=request)
+                raise httpx.HTTPStatusError(
+                    "upstream error",
+                    request=request,
+                    response=response,
+                )
+            return fixtures["event_h2h_only"]
+
+        client.get_odds = fake_get_odds
+
+        snapshots = await client.get_all_odds(["bad_sport", "icehockey_nhl"])
+
+        assert calls == ["bad_sport", "icehockey_nhl"]
+        assert len(snapshots) == 1
+        assert snapshots[0].sport_key == "icehockey_nhl"

@@ -1,5 +1,7 @@
 """Tests for odds_math utilities."""
 
+from decimal import Decimal
+
 import pytest
 from app.utils.odds_math import (
     aggregate_probabilities,
@@ -171,6 +173,44 @@ class TestAggregateBookmakerOdds:
 
         assert result["bookmaker_count"] == 2
         assert abs(result["home_probability"] - 0.56) < 0.0001
+
+    def test_median_method_coerces_decimals_and_excludes_invalid_probabilities(self):
+        snapshots = [
+            {
+                "home_win_probability": Decimal("0.41"),
+                "away_win_probability": Decimal("0.59"),
+                "over_under": Decimal("8.5"),
+                "home_spread": Decimal("1.5"),
+            },
+            {
+                "home_win_probability": Decimal("0.43"),
+                "away_win_probability": Decimal("0.57"),
+                "over_under": Decimal("9.5"),
+                "home_spread": Decimal("2.5"),
+            },
+            {
+                "home_win_probability": Decimal("0.92"),
+                "away_win_probability": Decimal("0.08"),
+                "over_under": Decimal("10.5"),
+                "home_spread": Decimal("3.5"),
+            },
+            {
+                "home_win_probability": Decimal("1.20"),
+                "away_win_probability": Decimal("-0.20"),
+                "over_under": None,
+                "home_spread": None,
+            },
+        ]
+
+        result = aggregate_bookmaker_odds(snapshots, method="median")
+
+        assert result["home_probability"] == 0.43
+        assert result["away_probability"] == 0.57
+        assert result["bookmaker_count"] == 3
+        assert result["min_home_probability"] == 0.41
+        assert result["max_home_probability"] == 0.92
+        assert result["over_under"] == 9.5
+        assert result["home_spread"] == 2.5
 
 
 class TestMoneylineToProbability:

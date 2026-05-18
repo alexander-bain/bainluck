@@ -303,6 +303,10 @@ class TestParseJsonStringArray:
         result = PolymarketAPIService._parse_json_string_array("[0.65, 0.35]")
         assert result == ["0.65", "0.35"]
 
+    def test_mixed_scalar_array(self):
+        result = PolymarketAPIService._parse_json_string_array([0.65, "0.35", None])
+        assert result == ["0.65", "0.35", "None"]
+
     def test_malformed_string(self):
         result = PolymarketAPIService._parse_json_string_array("not json")
         assert result == []
@@ -512,6 +516,68 @@ class TestParseMarket:
         assert market.best_bid is None
         assert market.volume is None
 
+    def test_market_with_invalid_outcome_price_returns_none(self):
+        """Bad price arrays should drop the market instead of half-parsing it."""
+        service = self._make_service()
+        market = service._parse_market({
+            "conditionId": "0xbadprice",
+            "question": "Will this malformed market parse?",
+            "outcomes": '["Yes", "No"]',
+            "outcomePrices": '["not-a-price", "0.45"]',
+            "clobTokenIds": '["yes", "no"]',
+        })
+        assert market is None
+
+    def test_market_preserves_group_item_title(self):
+        service = self._make_service()
+        market = service._parse_market({
+            "conditionId": "0xgroupitem",
+            "question": "Will Player B win the tournament?",
+            "groupItemTitle": "Player B",
+            "outcomes": '["Yes", "No"]',
+            "outcomePrices": '["1", "0"]',
+            "clobTokenIds": '["yes", "no"]',
+        })
+        assert market is not None
+        assert market.group_item_title == "Player B"
+
+    def test_negrisk_event_parses_grouped_markets(self):
+        """Grouped events keep each sub-market candidate separate."""
+        service = self._make_service()
+        event = service._parse_event({
+            "id": "negrisk-1",
+            "title": "2026 Men's French Open Winner",
+            "active": True,
+            "closed": False,
+            "negRisk": True,
+            "tags": [{"label": "Sports"}, {"label": "Tennis"}],
+            "markets": [
+                {
+                    "conditionId": "0xsinner",
+                    "question": "Will Jannik Sinner win the 2026 French Open?",
+                    "groupItemTitle": "Jannik Sinner",
+                    "outcomes": '["Yes", "No"]',
+                    "outcomePrices": '["0.31", "0.69"]',
+                    "clobTokenIds": '["sinner_yes", "sinner_no"]',
+                },
+                {
+                    "conditionId": "0xplayerb",
+                    "question": "Will Player B win the 2026 French Open?",
+                    "groupItemTitle": "Player B",
+                    "outcomes": '["Yes", "No"]',
+                    "outcomePrices": '["1", "0"]',
+                    "clobTokenIds": '["playerb_yes", "playerb_no"]',
+                },
+            ],
+        })
+        assert event is not None
+        assert event.neg_risk is True
+        assert [m.condition_id for m in event.markets] == ["0xsinner", "0xplayerb"]
+        assert [m.group_item_title for m in event.markets] == [
+            "Jannik Sinner",
+            "Player B",
+        ]
+
 
 # =========================================================================
 # Probability resolution tests
@@ -596,6 +662,16 @@ class TestResolveMarketProbability:
             outcome_prices=[],
             best_bid=None,
             best_ask=0.99,
+            last_trade_price=None,
+        )
+        assert _resolve_market_probability(m) is None
+
+    def test_no_liquidity_max_ask_with_zero_price_is_skipped(self):
+        """A zero Yes price with only a max ask is stale/no-liquidity noise."""
+        m = self._make_market(
+            outcome_prices=[0.0, 1.0],
+            best_bid=0.0,
+            best_ask=1.0,
             last_trade_price=None,
         )
         assert _resolve_market_probability(m) is None

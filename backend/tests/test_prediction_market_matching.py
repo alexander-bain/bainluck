@@ -11,6 +11,9 @@ Tests cover:
 - Kalshi market name construction (_build_game_market_name)
 """
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from app.utils.prediction_market_matching import (
@@ -37,6 +40,7 @@ from app.tasks.kalshi import (
     _is_kalshi_game_ticker as kalshi_is_game_ticker,
     _build_game_market_name,
 )
+from app.tasks.prediction_market_matching import _score_candidates
 
 
 # =============================================================================
@@ -830,6 +834,71 @@ class TestEdgeCases:
         assert home_prob == pytest.approx(0.35)
 
 
+class TestScoreCandidatesSportGuardrails:
+    """Guardrails for city-name collisions across sports."""
+
+    @staticmethod
+    def _event(event_id, sport_key, home_team, away_team):
+        return SimpleNamespace(
+            id=event_id,
+            home_team_name=home_team,
+            away_team_name=away_team,
+            commence_time=datetime(2026, 2, 21, 20, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=f"odds:{event_id}",
+            sport=SimpleNamespace(key=sport_key),
+            sport_id=event_id,
+        )
+
+    def test_ticker_sport_rejects_wrong_category_city_collision(self):
+        """Ticker-derived sport should win over stale llm_sport_category."""
+        matchup = MatchupInfo("New York", "Boston", yes_team="New York", format_type="bare_matchup")
+        market = SimpleNamespace(
+            source="kalshi",
+            name="New York at Boston",
+            external_id="KXNBAGAME-26FEB21NYKBOS",
+            llm_sport_category="hockey",
+        )
+        candidates = [
+            self._event(1, "icehockey_nhl", "Boston Bruins", "New York Rangers"),
+            self._event(2, "basketball_nba", "Boston Celtics", "New York Knicks"),
+        ]
+
+        result = _score_candidates(
+            candidates,
+            matchup,
+            market,
+            datetime(2026, 2, 21, 18, tzinfo=timezone.utc),
+        )
+
+        assert result is not None
+        assert result["event_id"] == 2
+
+    def test_llm_category_rejects_wrong_sport_city_collision_without_ticker(self):
+        """Polymarket-style markets rely on llm_sport_category for sport scoping."""
+        matchup = MatchupInfo("New York", "Boston", yes_team="New York", format_type="bare_matchup")
+        market = SimpleNamespace(
+            source="polymarket",
+            name="New York at Boston",
+            external_id=None,
+            llm_sport_category="hockey",
+        )
+        candidates = [
+            self._event(1, "basketball_nba", "Boston Celtics", "New York Knicks"),
+            self._event(2, "icehockey_nhl", "Boston Bruins", "New York Rangers"),
+        ]
+
+        result = _score_candidates(
+            candidates,
+            matchup,
+            market,
+            datetime(2026, 2, 21, 18, tzinfo=timezone.utc),
+        )
+
+        assert result is not None
+        assert result["event_id"] == 2
+
+
 # =============================================================================
 # is_kalshi_game_ticker — Utility function (in prediction_market_matching.py)
 # =============================================================================
@@ -873,6 +942,12 @@ class TestIsKalshiGameTicker:
 
     def test_boxing_fight_ticker(self):
         assert is_kalshi_game_ticker("KXBOXINGFIGHT-26APR10FURY")
+
+    def test_unsupported_league_ticker_excluded_from_game_scan(self):
+        """Classifiable Kalshi leagues without event coverage are not game tickers."""
+        ticker = "KXCBAGAME-26FEB21BAYGUA"
+        assert get_sport_prefix_from_ticker(ticker) == "basketball_other"
+        assert not is_kalshi_game_ticker(ticker)
 
     def test_not_game_championship(self):
         """Championship tickers should not be game-level."""
