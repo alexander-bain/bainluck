@@ -6,6 +6,7 @@ from app.routes.feed import (
     _build_discover_category_affinities,
     _build_discover_feature_affinities,
     _discover_feature_tokens,
+    _discover_semantic_tokens,
 )
 
 
@@ -93,6 +94,22 @@ def test_discover_feature_tokens_include_archetype_and_entities():
     assert "archetype:culture_moment" in tokens
     assert "topic:entertainment_charts" in tokens
     assert "entity:noah_kahan" in tokens
+
+
+def test_discover_semantic_tokens_bridge_league_champion_language():
+    dismissed = _discover_semantic_tokens(
+        item_name="Chilean Primera Division champion",
+        category="soccer",
+        item_type="futures",
+    )
+    candidate = _discover_semantic_tokens(
+        item_name="Who wins the Chilean league?",
+        category="soccer",
+        item_type="futures",
+    )
+
+    assert dismissed & candidate >= {"term:chilean", "term:league", "term:win"}
+    assert len(dismissed & candidate) / len(dismissed | candidate) > 0.60
 
 
 def test_discover_feature_tokens_bridge_boston_teams_to_massachusetts():

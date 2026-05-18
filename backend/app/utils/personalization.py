@@ -51,6 +51,8 @@ CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY = -0.60
 CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY = -0.80
 FEATURE_INTEREST_MAX_BONUS = 0.12  # Recent Discover swipes by story/entity feature
 FEATURE_DISLIKE_MAX_PENALTY = -0.25  # Soft "less like this" by story/entity feature
+SEMANTIC_DISMISS_SIMILARITY_THRESHOLD = 0.60
+SEMANTIC_DISMISS_PENALTY = -0.30
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -90,6 +92,9 @@ class PersonalizationContext:
     # feature token → bounded multiplier delta from recent Discover interactions
     # Examples: "archetype:culture_moment", "entity:noah_kahan".
     discover_feature_affinities: dict[str, float] = field(default_factory=dict)
+    # Up to 50 most-recent negative-swipe semantic token sets. Used for a
+    # bounded soft penalty when a new card is similar but lacks a shared story key.
+    recent_dismissed_feature_token_sets: list[set[str]] = field(default_factory=list)
     # Exact Discover cards recently shown/dismissed. Used for feed hygiene, not
     # broad ranking: avoid showing the same stale card repeatedly.
     recent_seen_event_ids: set[int] = field(default_factory=set)
@@ -138,6 +143,7 @@ def compute_event_multiplier(
         not ctx.is_authenticated
         and not ctx.discover_category_affinities
         and not ctx.discover_feature_affinities
+        and not ctx.recent_dismissed_feature_token_sets
     ):
         return PersonalizationResult()
 
@@ -210,6 +216,11 @@ def compute_event_multiplier(
         bonus += feature_bonus
         reasons.append(feature_reason)
 
+    semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
+    if semantic_bonus:
+        bonus += semantic_bonus
+        reasons.append(semantic_reason)
+
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
     # the user has no team or sport affinity match, suppress it.
@@ -266,6 +277,7 @@ def compute_futures_multiplier(
         not ctx.is_authenticated
         and not ctx.discover_category_affinities
         and not ctx.discover_feature_affinities
+        and not ctx.recent_dismissed_feature_token_sets
     ):
         return PersonalizationResult()
 
@@ -342,6 +354,11 @@ def compute_futures_multiplier(
     if feature_bonus:
         bonus += feature_bonus
         reasons.append(feature_reason)
+
+    semantic_bonus, semantic_reason = _semantic_dismiss_bonus(ctx, feature_tokens)
+    if semantic_bonus:
+        bonus += semantic_bonus
+        reasons.append(semantic_reason)
 
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:
@@ -481,6 +498,54 @@ def _feature_affinity_bonus(
     if total > 0:
         return total, f"discover_feature_interest:{strongest_token}:{total:.2f}"
     return total, f"discover_feature_dislike:{strongest_token}:{total:.2f}"
+
+
+_SEMANTIC_DISMISS_IGNORED_PREFIXES = (
+    "category:",
+    "type:",
+    "archetype:",
+    "format:",
+)
+
+
+def _semantic_dismiss_bonus(
+    ctx: PersonalizationContext,
+    feature_tokens: Optional[list[str]],
+) -> tuple[float, str]:
+    """Return a soft penalty when a card resembles recent dismisses."""
+    if not feature_tokens or not ctx.recent_dismissed_feature_token_sets:
+        return 0.0, ""
+
+    candidate = _semantic_dismiss_token_set(feature_tokens)
+    if not candidate:
+        return 0.0, ""
+
+    best_similarity = 0.0
+    for dismissed_tokens in ctx.recent_dismissed_feature_token_sets[:50]:
+        dismissed = _semantic_dismiss_token_set(dismissed_tokens)
+        if not dismissed:
+            continue
+        union = candidate | dismissed
+        if not union:
+            continue
+        similarity = len(candidate & dismissed) / len(union)
+        if similarity > best_similarity:
+            best_similarity = similarity
+
+    if best_similarity > SEMANTIC_DISMISS_SIMILARITY_THRESHOLD:
+        return (
+            SEMANTIC_DISMISS_PENALTY,
+            f"semantic_dismiss:{SEMANTIC_DISMISS_PENALTY:.2f}:{best_similarity:.2f}",
+        )
+    return 0.0, ""
+
+
+def _semantic_dismiss_token_set(tokens) -> set[str]:
+    return {
+        str(token)
+        for token in tokens
+        if token and not str(token).startswith(_SEMANTIC_DISMISS_IGNORED_PREFIXES)
+    }
 
 
 def _lookup_sport_affinity(

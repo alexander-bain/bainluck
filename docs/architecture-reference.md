@@ -297,9 +297,10 @@ Admin rollup:
 Personalization layering:
 - Authenticated feed scoring loads recent `discover_interactions` in `_load_personalization_context()`.
 - `PersonalizationContext.discover_category_affinities` stores category deltas derived from the last 30 days.
+- `PersonalizationContext.recent_dismissed_feature_token_sets` stores up to 50 recent dismiss/unlike semantic token sets. Candidate events/futures compare topic/region/team/term tokens against those sets with Jaccard similarity and receive only a soft `-0.30x` downrank above 0.60 similarity; generic category/type/archetype/format tokens are ignored.
 - `compute_event_multiplier()` maps sport keys to Discover categories (`americanfootball_*` → `football`, `icehockey_*` → `hockey`).
 - `compute_futures_multiplier()` uses `llm_sport_category`.
-- Interaction-derived deltas are capped to `+0.18x` / `-0.15x`; favorites, pins, sport affinities, and quality filters remain the stronger signals.
+- Interaction-derived deltas are capped: category interest up to `+0.18x`, repeated category dismiss down to `-0.80x`, feature dislike to `-0.25x`, and semantic dismiss to `-0.30x`. Favorites, pins, sport affinities, and quality filters remain the stronger signals.
 
 ---
 

@@ -79,6 +79,8 @@ FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}' \
 
 The Discover audit is mandatory before and after ranking, explanation, hook-enrichment, personalization, or card-display changes that affect `/discover`.
 
+Personalization changes should also run focused unit coverage for `tests/test_personalization.py`, `tests/test_feed_discover_affinities.py`, and `tests/test_feed_dismiss_propagation.py` so category penalties, feature affinities, story/group suppression, and semantic-dismiss soft penalties stay bounded.
+
 Targets:
 - `boring-rate@20=0/20`
 - `ladder/bucket-rate@20=0/20`

@@ -25,6 +25,7 @@ from app.utils.personalization import (
     CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY,
     FEATURE_INTEREST_MAX_BONUS,
     FEATURE_DISLIKE_MAX_PENALTY,
+    SEMANTIC_DISMISS_PENALTY,
     MIN_MULTIPLIER,
     MAX_MULTIPLIER,
 )
@@ -63,6 +64,7 @@ def _basic_ctx(
     discover_category_affinities=None,
     discover_category_negative_counts=None,
     discover_feature_affinities=None,
+    recent_dismissed_feature_token_sets=None,
 ) -> PersonalizationContext:
     """Authenticated context with optional overrides."""
     return PersonalizationContext(
@@ -75,6 +77,7 @@ def _basic_ctx(
         discover_category_affinities=discover_category_affinities or {},
         discover_category_negative_counts=discover_category_negative_counts or {},
         discover_feature_affinities=discover_feature_affinities or {},
+        recent_dismissed_feature_token_sets=recent_dismissed_feature_token_sets or [],
         is_authenticated=True,
     )
 
@@ -1012,6 +1015,57 @@ class TestDiscoverCategoryAffinity:
             f"discover_feature_dislike:region:california:"
             f"{FEATURE_DISLIKE_MAX_PENALTY:.2f}"
         ) in result.reasons
+
+    def test_semantic_dismiss_applies_soft_penalty_for_similar_market(self):
+        ctx = _basic_ctx(
+            recent_dismissed_feature_token_sets=[
+                {"term:chilean", "term:league", "term:primera", "term:win"}
+            ],
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="soccer",
+            outcome_team_ids=[],
+            feature_tokens=["term:chilean", "term:league", "term:win"],
+        )
+
+        assert result.multiplier == pytest.approx(1.0 + SEMANTIC_DISMISS_PENALTY)
+        assert any(reason.startswith("semantic_dismiss:-0.30:") for reason in result.reasons)
+
+    def test_semantic_dismiss_ignores_generic_category_overlap(self):
+        ctx = _basic_ctx(
+            recent_dismissed_feature_token_sets=[
+                {"category:soccer", "type:futures", "archetype:sports_future", "term:chilean"}
+            ],
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="soccer",
+            outcome_team_ids=[],
+            feature_tokens=["category:soccer", "type:futures", "archetype:sports_future", "term:argentine"],
+        )
+
+        assert result.multiplier == 1.0
+        assert result.reasons == []
+
+    def test_semantic_dismiss_compares_only_recent_token_sets(self):
+        recent_nonmatches = [
+            {"term:argentine", "term:league", "term:win"}
+            for _ in range(50)
+        ]
+        ctx = _basic_ctx(
+            recent_dismissed_feature_token_sets=recent_nonmatches
+            + [{"term:chilean", "term:league", "term:win"}],
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="soccer",
+            outcome_team_ids=[],
+            feature_tokens=["term:chilean", "term:league", "term:win"],
+        )
+
+        assert result.multiplier == 1.0
+        assert result.reasons == []
 
     def test_event_category_and_feature_interest_stack_with_team_and_sport(self):
         ctx = _basic_ctx(

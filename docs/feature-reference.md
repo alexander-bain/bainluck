@@ -834,7 +834,7 @@ The Discover feed is a social prediction-market feed across sports, politics, ge
 
 **Candidate pools and scoring:**
 - Candidate pools include sports events, non-sports volume leaders, movement leaders, enriched markets, soon-resolving markets, and targeted postseason sports stories.
-- Futures use `compute_futures_highlight()` plus quality/archetype classification in `feed_market_quality.py`.
+- Futures use `compute_futures_highlight()` plus quality/archetype classification in `feed_market_quality.py`. Entertainment/culture base scoring is intentionally strong enough for public-story markets, and compelling pattern recognition includes award shows, prestige/reality TV, box office, Rotten Tomatoes, Netflix/HBO/Disney+, Spotify, and Billboard markets.
 - Deterministic explanations in `feed_reasons.py` generate first-page headlines from outcome data: named movers, opening-probability surprises, leader changes, source disagreement, and resolving-soon context.
 - LLM hooks (`hook_description`) are helpful enrichment, not a first-page dependency.
 - Async Discover LLM metadata enrichment writes compact structured metadata to `FuturesMarket.market_metadata["discover_llm"]`: topic, subtopic, entities, archetype, audience scope, salience score, junk flags, and comparison axes. The feed never calls OpenAI at request time; it only consumes cached metadata for bounded deterministic score nudges and swipe-personalization feature tokens.
@@ -860,7 +860,7 @@ The Discover feed is a social prediction-market feed across sports, politics, ge
 
 **Personalization layers:**
 - Anonymous web/native: local category profile from impressions, opens, dismisses, likes/shares, and expands; re-ranks only within five-card windows after the first three cards.
-- Authenticated/backend session ranking: existing favorites, pins, sport affinities, and roster-player matching remain primary. Recent first-party Discover interactions add tiny bounded category and feature/entity/archetype deltas; right swipe is `like` / "more like this", left swipe is `unlike` / "less like this". Repeated hard dismisses can escalate category penalty, while `unlike` stays a soft downrank.
+- Authenticated/backend session ranking: existing favorites, pins, sport affinities, and roster-player matching remain primary. Recent first-party Discover interactions add tiny bounded category and feature/entity/archetype deltas; right swipe is `like` / "more like this", left swipe is `unlike` / "less like this". Repeated hard dismisses can escalate category penalty, while `unlike` stays a soft downrank. Related-dismiss behavior has two layers: shared `group_id`/story-key matches can suppress related futures, and lightweight semantic similarity applies only a `-0.30` multiplier penalty when candidate tokens match one of the 50 most recent dismisses above 0.60 Jaccard similarity.
 - The engagement-derived signal is intentionally conservative and cannot override quality caps or explicit "Nah" sport filtering.
 
 **Native parity:**

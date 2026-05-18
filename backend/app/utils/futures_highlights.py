@@ -89,8 +89,8 @@ CATEGORY_BASE_SCORES: dict[str, float] = {
     "geopolitics": 55.0,
     "economics": 50.0,
     "tech": 50.0,
-    "entertainment": 48.0,
-    "culture": 45.0,
+    "entertainment": 52.0,
+    "culture": 48.0,
     "health": 42.0,
     "weather": 38.0,
     "crypto": 35.0,
@@ -188,6 +188,9 @@ _COMPELLING_PATTERNS = [
         r"(alien|ufo|uap|extraterrestrial)",
         r"(royal family|king charles|prince|princess|meghan|harry)",
         r"(nobel prize|pulitzer|ballon d.or)",
+        r"(oscars?|academy award|emmy|grammy|golden globe|tony award|bafta|cannes|sundance|eurovision)",
+        r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)",
+        r"(box office|rotten tomatoes|netflix|disney\+|hbo|spotify|billboard|#1 song|#1 album)",
     ]
 ]
 

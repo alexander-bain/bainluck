@@ -1730,6 +1730,7 @@ async def _load_personalization_context(
             DiscoverInteraction.item_id,
             DiscoverInteraction.action,
         )
+        .order_by(func.max(DiscoverInteraction.created_at).desc())
     )
 
     favorites = favorites_result.scalars().all()
@@ -1757,6 +1758,7 @@ async def _load_personalization_context(
     recent_dismissed_futures_ids: set[int] = set()
     recent_dismissed_story_keys: set[str] = set()
     recent_dismissed_group_ids: set[str] = set()
+    recent_dismissed_feature_token_sets: list[set[str]] = []
     if interaction_suppression_enabled:
         for item_type, item_id_raw, action, last_seen, item_name, category in recent_items_result.all():
             try:
@@ -1773,6 +1775,14 @@ async def _load_personalization_context(
                     sk = compute_story_key(item_name, category or "")
                     if sk:
                         recent_dismissed_story_keys.add(sk)
+                    if len(recent_dismissed_feature_token_sets) < 50:
+                        recent_dismissed_feature_token_sets.append(
+                            _discover_semantic_tokens(
+                                item_name=item_name,
+                                category=category,
+                                item_type=item_type,
+                            )
+                        )
             elif action == "impression" and last_seen_dt and last_seen_dt >= seen_cutoff:
                 if item_type == "event":
                     recent_seen_event_ids.add(item_id)
@@ -1829,6 +1839,7 @@ async def _load_personalization_context(
         recent_dismissed_futures_ids=recent_dismissed_futures_ids,
         recent_dismissed_story_keys=recent_dismissed_story_keys,
         recent_dismissed_group_ids=recent_dismissed_group_ids,
+        recent_dismissed_feature_token_sets=recent_dismissed_feature_token_sets,
         is_authenticated=bool(user),
     )
 
@@ -1987,6 +1998,54 @@ def _discover_feature_tokens(
         if entity and len(entity) >= 3:
             tokens.add(f"entity:{entity}")
 
+    return tokens
+
+
+_DISCOVER_SEMANTIC_STOPWORDS = {
+    "about", "after", "again", "against", "before", "between", "from", "into",
+    "market", "month", "next", "over", "than", "that", "the", "their", "this",
+    "today", "tomorrow", "under", "week", "when", "what", "which", "will",
+    "with", "year", "yes", "no", "who", "wins", "win", "winner", "winning",
+    "champion", "champions", "championship",
+}
+
+
+def _discover_semantic_tokens(
+    *,
+    item_name: str | None,
+    category: str | None,
+    item_type: str | None = None,
+) -> set[str]:
+    """Derive compact semantic tokens for soft dismiss propagation."""
+    tokens = {
+        token for token in _discover_feature_tokens(
+            item_name=item_name,
+            category=category,
+            item_type=item_type,
+        )
+        if token.startswith(("topic:", "region:", "team:"))
+    }
+    lower = (item_name or "").lower()
+    if re.search(
+        r"\b(champion|champions|championship|winner|winning|wins|win)\b",
+        lower,
+    ):
+        tokens.add("term:win")
+    if "primera division" in lower:
+        tokens.add("term:league")
+
+    for word in re.findall(r"\b[a-z][a-z0-9]{3,}\b", lower):
+        if word in _DISCOVER_SEMANTIC_STOPWORDS:
+            continue
+        if word in {"champions", "champion", "championship", "winner", "winning"}:
+            tokens.add("term:win")
+            continue
+        if word in {"league", "division"}:
+            tokens.add("term:league")
+            continue
+        tokens.add(f"term:{word}")
+        if len(tokens) >= 16:
+            break
     return tokens
 
 
@@ -2346,6 +2405,10 @@ async def _score_events(
             home_score=event.home_score,
             away_score=event.away_score,
             feature_tokens=list(_discover_feature_tokens(
+                item_name=f"{event.away_team_name} vs {event.home_team_name}",
+                category=_personalization_category_from_sport_key(sport_key),
+                item_type="event",
+            )) + list(_discover_semantic_tokens(
                 item_name=f"{event.away_team_name} vs {event.home_team_name}",
                 category=_personalization_category_from_sport_key(sport_key),
                 item_type="event",
@@ -3056,6 +3119,10 @@ async def _score_futures(
             sport_key=market.sport.key if market.sport else None,
             outcome_names=outcome_names,
             feature_tokens=list(_discover_feature_tokens(
+                item_name=market.name,
+                category=market.llm_sport_category,
+                item_type="futures",
+            )) + list(_discover_semantic_tokens(
                 item_name=market.name,
                 category=market.llm_sport_category,
                 item_type="futures",
