@@ -1375,6 +1375,39 @@ class TestQualityFamilyDiversity:
         assert minor_soccer[0]["score"] == 100
         assert any(item["_quality_family_key"] == "premier league" for item in capped)
 
+    def test_diversify_caps_aliens_disclosure_story_to_two(self):
+        names = [
+            "Will the US confirm that aliens exist by...?",
+            "Will Trump release new UFO files before 2027?",
+            "Japan declassifies new UFO files in 2026?",
+            "Will the U.S. confirm that aliens exist before 2027?",
+        ]
+        items = []
+        for idx, name in enumerate(names):
+            quality = classify_market_quality(name, sport_category="culture")
+            items.append({
+                "score": 100 - idx,
+                "_quality_class": quality.quality_class,
+                "_quality_family_key": quality.family_key,
+                "_quality_story_key": quality.story_key,
+            })
+        items.append({
+            "score": 80,
+            "_quality_class": "compelling",
+            "_quality_family_key": "fed rates",
+            "_quality_story_key": "story:macro_rates",
+        })
+
+        capped = diversify_quality_families(items, exact_family_cap=1, story_family_cap=5)
+
+        aliens = [
+            item for item in capped
+            if item["_quality_story_key"] == "story:aliens_disclosure"
+        ]
+        assert len(aliens) == 2
+        assert [item["score"] for item in aliens] == [100, 99]
+        assert any(item["_quality_story_key"] == "story:macro_rates" for item in capped)
+
     def test_diversify_hard_caps_regional_and_niche_low_signal_stories(self):
         items = [
             {

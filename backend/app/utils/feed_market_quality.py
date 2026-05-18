@@ -1206,6 +1206,7 @@ def diversify_quality_families(
         "story:us_2028_election": 2,
         "story:macro_rates": 3,
         "story:ai": 2,
+        "story:aliens_disclosure": 2,
         "story:drake_iceman": 1,
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,
