@@ -972,15 +972,22 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("survivor", re.compile(r"\bsurvivor\b", re.IGNORECASE), 88),
     ("music_charts", re.compile(r"\b(spotify|billboard)\b", re.IGNORECASE), 88),
     ("film_tv_scores", re.compile(r"\brotten tomatoes\b", re.IGNORECASE), 88),
-    ("major_entertainment_events", re.compile(r"\bmet gala\b", re.IGNORECASE), 88),
     ("macro_recession", re.compile(r"\brecession\b", re.IGNORECASE), 88),
+    ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
+    (
+        "us_2028_presidential",
+        re.compile(
+            r"\b2028\b.*\b(presidential|president|nominee|election)\b", re.IGNORECASE
+        ),
+        90,
+    ),
+    ("major_entertainment_events", re.compile(r"\bmet gala\b", re.IGNORECASE), 88),
     ("ai_frontier", re.compile(r"\bbest ai\b", re.IGNORECASE), 88),
     (
         "spacex_launches",
         re.compile(r"\bspacex\b.*\b(starship|launch|launches)\b", re.IGNORECASE),
         88,
     ),
-    ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
     (
         "federal_power",
         re.compile(
@@ -988,13 +995,6 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
             re.IGNORECASE,
         ),
         86,
-    ),
-    (
-        "us_2028_presidential",
-        re.compile(
-            r"\b2028\b.*\b(presidential|president|nominee|election)\b", re.IGNORECASE
-        ),
-        90,
     ),
     ("fifa_world_cup", re.compile(r"\b(fifa\s+)?world cup\b", re.IGNORECASE), 82),
 )
