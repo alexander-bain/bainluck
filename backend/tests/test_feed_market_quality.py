@@ -85,6 +85,21 @@ class TestMarketQualityClassification:
             assert quality.quality_class == "low_quality", name
             assert quality.is_ladder_or_bucket is True, name
 
+    def test_finance_price_threshold_variants_stay_low_quality(self):
+        examples = [
+            "S&P 500 price between 5,200 and 5,225 on May 17?",
+            "Will natural gas close above $3.10 on May 20?",
+            "Gold price below $2,350 next week?",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="economics")
+            assert quality.quality_class == "low_quality", name
+            assert quality.is_ladder_or_bucket is True, name
+            assert "ladder_or_bucket" in quality.reasons, name
+            assert quality.explanation_required is False, name
+            assert apply_quality_score(100, quality) <= 70, name
+
     def test_social_filler_is_suppressed(self):
         quality = classify_market_quality(
             'Will Trump post "tariffs" this week on Truth?',
@@ -93,6 +108,19 @@ class TestMarketQualityClassification:
 
         assert quality.quality_class == "suppress"
         assert "social_filler" in quality.reasons
+
+    def test_social_engagement_count_filler_is_suppressed_even_with_big_names(self):
+        examples = [
+            "Trump # likes on Truth this week",
+            "Elon Musk # views on X this week",
+            "What will Trump say during the debate?",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="politics")
+            assert quality.quality_class == "suppress", name
+            assert "social_filler" in quality.reasons, name
+            assert apply_quality_score(100, quality) == 0, name
 
     def test_conversation_and_endorsement_filler_is_suppressed(self):
         examples = [
@@ -190,6 +218,35 @@ class TestMarketQualityClassification:
         assert all("regional_us_election" not in q.reasons for q in qualities)
         assert all("social_filler" not in q.reasons for q in qualities)
         assert all(q.explanation_required for q in qualities)
+
+    def test_public_interest_markets_are_preserved_above_noise_filters(self):
+        examples = [
+            (
+                "Will China invade Taiwan before 2027?",
+                "geopolitics",
+                "world_event",
+            ),
+            (
+                "Will Nvidia earnings beat expectations in Q2?",
+                "economics",
+                "tech_frontier",
+            ),
+            (
+                "Will a Category 4 hurricane make landfall in Florida before September?",
+                "weather",
+                "health_weather_risk",
+            ),
+        ]
+
+        for name, category, expected_archetype in examples:
+            quality = classify_market_quality(name, sport_category=category)
+            assert quality.quality_class == "compelling", name
+            assert "compelling_topic" in quality.reasons, name
+            assert "ladder_or_bucket" not in quality.reasons, name
+            assert "social_filler" not in quality.reasons, name
+            assert quality.explanation_required is True, name
+            assert apply_quality_score(100, quality) == 100, name
+            assert editorial_archetype(name, category) == expected_archetype, name
 
     def test_niche_low_signal_sports_are_low_quality(self):
         quality = classify_market_quality(

@@ -13,6 +13,16 @@ from pathlib import Path
 import pytest
 
 from app.services.kalshi_api import KalshiAPIService
+from app.tasks.kalshi import (
+    _build_game_market_name,
+    _categorize_kalshi_market,
+    _is_kalshi_game_ticker,
+)
+from app.utils.prediction_market_matching import (
+    extract_game_date_from_ticker,
+    extract_matchup_with_ticker_fallback,
+    extract_teams_from_ticker,
+)
 
 
 @pytest.fixture
@@ -59,6 +69,47 @@ class TestParseMarket:
         assert market.yes_ask == 0.01
         assert market.no_bid == 0.99
         assert market.no_ask == 1.0
+
+    def test_invalid_dollar_price_falls_back_to_cents(self, client, fixtures):
+        raw = dict(fixtures["market_cents_only"])
+        raw.update(
+            {
+                "yes_bid_dollars": "not-a-price",
+                "yes_ask_dollars": "",
+                "last_price_dollars": None,
+                "yes_bid": 41,
+                "yes_ask": 44,
+                "last_price": 42,
+            }
+        )
+
+        market = client._parse_market(raw)
+
+        assert market is not None
+        assert market.yes_bid == pytest.approx(0.41)
+        assert market.yes_ask == pytest.approx(0.44)
+        assert market.last_price == pytest.approx(0.42)
+
+    def test_decimal_cent_fields_are_not_divided_again(self, client, fixtures):
+        raw = dict(fixtures["market_cents_only"])
+        raw.update(
+            {
+                "yes_bid": 0.41,
+                "yes_ask": 0.44,
+                "no_bid": 0.56,
+                "no_ask": 0.59,
+                "last_price": 0.42,
+            }
+        )
+
+        market = client._parse_market(raw)
+
+        assert market is not None
+        assert market.yes_bid == pytest.approx(0.41)
+        assert market.yes_ask == pytest.approx(0.44)
+        assert market.no_bid == pytest.approx(0.56)
+        assert market.no_ask == pytest.approx(0.59)
+        assert market.last_price == pytest.approx(0.42)
 
     def test_minimal_market(self, client, fixtures):
         market = client._parse_market(fixtures["market_minimal"])
@@ -191,3 +242,88 @@ class TestParseTimestamp:
         z = client._parse_timestamp("2026-04-10T15:00:00Z")
         offset = client._parse_timestamp("2026-04-10T15:00:00+00:00")
         assert z == offset
+
+
+# ── Kalshi game-market linking guardrails ─────────────────────────────
+
+
+class TestKalshiGameMarketLinkingHelpers:
+
+    def test_game_ticker_detection_is_case_insensitive(self):
+        assert _is_kalshi_game_ticker("KXMLBGAME-26MAR281910CWSMIL") == "MLB"
+        assert _is_kalshi_game_ticker("kxmlbgame-26mar281910cwsmil") == "MLB"
+        assert _is_kalshi_game_ticker("KXMLBWS-26") is None
+
+    def test_game_market_name_prefers_existing_matchup_title(self):
+        assert (
+            _build_game_market_name(
+                event_title="Boston Celtics at Golden State Warriors",
+                event_ticker="KXNBAGAME-26FEB21BOSGSW",
+                market_title="Professional Basketball Game",
+                yes_sub_title="Celtics",
+                no_sub_title="Warriors",
+                sport_label="NBA",
+            )
+            == "Boston Celtics at Golden State Warriors"
+        )
+
+    def test_game_market_name_builds_matchup_from_subtitles_for_generic_title(self):
+        assert (
+            _build_game_market_name(
+                event_title="Professional Baseball Game",
+                event_ticker="KXMLBGAME-26MAR281910CWSMIL",
+                market_title="Moneyline",
+                yes_sub_title="Chicago White Sox",
+                no_sub_title="Milwaukee Brewers",
+                sport_label="MLB",
+            )
+            == "Chicago White Sox at Milwaukee Brewers"
+        )
+
+    def test_mlb_ticker_team_parsing_handles_start_time_and_outcome_suffix(self):
+        assert extract_teams_from_ticker("KXMLBGAME-26MAR281910CWSMIL-CWS") == (
+            "White Sox",
+            "Brewers",
+        )
+
+    def test_mlb_ticker_date_parsing_preserves_embedded_start_time(self):
+        game_date = extract_game_date_from_ticker("KXMLBGAME-26MAR281910CWSMIL")
+
+        assert game_date == datetime(2026, 3, 28, 19, 10, tzinfo=timezone.utc)
+
+    def test_matchup_fallback_uses_ticker_aliases_for_abbreviated_team_names(self):
+        matchup = extract_matchup_with_ticker_fallback(
+            "A's at Philadelphia Phillies",
+            "KXMLBGAME-26MAY17ATHPHI-ATH",
+        )
+
+        assert matchup is not None
+        assert matchup.team_a == "Athletics"
+        assert matchup.team_b == "Phillies"
+        assert matchup.format_type == "ticker_parsed"
+
+
+# ── Kalshi futures categorization guardrails ──────────────────────────
+
+
+class TestKalshiFuturesCategorization:
+
+    def test_ticker_prefix_overrides_ambiguous_conference_market_name(self):
+        assert (
+            _categorize_kalshi_market(
+                "Eastern Conference winner",
+                "Sports",
+                event_ticker="KXNHLEAST-26",
+            )
+            == "hockey"
+        )
+
+    def test_game_prop_ticker_prefix_overrides_generic_or_wrong_category(self):
+        assert (
+            _categorize_kalshi_market(
+                "Player to record 2+ hits",
+                "Politics",
+                event_ticker="KXMLBHIT-26MAY17ATHPHI-JUDGE",
+            )
+            == "baseball"
+        )

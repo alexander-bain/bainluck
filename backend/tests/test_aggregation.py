@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.utils.aggregation import (
     TimestampedProb,
+    compute_aggregate_probability,
     compute_aggregated_probability,
     compute_current_aggregate,
     _weighted_median,
@@ -226,3 +227,73 @@ class TestComputeCurrentAggregate:
         )
         # All sources roughly agree around 0.55
         assert 0.52 <= result <= 0.58
+
+
+class TestComputeAggregateProbability:
+    """Test event-model aggregation helper used during serialization."""
+
+    def test_reads_numeric_and_value_wrapped_sources(self):
+        event = type("Event", (), {
+            "status": "live",
+            "win_probability_sources": {
+                "betting": 0.60,
+                "espn": {"value": 0.54},
+                "unknown_source": 0.05,
+            },
+            "espn_win_prob_home": 0.20,
+            "opening_home_probability": 0.10,
+        })()
+
+        expected = ((0.60 * SOURCE_WEIGHTS["betting"]) + (0.54 * SOURCE_WEIGHTS["espn"])) / (
+            SOURCE_WEIGHTS["betting"] + SOURCE_WEIGHTS["espn"]
+        )
+        assert compute_aggregate_probability(event) == pytest.approx(expected)
+
+    def test_completed_games_exclude_prediction_markets(self):
+        event = type("Event", (), {
+            "status": "completed",
+            "win_probability_sources": {
+                "betting": 1.0,
+                "kalshi": 0.55,
+                "polymarket": 0.45,
+            },
+            "espn_win_prob_home": None,
+            "opening_home_probability": None,
+        })()
+
+        assert compute_aggregate_probability(event) == 1.0
+
+    def test_event_status_argument_overrides_event_status(self):
+        event = type("Event", (), {
+            "status": "live",
+            "win_probability_sources": {
+                "betting": 1.0,
+                "kalshi": 0.0,
+            },
+            "espn_win_prob_home": None,
+            "opening_home_probability": None,
+        })()
+
+        assert compute_aggregate_probability(event, event_status="closed") == 1.0
+
+    def test_falls_back_to_espn_then_opening_probability(self):
+        event = type("Event", (), {
+            "status": "live",
+            "win_probability_sources": {},
+            "espn_win_prob_home": 0.42,
+            "opening_home_probability": 0.38,
+        })()
+        assert compute_aggregate_probability(event) == 0.42
+
+        event.espn_win_prob_home = None
+        assert compute_aggregate_probability(event) == 0.38
+
+    def test_returns_none_without_any_probability(self):
+        event = type("Event", (), {
+            "status": "scheduled",
+            "win_probability_sources": {"kalshi": {"value": None}},
+            "espn_win_prob_home": None,
+            "opening_home_probability": None,
+        })()
+
+        assert compute_aggregate_probability(event) is None
