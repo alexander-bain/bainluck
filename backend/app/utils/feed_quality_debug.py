@@ -54,6 +54,124 @@ _FUN_ARCHETYPES = {
     "sports_drama",
 }
 
+_STALE_ROOT_CAUSES = {
+    "closed": {
+        "code": "closed_market",
+        "label": "Market is closed or resolved",
+        "recommended_action": "No ranking fix; remove or settle the stale market source row.",
+    },
+    "not_open": {
+        "code": "market_not_open",
+        "label": "Market is no longer open",
+        "recommended_action": "No ranking fix; verify source status sync if this still appears in Discover.",
+    },
+    "past_resolution": {
+        "code": "past_resolution_date",
+        "label": "Resolution date is in the past",
+        "recommended_action": "Check settlement/backfill tasks if the source still marks this market open.",
+    },
+    "stale_updated_at": {
+        "code": "no_recent_market_update",
+        "label": "No recent market update",
+        "recommended_action": "Check source polling and live-price refresh for this market.",
+    },
+    "stale_no_movement": {
+        "code": "stale_without_movement",
+        "label": "No recent price movement",
+        "recommended_action": "Keep suppressed unless this market has strong editorial value despite low movement.",
+    },
+    "all_outcomes_settled": {
+        "code": "settled_outcomes",
+        "label": "All outcomes look settled",
+        "recommended_action": "Check settlement/backfill tasks if the exchange has not formally closed it.",
+    },
+    "effectively_resolved": {
+        "code": "effectively_resolved",
+        "label": "Leader probability is effectively resolved",
+        "recommended_action": "Keep suppressed unless there is fresh reversal movement.",
+    },
+    "soft_settled_binary": {
+        "code": "soft_settled_binary",
+        "label": "Binary sports market appears decided",
+        "recommended_action": "Check whether the sports market should be settled or excluded from Discover.",
+    },
+    "completed_old": {
+        "code": "completed_event",
+        "label": "Event completed too long ago",
+        "recommended_action": "Check event status freshness if this completed game still appears in Discover.",
+    },
+}
+
+
+def stale_root_cause_for_reason(reason: str | None) -> dict[str, str] | None:
+    """Return a stable admin-facing root-cause label for a stale-card reason."""
+    if not reason:
+        return None
+    cause = _STALE_ROOT_CAUSES.get(reason)
+    if cause:
+        return {"reason": reason, **cause}
+    return {
+        "reason": reason,
+        "code": "unknown_stale_reason",
+        "label": "Unknown stale-card reason",
+        "recommended_action": "Inspect source status, resolution date, and refresh timestamps.",
+    }
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def diagnose_stale_card_root_cause(
+    item: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    stale_no_movement_days: float = 2,
+) -> dict[str, str] | None:
+    """Explain obvious stale-card causes from fields already present in debug payloads."""
+    now = now or datetime.now(timezone.utc)
+    data = item.get("data") or {}
+    item_type = item.get("type")
+
+    if item_type == "futures":
+        status = data.get("status")
+        if status in ("closed", "resolved"):
+            return stale_root_cause_for_reason("closed")
+        if status and status != "open":
+            return stale_root_cause_for_reason("not_open")
+
+        resolution_date = _parse_datetime(data.get("resolution_date"))
+        if resolution_date and resolution_date < now:
+            return stale_root_cause_for_reason("past_resolution")
+
+        updated_at = _parse_datetime(data.get("updated_at"))
+        if updated_at and (now - updated_at).total_seconds() / 86400 > stale_no_movement_days:
+            return stale_root_cause_for_reason("stale_updated_at")
+
+    if item_type == "event":
+        status = data.get("status")
+        commence_time = _parse_datetime(data.get("commence_time"))
+        if (
+            status in ("completed", "closed")
+            and commence_time
+            and (now - commence_time).total_seconds() > 8 * 3600
+        ):
+            return stale_root_cause_for_reason("completed_old")
+
+    return None
+
 
 def _normalized_words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
@@ -380,6 +498,7 @@ def diagnose_feed_items(
     items: list[dict[str, Any]],
     *,
     ground_truth: set[str] | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Build per-card diagnostics for feed items.
 
@@ -387,6 +506,7 @@ def diagnose_feed_items(
     lightweight sports-story classification so mixed feeds remain readable.
     """
     ground_truth = ground_truth or set()
+    now = now or datetime.now(timezone.utc)
     diagnosed: list[dict[str, Any]] = []
 
     for idx, item in enumerate(items, start=1):
@@ -422,6 +542,7 @@ def diagnose_feed_items(
                     "story_key": None,
                     "ladder": False,
                     "reasons": [],
+                    "stale_root_cause": diagnose_stale_card_root_cause(item, now=now),
                     "ground_truth": False,
                     "personalization_trace": item.get("personalization_trace"),
                 }
@@ -466,6 +587,7 @@ def diagnose_feed_items(
                 "story_key": quality.story_key,
                 "ladder": quality.is_ladder_or_bucket,
                 "reasons": quality.reasons,
+                "stale_root_cause": diagnose_stale_card_root_cause(item, now=now),
                 "ground_truth": matches_ground_truth(name, ground_truth),
                 "personalization_trace": item.get("personalization_trace"),
             }
@@ -558,11 +680,12 @@ def build_feed_quality_debug(
     ground_truth: set[str] | None = None,
     ground_truth_items: list[dict[str, Any]] | None = None,
     top_n: int = 20,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Return summary and per-item diagnostics for a feed response."""
     if ground_truth is None and ground_truth_items is not None:
         ground_truth = {_normalize_match_name(item["name"]) for item in ground_truth_items}
-    diagnosed = diagnose_feed_items(items, ground_truth=ground_truth)
+    diagnosed = diagnose_feed_items(items, ground_truth=ground_truth, now=now)
     missing = find_missing_ground_truth_items(
         diagnosed,
         ground_truth_items or [],

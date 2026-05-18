@@ -4,6 +4,9 @@ Tests response shape and query parameter validation, not exact data values.
 The feed is the home page — the most important endpoint for user experience.
 """
 
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from app.routes.feed import _apply_manual_review_decision_map
@@ -408,6 +411,7 @@ class TestDiscoverInteractions:
         from unittest.mock import MagicMock
 
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+        old_update = datetime.now(timezone.utc) - timedelta(days=3)
         grouped = MagicMock()
         grouped.all.return_value = [
             ("native", "basketball", "event", "impression", 20),
@@ -426,10 +430,36 @@ class TestDiscoverInteractions:
         repeat = MagicMock()
         repeat.all.return_value = []
         impression_items = MagicMock()
-        impression_items.all.return_value = []
+        impression_items.all.return_value = [
+            SimpleNamespace(
+                item_type="futures",
+                item_id="123",
+                item_name="Will stale market resolve?",
+                category="politics",
+                surface="native",
+                impressions=7,
+            )
+        ]
+        futures_result = MagicMock()
+        futures_result.all.return_value = [
+            SimpleNamespace(
+                id=123,
+                status="open",
+                updated_at=old_update,
+                resolution_date=None,
+            )
+        ]
         decisions = MagicMock()
         decisions.scalars.return_value.all.return_value = []
-        mock_db.execute.side_effect = [grouped, review, decisions, repeat, impression_items, top_items]
+        mock_db.execute.side_effect = [
+            grouped,
+            review,
+            decisions,
+            repeat,
+            impression_items,
+            futures_result,
+            top_items,
+        ]
 
         resp = await client.get("/api/admin/discover-engagement?secret=test-admin&days=7")
         body = resp.json()
@@ -448,6 +478,9 @@ class TestDiscoverInteractions:
         assert body["review_queue"][0]["kind"] == "promote"
         assert body["review_queue"][0]["auth_segment"] == "anonymous"
         assert body["launch_health"]["repeat_rate"] == 0
+        assert body["launch_health"]["stale_impressions"] == 7
+        assert body["launch_health"]["top_stale_items"][0]["root_cause_label"] == "No recent market update"
+        assert body["launch_health"]["top_stale_items"][0]["root_cause"]["code"] == "no_recent_market_update"
         assert body["runtime_config"]["interaction_suppression_enabled"] is True
         assert body["top_items"][0]["item_name"] == "Lakers vs Celtics"
 

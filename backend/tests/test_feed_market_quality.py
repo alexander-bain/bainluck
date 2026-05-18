@@ -7,6 +7,7 @@ from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _o
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
+    balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
     diversify_discover_first_page,
@@ -17,6 +18,7 @@ from app.utils.feed_market_quality import (
     quality_score_adjustment,
 )
 from app.utils.feed_quality_debug import build_feed_quality_debug
+from app.utils.feed_quality_debug import diagnose_stale_card_root_cause
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.futures_highlights import compute_futures_highlight
 
@@ -511,6 +513,7 @@ class TestMarketQualityClassification:
 
 class TestFeedQualityDebug:
     def test_builds_summary_and_item_diagnostics(self):
+        now = datetime(2026, 5, 18, tzinfo=timezone.utc)
         items = [
             {
                 "type": "futures",
@@ -522,6 +525,7 @@ class TestFeedQualityDebug:
                     "name": "Iran closes its airspace by...?",
                     "llm_sport_category": "geopolitics",
                     "source": "kalshi",
+                    "status": "open",
                     "top_outcomes": [{"name": "Yes", "probability": 0.8}],
                     "hook_description": None,
                     "image_url": None,
@@ -537,6 +541,8 @@ class TestFeedQualityDebug:
                     "name": "Oil Price (WTI) on May 1, 2026?",
                     "llm_sport_category": "economics",
                     "source": "kalshi",
+                    "status": "open",
+                    "resolution_date": "2026-05-01T00:00:00+00:00",
                     "top_outcomes": [{"name": "Yes", "probability": 0.55}],
                     "hook_description": None,
                     "image_url": None,
@@ -573,6 +579,7 @@ class TestFeedQualityDebug:
                 },
             ],
             top_n=2,
+            now=now,
         )
 
         assert debug["summary"]["items"] == 2
@@ -582,6 +589,7 @@ class TestFeedQualityDebug:
         assert debug["items"][0]["quality_class"] == "compelling"
         assert debug["items"][0]["ground_truth"] is True
         assert debug["items"][1]["quality_class"] == "low_quality"
+        assert debug["items"][1]["stale_root_cause"]["code"] == "past_resolution_date"
         assert [item["name"] for item in debug["missing_ground_truth"]] == [
             "Will OpenAI announce GPT-6 in 2026?",
             "Celtics vs. Knicks",
@@ -596,6 +604,38 @@ class TestFeedQualityDebug:
             "candidate_recall_gap": 1,
             "game_market_noise": 1,
         }
+
+    def test_stale_root_cause_labels_obvious_futures_and_event_causes(self):
+        now = datetime(2026, 5, 18, 12, tzinfo=timezone.utc)
+
+        closed = diagnose_stale_card_root_cause(
+            {"type": "futures", "data": {"status": "resolved"}},
+            now=now,
+        )
+        stale_update = diagnose_stale_card_root_cause(
+            {
+                "type": "futures",
+                "data": {
+                    "status": "open",
+                    "updated_at": "2026-05-15T00:00:00+00:00",
+                },
+            },
+            now=now,
+        )
+        completed_event = diagnose_stale_card_root_cause(
+            {
+                "type": "event",
+                "data": {
+                    "status": "completed",
+                    "commence_time": "2026-05-17T00:00:00+00:00",
+                },
+            },
+            now=now,
+        )
+
+        assert closed["label"] == "Market is closed or resolved"
+        assert stale_update["code"] == "no_recent_market_update"
+        assert completed_event["reason"] == "completed_old"
 
     def test_ground_truth_matching_normalizes_us_punctuation(self):
         debug = build_feed_quality_debug(
@@ -1482,6 +1522,58 @@ class TestDiscoverFirstPageMixer:
                 item["data"]["llm_sport_category"],
             ) in {"culture_moment", "absurd_but_real", "big_name", "sports_drama", "weird_news"}
             for item in top10
+        )
+
+    def test_event_category_mix_defers_over_budget_soccer_events(self):
+        items = [
+            {
+                "type": "event",
+                "score": 70,
+                "data": {"id": i, "sport": "soccer_france_ligue_two"},
+            }
+            for i in range(7)
+        ] + [
+            self._item(100, "entertainment", 69, name="Eurovision Winner 2026?"),
+        ]
+
+        mixed = balance_discover_event_category_mix(items)
+        entertainment_index = next(
+            idx for idx, item in enumerate(mixed)
+            if item["type"] == "futures"
+        )
+
+        assert entertainment_index == 5
+        assert [item["data"]["id"] for item in mixed[-2:]] == [5, 6]
+
+    def test_event_category_mix_defers_low_score_events_behind_futures(self):
+        event = {
+            "type": "event",
+            "score": 35,
+            "data": {"id": 1, "sport": "baseball_mlb"},
+        }
+        future = self._item(2, "tech", 34, name="OpenAI $1T+ valuation in 2026?")
+
+        mixed = balance_discover_event_category_mix([event, future])
+
+        assert mixed == [future, event]
+
+    def test_mixer_gives_entertainment_floor_to_strong_candidate(self):
+        items = [
+            self._item(i, "geopolitics", 100 - i, name=f"Will Russia conflict variant {i} happen?")
+            for i in range(6)
+        ] + [
+            self._item(100, "politics", 93, name="2028 U.S. Presidential Election winner?"),
+            self._item(101, "economics", 92, name="How many Fed rate cuts in 2026?"),
+            self._item(102, "tech", 91, name="GPT-5.6 released by...?"),
+            self._item(103, "entertainment", 80, name="Eurovision Winner 2026?"),
+        ]
+
+        mixed = diversify_discover_first_page(items, first_page_size=8)
+        first_page = mixed[:8]
+
+        assert any(
+            item["data"]["llm_sport_category"] == "entertainment"
+            for item in first_page
         )
 
 

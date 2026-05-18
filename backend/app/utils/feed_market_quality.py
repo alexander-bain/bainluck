@@ -572,6 +572,80 @@ def _discover_category_group(item: dict) -> str:
     return "other"
 
 
+def _discover_event_sport_group(item: dict) -> str:
+    """Return the broad sport bucket for a Discover event card."""
+    data = item.get("data") or {}
+    sport = (data.get("sport") or data.get("sport_name") or "").lower()
+    if "soccer" in sport or sport.startswith(("epl", "mls")):
+        return "soccer"
+    if "baseball" in sport or sport.startswith("mlb"):
+        return "baseball"
+    if "basketball" in sport or sport.startswith(("nba", "wnba")):
+        return "basketball"
+    if "football" in sport or sport.startswith(("nfl", "ncaaf")):
+        return "football"
+    if "hockey" in sport or sport.startswith("nhl"):
+        return "hockey"
+    if "golf" in sport or sport.startswith("pga"):
+        return "golf"
+    if "tennis" in sport:
+        return "tennis"
+    if "mma" in sport or "ufc" in sport:
+        return "mma"
+    if "racing" in sport or "nascar" in sport or "f1" in sport:
+        return "racing"
+    if "cricket" in sport:
+        return "cricket"
+    return "other"
+
+
+_DISCOVER_EVENT_SPORT_CAPS = {
+    "soccer": 5,
+    "baseball": 5,
+    "basketball": 6,
+    "football": 6,
+    "hockey": 5,
+    "golf": 4,
+    "tennis": 3,
+    "mma": 3,
+    "racing": 3,
+    "cricket": 2,
+    "other": 3,
+}
+
+
+def balance_discover_event_category_mix(items: list[dict]) -> list[dict]:
+    """Defer repetitive or low-scoring sports events behind futures in Discover.
+
+    This is a pure reorder pass: scores and card data are unchanged. It keeps
+    live/high-interest sports in the feed while preventing one event bucket
+    from filling the long tail after first-page caps have done their work.
+    """
+    if not items:
+        return items
+
+    kept: list[dict] = []
+    deferred_events: list[dict] = []
+    event_counts: dict[str, int] = {}
+
+    for item in items:
+        if item.get("type") != "event":
+            kept.append(item)
+            continue
+
+        sport_group = _discover_event_sport_group(item)
+        cap = _DISCOVER_EVENT_SPORT_CAPS.get(sport_group, 3)
+        score = float(item.get("score") or 0)
+        if score < 50 or event_counts.get(sport_group, 0) >= cap:
+            deferred_events.append(item)
+            continue
+
+        event_counts[sport_group] = event_counts.get(sport_group, 0) + 1
+        kept.append(item)
+
+    return kept + deferred_events
+
+
 _DISCOVER_FIRST_PAGE_CATEGORY_CAPS = {
     "politics": 5,
     "geopolitics": 3,
@@ -674,6 +748,7 @@ def diversify_discover_first_page(
         selected.extend(fallback[:needed])
 
     _ensure_required_archetypes(selected, items)
+    _ensure_category_hunger(selected, items)
     _improve_strict_variety(selected, items)
 
     selected_keys = {_feed_item_key(item) for item in selected}
@@ -683,6 +758,54 @@ def diversify_discover_first_page(
         and item not in selected
     ]
     return selected + remainder
+
+
+def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None:
+    """Give a strong missing category one first-page slot when possible."""
+    if not selected:
+        return
+
+    selected_keys = {_feed_item_key(item) for item in selected}
+    desired_thresholds = {
+        "entertainment": 80,
+        "tech": 90,
+        "economics": 90,
+        "weather_health": 90,
+        "sports_culture": 90,
+    }
+
+    for target, min_score in desired_thresholds.items():
+        if any(_discover_category_group(item) == target for item in selected):
+            continue
+
+        candidate = next(
+            (
+                item for item in all_items
+                if _feed_item_key(item) not in selected_keys
+                and _discover_category_group(item) == target
+                and item.get("score", 0) >= min_score
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+
+        category_counts = Counter(_discover_category_group(item) for item in selected)
+        replacement_idx = next(
+            (
+                idx for idx in range(len(selected) - 1, -1, -1)
+                if category_counts[_discover_category_group(selected[idx])] > 1
+                and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
+            ),
+            None,
+        )
+        if replacement_idx is None:
+            continue
+
+        removed = selected[replacement_idx]
+        selected[replacement_idx] = candidate
+        selected_keys.discard(_feed_item_key(removed))
+        selected_keys.add(_feed_item_key(candidate))
 
 
 def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> None:

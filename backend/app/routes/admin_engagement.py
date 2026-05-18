@@ -20,6 +20,7 @@ from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDeci
 from app.services import get_db
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth
+from app.utils.feed_quality_debug import stale_root_cause_for_reason
 
 import logging
 logger = logging.getLogger(__name__)
@@ -822,6 +823,7 @@ async def discover_engagement_summary(
                 if commence_time and (now - commence_time).total_seconds() > 8 * 3600:
                     stale_reason = "completed_old"
         if stale_reason:
+            root_cause = stale_root_cause_for_reason(stale_reason)
             stale_impressions += impressions
             stale_items.append(
                 {
@@ -832,6 +834,8 @@ async def discover_engagement_summary(
                     "surface": row.surface,
                     "impressions": impressions,
                     "reason": stale_reason,
+                    "root_cause": root_cause,
+                    "root_cause_label": root_cause["label"] if root_cause else None,
                 }
             )
     stale_items.sort(key=lambda row: row["impressions"], reverse=True)

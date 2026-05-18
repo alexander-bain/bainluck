@@ -45,6 +45,7 @@ from app.utils.feed_market_quality import (
     _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
+    balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
     diversify_discover_first_page,
@@ -716,6 +717,7 @@ async def get_feed(
         _demote_non_exceptional_discover_events(feed_items)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
+        feed_items = balance_discover_event_category_mix(feed_items)
 
     if not my_teams_only:
         if event_pct is not None and event_pct < 0.2:

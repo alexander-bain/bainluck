@@ -382,7 +382,7 @@ The `discover_llm` enrichment already produces `audience_scope` (broad/mainstrea
 
 **Files:** `backend/app/routes/feed.py` (`_discover_llm_score_adjustment()`), LLM enrichment prompt
 
-**0u-N3. Category-aware event-vs-futures balancing**
+**~~0u-N3. Category-aware event-vs-futures balancing~~** — SHIPPED May 18
 
 Currently events and futures compete on raw score, and events dominate because live games score 80-100 from basic signals. The first-page diversity caps `sports_culture` events at 3, but this only applies to the first 20 items. Steps:
 1. Add a per-category event budget beyond the first page (e.g., max 5 soccer events, max 5 baseball events in the full feed)
@@ -391,6 +391,8 @@ Currently events and futures compete on raw score, and events dominate because l
 4. Enforce the entertainment cap of 3 is treated as a *floor* (guarantee at least 1 entertainment item in top 20 if any score >= 80)
 
 **Files:** `backend/app/routes/feed.py` (post-scoring ranking), `backend/app/utils/feed_market_quality.py` (first-page diversity)
+
+**Fix shipped:** Discover mode now runs a pure post-demotion balancing pass that defers low-score events and over-budget sport buckets behind futures without mutating visible scores. First-page mixing also gives strong missing categories a slot, including an entertainment floor when a candidate scores 80+. Tests cover over-budget soccer events, low-score event deferral, and entertainment floor behavior.
 
 **~~0u-N4. Semantic similarity for dismiss propagation~~** — SHIPPED May 18
 
@@ -417,6 +419,8 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 
 **Files:** `backend/scripts/calibrate_interestingness.py`, new export script, admin panel
 
+**May 18 first export slice shipped:** `backend/scripts/export_discover_interestingness.py` exports Discover interactions joined with futures/event metadata to CSV or JSONL, including impression/action counts, positive/negative engagement rates, labels, category share, probability, movement, volume, and source count. It is read-only, supports `--print-sql`, and feeds directly into `scripts/calibrate_interestingness.py`. Remaining work: scheduled export/import, score-bucket analysis, admin scatterplots, and human-reviewed weight changes.
+
 ---
 
 **Next phases:**
@@ -430,7 +434,7 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
    - Re-run the page after each change and keep a simple before/after note in this backlog item until both metrics are clean.
 3. Make launch-health remediation more automatic:
    - Add one-click "hide this stale card now" / "suppress this repeat family" actions with explicit expiry.
-   - Add root-cause labels for stale cards: closed market still open, past resolution date, no recent odds movement, completed event still ranked, missing resolved outcome.
+   - ✅ Root-cause labels shipped May 18 for stale cards in feed quality debug and admin engagement launch-health output: closed/resolved market, non-open status, past resolution date, no recent market update, no recent movement, settled outcomes, effectively resolved leaders, soft-settled sports binaries, and completed-old events.
    - Add a small trend panel for repeat/stale rates over the last 1h/24h/7d so we can tell whether fixes are working.
 4. Automate ranking progress after manual hill-climb sessions:
    - Convert repeated manual fixes into durable rules: auto-hide stale root-cause classes, auto-cap repeat families, and auto-promote/downrank only when a reviewed pattern has enough impressions and confidence.
