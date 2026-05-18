@@ -447,7 +447,7 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
         return "story:basketball_finals_path"
 
-    if category == "soccer" and re.search(r"\b(fifa\s+)?world cup\b", lower):
+    if re.search(r"\b(fifa\s+)?world cup\b", lower):
         return "story:fifa_world_cup"
 
     if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):

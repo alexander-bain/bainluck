@@ -446,9 +446,14 @@ class TestMarketQualityClassification:
             "Will France win the 2026 FIFA World Cup?",
             sport_category="soccer",
         )
+        mislabeled = classify_market_quality(
+            "Will Germany win the 2026 FIFA World Cup?",
+            sport_category="trending",
+        )
 
         assert germany.story_key == "story:fifa_world_cup"
         assert france.story_key == "story:fifa_world_cup"
+        assert mislabeled.story_key == "story:fifa_world_cup"
         assert germany.quality_class == "compelling"
 
     def test_story_key_groups_repeated_company_stake_and_tournament_props(self):
