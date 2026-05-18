@@ -15,11 +15,11 @@ Shipped:
 - View-model-owned published state is `private(set)` where views only read it.
 - Futures browser entry point is hidden from production navigation until the native Futures browser is rebuilt; 🍀 sidebar branding and Calibration remain visible.
 - CQ-10 shipped: daily challenge UI moved into `Components/DailyChallengeCard.swift`.
+- CQ-6 shipped: `NativeGuessCard` now handles both futures and event Higher/Lower questions.
 - CQ-7 shipped: shared Feed/Discover context menu moved into `Components/CardContextMenu.swift`.
 - iOS-7 hidden Futures browser rebuild is partial: grouped category rail, polished rows, reusable browse components, and loading/error/empty states are in place.
 
 Still open:
-- CQ-6: unify `NativeGuessCard` and `NativeEventGuessCard`.
 - CQ-16: broad helper-method `private` cleanup.
 - CQ-17: broad abbreviation cleanup.
 
@@ -103,7 +103,7 @@ Used in: DiscoverView, FeedView
 ### P3b. Unify NativeGuessCard and NativeEventGuessCard (2 hours)
 90% identical — same layout, same `submitGuess()`, same `generateThreshold()`. Extract a single `GuessCardView` that takes a protocol or enum for the data source.
 **File:** DiscoverView.swift (currently ~2,200 lines → would drop ~400 lines)
-**Status:** Open.
+**Status:** Shipped May 17 — `NativeGuessCard` now supports both futures and event content; `NativeEventGuessCard` was removed.
 
 ### P3c. Shared context menu builder (30 min)
 `FeedView.cardContextMenu()` and `DiscoverView.discoverCardMenu()` do the same thing. Extract to `Components/CardContextMenu.swift`.

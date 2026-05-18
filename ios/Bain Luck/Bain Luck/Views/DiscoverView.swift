@@ -634,7 +634,7 @@ struct DiscoverView: View {
                                                 hideForSession(itemId(item))
                                             }
                                         ) {
-                                            NativeEventGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                                            NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                                         }
                                     } else if item.type == "event", let e = item.event {
                                         SwipeToDismiss(
@@ -983,8 +983,136 @@ private struct NativeCompactFuturesRow: View {
 
 // MARK: - Guess Card
 
+private enum NativeGuessCardContent {
+    case futures(FeedFuturesData)
+    case event(FeedEventData)
+
+    var id: Int {
+        switch self {
+        case .futures(let data): return data.id
+        case .event(let event): return event.id
+        }
+    }
+
+    var actualProbability: Double? {
+        switch self {
+        case .futures(let data): return data.topOutcomes?.first?.probability
+        case .event(let event): return event.currentOdds?.homeProbability ?? 0.5
+        }
+    }
+
+    var actualPct: Int {
+        Int(((actualProbability ?? 0) * 100).rounded())
+    }
+
+    var categoryLabel: String? {
+        switch self {
+        case .futures(let data):
+            return data.llmSportCategory
+        case .event(let event):
+            return event.sportName ?? event.sport ?? "GAME"
+        }
+    }
+
+    var analyticsCategory: String? {
+        switch self {
+        case .futures(let data):
+            return data.llmSportCategory
+        case .event(let event):
+            return event.sport?.split(separator: "_").first.map(String.init)
+        }
+    }
+
+    var contentType: String {
+        switch self {
+        case .futures: return "futures"
+        case .event: return "event"
+        }
+    }
+
+    var questionPrompt: String {
+        switch self {
+        case .futures:
+            return "Is the current probability higher or lower than"
+        case .event(let event):
+            return "Is \(Self.shortName(event.homeTeam)) to win higher or lower than"
+        }
+    }
+
+    var questionSubject: String? {
+        switch self {
+        case .futures(let data):
+            return data.topOutcomes?.first?.name ?? "This outcome"
+        case .event:
+            return nil
+        }
+    }
+
+    var resultSubject: String {
+        switch self {
+        case .futures(let data):
+            return data.topOutcomes?.first?.name ?? data.name
+        case .event(let event):
+            return event.homeTeam
+        }
+    }
+
+    var detailRoute: Route {
+        switch self {
+        case .futures(let data): return .futuresDetail(id: data.id)
+        case .event(let event): return .eventDetail(id: event.id)
+        }
+    }
+
+    var detailLabel: String {
+        switch self {
+        case .futures: return "See full market"
+        case .event: return "See full game"
+        }
+    }
+
+    var thresholdColor: Color {
+        switch self {
+        case .futures:
+            return .primary
+        case .event(let event):
+            return Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+        }
+    }
+
+    var resultColor: Color? {
+        switch self {
+        case .futures:
+            return nil
+        case .event(let event):
+            return Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+        }
+    }
+
+    var animatesResult: Bool {
+        switch self {
+        case .futures: return true
+        case .event: return false
+        }
+    }
+
+    func shareText(correct: Bool) -> String {
+        let result = correct ? "Got it right" : "Missed it"
+        switch self {
+        case .futures(let data):
+            return "\(result)! \(data.name) — \(actualPct)%. Can you beat my streak? bainluck.com/discover"
+        case .event(let event):
+            return "\(result)! \(event.homeTeam) was \(actualPct)% to win. Can you beat my streak? bainluck.com/discover"
+        }
+    }
+
+    static func shortName(_ name: String) -> String {
+        name.split(separator: " ").last.map(String.init) ?? name
+    }
+}
+
 struct NativeGuessCard: View {
-    let data: FeedFuturesData
+    private let content: NativeGuessCardContent
     var onNextQuestion: (() -> Void)? = nil
     var nextButtonLabel: String = "Next"
     var onGuessCompleted: (() -> Void)? = nil
@@ -994,37 +1122,67 @@ struct NativeGuessCard: View {
     @State private var displayPct: Int = 0
     @State private var showShare = false
 
-    private var leader: FeedFuturesOutcome? { data.topOutcomes?.first }
-    private var actualPct: Int { Int(((leader?.probability ?? 0) * 100).rounded()) }
+    init(
+        data: FeedFuturesData,
+        onNextQuestion: (() -> Void)? = nil,
+        nextButtonLabel: String = "Next",
+        onGuessCompleted: (() -> Void)? = nil
+    ) {
+        self.content = .futures(data)
+        self.onNextQuestion = onNextQuestion
+        self.nextButtonLabel = nextButtonLabel
+        self.onGuessCompleted = onGuessCompleted
+    }
+
+    init(
+        event: FeedEventData,
+        onNextQuestion: (() -> Void)? = nil,
+        nextButtonLabel: String = "Next",
+        onGuessCompleted: (() -> Void)? = nil
+    ) {
+        self.content = .event(event)
+        self.onNextQuestion = onNextQuestion
+        self.nextButtonLabel = nextButtonLabel
+        self.onGuessCompleted = onGuessCompleted
+    }
+
+    private var actualPct: Int { content.actualPct }
+
     private var correct: Bool {
         guard let g = guess else { return false }
         return g == "higher" ? actualPct > threshold : actualPct < threshold
     }
 
+    private var shareText: String {
+        content.shareText(correct: correct)
+    }
+
     private func submitGuess(_ g: String) {
-        guard let actualProbability = leader?.probability else { return }
+        guard let actualProbability = content.actualProbability else { return }
         guess = g
-        displayPct = 0
+        displayPct = content.animatesResult ? 0 : actualPct
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
-        withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
+        if content.animatesResult {
+            withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
+        }
         onGuessCompleted?()
         AnalyticsService.trackPredictionSubmit(
-            marketId: data.id,
+            marketId: content.id,
             guess: g,
             threshold: threshold,
             actualProbability: actualProbability,
             correct: isCorrect,
-            contentType: "futures",
-            category: data.llmSportCategory
+            contentType: content.contentType,
+            category: content.analyticsCategory
         )
         Task {
             let request = PredictionRequest(
-                marketId: data.id,
+                marketId: content.id,
                 guess: g,
                 threshold: threshold,
                 actualProbability: actualProbability,
                 correct: isCorrect,
-                category: data.llmSportCategory
+                category: content.analyticsCategory
             )
             _ = try? await APIClient.shared.submitPrediction(request)
             if let stats = try? await APIClient.shared.fetchPredictionStats() {
@@ -1033,35 +1191,17 @@ struct NativeGuessCard: View {
         }
     }
 
-    private var shareText: String {
-        let result = correct ? "Got it right" : "Missed it"
-        return "\(result)! \(data.name) — \(actualPct)%. Can you beat my streak? bainluck.com/discover"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            guessHeader(category: data.llmSportCategory)
+            guessHeader(category: content.categoryLabel)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(data.name)
-                    .font(.headline.weight(.bold))
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let leader {
-                    Text(leader.name)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            summaryPanel()
 
             if guess == nil {
-                questionPanel(subject: leader?.name ?? "This outcome")
+                questionPanel()
                 guessButtons()
             } else {
-                resultPanel(subject: leader?.name ?? data.name, detailRoute: .futuresDetail(id: data.id), detailLabel: "See full market")
+                resultPanel()
                     .sheet(isPresented: $showShare) {
                         ShareSheet(text: shareText)
                     }
@@ -1094,20 +1234,45 @@ struct NativeGuessCard: View {
         }
     }
 
-    private func questionPanel(subject: String) -> some View {
+    @ViewBuilder
+    private func summaryPanel() -> some View {
+        switch content {
+        case .futures(let data):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(data.name)
+                    .font(.headline.weight(.bold))
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let leader = data.topOutcomes?.first {
+                    Text(leader.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        case .event(let event):
+            matchupPanel(event: event)
+        }
+    }
+
+    private func questionPanel() -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Is the current probability higher or lower than")
+            Text(content.questionPrompt)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(threshold)%")
                     .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.primary)
-                Text(subject)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(content.thresholdColor)
+                if let subject = content.questionSubject {
+                    Text(subject)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(14)
@@ -1127,201 +1292,11 @@ struct NativeGuessCard: View {
         .buttonStyle(.plain)
     }
 
-    private func guessButton(label: String, systemImage: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(label, systemImage: systemImage)
-                .font(.subheadline.weight(.heavy))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                .foregroundStyle(color)
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.28), lineWidth: 1))
-        }
-    }
+    private func matchupPanel(event: FeedEventData) -> some View {
+        let homeColor = Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+        let awayColor = Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
 
-    private func resultPanel(subject: String, detailRoute: Route, detailLabel: String) -> some View {
-        VStack(spacing: 12) {
-            Text(correct ? "Correct" : "Not quite")
-                .font(.caption.weight(.heavy))
-                .foregroundStyle(correct ? .green : .red)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background((correct ? Color.green : Color.red).opacity(0.12), in: Capsule())
-
-            Text("\(displayPct)%")
-                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
-                .contentTransition(.numericText())
-
-            Text(subject)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-
-            if let streak, streak > 1 {
-                Text("\(streak) correct in a row")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.orange)
-            }
-
-            HStack(spacing: 10) {
-                NavigationLink(value: detailRoute) {
-                    Label(detailLabel, systemImage: "chart.xyaxis.line")
-                        .font(.caption.weight(.bold))
-                }
-                Button { showShare = true } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.caption.weight(.bold))
-                }
-                .buttonStyle(.plain)
-                if let onNextQuestion {
-                    Button { onNextQuestion() } label: {
-                        Label(nextButtonLabel, systemImage: nextButtonLabel == "Finish" ? "checkmark" : "arrow.down")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.orange)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(14)
-        .background((correct ? Color.green : Color.red).opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func generateThreshold() {
-        let actual = Double(actualPct) / 100.0
-        let goHigher = Bool.random()
-        let offset = 0.10 + Double.random(in: 0...0.15)
-        var t = goHigher ? actual + offset : actual - offset
-        t = max(0.05, min(0.95, t))
-        if abs(t - actual) < 0.10 {
-            t = actual > 0.5 ? actual - offset : actual + offset
-            t = max(0.05, min(0.95, t))
-        }
-        threshold = Int((t * 100).rounded())
-    }
-}
-
-// MARK: - Event Guess Card
-
-struct NativeEventGuessCard: View {
-    let event: FeedEventData
-    var onNextQuestion: (() -> Void)? = nil
-    var nextButtonLabel: String = "Next"
-    var onGuessCompleted: (() -> Void)? = nil
-    @State private var guess: String? = nil
-    @State private var threshold: Int = 50
-    @State private var streak: Int? = nil
-    @State private var showShare = false
-
-    private var actualPct: Int { Int(((event.currentOdds?.homeProbability ?? 0.5) * 100).rounded()) }
-    private var correct: Bool {
-        guard let g = guess else { return false }
-        return g == "higher" ? actualPct > threshold : actualPct < threshold
-    }
-
-    private var homeColor: Color {
-        Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
-    }
-
-    private var awayColor: Color {
-        Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
-    }
-
-    private var shareText: String {
-        let result = correct ? "Got it right" : "Missed it"
-        return "\(result)! \(event.homeTeam) was \(actualPct)% to win. Can you beat my streak? bainluck.com/discover"
-    }
-
-    private func submitGuess(_ g: String) {
-        guess = g
-        let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
-        onGuessCompleted?()
-        let cat = event.sport?.split(separator: "_").first.map(String.init)
-        AnalyticsService.trackPredictionSubmit(
-            marketId: event.id,
-            guess: g,
-            threshold: threshold,
-            actualProbability: event.currentOdds?.homeProbability ?? 0.5,
-            correct: isCorrect,
-            contentType: "event",
-            category: cat
-        )
-        Task {
-            let request = PredictionRequest(
-                marketId: event.id,
-                guess: g,
-                threshold: threshold,
-                actualProbability: event.currentOdds?.homeProbability ?? 0.5,
-                correct: isCorrect,
-                category: cat
-            )
-            _ = try? await APIClient.shared.submitPrediction(request)
-            if let stats = try? await APIClient.shared.fetchPredictionStats() {
-                streak = stats.currentStreak
-            }
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("What's the probability?", systemImage: "target")
-                    .font(.system(size: 11, weight: .heavy))
-                    .tracking(0.8)
-                    .foregroundStyle(.orange)
-                    .textCase(.uppercase)
-                Spacer()
-                Text((event.sportName ?? event.sport ?? "GAME").uppercased())
-                    .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.10), in: Capsule())
-            }
-
-            matchupPanel()
-
-            if guess == nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Is \(shortName(event.homeTeam)) to win higher or lower than")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(threshold)%")
-                        .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
-                        .foregroundStyle(homeColor)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
-
-                HStack(spacing: 12) {
-                    guessButton(label: "Higher", systemImage: "arrow.up", color: .green) {
-                        submitGuess("higher")
-                    }
-                    guessButton(label: "Lower", systemImage: "arrow.down", color: .red) {
-                        submitGuess("lower")
-                    }
-                }
-                .buttonStyle(.plain)
-            } else {
-                resultPanel()
-                    .sheet(isPresented: $showShare) {
-                        ShareSheet(text: shareText)
-                    }
-            }
-        }
-        .padding(16)
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.orange.opacity(0.32), lineWidth: 1.5))
-        .shadow(color: .orange.opacity(0.08), radius: 12, x: 0, y: 5)
-        .onAppear { generateThreshold() }
-    }
-
-    private func matchupPanel() -> some View {
-        HStack(spacing: 10) {
+        return HStack(spacing: 10) {
             teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall, color: awayColor)
 
             VStack(spacing: 4) {
@@ -1350,7 +1325,7 @@ struct NativeEventGuessCard: View {
                     .fill(color)
                     .frame(width: 36, height: 36)
             }
-            Text(shortName(name))
+            Text(NativeGuessCardContent.shortName(name))
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
         }
@@ -1378,11 +1353,9 @@ struct NativeEventGuessCard: View {
                 .padding(.vertical, 5)
                 .background((correct ? Color.green : Color.red).opacity(0.12), in: Capsule())
 
-            Text("\(actualPct)%")
-                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
-                .foregroundStyle(homeColor)
+            resultProbabilityText()
 
-            Text(event.homeTeam)
+            Text(content.resultSubject)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -1395,8 +1368,8 @@ struct NativeEventGuessCard: View {
             }
 
             HStack(spacing: 10) {
-                NavigationLink(value: Route.eventDetail(id: event.id)) {
-                    Label("See full game", systemImage: "chart.xyaxis.line")
+                NavigationLink(value: content.detailRoute) {
+                    Label(content.detailLabel, systemImage: "chart.xyaxis.line")
                         .font(.caption.weight(.bold))
                 }
                 Button { showShare = true } label: {
@@ -1419,8 +1392,18 @@ struct NativeEventGuessCard: View {
         .background((correct ? Color.green : Color.red).opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func shortName(_ name: String) -> String {
-        name.split(separator: " ").last.map(String.init) ?? name
+    @ViewBuilder
+    private func resultProbabilityText() -> some View {
+        if content.animatesResult {
+            Text("\(displayPct)%")
+                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(content.resultColor ?? .primary)
+                .contentTransition(.numericText())
+        } else {
+            Text("\(actualPct)%")
+                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(content.resultColor ?? .primary)
+        }
     }
 
     private func generateThreshold() {

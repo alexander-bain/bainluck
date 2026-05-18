@@ -15,6 +15,7 @@
 - ✅ **Daily Challenge component extracted** — `NativeDailyChallengeCard` and `NativeChallengeSheet` moved out of `DiscoverView.swift` into `Components/DailyChallengeCard.swift`.
 - ✅ **Resolution card component extracted** — `NativeResolutionCard` moved out of `DiscoverView.swift` into `Components/ResolutionCard.swift`.
 - ✅ **Discover card components extracted** — `NativeEventDiscoverCard` and `NativeFuturesDiscoverCard` moved out of `DiscoverView.swift` into focused component files.
+- ✅ **Guess card logic unified** — `NativeGuessCard` now renders both futures and event Higher/Lower questions; the duplicated `NativeEventGuessCard` implementation was removed.
 - ✅ **Shared card context menu extracted** — Feed and Discover now use `Components/CardContextMenu.swift` for copy probability, copy/share link, pin/unpin, macOS new-window, and Less Like This actions.
 - ✅ **Hidden Futures browser rebuild groundwork** — the native Futures browser remains hidden, but now has a grouped category rail, polished market rows, reusable browse components, and loading/error/empty states for iOS-7 review.
 - ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.

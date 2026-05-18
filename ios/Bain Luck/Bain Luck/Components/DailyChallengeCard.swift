@@ -182,7 +182,7 @@ struct NativeChallengeSheet: View {
                 onGuessCompleted: onGuessCompleted
             )
         } else if item.type == "event", let event = item.event {
-            NativeEventGuessCard(
+            NativeGuessCard(
                 event: event,
                 onNextQuestion: advance,
                 nextButtonLabel: label,

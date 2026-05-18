@@ -1281,7 +1281,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-4~~ | ~~Extract clipboard utility~~ | `Utilities/Clipboard.swift`, native card menus | ✅ DONE May 17 — shared `copyToClipboard(_:)` replaces duplicated string-copy pasteboard blocks. Bug-report screenshot pasteboard read remains intentional. |
 | ~~CQ-5~~ | ~~Extract share URL builders~~ | `Utilities/ShareURLs.swift`, native share links | ✅ DONE May 17 — shared `eventShareURL(_:)` and `futuresShareURL(_:)` preserve Discover native-card UTM links and Feed/My Stuff plain links. |
-| CQ-6 | Unify guess cards | New `Components/GuessCardView.swift` | `NativeGuessCard` and `NativeEventGuessCard` are 90% identical. Merge into one generic component. Deletes ~400 lines from DiscoverView |
+| ~~CQ-6~~ | ~~Unify guess cards~~ | `DiscoverView.swift`, `DailyChallengeCard.swift` | ✅ DONE May 17 — `NativeGuessCard` now handles both futures and event questions through typed content initializers; duplicate `NativeEventGuessCard` removed. |
 | ~~CQ-7~~ | ~~Shared context menu~~ | `Components/CardContextMenu.swift` | ✅ DONE May 17 — shared Feed/Discover context menu now owns copy probability, copy link, share, pin/unpin, macOS new-window, and Less Like This actions. |
 
 ### Wave 3: Split DiscoverView (2 hours)
