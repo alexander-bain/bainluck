@@ -419,7 +419,7 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 
 **Files:** `backend/scripts/calibrate_interestingness.py`, new export script, admin panel
 
-**May 18 export/reporting slices shipped:** `backend/scripts/export_discover_interestingness.py` exports Discover interactions joined with futures/event metadata to CSV or JSONL, including impression/action counts, positive/negative engagement rates, labels, category share, probability, movement, volume, and source count. It is read-only, supports `--print-sql`, feeds directly into `scripts/calibrate_interestingness.py`, and now has `--summary` / `--summary-json` reporting for engagement by category and feed-score bucket plus over/under-ranked category opportunities. Remaining work: scheduled export/import, admin scatterplots, and human-reviewed weight changes.
+**May 18 export/reporting slices shipped:** `backend/scripts/export_discover_interestingness.py` exports Discover interactions joined with futures/event metadata to CSV or JSONL, including impression/action counts, positive/negative engagement rates, labels, category share, probability, movement, volume, and source count. It is read-only, supports `--print-sql`, feeds directly into `scripts/calibrate_interestingness.py`, and now has `--summary` / `--summary-json` reporting for engagement by category and feed-score bucket plus over/under-ranked category opportunities. `/admin/discover-quality` also shows feed-score bucket engagement from `/api/admin/discover-engagement`. Remaining work: scheduled export/import, richer admin scatterplots, and human-reviewed weight changes.
 
 ---
 

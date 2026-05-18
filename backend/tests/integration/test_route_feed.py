@@ -418,6 +418,13 @@ class TestDiscoverInteractions:
             ("native", "basketball", "event", "open", 4),
             ("native", "basketball", "event", "share", 1),
         ]
+        score_buckets = MagicMock()
+        score_buckets.all.return_value = [
+            (95, "impression", 10),
+            (95, "detail_click", 3),
+            (35, "impression", 10),
+            (35, "dismiss", 2),
+        ]
         top_items = MagicMock()
         top_items.all.return_value = [
             ("event", "1", "Lakers vs Celtics", "basketball", "native", 2),
@@ -453,6 +460,7 @@ class TestDiscoverInteractions:
         decisions.scalars.return_value.all.return_value = []
         mock_db.execute.side_effect = [
             grouped,
+            score_buckets,
             review,
             decisions,
             repeat,
@@ -468,6 +476,10 @@ class TestDiscoverInteractions:
         assert body["totals"]["impressions"] == 20
         assert body["totals"]["opens"] == 4
         assert body["totals"]["shares"] == 1
+        assert body["score_buckets"][0]["bucket"] == "90-99"
+        assert body["score_buckets"][0]["open_rate"] == 0.3
+        assert body["score_buckets"][1]["bucket"] == "30-39"
+        assert body["score_buckets"][1]["dismiss_rate"] == 0.2
         assert any(
             row["surface"] == "native"
             and row["category"] == "basketball"

@@ -454,6 +454,76 @@ async def discover_engagement_summary(
             }
         )
 
+    score_result = await db.execute(
+        select(
+            DiscoverInteraction.score,
+            DiscoverInteraction.action,
+            func.count(DiscoverInteraction.id).label("count"),
+        )
+        .where(DiscoverInteraction.created_at >= cutoff)
+        .group_by(DiscoverInteraction.score, DiscoverInteraction.action)
+    )
+    score_buckets: dict[str, dict] = {}
+    for score, action, count in score_result.all():
+        label = _score_bucket_label(score)
+        bucket = score_buckets.setdefault(
+            label,
+            {
+                "bucket": label,
+                "impressions": 0,
+                "opens": 0,
+                "dismisses": 0,
+                "shares": 0,
+                "context_expands": 0,
+                "actions": 0,
+            },
+        )
+        n = int(count or 0)
+        if action == "impression":
+            bucket["impressions"] += n
+        elif action in ("detail_click", "open"):
+            bucket["opens"] += n
+            bucket["actions"] += n
+        elif action == "dismiss":
+            bucket["dismisses"] += n
+            bucket["actions"] += n
+        elif action == "share":
+            bucket["shares"] += n
+            bucket["actions"] += n
+        elif action == "context_expand":
+            bucket["context_expands"] += n
+            bucket["actions"] += n
+        else:
+            bucket["actions"] += n
+
+    score_bucket_rows = []
+    for bucket in score_buckets.values():
+        impressions = bucket["impressions"]
+        score_bucket_rows.append(
+            {
+                **bucket,
+                "open_rate": round(bucket["opens"] / impressions, 4) if impressions else 0,
+                "dismiss_rate": round(bucket["dismisses"] / impressions, 4) if impressions else 0,
+                "share_rate": round(bucket["shares"] / impressions, 4) if impressions else 0,
+                "context_expand_rate": round(bucket["context_expands"] / impressions, 4)
+                if impressions
+                else 0,
+                "engagement_score": round(
+                    (
+                        bucket["opens"]
+                        + bucket["shares"]
+                        + bucket["context_expands"]
+                        - bucket["dismisses"]
+                    )
+                    / impressions,
+                    4,
+                )
+                if impressions
+                else 0,
+            }
+        )
+    score_bucket_rows.sort(key=lambda row: _score_bucket_sort_key(row["bucket"]), reverse=True)
+
     opportunities = []
     for row in rows:
         impressions = row["impressions"]
@@ -879,6 +949,7 @@ async def discover_engagement_summary(
             else 0,
         },
         "groups": sorted(rows, key=lambda r: (r["surface"], -r["impressions"], r["category"]))[:100],
+        "score_buckets": score_bucket_rows,
         "opportunities": sorted(opportunities, key=lambda r: r["priority"], reverse=True)[:20],
         "review_queue": sorted(review_queue, key=lambda r: r["priority"], reverse=True)[:50],
         "runtime_config": runtime_config,
@@ -920,6 +991,30 @@ async def discover_engagement_summary(
             for item_type, item_id, item_name, category, surface, actions in top_items_result.all()
         ],
     }
+
+
+def _score_bucket_label(score: int | None) -> str:
+    if score is None:
+        return "unknown"
+    try:
+        value = int(score)
+    except (TypeError, ValueError):
+        return "unknown"
+    if value >= 100:
+        return "100"
+    floor = max(0, min(90, (value // 10) * 10))
+    return f"{floor:02d}-{floor + 9:02d}"
+
+
+def _score_bucket_sort_key(label: str) -> int:
+    if label == "100":
+        return 100
+    if label == "unknown":
+        return -1
+    try:
+        return int(label.split("-", 1)[0])
+    except (TypeError, ValueError):
+        return -1
 
 
 @router.get("/bug-reports")
