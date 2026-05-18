@@ -37,6 +37,18 @@ def _anonymous_ctx() -> PersonalizationContext:
     return PersonalizationContext()
 
 
+def _anonymous_session_ctx(
+    discover_category_affinities=None,
+    discover_feature_affinities=None,
+) -> PersonalizationContext:
+    """Anonymous context with session-derived Discover behavior."""
+    return PersonalizationContext(
+        discover_category_affinities=discover_category_affinities or {},
+        discover_feature_affinities=discover_feature_affinities or {},
+        is_authenticated=False,
+    )
+
+
 def _basic_ctx(
     team_relations=None,
     team_weights=None,
@@ -66,7 +78,7 @@ def _basic_ctx(
 # ============================================================================
 
 class TestAnonymousUser:
-    """Anonymous users should always get multiplier=1.0 with no personalization."""
+    """Anonymous users get 1.0x unless there are session Discover signals."""
 
     def test_anonymous_event_returns_1x(self):
         ctx = _anonymous_ctx()
@@ -90,6 +102,28 @@ class TestAnonymousUser:
         )
         result = compute_event_multiplier(ctx, home_team_id=1, away_team_id=2, sport_key="basketball_nba")
         assert result.multiplier == 1.0
+
+    def test_anonymous_session_category_signal_personalizes_futures(self):
+        """Anonymous sessions can still get recent Discover category ranking."""
+        ctx = _anonymous_session_ctx(discover_category_affinities={"tech": 0.12})
+        result = compute_futures_multiplier(ctx, sport_category="tech", outcome_team_ids=[])
+        assert result.multiplier == pytest.approx(1.12)
+        assert result.is_personalized
+        assert "discover_interest:0.12" in result.reasons
+
+    def test_anonymous_session_feature_signal_personalizes_events(self):
+        """Anonymous session likes/unlikes can rank matching event features."""
+        ctx = _anonymous_session_ctx(discover_feature_affinities={"region:massachusetts": -0.07})
+        result = compute_event_multiplier(
+            ctx,
+            home_team_id=None,
+            away_team_id=None,
+            sport_key=None,
+            feature_tokens=["region:massachusetts"],
+        )
+        assert result.multiplier == pytest.approx(0.93)
+        assert result.is_personalized
+        assert "discover_feature_dislike:region:massachusetts:-0.07" in result.reasons
 
 
 # ============================================================================
@@ -774,6 +808,41 @@ class TestDiscoverCategoryAffinity:
         )
         assert result.multiplier == pytest.approx(0.92)
         assert any("discover_feature_dislike" in r for r in result.reasons)
+
+    def test_entity_like_boosts_matching_card_only(self):
+        ctx = _basic_ctx(discover_feature_affinities={"entity:noah_kahan": 0.10})
+        matching = compute_futures_multiplier(
+            ctx,
+            sport_category="entertainment",
+            outcome_team_ids=[],
+            feature_tokens=["entity:noah_kahan"],
+        )
+        unrelated = compute_futures_multiplier(
+            ctx,
+            sport_category="entertainment",
+            outcome_team_ids=[],
+            feature_tokens=["entity:taylor_swift"],
+        )
+        assert matching.multiplier == pytest.approx(1.10)
+        assert "discover_feature_interest:entity:noah_kahan:0.10" in matching.reasons
+        assert unrelated.multiplier == 1.0
+        assert unrelated.reasons == []
+
+    def test_repeated_entity_unlikes_stay_soft_for_followed_team(self):
+        ctx = _basic_ctx(
+            team_relations={10: {"follow"}},
+            team_weights={10: 1.0},
+            discover_feature_affinities={"entity:new_york_yankees": -9.0},
+        )
+        result = compute_futures_multiplier(
+            ctx,
+            sport_category="baseball",
+            outcome_team_ids=[10],
+            feature_tokens=["entity:new_york_yankees"],
+        )
+        assert result.multiplier == pytest.approx(1.0 + FOLLOW_BONUS + FEATURE_DISLIKE_MAX_PENALTY)
+        assert any("your_team_futures" in r for r in result.reasons)
+        assert "discover_feature_dislike:entity:new_york_yankees:-0.12" in result.reasons
 
     def test_feature_signal_is_capped(self):
         ctx = _basic_ctx(discover_feature_affinities={

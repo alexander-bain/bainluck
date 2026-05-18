@@ -23,6 +23,12 @@ STABLE_EXPORT_CSV_TEXT = """date,source,market_name,category,leader,leader_proba
 5/11/2026,polymarket,Will Taylor Swift be pregnant in 2026?,entertainment,Yes,22%,2026-12-31,Email,entertainment,Hook,9,this_month,9
 """
 
+DEDUPING_CSV_TEXT = """Date,Source,Market Name,Category,Leader,Leader Probability,Resolution Date,Email Subject,LLM Category,Hook,Interestingness,Timeliness,Shareability
+2026-05-11,polymarket,  Will Fed cut rates in June?  ,economics,Yes,55%,2026-06-30,Email,economics,Hook,9,this_month,8
+2026-05-11,polymarket,WILL FED CUT RATES IN JUNE?,economics,Yes,55%,2026-06-30,Email,economics,Hook,9,this_month,8
+2026-04-01,polymarket,Old high-signal market,politics,Yes,64%,2026-12-31,Email,politics,Hook,9,ongoing,8
+"""
+
 
 def test_load_polymarket_email_ground_truth_filters_and_dedupes():
     items = load_polymarket_email_ground_truth_from_csv_text(
@@ -54,6 +60,45 @@ def test_load_polymarket_email_ground_truth_accepts_stable_export_headers():
     assert report["items"][0]["name"] == "Will Taylor Swift be pregnant in 2026?"
     assert report["items"][0]["probability"] == "22%"
     assert report["items"][0]["email_subject"] == "Email"
+
+
+def test_load_polymarket_email_ground_truth_dedupes_case_and_spacing():
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
+        DEDUPING_CSV_TEXT,
+        min_interestingness=8,
+        lookback_days=21,
+        now=datetime(2026, 5, 12, tzinfo=timezone.utc),
+    )
+
+    assert report["metadata"]["raw_row_count"] == 3
+    assert report["metadata"]["loaded_count"] == 1
+    assert report["items"][0]["name"] == "Will Fed cut rates in June?"
+
+
+def test_load_polymarket_email_ground_truth_can_disable_lookback_filter():
+    items = load_polymarket_email_ground_truth_from_csv_text(
+        DEDUPING_CSV_TEXT,
+        min_interestingness=8,
+        lookback_days=None,
+        now=datetime(2026, 5, 12, tzinfo=timezone.utc),
+    )
+
+    assert [item["name"] for item in items] == [
+        "Will Fed cut rates in June?",
+        "Old high-signal market",
+    ]
+
+
+def test_report_marks_ground_truth_stale_when_latest_email_is_old():
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
+        CSV_TEXT,
+        min_interestingness=8,
+        lookback_days=None,
+        now=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+
+    assert report["metadata"]["latest_date"] == "2026-05-11"
+    assert report["metadata"]["stale"] is True
 
 
 def test_sheet_values_to_csv_reuses_stable_parser():

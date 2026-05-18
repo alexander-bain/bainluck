@@ -197,6 +197,31 @@ class TestGetSportKeyFromTicker:
     def test_none(self):
         assert get_sport_key_from_ticker(None) is None
 
+    @pytest.mark.parametrize(
+        ("ticker", "expected_sport_key"),
+        [
+            ("KXNBASPREAD-26FEB19BOSGSW", "basketball_nba"),
+            ("KXNBA2HTOTAL-26FEB19BOSGSW", "basketball_nba"),
+            ("KXNFLPASSTDS-26SEP07KCBUF", "americanfootball_nfl"),
+            ("KXNFLTEAMFIRSTTD-26SEP07KCBUF", "americanfootball_nfl"),
+            ("KXNHLFIRSTGOAL-26MAR30BOSMON", "icehockey_nhl"),
+            ("KXMLBF5TOTAL-26APR01NYYBOS", "baseball_mlb"),
+            ("KXNCAAMB1HSPREAD-26JAN20DUKEUNC", "basketball_ncaab"),
+            ("KXNCAABBSPREAD-26MAY30LSUTEX", "baseball_ncaa"),
+            ("KXNCAAF2HTOTAL-26NOV28MICHOSU", "americanfootball_ncaaf"),
+            ("KXMLSBTTS-26JUN14LAFSEA", "soccer_usa_mls"),
+            ("KXSOCTOTAL-26DEC26ARSAVL", "soccer_epl"),
+            ("KXATPGAMESPREAD-26JUL01SINNERALCARAZ", "tennis_atp"),
+            ("KXUFCDISTANCE-26FEB20", "mma_mixed_martial_arts"),
+            ("KXCS2MAPWINNER-26JUN10", "esports"),
+        ],
+    )
+    def test_game_market_linking_tickers_resolve_to_expected_sports(
+        self, ticker, expected_sport_key
+    ):
+        assert get_sport_key_from_ticker(ticker) == expected_sport_key
+        assert is_kalshi_game_ticker(ticker) is True
+
 
 class TestIsKalshiGameTicker:
     def test_nba_game(self):
@@ -285,6 +310,49 @@ class TestGetSportKeysForCategory:
     def test_empty_string(self):
         assert get_sport_keys_for_category("") is None
 
+    @pytest.mark.parametrize(
+        ("category", "required_sport_keys"),
+        [
+            (
+                "basketball",
+                {
+                    "basketball_nba",
+                    "basketball_wnba",
+                    "basketball_ncaab",
+                    "basketball_wncaab",
+                },
+            ),
+            ("football", {"americanfootball_nfl", "americanfootball_ncaaf"}),
+            ("baseball", {"baseball_mlb"}),
+            ("hockey", {"icehockey_nhl"}),
+            ("soccer", {"soccer_epl", "soccer_usa_mls", "soccer_uefa_champs_league"}),
+            ("tennis", {"tennis_atp", "tennis_wta"}),
+            ("mma", {"mma_mixed_martial_arts"}),
+        ],
+    )
+    def test_discover_sports_category_filters_include_core_sport_keys(
+        self, category, required_sport_keys
+    ):
+        result = get_sport_keys_for_category(category)
+        assert result is not None
+        assert required_sport_keys.issubset(set(result))
+
+    @pytest.mark.parametrize(
+        ("category", "excluded_sport_keys"),
+        [
+            ("basketball", {"baseball_mlb", "americanfootball_nfl", "icehockey_nhl"}),
+            ("football", {"basketball_nba", "baseball_mlb", "icehockey_nhl"}),
+            ("baseball", {"basketball_nba", "americanfootball_nfl", "icehockey_nhl"}),
+            ("hockey", {"basketball_nba", "americanfootball_nfl", "baseball_mlb"}),
+        ],
+    )
+    def test_discover_sports_category_filters_do_not_cross_major_sports(
+        self, category, excluded_sport_keys
+    ):
+        result = get_sport_keys_for_category(category)
+        assert result is not None
+        assert set(result).isdisjoint(excluded_sport_keys)
+
 
 class TestGetLlmCategoryForPrefix:
     def test_known_prefix(self):
@@ -292,6 +360,29 @@ class TestGetLlmCategoryForPrefix:
 
     def test_passthrough(self):
         assert get_llm_category_for_prefix("unknown_prefix") == "unknown_prefix"
+
+    @pytest.mark.parametrize(
+        ("ticker", "expected_category"),
+        [
+            ("KXNFLMVP-26", "football"),
+            ("KXNBAMVP-26", "basketball"),
+            ("KXMLBWS-26", "baseball"),
+            ("KXNCAABASEBALL-26", "baseball"),
+            ("KXNHLHART-26", "hockey"),
+            ("KXEPLTOP4-26", "soccer"),
+            ("KXATPFINALS-26", "tennis"),
+            ("KXUFCWHITEHOUSE-26", "mma"),
+            ("KXEWCMLBB-26", "esports"),
+            ("KXF1WDC-26", "motorsports"),
+        ],
+    )
+    def test_discover_category_routing_for_representative_futures(
+        self, ticker, expected_category
+    ):
+        sport_key = get_sport_key_from_ticker(ticker)
+        assert sport_key is not None
+        sport_prefix = sport_key.split("_", maxsplit=1)[0]
+        assert get_llm_category_for_prefix(sport_prefix) == expected_category
 
 
 # =============================================================================

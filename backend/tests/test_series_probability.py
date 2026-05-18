@@ -108,6 +108,68 @@ class TestSeriesWinProbNonCoinFlip:
         assert result == 0.0
 
 
+class TestSeriesWinProbHomeAway:
+    """Consistency checks when viewing the same series from either team."""
+
+    @pytest.mark.parametrize(
+        ("home_win_prob", "home_wins", "away_wins"),
+        [
+            (0.58, 0, 0),
+            (0.62, 2, 1),
+            (0.47, 1, 3),
+            (0.71, 3, 3),
+        ],
+    )
+    def test_home_and_away_views_are_complements(
+        self, home_win_prob, home_wins, away_wins
+    ):
+        """Home P(series) + away P(series) should sum to 1 from swapped views."""
+        home_series_prob = compute_series_win_prob(
+            home_win_prob, home_wins, away_wins, games_to_win=4
+        )
+        away_series_prob = compute_series_win_prob(
+            1 - home_win_prob, away_wins, home_wins, games_to_win=4
+        )
+
+        assert home_series_prob + away_series_prob == pytest.approx(1.0)
+
+    def test_home_away_game_seven_matches_single_game_probabilities(self):
+        """At 3-3, each side's series chance should equal its Game 7 chance."""
+        home_win_prob = 0.57
+
+        home_series_prob = compute_series_win_prob(
+            home_win_prob, 3, 3, games_to_win=4
+        )
+        away_series_prob = compute_series_win_prob(
+            1 - home_win_prob, 3, 3, games_to_win=4
+        )
+
+        assert home_series_prob == pytest.approx(home_win_prob)
+        assert away_series_prob == pytest.approx(1 - home_win_prob)
+
+
+class TestSeriesWinProbCompletedGames:
+    """Completed series should be terminal regardless of future game odds."""
+
+    @pytest.mark.parametrize(
+        ("game_prob", "team_wins", "opponent_wins", "expected"),
+        [
+            (0.0, 4, 3, 1.0),
+            (1.0, 3, 4, 0.0),
+            (0.23, 4, 0, 1.0),
+            (0.77, 0, 4, 0.0),
+        ],
+    )
+    def test_completed_series_score_overrides_remaining_game_probability(
+        self, game_prob, team_wins, opponent_wins, expected
+    ):
+        result = compute_series_win_prob(
+            game_prob, team_wins, opponent_wins, games_to_win=4
+        )
+
+        assert result == expected
+
+
 class TestSeriesWinProbBestOf:
     """Different series lengths."""
 
@@ -157,6 +219,24 @@ class TestSeriesWinProbValidation:
         with pytest.raises(ValueError, match="at least 1"):
             compute_series_win_prob(0.5, 0, 0, games_to_win=0)
 
+    @pytest.mark.xfail(
+        reason="compute_series_win_prob currently accepts impossible terminal scores",
+        strict=True,
+    )
+    @pytest.mark.parametrize(
+        ("team_wins", "opponent_wins"),
+        [
+            (4, 4),
+            (5, 1),
+            (1, 5),
+        ],
+    )
+    def test_impossible_series_scores_raise(self, team_wins, opponent_wins):
+        with pytest.raises(ValueError, match="impossible|invalid"):
+            compute_series_win_prob(
+                0.5, team_wins, opponent_wins, games_to_win=4
+            )
+
 
 class TestSeriesWinProbSymmetry:
     """Symmetry and consistency checks."""
@@ -178,6 +258,46 @@ class TestSeriesWinProbSymmetry:
         tied = compute_series_win_prob(0.5, 2, 2, games_to_win=4)
         leading = compute_series_win_prob(0.5, 3, 2, games_to_win=4)
         assert leading > tied
+
+    @pytest.mark.parametrize(
+        ("team_wins", "opponent_wins"),
+        [
+            (0, 0),
+            (1, 1),
+            (2, 2),
+            (3, 2),
+            (2, 3),
+        ],
+    )
+    def test_series_probability_increases_monotonically_with_game_probability(
+        self, team_wins, opponent_wins
+    ):
+        """Better per-game odds should never reduce series odds."""
+        low = compute_series_win_prob(0.35, team_wins, opponent_wins)
+        medium = compute_series_win_prob(0.50, team_wins, opponent_wins)
+        high = compute_series_win_prob(0.65, team_wins, opponent_wins)
+
+        assert low < medium < high
+
+    def test_each_additional_team_win_increases_series_probability(self):
+        """At fixed opponent wins, each added team win should improve the outlook."""
+        outcomes = [
+            compute_series_win_prob(0.55, team_wins, 1, games_to_win=4)
+            for team_wins in range(4)
+        ]
+
+        assert outcomes == sorted(outcomes)
+        assert len(set(outcomes)) == len(outcomes)
+
+    def test_each_additional_opponent_win_decreases_series_probability(self):
+        """At fixed team wins, each added opponent win should hurt the outlook."""
+        outcomes = [
+            compute_series_win_prob(0.55, 1, opponent_wins, games_to_win=4)
+            for opponent_wins in range(4)
+        ]
+
+        assert outcomes == sorted(outcomes, reverse=True)
+        assert len(set(outcomes)) == len(outcomes)
 
 
 # =============================================================================
