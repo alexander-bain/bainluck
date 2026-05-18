@@ -981,14 +981,15 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 4. Smart features: game start notifications, EI spike alerts, optional heartbeat audio, multi-game split screen
 
 ### iOS App (SwiftUI)
-Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same production API as the web frontend. Developed across 7 phases (Feb-Mar 2026), 29 commits.
+Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same production API as the web frontend.
 
 **Architecture:**
-- **MVVM** with `@Observable` view models
+- **MVVM** with `ObservableObject` view models under `ios/Bain Luck/Bain Luck/ViewModels/`
 - **Async/await** networking via `APIClient.swift`
 - **Firebase Auth** — Google Sign-In (via `GoogleSignIn-iOS` SPM) + Apple Sign-In (native `AuthenticationServices`)
 - **Firebase Analytics** — screen views, event interactions, search queries
 - **SwiftUI Navigation** — `NavigationCoordinator` with `Route` enum for deep linking
+- **Shared native utilities** — clipboard, share URLs, formatting, sport labels, flag URLs, flow layout, and color helpers live under `Utilities/`
 
 **Key features (shipped):**
 - Section-based feed (Live Now, Just Happened, Upcoming, Top Markets) with 30s auto-refresh
@@ -1000,12 +1001,15 @@ Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same produ
 - Apple Sign-In + Google Sign-In with Keychain token storage
 - Native onboarding flow (location → teams → alma maters → sports → rivals)
 - Preferences page with app icon selection
-- iPad-native layout (sidebar navigation + max-width detail views)
+- iPad-native layout (sidebar navigation + max-width detail views). Sidebar keeps the 🍀 Bain Luck title and Calibration quick link; the unfinished Futures browser is hidden from visible production navigation pending iOS-7.
 - Category pages navigable from filter chips
 - Skeleton loading states, haptic feedback, live tab badge
+- Native Discover: swipe feedback, daily challenge, grouped market cards, resolution cards, native share sheets, first-party interaction capture, and bounded local personalization.
 
 **Files:**
-- App: `ios/Bain Luck/Bain Luck/` (46 Swift files)
+- App: `ios/Bain Luck/Bain Luck/` (108 Swift files)
+- View models: `ios/Bain Luck/Bain Luck/ViewModels/`
+- Utilities: `ios/Bain Luck/Bain Luck/Utilities/`
 - SPM dependencies: `GoogleSignIn-iOS`, `firebase-ios-sdk`
 - Not in App Store yet — TestFlight distribution
 
@@ -1014,6 +1018,7 @@ Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same produ
 - `Combine` import needed for `URLSession.DataTaskPublisher` even with async/await
 - Firebase `GIDSignIn` requires URL scheme in Info.plist (`REVERSED_CLIENT_ID`)
 - Chart aggregation uses 60s buckets (vs web's 30s) for smoother rendering on smaller screens
+- Extracted Swift files need their own imports and visibility. If a view model moves out of a view file, add `Foundation` for `localizedDescription`/string helpers and make shared helpers module-visible when needed.
 
 ### Golf Landing Page
 Bespoke category page for golf at `/categories/golf`. Aggregates tournament odds from Polymarket, Kalshi, and The Odds API with rich tournament context.

@@ -1,5 +1,23 @@
 # Completed Features (Shipped)
 
+## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
+
+### Rage Shake / Native Discover Fixes
+- ✅ **Native Discover swipe/replenishment fixes** — positive swipes now complete, dismissed cards are replaced instead of emptying the feed, refresh resets local visible/dismissed state, and guess cards skip nil-probability markets.
+- ✅ **Native Discover feed quality pass** — sports-heavy first pages were downranked with stronger category diversity, regional/context signals, and Red Sox/Boston-style affinity hooks. Backend feed now emits stable grouping metadata for native dedupe.
+- ✅ **Sports/My Stuff/native page decode fixes** — Sports feed now backfills beyond live cards; My Stuff hides noisy global category futures; league/native pages use corrected probability field types and response decoding.
+- ✅ **Futures tab removed from prod navigation** — The unfinished native Futures browser entry point is hidden from production sidebar/tab navigation and tracked as iOS-7 for rebuild. The 🍀 Bain Luck sidebar title and Calibration entry point remain visible.
+- ✅ **Native onboarding/sidebar polish** — fixed truncated percentage text, line-broken sidebar labels, and the oversized placeholder icon in the sidebar title.
+
+### Native Maintainability Sweep
+- ✅ **All native ViewModels moved into `ViewModels/`** — extracted embedded `ObservableObject` classes from view files, including Discover, Feed, My Stuff, Event Detail, category pages, Search, Calibration, Daily Challenge, league/category grids, and futures detail/list.
+- ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.
+- ✅ **Shared native utilities** — extracted clipboard, share URL, formatting, sport display, flag URL, flow layout, and color helpers. Share links now avoid force-unwrapped URLs.
+- ✅ **Native model/service docs** — added concise doc comments across native model types and key API/auth/navigation service methods.
+- ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches.
+
+**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`
+
 ## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
 
 ### Shareable Prediction Scorecards

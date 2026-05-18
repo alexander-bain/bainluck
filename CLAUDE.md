@@ -39,7 +39,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 |-----|---------|---------------|
 | `docs/backlog.md` | All outstanding work items (SINGLE SOURCE OF TRUTH) | When items ship, are added, or reprioritized |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
-| `docs/gotchas-reference.md` | Extended gotchas (items 16-62) | When new gotchas discovered |
+| `docs/gotchas-reference.md` | Extended gotchas (items 16-75) | When new gotchas discovered |
 | `docs/quality-audit.md` | Audit script usage, check catalog | When checks added/removed |
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
@@ -56,7 +56,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS/macOS App | SwiftUI (shared codebase, 89 Swift files) | TestFlight / direct |
+| iOS/macOS App | SwiftUI (shared codebase, 108 Swift files) | TestFlight / direct |
 
 **Key External Services:**
 - **The Odds API** — Sports odds data (~$119/mo, 5M monthly quota — monitor closely)
@@ -114,7 +114,7 @@ bainluck/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
 │   └── lib/                     # API client, types, utilities
-├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 89 Swift files)
+├── ios/Bain Luck/               # iOS + macOS app (SwiftUI, 108 Swift files)
 └── docs/                        # Documentation
 ```
 
@@ -157,13 +157,16 @@ Each category page follows the same pattern:
 **iOS Authentication** (`ios/.../Services/AuthManager.swift`):
 Backend-session-token pattern, NOT typical Firebase client auth. iOS SDK handles OAuth popup (Apple native / Google GID SDK) → raw credential sent to Bain Luck backend (`POST /api/auth/apple` or `/api/auth/google-access-token`) → backend verifies with identity provider, creates Firebase user, issues PyJWT session token (HS256, 30-day TTL) → iOS stores in Keychain, sends as `Bearer` on all API calls. Originated as Safari ITP workaround; iOS uses the same flow. Silent Google restore on token expiry. Apple credential revocation checked on foreground.
 
+**Native iOS/macOS Code Organization** (`ios/Bain Luck/Bain Luck/`):
+SwiftUI views live under `Views/`, shared UI under `Components/`, cross-platform helpers under `Utilities/`, API/auth/navigation under `Services/`, and all `ObservableObject` view models under `ViewModels/`. View models use `@MainActor` on async mutating methods rather than class-wide isolation unless a specific class needs it. Published state that views only read should be `private(set)`; fields bound from views, such as search query or selected filters, remain mutable. String-copy/share logic should go through `copyToClipboard`, `eventShareURL`, and `futuresShareURL`. The iPad/macOS sidebar intentionally keeps the 🍀 Bain Luck title and Calibration entry point; the unfinished Futures browser entry point is hidden from production navigation until iOS-7 is rebuilt.
+
 **Market Grouping via `group_id`** (`FuturesMarket.group_id`):
 Markets that belong to the same real-world question (e.g., "Who wins Best Picture?" with 10 nominee sub-markets on Polymarket) share a `group_id`. This powers: Discover feed dedup (one card per question, not 10), cross-source matching on category pages, calibration curve accuracy, and related-market grouping on detail pages. Set during polling (`tasks/polymarket.py`: `f"polymarket:{event.id}"` for multi-market events). `market_metadata->>'polymarket_event_id'` stores the Polymarket event ID for backfilling `group_id` on markets that were ingested before the grouping logic was added.
 
 **Calibration Pipeline** (`routes/calibration.py`, `tasks/backfill_winners.py`):
 Public endpoint at `GET /api/calibration` (1h cache) returns pre-aggregated calibration buckets across 3 sources (Kalshi, Polymarket, Odds API) with `price_moved` dimension for trading activity analysis. Uses `calibration_probability` (closing line) not `opening_probability`. Virtual market reconstruction via `(is_grouped OR eligible >= 3)`. `backfill_winners` task (every 6h) runs 7 phases: group_id backfill, null untradeable (≤2 snapshots), closing lines, calibration prices (Parts A/B/C), `is_winner`. `backfill_polymarket_history` (every 6h) fetches historical prices from Polymarket's CLOB API for outcomes with sparse snapshots. Frontend page at `/calibration` with ECE metric and "Does Trading Activity Matter?" section. MCE 2.7pp as of May 14. See `docs/architecture-reference.md` for full details.
 
-**Rage Shake Bug Reporting** (`ios/.../Utils/RageShake.swift`, `routes/admin.py`, `frontend/app/admin/bug-reports/`):
+**Rage Shake Bug Reporting** (`ios/.../Services/ShakeDetector.swift`, `ios/.../Views/BugReportView.swift`, `routes/admin.py`, `frontend/app/admin/bug-reports/`):
 Shake phone or `Cmd+Shift+F` (macOS) → screenshot + app state (page, device, network, user) → `POST /api/feedback/bug-report` → admin page at `/admin/bug-reports`. Auto-diagnosis generates severity (P0-P3), root cause, and a Claude Code prompt with screenshot download command. Status flow: new → reviewed (auto on click) → actioned (added to backlog) / dismissed.
 
 ---
@@ -288,6 +291,7 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 67. **iOS Decodable models must use `Double` for probability fields** — Backend `round(prob * 100, 1)` returns floats like `72.5`, not integers. Using `Int` in the iOS Decodable model causes the entire response to fail to decode. Always use `Double` (or `Double?` for nullable fields) for any probability, percentage, or numeric score from the API.
 68. **PKCanvasView annotation coordinates require explicit frame sizing** — Using `.frame(maxHeight: 300)` without width constraint makes the canvas wider than the rendered image. Touch coordinates then include dead space, and flattening uses wrong scale factors. Always size the canvas to match the image's aspect ratio exactly, disable scroll, and use independent scaleX/scaleY with `UIScreen.main.scale` for retina.
 69. **Rapid git pushes crash Heroku** — Each push to master triggers a separate Heroku deploy. Overlapping release phases (import validation + Alembic) can exhaust resources and crash the dyno. Batch commits into single pushes, or use the CI deploy job (`concurrency: cancel-in-progress: true`) which serializes deploys. Caused a 30-minute outage May 15.
+70. **Swift file extraction changes visibility/import boundaries** — Moving native view models or helpers out of view files can expose hidden dependencies. Add required imports (`Foundation` for `localizedDescription`, string splitting/trimming, `Date`, etc.) and make shared helpers module-visible when extracted view models need them. Do not leave duplicated class definitions in both `Views/` and `ViewModels/`.
 
 ---
 

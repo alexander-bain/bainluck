@@ -298,6 +298,23 @@ Personalization layering:
 
 ---
 
+## Native iOS/macOS Architecture
+
+The native app is a shared SwiftUI codebase under `ios/Bain Luck/Bain Luck/` with the following boundaries:
+
+- `Views/` owns SwiftUI layout and navigation surfaces.
+- `ViewModels/` owns `ObservableObject` state, async loading, timers, and API orchestration.
+- `Models/` owns `Decodable` API response types and shared native data structures.
+- `Services/` owns API, auth, analytics, navigation, notifications, keychain, image cache, and pin state.
+- `Components/` owns reusable SwiftUI UI pieces.
+- `Utilities/` owns cross-platform helpers such as clipboard, share URLs, formatting, sport labels, flag URLs, colors, and layout.
+
+Native view models keep async mutating methods isolated with `@MainActor` rather than class-wide isolation unless the whole type requires it. Published state that only the view model writes is `private(set)`; fields bound directly from views, such as search text and selected filters, remain publicly mutable.
+
+Navigation uses `NavigationCoordinator` plus `AppTab` and `Route`. The visible iPad/macOS sidebar intentionally keeps the 🍀 Bain Luck title and the Calibration quick link. The unfinished Futures browser can still exist as a route/deep-link target, but its production navigation entry point is hidden until the native Futures browser is rebuilt.
+
+---
+
 ## Polymarket Game Event Decomposition (`tasks/polymarket.py`)
 
 Polymarket game events (e.g., "Magic vs. Pistons") contain ~40 sub-markets: moneyline, spread, O/U, and 20+ player props. These are NOT outcomes of one market — each sub-market has its own `condition_id` and `question`.
