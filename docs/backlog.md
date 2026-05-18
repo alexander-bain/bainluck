@@ -123,16 +123,16 @@ Root cause: status and `llm_sport_category` filters were excluding linked market
 
 **Problem:** Non-sport markets (politics, entertainment, economics, weather) from Kalshi and Polymarket show as separate cards even when they're the same question.
 
-**Current state (May 7):** Politics page now has cross-source matching built in:
-- Presidential hero merges candidates across Kalshi + Polymarket by name
-- Cross-source spotlight section finds markets on both platforms (normalized question matching), ranked by disagreement
-- **Remaining:** Entertainment, economics, weather pages still show duplicates. Canonical market key coverage incomplete.
+**Current state (May 18):** All 4 category pages (politics, entertainment, economics, weather) have cross-source matching. Shared utility extracted to `utils/cross_source_matching.py` (May 18) — 26 unit tests, ~200 lines of copy-paste removed from route files. Matching is exact-string only via `normalize_question()` (strip punctuation, lowercase, trim).
 
-**Remaining phases:** Apply same approach to entertainment/economics/weather → Audit script for coverage → Backfill NULL canonical keys.
+**Remaining:** Canonical market key coverage incomplete. Exact-string matching misses paraphrased questions (e.g., "Will the US enter a recession in 2026?" vs "US recession in 2026?"). Next steps:
+1. Audit match rate: what % of Kalshi/Polymarket pairs on category pages actually pair up?
+2. If low, add fuzzy matching (token overlap / Jaccard similarity) to `find_cross_source_markets()`
+3. Backfill NULL `canonical_market_key` values
 
 **Target:** <10% unmatched duplicates across all category pages.
 
-**Files:** `tasks/kalshi.py`, `tasks/polymarket.py`, `routes/politics.py` (done), `routes/entertainment.py`, `routes/economics.py`
+**Files:** `utils/cross_source_matching.py` (shared), `routes/politics.py`, `routes/entertainment.py`, `routes/economics.py`, `routes/weather.py`
 **Parallel Safety:** Yellow
 
 ---
@@ -392,13 +392,15 @@ Currently events and futures compete on raw score, and events dominate because l
 
 **Files:** `backend/app/routes/feed.py` (post-scoring ranking), `backend/app/utils/feed_market_quality.py` (first-page diversity)
 
-**0u-N4. Semantic similarity for dismiss propagation**
+**~~0u-N4. Semantic similarity for dismiss propagation~~** — SHIPPED May 18
 
 Story-key propagation (R7) handles cases where dismissed markets share an explicit key. For the long tail, add lightweight semantic similarity so dismissing "Chilean Primera Division champion" also suppresses "Who wins the Chilean league?" Steps:
 1. Extract entity/topic tokens from dismissed market names (reuse existing `_discover_feature_tokens()`)
 2. For each candidate market, compute Jaccard similarity of feature tokens against dismissed items
 3. If similarity > 0.6, apply a -0.30 soft penalty (not a hard filter)
 4. Cap computation cost: only compare against the 50 most recent dismisses
+
+**Fix shipped:** `_load_personalization_context()` now records semantic token sets for the 50 most recent Discover dismiss/unlike actions. `_discover_semantic_tokens()` keeps compact topic/region/team/term tokens, normalizes winner/champion language to `term:win`, and bridges league phrasing such as "Primera Division" ↔ "league". `compute_event_multiplier()` and `compute_futures_multiplier()` compare candidate tokens against those recent dismisses with Jaccard similarity, ignore generic category/type/archetype/format tokens, and apply a bounded `semantic_dismiss:-0.30` multiplier penalty when similarity is greater than 0.60. This is intentionally a soft downrank; group_id and story_key matches remain the only hard related-dismiss suppression path.
 
 **Files:** `backend/app/routes/feed.py` (scoring loop), `backend/app/utils/personalization.py`
 

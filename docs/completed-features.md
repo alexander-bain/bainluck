@@ -38,8 +38,13 @@
 - ✅ **Swipe penalty escalation** — category dislikes now escalate at 5+ and 8+ negative swipes, feature dislike caps are stronger, and the personalization multiplier lower bound is 0.15.
 - ✅ **Minor soccer futures suppression** — non-top-tier soccer futures now receive an obscure-soccer penalty and share a capped minor-soccer story family.
 - ✅ **Dismiss story/group propagation** — recent Discover dismiss/unlike feedback now suppresses related futures that share a group_id or story key, with My Teams mode exempted.
+- ✅ **Semantic dismiss propagation** — Discover now stores compact semantic tokens for the 50 most recent dismiss/unlike actions and applies a bounded `-0.30` soft penalty to similar future candidates whose Jaccard similarity is above 0.60, while ignoring generic category/type/archetype overlap.
 - ✅ **Non-major election penalty** — politics/election futures outside the major-election allowlist now receive a foreign/local election penalty while major US presidential-style markets are preserved.
 - ✅ **Discover LLM metadata penalties** — cached LLM audience scope and junk flags now apply stronger bounded downranks, and the enrichment prompt includes minor soccer, procedural politics, and commodity ladder flags.
+- ✅ **Entertainment base score boost** — entertainment base score raised from 48 to 52, culture from 45 to 48. Added 3 new compelling patterns for awards shows (Oscars, Emmy, Grammy, Eurovision), TV shows (Survivor, The Boys, Last of Us, Joe Rogan), and media platforms (Netflix, Spotify, Billboard, box office). Entertainment futures now score 67 vs previous 55, competitive with economics (70) and geopolitics (78).
+- ✅ **Event demotion: require major league for score+EI fallback** — the `score >= 90 and ei_score >= 50` demotion bypass now also requires Tier 1/2 league context. Prevents minor league games (e.g., Spanish Segunda with EI=60) from keeping full Discover scores.
+- ✅ **Cross-source matching utility extracted** — duplicated `_normalize_q()`, `_find_cross_source()`, `_is_resolved()`, `_clean_outcomes()`, `_source()` from politics/entertainment/economics routes into shared `utils/cross_source_matching.py`. 26 unit tests. Route files reduced by ~200 lines of copy-paste.
+- ✅ **Entertainment/culture highlight broadening** — futures highlighting now gives entertainment/culture markets a slightly stronger base and treats award shows, prestige TV, reality shows, box office, Rotten Tomatoes, Netflix/HBO/Disney+, Spotify, and Billboard patterns as compelling public-story candidates.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 
