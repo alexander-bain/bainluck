@@ -69,7 +69,7 @@ private struct QuickSearchItem: Identifiable {
 // MARK: - View
 
 struct SearchView: View {
-    @StateObject private var vm = SearchViewModel()
+    @StateObject private var viewModel = SearchViewModel()
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -113,20 +113,20 @@ struct SearchView: View {
                     .padding(.vertical, 8)
 
                 // Sport filter chips (shown when there's a query or results)
-                if !vm.query.trimmingCharacters(in: .whitespaces).isEmpty || vm.results != nil {
+                if !viewModel.query.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.results != nil {
                     sportFilterChips
                         .padding(.bottom, 4)
                 }
 
-                if vm.loading {
+                if viewModel.loading {
                     Spacer()
                     ProgressView()
                     Spacer()
-                } else if let results = vm.results {
+                } else if let results = viewModel.results {
                     searchResults(results)
-                } else if !vm.suggestions.isEmpty {
+                } else if !viewModel.suggestions.isEmpty {
                     suggestionList
-                } else if vm.query.trimmingCharacters(in: .whitespaces).count >= 2 {
+                } else if viewModel.query.trimmingCharacters(in: .whitespaces).count >= 2 {
                     Spacer()
                     ContentUnavailableView(
                         "Search",
@@ -149,13 +149,13 @@ struct SearchView: View {
             updateLandscapeColumns()
         }
         .task {
-            await vm.loadTrending()
+            await viewModel.loadTrending()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             if navCoordinator.selectedTab == .search,
                let query = navCoordinator.consumeSearchQuery() {
-                vm.query = query
-                Task { await vm.search() }
+                viewModel.query = query
+                Task { await viewModel.search() }
             }
         }
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
@@ -175,7 +175,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
                 .foregroundStyle(isSearchFocused ? .primary : .secondary)
-            TextField("Search teams, games, futures...", text: $vm.query)
+            TextField("Search teams, games, futures...", text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .focused($isSearchFocused)
@@ -184,17 +184,17 @@ struct SearchView: View {
                 #endif
                 .submitLabel(.search)
                 .onSubmit {
-                    Task { await vm.search() }
+                    Task { await viewModel.search() }
                 }
-                .onChange(of: vm.query) { _, _ in
-                    vm.onQueryChange()
+                .onChange(of: viewModel.query) { _, _ in
+                    viewModel.onQueryChange()
                 }
-            if !vm.query.isEmpty {
+            if !viewModel.query.isEmpty {
                 Button {
-                    vm.query = ""
-                    vm.suggestions = []
-                    vm.results = nil
-                    vm.selectedSport = ""
+                    viewModel.query = ""
+                    viewModel.suggestions = []
+                    viewModel.results = nil
+                    viewModel.selectedSport = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.subheadline)
@@ -218,12 +218,12 @@ struct SearchView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(searchSportFilters) { filter in
-                    let isSelected = vm.selectedSport == filter.key
+                    let isSelected = viewModel.selectedSport == filter.key
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            vm.selectedSport = filter.key
+                            viewModel.selectedSport = filter.key
                         }
-                        vm.onSportFilterChange()
+                        viewModel.onSportFilterChange()
                     } label: {
                         HStack(spacing: 4) {
                             if !filter.icon.isEmpty {
@@ -252,7 +252,7 @@ struct SearchView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Recent Searches
-                if !vm.recentSearches.isEmpty {
+                if !viewModel.recentSearches.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Recent")
@@ -262,7 +262,7 @@ struct SearchView: View {
                                 .padding(.horizontal, 4)
                             Spacer()
                             Button {
-                                vm.clearRecentSearches()
+                                viewModel.clearRecentSearches()
                             } label: {
                                 Text("Clear")
                                     .font(.caption)
@@ -270,11 +270,11 @@ struct SearchView: View {
                             }
                         }
 
-                        ForEach(vm.recentSearches, id: \.self) { recent in
+                        ForEach(viewModel.recentSearches, id: \.self) { recent in
                             HStack(spacing: 10) {
                                 Button {
-                                    vm.query = recent
-                                    Task { await vm.search() }
+                                    viewModel.query = recent
+                                    Task { await viewModel.search() }
                                 } label: {
                                     HStack(spacing: 8) {
                                         Image(systemName: "clock.arrow.circlepath")
@@ -293,7 +293,7 @@ struct SearchView: View {
                                 .buttonStyle(.plain)
 
                                 Button {
-                                    vm.removeRecentSearch(recent)
+                                    viewModel.removeRecentSearch(recent)
                                 } label: {
                                     Image(systemName: "xmark")
                                         .font(.caption2)
@@ -320,8 +320,8 @@ struct SearchView: View {
                     FlowLayout(spacing: 8) {
                         ForEach(quickSearches) { item in
                             quickSearchChip(icon: item.icon, label: item.label) {
-                                vm.query = item.query
-                                Task { await vm.search() }
+                                viewModel.query = item.query
+                                Task { await viewModel.search() }
                             }
                         }
                     }
@@ -346,25 +346,25 @@ struct SearchView: View {
 
                 // Trending / Explore
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(vm.trendingSearches.isEmpty ? "Explore" : "Trending")
+                    Text(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
 
                     FlowLayout(spacing: 8) {
-                        if vm.trendingSearches.isEmpty {
+                        if viewModel.trendingSearches.isEmpty {
                             ForEach(fallbackTrendingSearches) { item in
                                 quickSearchChip(icon: item.icon, label: item.label) {
-                                    vm.query = item.query
-                                    Task { await vm.search() }
+                                    viewModel.query = item.query
+                                    Task { await viewModel.search() }
                                 }
                             }
                         } else {
-                            ForEach(vm.trendingSearches) { trend in
+                            ForEach(viewModel.trendingSearches) { trend in
                                 quickSearchChip(icon: "flame.fill", label: trend.query.capitalized) {
-                                    vm.query = trend.query
-                                    Task { await vm.search() }
+                                    viewModel.query = trend.query
+                                    Task { await viewModel.search() }
                                 }
                             }
                         }
@@ -413,11 +413,11 @@ struct SearchView: View {
 
     private var suggestionList: some View {
         List {
-            if let dym = vm.didYouMean {
+            if let dym = viewModel.didYouMean {
                 Section {
                     Button {
-                        vm.query = dym
-                        vm.didYouMean = nil
+                        viewModel.query = dym
+                        viewModel.didYouMean = nil
                     } label: {
                         HStack(spacing: 4) {
                             Text("Showing results for")
@@ -432,33 +432,33 @@ struct SearchView: View {
                 }
             }
 
-            ForEach(vm.suggestions) { suggestion in
+            ForEach(viewModel.suggestions) { suggestion in
                 Button {
                     RecentSearches.save(suggestion.text)
-                    vm.recentSearches = RecentSearches.load()
+                    viewModel.recentSearches = RecentSearches.load()
 
                     switch suggestion.type {
                     case "team":
                         if let slug = suggestion.teamSlug {
                             path.append(Route.teamDetail(slug: slug))
                         } else {
-                            vm.query = suggestion.text
-                            Task { await vm.search() }
+                            viewModel.query = suggestion.text
+                            Task { await viewModel.search() }
                         }
                     case "event":
                         if let eventId = suggestion.eventId {
                             path.append(Route.eventDetail(id: eventId))
                         } else {
-                            vm.query = suggestion.text
-                            Task { await vm.search() }
+                            viewModel.query = suggestion.text
+                            Task { await viewModel.search() }
                         }
                     case "futures":
                         if let marketId = suggestion.marketId {
                             path.append(Route.futuresDetail(id: marketId))
                         }
                     default:
-                        vm.query = suggestion.text
-                        Task { await vm.search() }
+                        viewModel.query = suggestion.text
+                        Task { await viewModel.search() }
                     }
                 } label: {
                     HStack(spacing: 10) {

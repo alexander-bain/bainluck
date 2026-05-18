@@ -21,6 +21,8 @@
 - ✅ **Bug report filer email capture** — authenticated rage-shake submissions now store `user_email` at submission time so later fix notifications do not need a user-table join; anonymous submissions remain email-free.
 - ✅ **Notification route guardrails** — added focused tests for device-token registration, admin token listing redaction, Firebase test-send payloads, invalid-token hints, and unconfigured Firebase errors.
 - ✅ **Native naming cleanup slice 2** — continued `vm` to `viewModel` cleanup in Calibration, Politics, Entertainment, and Preferences views.
+- ✅ **Market interestingness scorer scaffold** — added pure 0-100 interestingness scoring utilities and a local CSV/JSON/JSONL calibration script with labeled precision/recall metrics; no feed-ranking integration yet.
+- ✅ **Native naming cleanup slice 3** — continued `vm` to `viewModel` cleanup in SearchView.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

@@ -1,273 +1,202 @@
-"""
-Calibrate feed interestingness against Polymarket ground truth.
+"""Lightweight calibration scaffold for market interestingness scoring.
 
-Reads the enriched Google Sheet, matches market names against our DB,
-compares ground truth interestingness scores against our feed scores,
-and reports gaps (markets Polymarket highlights that we rank low).
+This script intentionally does not read from the database or any external
+service. It can score CSV, JSON, or JSONL rows with optional labels so future
+ground-truth exports can be evaluated without touching runtime feed ranking.
 
 Usage:
-    heroku run --app bainluck -- python3 scripts/calibrate_interestingness.py
+    python3 scripts/calibrate_interestingness.py --input labels.csv
+    python3 scripts/calibrate_interestingness.py --input labels.json --json
 """
 
-import asyncio
+from __future__ import annotations
+
+import argparse
+import csv
 import json
 import os
 import sys
+from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-SHEET_ID = "1RztughDfCj1F691yeQWq_67UfCn3LXNpVrejZ35_4_w"
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+from app.utils.market_interestingness import (  # noqa: E402
+    MarketInterestingnessInputs,
+    score_market_interestingness,
+)
 
 
-def _get_sheets_service():
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
+def load_rows(path: str | Path) -> list[dict[str, Any]]:
+    """Load candidate rows from CSV, JSON array/object, or JSONL."""
 
-    creds_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-    if not creds_json:
-        creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        creds_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if creds_file and os.path.exists(creds_file):
-            creds_json = open(creds_file).read()
-    if not creds_json:
-        raise RuntimeError("No Google credentials found")
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open(newline="") as handle:
+            return list(csv.DictReader(handle))
 
-    creds_dict = json.loads(creds_json)
-    credentials = service_account.Credentials.from_service_account_info(
-        creds_dict, scopes=SCOPES
-    )
-    return build("sheets", "v4", credentials=credentials)
+    if suffix == ".jsonl":
+        rows = []
+        with path.open() as handle:
+            for line in handle:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        return rows
+
+    with path.open() as handle:
+        data = json.load(handle)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        rows = data.get("rows") or data.get("markets") or data.get("items")
+        if isinstance(rows, list):
+            return rows
+    raise ValueError(f"Unsupported input shape for {path}")
 
 
-async def calibrate():
-    from sqlalchemy import select, text
-    from app.tasks.base import get_task_session
-    from app.models.models import FuturesMarket, FuturesOutcome
+def score_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Score rows and append deterministic score details."""
 
-    # 1. Read ground truth from sheet
-    print("Reading ground truth sheet...")
-    service = _get_sheets_service()
-    result = service.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID,
-        range="Sheet1!A1:M1000",
-    ).execute()
-    rows = result.get("values", [])
-    if len(rows) < 2:
-        print("Sheet is empty")
-        return
-
-    headers = rows[0]
-    ground_truth = []
-    for row in rows[1:]:
-        while len(row) < 13:
-            row.append("")
-        gt = {
-            "date": row[0],
-            "market_name": row[2],
-            "regex_category": row[3],
-            "llm_category": row[8],
-            "hook": row[9],
-            "interestingness": int(row[10]) if row[10] else 0,
-            "timeliness": row[11],
-            "shareability": int(row[12]) if row[12] else 0,
-        }
-        if gt["market_name"] and gt["interestingness"] > 0:
-            ground_truth.append(gt)
-
-    print(f"Ground truth: {len(ground_truth)} enriched markets")
-
-    # 2. Match against our DB
-    print("\nMatching against futures_markets DB...")
-    async with get_task_session() as session:
-        # Get our feed scores for comparison
-        feed_result = await session.execute(text("""
-            SELECT fm.id, fm.name, fm.llm_sport_category, fm.market_tier,
-                   fm.status, fm.source,
-                   (SELECT MAX(fo.current_probability) FROM futures_outcomes fo WHERE fo.market_id = fm.id) as leader_prob,
-                   fm.volume_24h
-            FROM futures_markets fm
-            WHERE fm.status = 'open'
-            ORDER BY fm.volume_24h DESC NULLS LAST
-            LIMIT 5000
-        """))
-        db_markets = feed_result.all()
-
-    print(f"DB open markets: {len(db_markets)}")
-
-    # 3. Fuzzy match ground truth → DB
-    from difflib import SequenceMatcher
-
-    matched = []
-    unmatched = []
-
-    for gt in ground_truth:
-        gt_name = gt["market_name"].lower().strip()
-        best_match = None
-        best_score = 0
-
-        for dbm in db_markets:
-            db_name = (dbm.name or "").lower().strip()
-            # Try exact substring match first
-            if gt_name in db_name or db_name in gt_name:
-                score = 0.95
-            else:
-                score = SequenceMatcher(None, gt_name, db_name).ratio()
-
-            if score > best_score and score > 0.5:
-                best_score = score
-                best_match = dbm
-
-        if best_match and best_score > 0.5:
-            matched.append({
-                "gt": gt,
-                "db_id": best_match.id,
-                "db_name": best_match.name,
-                "db_category": best_match.llm_sport_category,
-                "db_tier": best_match.market_tier,
-                "db_source": best_match.source,
-                "db_volume": best_match.volume_24h,
-                "db_leader_prob": float(best_match.leader_prob) if best_match.leader_prob else None,
-                "match_score": best_score,
-            })
-        else:
-            unmatched.append(gt)
-
-    print(f"\nMatched: {len(matched)}/{len(ground_truth)} ({len(matched) * 100 // len(ground_truth)}%)")
-    print(f"Unmatched: {len(unmatched)}")
-
-    # 4. Analysis
-    print("\n" + "=" * 70)
-    print("CALIBRATION REPORT")
-    print("=" * 70)
-
-    # Category distribution
-    from collections import Counter
-    gt_cats = Counter(gt["llm_category"] for gt in ground_truth)
-    print("\nGround truth category distribution:")
-    for cat, count in gt_cats.most_common():
-        print(f"  {cat:20s} {count:3d} ({count * 100 // len(ground_truth)}%)")
-
-    # High-interestingness markets we DON'T have
-    print(f"\n--- HIGH-VALUE MARKETS WE'RE MISSING ({len(unmatched)} unmatched) ---")
-    high_value_missing = [gt for gt in unmatched if gt["interestingness"] >= 8]
-    high_value_missing.sort(key=lambda x: x["interestingness"], reverse=True)
-    for gt in high_value_missing[:15]:
-        print(f"  int={gt['interestingness']} share={gt['shareability']} [{gt['llm_category']:12s}] {gt['market_name'][:60]}")
-
-    # Category gaps: what categories does Polymarket highlight that we underweight?
-    print("\n--- CATEGORY GAPS ---")
-    matched_cats = Counter(m["gt"]["llm_category"] for m in matched)
-    unmatched_cats = Counter(gt["llm_category"] for gt in unmatched)
-    all_cats = set(gt_cats.keys())
-    print(f"{'Category':20s} {'GT Total':>8s} {'Matched':>8s} {'Missing':>8s} {'Match%':>8s}")
-    for cat in sorted(all_cats):
-        total = gt_cats[cat]
-        found = matched_cats.get(cat, 0)
-        missing = unmatched_cats.get(cat, 0)
-        pct = f"{found * 100 // total}%" if total > 0 else "N/A"
-        flag = " ← GAP" if missing > found else ""
-        print(f"  {cat:20s} {total:>6d} {found:>8d} {missing:>8d} {pct:>8s}{flag}")
-
-    # Interestingness distribution for matched markets
-    if matched:
-        print("\n--- MATCHED MARKET ANALYSIS ---")
-        avg_int = sum(m["gt"]["interestingness"] for m in matched) / len(matched)
-        avg_share = sum(m["gt"]["shareability"] for m in matched) / len(matched)
-        print(f"Average interestingness: {avg_int:.1f}/10")
-        print(f"Average shareability: {avg_share:.1f}/10")
-
-        # Markets with high ground truth but low DB presence (no volume)
-        low_volume_high_interest = [
-            m for m in matched
-            if m["gt"]["interestingness"] >= 8 and (m["db_volume"] is None or m["db_volume"] < 100)
-        ]
-        if low_volume_high_interest:
-            print(f"\nHigh-interest but low-volume in our DB ({len(low_volume_high_interest)}):")
-            for m in low_volume_high_interest[:10]:
-                print(f"  int={m['gt']['interestingness']} vol={m['db_volume'] or 0:>8.0f} [{m['db_category'] or '?':12s}] {m['db_name'][:50]}")
-
-    # 5. Feed ranking check — where do these markets rank in our actual feed?
-    print("\n--- FEED RANKING CHECK ---")
-    print("Fetching live feed to check where ground truth markets rank...")
-    try:
-        import httpx
-        feed_resp = httpx.get(
-            "https://api.bainluck.com/api/feed?limit=500&include_events=false",
-            timeout=30,
+    scored = []
+    for index, row in enumerate(rows):
+        result = score_market_interestingness(MarketInterestingnessInputs.from_mapping(row))
+        scored.append(
+            {
+                "index": index,
+                "id": row.get("id") or row.get("market_id") or index,
+                "name": row.get("name") or row.get("market_name") or "",
+                "label": row.get("label"),
+                "score": result.score,
+                "components": result.components,
+                "reasons": result.reasons,
+                "row": row,
+            }
         )
-        feed_data = feed_resp.json()
-        feed_items = feed_data.get("items", [])
-        feed_market_ids = set()
-        feed_rank = {}
-        for i, item in enumerate(feed_items):
-            if item.get("type") == "futures":
-                mid = item["data"].get("id")
-                feed_market_ids.add(mid)
-                feed_rank[mid] = i + 1
-
-        in_top_50 = 0
-        in_top_100 = 0
-        in_top_200 = 0
-        in_feed = 0
-        not_in_feed = 0
-
-        for m in matched:
-            db_id = m["db_id"]
-            rank = feed_rank.get(db_id)
-            if rank:
-                in_feed += 1
-                if rank <= 50: in_top_50 += 1
-                if rank <= 100: in_top_100 += 1
-                if rank <= 200: in_top_200 += 1
-            else:
-                not_in_feed += 1
-
-        print(f"  Of {len(matched)} matched ground truth markets:")
-        print(f"    In feed top 50:  {in_top_50:3d} ({in_top_50 * 100 // len(matched)}%)")
-        print(f"    In feed top 100: {in_top_100:3d} ({in_top_100 * 100 // len(matched)}%)")
-        print(f"    In feed top 200: {in_top_200:3d} ({in_top_200 * 100 // len(matched)}%)")
-        print(f"    In feed at all:  {in_feed:3d} ({in_feed * 100 // len(matched)}%)")
-        print(f"    NOT in feed:     {not_in_feed:3d} ({not_in_feed * 100 // len(matched)}%)")
-
-        # Show specific high-interest markets NOT in the feed
-        buried = [m for m in matched if m["db_id"] not in feed_market_ids and m["gt"]["interestingness"] >= 8]
-        if buried:
-            print(f"\n  High-interest markets NOT in feed ({len(buried)}):")
-            for m in buried[:10]:
-                print(f"    int={m['gt']['interestingness']} [{m['gt']['llm_category']:12s}] {m['db_name'][:55]}")
-
-        # Show what IS in the feed top 20 for comparison
-        print(f"\n  What's actually in our feed top 20:")
-        for i, item in enumerate(feed_items[:20]):
-            if item.get("type") == "futures":
-                d = item["data"]
-                cat = d.get("llm_sport_category", "?")
-                score = item.get("score", 0)
-                print(f"    #{i+1:2d} score={score:3d} [{cat:12s}] {d.get('name','')[:50]}")
-    except Exception as e:
-        print(f"  Feed check failed: {e}")
-
-    # Summary stats
-    print("\n--- SUMMARY ---")
-    print(f"Ground truth markets: {len(ground_truth)}")
-    print(f"Matched to our DB: {len(matched)} ({len(matched) * 100 // len(ground_truth)}%)")
-    print(f"Missing from DB: {len(unmatched)} ({len(unmatched) * 100 // len(ground_truth)}%)")
-    print(f"Top categories Polymarket highlights: {', '.join(c for c, _ in gt_cats.most_common(5))}")
-    top_missing_cats = unmatched_cats.most_common(3)
-    if top_missing_cats:
-        print(f"Top categories we're missing: {', '.join(f'{c}({n})' for c, n in top_missing_cats)}")
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored
 
 
-# Fix: define matched_count properly
-async def _run():
-    await calibrate()
+def evaluate_labeled_rows(
+    scored_rows: list[dict[str, Any]],
+    *,
+    label_column: str = "label",
+    top_n: int = 20,
+) -> dict[str, Any]:
+    """Compute small ranking metrics when labels are present."""
+
+    labels = []
+    for row in scored_rows:
+        raw_label = row["row"].get(label_column, row.get("label"))
+        label = _parse_label(raw_label)
+        if label is not None:
+            labels.append((row, label))
+
+    positives = [(row, label) for row, label in labels if label]
+    negatives = [(row, label) for row, label in labels if not label]
+    top_rows = scored_rows[:top_n]
+    top_positive_count = 0
+    top_labeled_count = 0
+    positive_ids = {id(row) for row, _ in positives}
+
+    for row in top_rows:
+        parsed = _parse_label(row["row"].get(label_column, row.get("label")))
+        if parsed is None:
+            continue
+        top_labeled_count += 1
+        if id(row) in positive_ids:
+            top_positive_count += 1
+
+    return {
+        "total_rows": len(scored_rows),
+        "labeled_rows": len(labels),
+        "positive_rows": len(positives),
+        "negative_rows": len(negatives),
+        "average_score": _average(row["score"] for row in scored_rows),
+        "positive_average_score": _average(row["score"] for row, _ in positives),
+        "negative_average_score": _average(row["score"] for row, _ in negatives),
+        f"precision_at_{top_n}": (
+            top_positive_count / top_labeled_count if top_labeled_count else None
+        ),
+        f"recall_at_{top_n}": (
+            top_positive_count / len(positives) if positives else None
+        ),
+    }
 
 
-def main():
-    asyncio.run(_run())
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", help="CSV, JSON, or JSONL rows to score")
+    parser.add_argument("--label-column", default="label")
+    parser.add_argument("--top-n", type=int, default=20)
+    parser.add_argument("--json", action="store_true", help="Print JSON output")
+    args = parser.parse_args()
+
+    if not args.input:
+        print("No input supplied. Pass --input with CSV, JSON, or JSONL rows.")
+        return 0
+
+    rows = load_rows(args.input)
+    scored = score_rows(rows)
+    metrics = evaluate_labeled_rows(
+        scored,
+        label_column=args.label_column,
+        top_n=args.top_n,
+    )
+
+    if args.json:
+        print(json.dumps({"metrics": metrics, "top_rows": scored[: args.top_n]}, indent=2))
+        return 0
+
+    print("Market interestingness calibration")
+    print(f"Rows: {metrics['total_rows']} ({metrics['labeled_rows']} labeled)")
+    print(f"Average score: {metrics['average_score']:.2f}")
+    if metrics["labeled_rows"]:
+        precision_key = f"precision_at_{args.top_n}"
+        recall_key = f"recall_at_{args.top_n}"
+        print(f"Positive average: {metrics['positive_average_score']:.2f}")
+        print(f"Negative average: {metrics['negative_average_score']:.2f}")
+        print(f"Precision@{args.top_n}: {_format_optional(metrics[precision_key])}")
+        print(f"Recall@{args.top_n}: {_format_optional(metrics[recall_key])}")
+
+    print("\nTop scored rows:")
+    for row in scored[: args.top_n]:
+        name = row["name"] or row["id"]
+        print(f"  {row['score']:6.2f}  {name}")
+    return 0
+
+
+def _parse_label(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "interesting", "positive"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "boring", "negative"}:
+        return False
+    try:
+        return float(normalized) > 0
+    except ValueError:
+        return None
+
+
+def _average(values: Any) -> float:
+    values = list(values)
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _format_optional(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2%}"
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1376,7 +1376,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, and Preferences views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
+| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, and Search views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)
@@ -1502,6 +1502,8 @@ Items 4, 5, 6, 8 remain (item 2 web x-axis alignment is done via `sharedChartDom
 ### 20. Market Interestingness Scoring
 
 **Goal:** Algorithmic scorer calibrated against Kalshi/Polymarket marketing emails as ground truth.
+
+**May 18 first slice shipped:** Added pure scoring utilities in `backend/app/utils/market_interestingness.py` and a local-input calibration scaffold in `backend/scripts/calibrate_interestingness.py`. It accepts CSV/JSON/JSONL rows, scores deterministic component signals, and reports optional labeled precision/recall metrics. No runtime feed ranking or database integration yet.
 
 **Phases:** (1) Ground truth collection (Gmail → Apps Script → Sheet, 50-100 labeled markets), (2) Scoring formula (8 weighted features: decisiveness, multi-source, recency, movement, resolution proximity, category novelty, volume, LLM quality), (3) Calibration (hill-climb weights, Precision@20/Recall@50/NDCG), (4) Integration (explore page, feed ranking, trending, push, featured hero).
 
