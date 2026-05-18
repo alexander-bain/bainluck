@@ -154,7 +154,16 @@ _REGIONAL_US_ELECTION_RE = re.compile(
     r"\b(state house|state senate|city council|county executive|school board)\b|"
     r"\b(republican|democratic|gop|dem)\s+(nominee|primary)\b|"
     r"\b(governor|senate|house)\s+(nominee|primary)\b|"
-    r"\b(lieutenant governor|attorney general|secretary of state)\b"
+    r"\b(lieutenant governor|secretary of state)\b|"
+    r"\b("
+    r"state|alabama|alaska|arizona|arkansas|california|colorado|connecticut|"
+    r"delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|"
+    r"kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|"
+    r"mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|"
+    r"new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|"
+    r"pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|"
+    r"utah|vermont|virginia|washington|west virginia|wisconsin|wyoming"
+    r")\s+attorney general\b"
     r")",
     re.IGNORECASE,
 )
@@ -437,6 +446,9 @@ def _story_key(name: str, category: str) -> str | None:
 
     if "spacex" in lower and "ipo" in lower:
         return "story:spacex_ipo"
+
+    if "ipo" in lower:
+        return "story:ipo_markets"
 
     if re.search(r"\b(spotify|billboard)\b", lower):
         return "story:music_charts"
@@ -1453,6 +1465,7 @@ def diversify_quality_families(
         "story:macro_rates": 3,
         "story:ai": 2,
         "story:aliens_disclosure": 2,
+        "story:ipo_markets": 4,
         "story:drake_iceman": 1,
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,

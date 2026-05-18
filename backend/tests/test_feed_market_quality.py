@@ -219,6 +219,7 @@ class TestMarketQualityClassification:
             "KY-04 Republican nominee?",
             "South Carolina Republican Governor nominee?",
             "NY-11 Democratic nominee?",
+            "Texas Attorney General winner?",
         ]
 
         qualities = [
@@ -229,6 +230,15 @@ class TestMarketQualityClassification:
         assert all(q.quality_class == "low_quality" for q in qualities)
         assert all("regional_us_election" in q.reasons for q in qualities)
         assert all(q.story_key == "story:regional_us_elections" for q in qualities)
+
+    def test_federal_appointment_markets_are_not_regional_election_noise(self):
+        quality = classify_market_quality(
+            "Who will be Trump's next Attorney General?",
+            sport_category="politics",
+        )
+
+        assert "regional_us_election" not in quality.reasons
+        assert quality.story_key != "story:regional_us_elections"
 
     def test_regional_public_interest_items_are_not_election_noise(self):
         examples = [
@@ -326,6 +336,11 @@ class TestMarketQualityClassification:
         examples = [
             ("Will OpenAI release GPT-5 before 2027?", "tech", "story:ai"),
             ("Will SpaceX IPO in 2026?", "tech", "story:spacex_ipo"),
+            (
+                "Which companies will officially announce an IPO this year?",
+                "companies",
+                "story:ipo_markets",
+            ),
             ("Will Taylor Swift be pregnant in 2026?", "entertainment", None),
         ]
 

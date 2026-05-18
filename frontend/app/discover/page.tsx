@@ -22,13 +22,34 @@ import { useCategoryInterests } from "@/hooks/useCategoryInterests";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
+const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
+const MAX_LOCAL_DISMISSES = 40;
+const MIN_ITEMS_AFTER_LOCAL_DISMISS = 20;
 
 function getDismissed(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
     const raw = localStorage.getItem(DISMISSED_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
+    if (!raw) return new Set();
+
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Legacy storage had no timestamp and could suppress the feed forever.
+      localStorage.removeItem(DISMISSED_KEY);
+      return new Set();
+    }
+
+    const now = Date.now();
+    const entries = Array.isArray(parsed?.items) ? parsed.items : [];
+    const fresh = entries
+      .filter((entry: { id?: string; ts?: number }) => {
+        return entry.id && entry.ts && now - entry.ts < DISMISS_TTL_MS;
+      })
+      .slice(-MAX_LOCAL_DISMISSES);
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify({ items: fresh }));
+    return new Set(fresh.map((entry: { id: string }) => entry.id));
   } catch {
+    localStorage.removeItem(DISMISSED_KEY);
     return new Set();
   }
 }
@@ -36,7 +57,23 @@ function getDismissed(): Set<string> {
 function saveDismissed(items: Set<string>) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...items]));
+    const now = Date.now();
+    const existingRaw = localStorage.getItem(DISMISSED_KEY);
+    const existing = existingRaw ? JSON.parse(existingRaw) : {};
+    const previous = Array.isArray(existing?.items) ? existing.items : [];
+    const byId = new Map<string, { id: string; ts: number }>();
+
+    for (const entry of previous) {
+      if (entry?.id && entry?.ts && now - entry.ts < DISMISS_TTL_MS) {
+        byId.set(entry.id, { id: entry.id, ts: entry.ts });
+      }
+    }
+    for (const id of items) {
+      byId.set(id, { id, ts: now });
+    }
+
+    const fresh = Array.from(byId.values()).slice(-MAX_LOCAL_DISMISSES);
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify({ items: fresh }));
   } catch { }
 }
 
@@ -583,7 +620,12 @@ export default function DiscoverPage() {
       seen.add(id);
       return true;
     });
-    const filtered = unique.filter((item) => !dismissed.has(getItemId(item)) && !isStale(item));
+    const fresh = unique.filter((item) => !isStale(item));
+    const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
+    const filtered = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
+      || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
+      ? dismissFiltered
+      : fresh;
     const catFiltered = categoryFilter === "all"
       ? filtered
       : categoryFilter === "sports"
@@ -663,7 +705,12 @@ export default function DiscoverPage() {
   // Count items per category for chip badges
   const catCountsForChips = useMemo(() => {
     const raw = data?.items ?? [];
-    const live = raw.filter((item) => !dismissed.has(getItemId(item)) && !isStale(item));
+    const fresh = raw.filter((item) => !isStale(item));
+    const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
+    const live = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
+      || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
+      ? dismissFiltered
+      : fresh;
     const counts = new Map<string, number>();
     for (const item of live) {
       const cat = getItemCategory(item);
