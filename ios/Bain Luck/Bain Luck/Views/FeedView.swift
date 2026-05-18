@@ -329,58 +329,30 @@ struct FeedView: View {
 
     @ViewBuilder
     private func cardContextMenu(_ item: FeedItem) -> some View {
-        if let pinInfo = pinInfo(for: item) {
-            let isPinned = pinManager.isPinned(type: pinInfo.type, id: pinInfo.id)
-            Button {
+        #if os(macOS)
+        CardContextMenu(
+            item: item,
+            pin: contextMenuPin(for: item),
+            onOpenEventInNewWindow: { eventId in
+                openWindow(value: eventId)
+            }
+        )
+        #else
+        CardContextMenu(
+            item: item,
+            pin: contextMenuPin(for: item)
+        )
+        #endif
+    }
+
+    private func contextMenuPin(for item: FeedItem) -> CardContextMenuPin? {
+        guard let pinInfo = pinInfo(for: item) else { return nil }
+        return CardContextMenuPin(
+            isPinned: pinManager.isPinned(type: pinInfo.type, id: pinInfo.id),
+            toggle: {
                 pinManager.togglePin(type: pinInfo.type, id: pinInfo.id)
-            } label: {
-                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
             }
-        }
-        if let event = item.event {
-            if let prob = event.currentOdds?.homeProbability {
-                Button {
-                    let text = "\(event.homeTeam): \(Int(prob * 100))%"
-                    copyToClipboard(text)
-                } label: {
-                    Label("Copy Probability", systemImage: "doc.on.doc")
-                }
-            }
-            Divider()
-            Button {
-                copyToClipboard(eventShareURL(event.id))
-            } label: {
-                Label("Copy Link", systemImage: "link")
-            }
-            ShareLink(item: URL(string: eventShareURL(event.id)) ?? bainLuckFallbackURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            #if os(macOS)
-            Button {
-                openWindow(value: event.id)
-            } label: {
-                Label("Open in New Window", systemImage: "macwindow.badge.plus")
-            }
-            #endif
-        } else if let futures = item.futures {
-            if let leader = futures.topOutcomes?.first, let prob = leader.probability {
-                Button {
-                    let text = "\(leader.name): \(Int(prob * 100))%"
-                    copyToClipboard(text)
-                } label: {
-                    Label("Copy Probability", systemImage: "doc.on.doc")
-                }
-            }
-            Divider()
-            Button {
-                copyToClipboard(futuresShareURL(futures.id))
-            } label: {
-                Label("Copy Link", systemImage: "link")
-            }
-            ShareLink(item: URL(string: futuresShareURL(futures.id)) ?? bainLuckFallbackURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-        }
+        )
     }
 
     private func pinInfo(for item: FeedItem) -> (type: String, id: Int)? {

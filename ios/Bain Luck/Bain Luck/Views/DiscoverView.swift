@@ -824,52 +824,18 @@ struct DiscoverView: View {
 
     @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
-        if let e = item.event {
-            let url = eventShareURL(e.id, style: .nativeCard)
-            if let prob = e.currentOdds?.homeProbability {
-                Button {
-                    let text = "\(e.homeTeam): \(Int(prob * 100))%"
-                    copyToClipboard(text)
-                } label: {
-                    Label("Copy Probability", systemImage: "doc.on.doc")
-                }
-            }
-            Button {
+        CardContextMenu(
+            item: item,
+            shareURLStyle: .nativeCard,
+            showsShareSectionDivider: false,
+            onCopyLink: { _ in
                 recordInteraction(for: item, action: .share, source: "copy_link")
-                copyToClipboard(url)
-            } label: {
-                Label("Copy Link", systemImage: "link")
+            },
+            onLessLikeThis: {
+                recordInteraction(for: item, action: .unlike, source: "context_menu")
+                hideForSession(itemId(item))
             }
-            ShareLink(item: URL(string: url) ?? bainLuckFallbackURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-        } else if let f = item.futures {
-            let url = futuresShareURL(f.id, style: .nativeCard)
-            if let leader = f.topOutcomes?.first, let prob = leader.probability {
-                Button {
-                    let text = "\(leader.name): \(Int(prob * 100))%"
-                    copyToClipboard(text)
-                } label: {
-                    Label("Copy Probability", systemImage: "doc.on.doc")
-                }
-            }
-            Button {
-                recordInteraction(for: item, action: .share, source: "copy_link")
-                copyToClipboard(url)
-            } label: {
-                Label("Copy Link", systemImage: "link")
-            }
-            ShareLink(item: URL(string: url) ?? bainLuckFallbackURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-        }
-        Divider()
-        Button {
-            recordInteraction(for: item, action: .unlike, source: "context_menu")
-            hideForSession(itemId(item))
-        } label: {
-            Label("Less Like This", systemImage: "hand.thumbsdown")
-        }
+        )
     }
 
 }
