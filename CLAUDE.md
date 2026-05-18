@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 4,450+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 4,550+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -77,7 +77,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Deployments from GitHub**: `git push origin master` triggers CI; Vercel deploys frontend from GitHub, and Heroku deploy runs through the serialized CI `deploy` job after tests pass.
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (4,450+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (4,550+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
 - **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (590+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
@@ -109,7 +109,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 4,450+ pytest items
+│   └── tests/                   # 4,550+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
@@ -140,7 +140,12 @@ bainluck/
 - The feed builds multiple candidate pools (sports, non-sports volume, movement, enriched, soon-resolving), scores with futures highlights, then applies market-quality caps/diversity before returning cards.
 - Quality classifier suppresses narrow commodity/finance ladders, repetitive dated buckets, social-count filler, and weak explanation cards. It separately boosts compelling public stories: politics, geopolitics, Fed/economics, AI/tech, health outbreaks, entertainment, and sports personnel.
 - Deterministic futures explanations are now first-class. Do not rely on LLM hooks to make the first page understandable: headlines should name the mover/leader/source disagreement from existing outcome data (e.g., "Yes side up 32.5 points from opening").
-- Personalization is intentionally bounded and latency-safe: recent Discover interactions produce small category plus feature/entity/archetype affinities for signed-in users and anonymous sessions. Right swipe is `like` / "more like this"; left swipe is `unlike` / "less like this" and should be treated as a soft downrank, not a permanent hard dismissal.
+- Personalization is intentionally bounded and latency-safe: recent Discover interactions produce small category plus feature/entity/archetype affinities for signed-in users and anonymous sessions. Right swipe is `like` / "more like this"; left swipe is `unlike` / "less like this" and should be treated as a soft downrank, not a permanent hard dismissal. Category dismiss penalty escalates: 3+ swipes → -0.40 (0.60x), 5+ → -0.60 (0.40x), 8+ → -0.80 (0.20x). Feature dislike penalty caps at -0.25. `MIN_MULTIPLIER` is 0.15.
+- Dismiss signal propagates to story keys and group IDs: dismissing one "Will Russia capture [village]?" market suppresses all markets sharing the same `story:russia_ukraine` key. `recent_dismissed_story_keys` and `recent_dismissed_group_ids` are populated during personalization context loading.
+- Discover event demotion in Discover mode (`event_pct < 0.3`): non-exceptional events are capped at score 35 so futures can compete. "Exceptional" requires: EI >= 85 (any league), EI >= 70 AND Tier 1/2 league, headline exception keyword AND Tier 1/2, or score >= 90 AND EI >= 50. Headline keywords like "upset"/"comeback"/"historic" only count for major leagues — a Ligue 2 upset is not exceptional. "elimination"/"buzzer"/"walk-off" are exceptional regardless of tier.
+- Election allowlist: `_MAJOR_ELECTION_RE` in `futures_highlights.py` lists elections that deserve the full politics base score (US federal, 25 major countries, supranational). Elections with "election/winner/nominee" that don't match get `FOREIGN_LOCAL_ELECTION_PENALTY = -30`. Obscure elections (UK boroughs, by-elections) get a separate `-20` penalty via `_OBSCURE_ELECTION_PATTERNS`.
+- Soccer league allowlist: `_TOP_TIER_SOCCER_RE` in `feed_market_quality.py` matches EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa League, MLS, FIFA World Cup, Copa America, Copa Libertadores, Liga MX. Non-matching soccer futures get `story:minor_soccer_leagues` (capped at 1).
+- Geopolitics story caps: `story:russia_ukraine` (cap 2) now catches Russia + capture/enter/advance/territory AND Russia + Putin/president/regime/fall. `story:middle_east_conflict` (cap 4) catches Iran/Israel/Gaza/Hormuz.
 - LLM enrichment is intentionally bounded and async. `enrich_market_hooks` only targets feed-shaped candidates and Celery runs small batches (`limit=100` every 6h). `enrich_discover_llm_metadata` adds cached structured metadata under `FuturesMarket.market_metadata["discover_llm"]` for feed-shaped candidates (`limit=125` every 6h), and feed ranking consumes only that cached metadata. Never run LLM calls inside `GET /api/feed` or grind through the full open-market backlog (~56K markets).
 - Daily LLM eval is advisory only: `evaluate_discover_with_llm` grades the top 50 Discover futures, compares against Polymarket email highlights, and writes `llm_proposed_*` review rows for admin inspection. These rows do not affect ranking unless a human later records an accepted promote/downrank decision.
 - Offline interestingness calibration has a pure scorer in `utils/market_interestingness.py` and a local-input script at `scripts/calibrate_interestingness.py` for CSV/JSON/JSONL labeled rows. It is a scaffold for review and tuning, not a feed-ranking integration; do not wire it into production ranking without an audit-backed rollout.
@@ -307,6 +312,9 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 76. **Bug fixed emails require captured submission email** — Store `user_email` when the bug report is created. Do not rely on joining to the current user row later; anonymous reports, deleted users, and changed emails make that unreliable.
 77. **Search weighted FTS is query-time only** — Current search ranking uses `websearch_to_tsquery` and weighted vectors in SQL expressions, not a persisted `ts_vector`. Add stored indexes only with a migration plan and regression traces.
 78. **Link-rate denominators must exclude impossible pairs** — Prediction-market health should exclude unsupported event coverage, obvious season/non-game markets, and impossible sport/league combinations. A 100% link rate must be structurally achievable.
+79. **Discover event demotion bypass must be gated on league tier** — Headline keywords like "upset"/"comeback"/"historic" only count as exceptional for Tier 1/2 leagues. EI >= 70 only exceptional for Tier 1/2. Only EI >= 85 is unconditionally exceptional. Without this gate, the headline generator labels every game "Recent upset" and Tier 4 soccer crowds out entertainment.
+80. **Election allowlist is inverted — default is penalty** — `_MAJOR_ELECTION_RE` is an allowlist. Elections not matching it get `-30`. Add new countries to the allowlist, not the obscure blocklist. Obscure blocklist gives separate `-20` for content that's worse (by-elections, UK boroughs).
+81. **Dismiss story-key propagation affects all markets sharing the key** — Dismissing one market suppresses all futures sharing its `story_key` for 14 days. New story keys widen the blast radius of a single dismiss.
 
 ---
 
@@ -326,6 +334,9 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/test_politics_normalization.py` | Politics probability normalization for independent binary markets | May 15 |
 | `tests/test_rate_limit.py` | Rate limiting middleware: thresholds, auth exemption, Redis fallback | May 15 |
 | `backend/tests/test_*` guardrail suites | Discover scoring/personalization, matching, ingestion/quota, display, auth/preferences, calibration/identity, provider parsers, retention/taxonomy | May 17 |
+| `tests/test_feed_discover_event_demotion.py` | Event demotion bypass: league-tier gating, EI thresholds, headline keyword exceptions | May 18 |
+| `tests/test_feed_dismiss_propagation.py` | Story-key and group_id dismiss propagation in personalization context | May 18 |
+| `tests/test_futures_highlights.py` | Election allowlist, soccer allowlist, non-major election penalty | May 18 |
 
 ---
 
