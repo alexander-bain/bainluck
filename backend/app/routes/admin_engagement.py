@@ -338,6 +338,82 @@ async def list_discover_review_decisions(
     }
 
 
+@router.get("/discover-ground-truth-diagnostics/runs")
+async def list_discover_ground_truth_diagnostic_runs(
+    secret: str = Query(...),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent persisted Discover ground-truth diagnostic snapshot runs."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        text(
+            """
+            WITH recent_runs AS (
+                SELECT run_id, MAX(captured_at) AS captured_at
+                FROM discover_ground_truth_diagnostics
+                GROUP BY run_id
+                ORDER BY MAX(captured_at) DESC
+                LIMIT :limit
+            )
+            SELECT
+                d.run_id,
+                r.captured_at,
+                d.source_group,
+                d.status,
+                d.triage_bucket,
+                COUNT(*) AS count
+            FROM discover_ground_truth_diagnostics d
+            JOIN recent_runs r ON r.run_id = d.run_id
+            GROUP BY
+                d.run_id,
+                r.captured_at,
+                d.source_group,
+                d.status,
+                d.triage_bucket
+            ORDER BY r.captured_at DESC, d.source_group, d.status, d.triage_bucket
+            """
+        ),
+        {"limit": limit},
+    )
+
+    runs: dict[str, dict] = {}
+    for row in result.mappings().all():
+        run = runs.setdefault(
+            row["run_id"],
+            {
+                "run_id": row["run_id"],
+                "captured_at": row["captured_at"].isoformat()
+                if row["captured_at"]
+                else None,
+                "total": 0,
+                "by_source_group": {},
+                "by_triage_bucket": {},
+            },
+        )
+        count = int(row["count"] or 0)
+        run["total"] += count
+
+        source_group = row["source_group"] or "unknown"
+        status = row["status"] or "unknown"
+        source_counts = run["by_source_group"].setdefault(
+            source_group,
+            {"total": 0, "hit": 0, "miss": 0},
+        )
+        source_counts["total"] += count
+        source_counts[status] = source_counts.get(status, 0) + count
+
+        triage_bucket = row["triage_bucket"]
+        if triage_bucket:
+            run["by_triage_bucket"][triage_bucket] = (
+                run["by_triage_bucket"].get(triage_bucket, 0) + count
+            )
+
+    return {"runs": list(runs.values())}
+
+
 @router.get("/discover-engagement")
 async def discover_engagement_summary(
     secret: str = Query(..., description="Admin secret for authorization"),
