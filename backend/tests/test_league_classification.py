@@ -3,6 +3,7 @@
 import pytest
 from app.utils.league_classification import (
     get_league_class,
+    is_valid_sport_league_pair,
     is_power_4_team,
     LEAGUE_CLASS,
     POWER_4_TEAMS,
@@ -38,6 +39,27 @@ class TestGetLeagueClass:
     def test_unknown_defaults_to_other(self):
         assert get_league_class("unknown_league") == "other"
         assert get_league_class("surfing_wsl") == "other"
+
+
+class TestSportLeaguePairValidation:
+    """Tests for sport/category league consistency guards."""
+
+    def test_valid_pairs(self):
+        assert is_valid_sport_league_pair("basketball", "NBA") is True
+        assert is_valid_sport_league_pair("football", "NCAAF") is True
+        assert is_valid_sport_league_pair("soccer", "UCL") is True
+        assert is_valid_sport_league_pair("esports", "LOL") is True
+
+    def test_impossible_pairs(self):
+        assert is_valid_sport_league_pair("basketball", "NHL") is False
+        assert is_valid_sport_league_pair("hockey", "NBA") is False
+        assert is_valid_sport_league_pair("esports", "MLB") is False
+        assert is_valid_sport_league_pair("baseball", "VALORANT") is False
+
+    def test_missing_or_unknown_values_are_permissive(self):
+        assert is_valid_sport_league_pair("basketball", None) is True
+        assert is_valid_sport_league_pair(None, "NBA") is True
+        assert is_valid_sport_league_pair("new_sport", "NEW_LEAGUE") is True
 
 
 class TestIsPower4Team:

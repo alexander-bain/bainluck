@@ -6,7 +6,7 @@ from typing import Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from sqlalchemy import select, update, or_, text, func, delete, case
+from sqlalchemy import select, update, or_, not_, text, func, delete, case
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,12 @@ from app.models.models import WinProbSnapshot
 
 from app.services import get_db
 
-from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
+from app.utils.league_classification import is_valid_sport_league_pair
+
+from app.utils.sport_keys import (
+    KALSHI_GAME_TICKER_PREFIXES,
+    KALSHI_LINK_RATE_GAME_TICKER_PREFIXES,
+)
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -27,6 +32,69 @@ router = APIRouter()
 
 
 _CLOSED_GAME_STATUSES = {"closed", "completed", "final"}
+_LINK_RATE_SPORT_CATEGORIES = (
+    "basketball", "football", "baseball", "hockey", "soccer",
+    "golf", "tennis", "mma", "boxing", "cricket", "rugby",
+    "lacrosse", "aussierules",
+)
+_LINK_RATE_NON_GAME_NAME_FRAGMENTS = (
+    "win the nba championship",
+    "win the wnba championship",
+    "win the ncaa championship",
+    "win the super bowl",
+    "win the world series",
+    "win the stanley cup",
+    "championship winner",
+    "super bowl winner",
+    "world series winner",
+    "stanley cup winner",
+    "series winner",
+    "division winner",
+    "conference winner",
+    "make playoffs",
+    "make the playoffs",
+    "regular season",
+    " mvp",
+    "cy young",
+    "rookie of the year",
+    "heisman",
+    "award",
+)
+
+
+def _is_obvious_non_game_market_name(name: str | None) -> bool:
+    """Identify season-level markets that can look matchup-shaped."""
+    if not name:
+        return False
+    name_lower = name.lower()
+    return any(
+        fragment in name_lower
+        for fragment in _LINK_RATE_NON_GAME_NAME_FRAGMENTS
+    )
+
+
+def _link_rate_game_name_filter():
+    non_game_name_filter = or_(
+        *[
+            FuturesMarket.name.ilike(f"%{fragment}%")
+            for fragment in _LINK_RATE_NON_GAME_NAME_FRAGMENTS
+        ]
+    )
+    return or_(
+        FuturesMarket.name.is_(None),
+        not_(non_game_name_filter),
+    )
+
+
+def _should_include_link_rate_bucket(
+    sport_category: str | None,
+    league: str | None,
+) -> bool:
+    """Keep only event-covered sports and internally consistent league buckets."""
+    return (
+        sport_category in _LINK_RATE_SPORT_CATEGORIES
+        and is_valid_sport_league_pair(sport_category, league)
+    )
 
 
 def _is_closed_past_event_candidate(candidate: Any, now: datetime) -> bool:
@@ -299,12 +367,6 @@ async def prediction_market_link_rate(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    _SPORT_CATEGORIES = [
-        "basketball", "football", "baseball", "hockey", "soccer",
-        "golf", "tennis", "mma", "boxing", "cricket", "rugby",
-        "lacrosse", "esports", "aussierules",
-    ]
-
     # Build game-level ticker filter for Kalshi.
     # Only count markets with game ticker prefixes — these are the markets
     # the matching task's Pass 1 scans. The old `event_id IS NOT NULL` clause
@@ -312,9 +374,10 @@ async def prediction_market_link_rate(
     # erroneously linked, inflating the denominator with unlinkable markets.
     _kalshi_ticker_conditions = [
         func.lower(FuturesMarket.external_id).like(f"{p}%")
-        for p in KALSHI_GAME_TICKER_PREFIXES
+        for p in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
     ]
     _kalshi_game_filter = or_(*_kalshi_ticker_conditions)
+    _game_name_filter = _link_rate_game_name_filter()
 
     # Kalshi: game-level markets only (ticker prefix match)
     kalshi_result = await db.execute(
@@ -329,8 +392,9 @@ async def prediction_market_link_rate(
         .where(
             FuturesMarket.source == "kalshi",
             FuturesMarket.llm_sport_category.isnot(None),
-            FuturesMarket.llm_sport_category.in_(_SPORT_CATEGORIES),
+            FuturesMarket.llm_sport_category.in_(_LINK_RATE_SPORT_CATEGORIES),
             _kalshi_game_filter,
+            _game_name_filter,
         )
         .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
         .order_by(func.count().desc())
@@ -338,6 +402,8 @@ async def prediction_market_link_rate(
     kalshi_by_sport = []
     kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
     for row in kalshi_result.all():
+        if not _should_include_link_rate_bucket(row.sport, row.league):
+            continue
         sport_data = {
             "sport": row.sport,
             "league": row.league,
@@ -365,12 +431,13 @@ async def prediction_market_link_rate(
         .where(
             FuturesMarket.source == "polymarket",
             FuturesMarket.llm_sport_category.isnot(None),
-            FuturesMarket.llm_sport_category.in_(_SPORT_CATEGORIES),
+            FuturesMarket.llm_sport_category.in_(_LINK_RATE_SPORT_CATEGORIES),
             or_(
                 FuturesMarket.name.ilike("% vs.%"),
                 FuturesMarket.name.ilike("% vs %"),
                 FuturesMarket.name.ilike("% at %"),
             ),
+            _game_name_filter,
         )
         .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
         .order_by(func.count().desc())
@@ -378,6 +445,8 @@ async def prediction_market_link_rate(
     poly_by_sport = []
     poly_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
     for row in poly_result.all():
+        if not _should_include_link_rate_bucket(row.sport, row.league):
+            continue
         sport_data = {
             "sport": row.sport,
             "league": row.league,

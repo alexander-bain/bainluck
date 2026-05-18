@@ -49,6 +49,8 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem (discovered May 18 health check):** The link rate endpoint reports misleadingly low rates for several sport/source combinations because the denominator includes markets that *cannot* be linked (season futures, non-game markets) and because league classification errors put markets under the wrong sport.
 
+**May 18 first slice shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. Guardrail tests cover unsupported esports, season/futures name filters, and impossible pairs.
+
 **Four distinct issues:**
 
 **1. Kalshi basketball link rate inflated denominator (open rate 53.4%)**
@@ -72,11 +74,11 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Impact:** These issues don't affect users directly (the markets still display correctly). They make the link rate dashboard unreliable as a health metric — we can't tell real matching gaps from denominator noise. Fixing the denominator is prerequisite to the next hill-climb iteration.
 
-**Hill-climb approach:**
-1. Query all unlinked open markets per source/sport, classify each as `game_level` vs `season_level` vs `unsupported_league`
-2. Fix league misclassification rules in `league_classification.py`
-3. Update link rate endpoint denominator to exclude season-level and unsupported-league markets
-4. Re-measure — the corrected rate should be significantly higher, and any remaining gaps are real matching bugs to fix
+**Remaining hill-climb approach:**
+1. Re-measure production link rate after deploy and inspect the remaining unlinked open markets per source/sport
+2. Classify remaining misses as `game_level` vs `season_level` vs `unsupported_league`
+3. Fix any remaining taxonomy rules where the market itself is misclassified, not just filtered from health metrics
+4. Use the corrected rate to target real matching bugs
 
 **Audit endpoint:** `GET /api/admin/prediction-markets/link-rate?secret=$ADMIN_TOKEN`
 
@@ -909,9 +911,9 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 1. ~~**Burndown chart**~~ — ✅ SHIPPED (May 13). SVG burndown chart + summary stats (open/closed/avg resolution time) on admin bug reports page.
 2. ~~**Category tagging**~~ — ✅ SHIPPED May 16. Added `category` field to `BugReport` model + admin dropdown. Also shipped lifecycle fields (`resolution_summary`, `backlog_ref`). Migration: `add_bugreport_cat`.
 3. ~~**Resolution time tracking**~~ — ✅ SHIPPED (May 13). Included in burndown summary stats.
-4. **Auto-categorization** — use GPT-4o-mini to auto-suggest a category from the bug description when a report is filed.
+4. ~~**Auto-categorization**~~ — ✅ deterministic admin backfill shipped May 18. The bug-report list fills missing categories from the existing rule-based classifier only when metadata is decisive; ambiguous reports stay uncategorized. GPT-assisted categorization remains optional later if deterministic coverage proves too low.
 
-**Files:** `frontend/app/admin/bug-reports/page.tsx`, `backend/app/models/models.py` (BugReport), `backend/app/routes/admin.py`
+**Files:** `frontend/app/admin/bug-reports/page.tsx`, `backend/app/models/models.py` (BugReport), `backend/app/routes/admin_engagement.py`, `backend/app/routes/feedback.py`
 **Parallel Safety:** Green
 
 ### ~~PRD Update~~ — DONE (May 15)
@@ -1370,7 +1372,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
-| CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects and native guess-card/profile stored properties tightened; deeper helper-method sweep remains. |
+| CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
 | CQ-17 | Stop abbreviating | All files (search-replace) | `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProb`/`homeProb`, `gm` → `gameMarkets` |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 

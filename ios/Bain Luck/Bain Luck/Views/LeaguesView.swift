@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - League Info
 
-struct LeagueInfo: Identifiable {
+private struct LeagueInfo: Identifiable {
     let slug: String
     let label: String
     let fullName: String

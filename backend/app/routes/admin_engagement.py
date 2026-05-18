@@ -30,6 +30,7 @@ router = APIRouter()
 
 _BUG_FIXED_EMAIL_STATUSES = {"fixed", "actioned"}
 _BUG_FIXED_EMAIL_TASK_NAME = "app.tasks.send_bug_fixed_email"
+_VALID_BUG_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
 
 
 def _has_resolution_summary(resolution_summary: Optional[str]) -> bool:
@@ -58,6 +59,19 @@ def _enqueue_bug_fixed_email(report_id: int) -> None:
         celery_app.send_task(_BUG_FIXED_EMAIL_TASK_NAME, args=[report_id])
     except Exception as exc:
         logger.warning("Bug fix email enqueue failed for report %d: %s", report_id, exc)
+
+
+def _suggest_bug_report_category(
+    description: Optional[str],
+    app_state: Optional[dict],
+) -> Optional[str]:
+    """Return a deterministic admin category only when metadata is decisive."""
+    from app.routes.feedback import categorize_bug_report
+
+    category = categorize_bug_report(description, app_state)
+    if category and category != "other":
+        return category
+    return None
 
 
 @router.get("/hook-coverage")
@@ -922,6 +936,28 @@ async def list_bug_reports(
     result = await db.execute(query)
     reports = result.scalars().all()
 
+    auto_category_updates: dict[str, list[int]] = {}
+    for report in reports:
+        if report.category:
+            continue
+        suggested_category = _suggest_bug_report_category(
+            report.description,
+            report.app_state,
+        )
+        if not suggested_category:
+            continue
+        report.category = suggested_category
+        auto_category_updates.setdefault(suggested_category, []).append(report.id)
+
+    if auto_category_updates:
+        for category_name, report_ids in auto_category_updates.items():
+            await db.execute(
+                update(BugReport)
+                .where(BugReport.id.in_(report_ids))
+                .values(category=category_name)
+            )
+        await db.commit()
+
     return {
         "reports": [
             {
@@ -963,15 +999,14 @@ async def update_bug_report(
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     _VALID_STATUSES = {"new", "reviewed", "in_progress", "fixed", "wont_fix", "duplicate", "actioned", "dismissed"}
-    _VALID_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
     values = {}
     if status:
         if status not in _VALID_STATUSES:
             raise HTTPException(400, f"Invalid status. Must be one of: {sorted(_VALID_STATUSES)}")
         values["status"] = status
     if category is not None:
-        if category and category not in _VALID_CATEGORIES:
-            raise HTTPException(400, f"Invalid category. Must be one of: {sorted(_VALID_CATEGORIES)}")
+        if category and category not in _VALID_BUG_CATEGORIES:
+            raise HTTPException(400, f"Invalid category. Must be one of: {sorted(_VALID_BUG_CATEGORIES)}")
         values["category"] = category or None
     if admin_notes is not None:
         if len(admin_notes) > 5000:

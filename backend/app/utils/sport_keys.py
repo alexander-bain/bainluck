@@ -528,6 +528,19 @@ KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
     if k not in _UNSUPPORTED_LEAGUE_PREFIXES
 )
 
+_LINK_RATE_UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
+    "kxlolgame", "kxlolgames", "kxlolmap", "kxloltotal", "kxloltotalmaps",
+    "kxcs2game", "kxcs2games", "kxcs2map", "kxcs2mapwinner",
+    "kxcs2totalmaps", "kxvalorantgame", "kxvalorantmap",
+})
+
+# Link-rate denominator prefixes are stricter than "game-shaped" tickers:
+# esports markets are game-shaped, but this repo does not ingest esports events.
+KALSHI_LINK_RATE_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
+    k for k in KALSHI_GAME_TICKER_PREFIXES
+    if k not in _LINK_RATE_UNSUPPORTED_LEAGUE_PREFIXES
+)
+
 
 # =============================================================================
 # 8b. KALSHI_FUTURES_TICKER_TO_SPORT_KEY — season/futures tickers → sport key

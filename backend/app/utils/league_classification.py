@@ -137,6 +137,42 @@ def get_league_class(sport_key: str) -> str:
     return LEAGUE_CLASS.get(sport_key, "other")
 
 
+SPORT_CATEGORY_VALID_LEAGUES: dict[str, set[str]] = {
+    "basketball": {"NBA", "WNBA", "NCAAB", "WNCAAB", "EUROLEAGUE"},
+    "football": {"NFL", "NCAAF", "CFL", "XFL", "UFL"},
+    "baseball": {"MLB", "NCAA_BASEBALL"},
+    "hockey": {"NHL", "AHL"},
+    "soccer": {
+        "EPL", "UCL", "EUROPA", "LA_LIGA", "BUNDESLIGA", "SERIE_A",
+        "LIGUE_1", "MLS", "NWSL", "LIGA_MX", "BRASILEIRAO", "FIFA_WC",
+        "COPA_AMERICA",
+    },
+    "golf": {"PGA", "LPGA", "LIV"},
+    "tennis": {"ATP", "WTA"},
+    "mma": {"UFC", "MMA"},
+    "boxing": {"BOXING"},
+    "cricket": {"IPL", "ICC"},
+    "rugby": {"NRL", "SIX_NATIONS", "RUGBY"},
+    "aussierules": {"AFL"},
+    "esports": {"LOL", "CSGO", "DOTA", "VALORANT"},
+}
+
+
+def is_valid_sport_league_pair(sport_category: str | None, league: str | None) -> bool:
+    """Return False for impossible sport/category league combinations.
+
+    Missing league data stays valid because many game markets do not have
+    llm_league set. Unknown sport categories also stay permissive so this guard
+    only removes combinations we can confidently identify as misclassified.
+    """
+    if not sport_category or not league:
+        return True
+    valid_leagues = SPORT_CATEGORY_VALID_LEAGUES.get(sport_category.lower())
+    if valid_leagues is None:
+        return True
+    return league.upper().strip() in valid_leagues
+
+
 def is_power_4_team(team_name: str) -> bool:
     """Check if a team name matches a Power 4 school.
 

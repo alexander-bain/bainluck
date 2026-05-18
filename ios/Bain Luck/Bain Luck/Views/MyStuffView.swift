@@ -766,8 +766,13 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
 // MARK: - PlayoffJourneyCard (native SwiftUI)
 
 private struct PlayoffJourneyCard: View {
-    let journey: PlayoffJourney
-    let onStageTap: (Int) -> Void
+    private let journey: PlayoffJourney
+    private let onStageTap: (Int) -> Void
+
+    init(journey: PlayoffJourney, onStageTap: @escaping (Int) -> Void) {
+        self.journey = journey
+        self.onStageTap = onStageTap
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -869,11 +874,16 @@ private struct PlayoffJourneyCard: View {
 // MARK: - Your Teams' Odds Section (with merging + progression)
 
 private struct TeamFuturesSection: View {
-    let futures: TeamFuturesResponse
-    @Binding var path: NavigationPath
+    private let futures: TeamFuturesResponse
+    @Binding private var path: NavigationPath
     @State private var expanded = false
 
     private static let initialShow = 8
+
+    init(futures: TeamFuturesResponse, path: Binding<NavigationPath>) {
+        self.futures = futures
+        self._path = path
+    }
 
     private var processed: (journeys: [PlayoffJourney], awards: [MergedTeamFuture], other: [MergedTeamFuture]) {
         let merged = mergeTeamFutures(futures.items)
@@ -1074,8 +1084,13 @@ private struct TeamFuturesSection: View {
 /// of showing the global top 3 leaders. Shows the user's team probability,
 /// rank, and movement in the context of the broader market.
 private struct MyTeamFuturesCard: View {
-    let futures: FeedFuturesData
-    let matchedOutcomes: [MatchedOutcome]
+    private let futures: FeedFuturesData
+    private let matchedOutcomes: [MatchedOutcome]
+
+    init(futures: FeedFuturesData, matchedOutcomes: [MatchedOutcome]) {
+        self.futures = futures
+        self.matchedOutcomes = matchedOutcomes
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

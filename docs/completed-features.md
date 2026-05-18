@@ -12,6 +12,9 @@
 - ✅ **Calibration closing-line cohort fix** — `price_moved=True` now requires a non-null calibration price that differs from opening price, keeping fallback opening-price rows out of closing-line metrics.
 - ✅ **Evolution chart combined probability** — web Evolution charts can show an optional dashed Combined line summing currently selected/visible outcomes.
 - ✅ **Native game segments** — iOS/macOS event detail now shows compact score-by-period segments for live/final games using existing ESPN history snapshots.
+- ✅ **Link-rate denominator guardrails** — admin link-rate metrics now exclude obvious season/non-game market names, event-uncovered esports buckets, and impossible sport/league combinations before aggregating health rates.
+- ✅ **Bug report category backfill** — admin bug-report listing backfills missing categories from the existing deterministic classifier when metadata is decisive, while leaving ambiguous reports uncategorized for human review.
+- ✅ **Native access-control sweep slice** — tightened additional view-local properties/helpers in Futures Detail, Leagues, and My Stuff with no behavior change.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

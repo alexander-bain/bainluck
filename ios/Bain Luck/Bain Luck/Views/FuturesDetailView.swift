@@ -11,7 +11,7 @@ private enum FuturesSortField: String, CaseIterable {
 // MARK: - View
 
 struct FuturesDetailView: View {
-    let marketId: Int
+    private let marketId: Int
     @StateObject private var vm: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false

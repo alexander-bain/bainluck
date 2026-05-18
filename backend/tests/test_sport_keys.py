@@ -11,6 +11,7 @@ from app.utils.sport_keys import (
     LLM_CATEGORY_TO_SPORT_PREFIX,
     KALSHI_TICKER_TO_SPORT_KEY,
     KALSHI_GAME_TICKER_PREFIXES,
+    KALSHI_LINK_RATE_GAME_TICKER_PREFIXES,
     KALSHI_TICKER_TO_DISPLAY_LABEL,
     KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
     LLM_CATEGORY_TO_SPORT_KEYS,
@@ -465,3 +466,14 @@ class TestGameFuturesMapSeparation:
         assert get_sport_key_from_ticker("KXNBASERIES-26MAY10BOSPHI") == "basketball_nba"
         assert get_sport_key_from_ticker("KXNHLSERIES-26MAY10FLORNG") == "icehockey_nhl"
         assert get_sport_key_from_ticker("KXMLBSERIES-26OCT15NYYATL") == "baseball_mlb"
+
+    def test_link_rate_game_prefixes_are_game_prefix_subset(self):
+        assert set(KALSHI_LINK_RATE_GAME_TICKER_PREFIXES).issubset(
+            set(KALSHI_GAME_TICKER_PREFIXES)
+        )
+
+    def test_link_rate_prefixes_exclude_esports_and_futures(self):
+        assert "kxlolgame" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
+        assert "kxcs2game" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
+        assert "kxvalorantgame" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
+        assert "kxnbaseries" not in KALSHI_LINK_RATE_GAME_TICKER_PREFIXES
