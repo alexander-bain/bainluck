@@ -129,59 +129,40 @@ async def get_snapshot_distribution(
     elif status_filter == "resolved":
         status_clause = "AND fm.status = 'resolved'"
 
-    rows = (await db.execute(text(f"""
-        SELECT fm.source,
-               COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE fo.snapshot_count IS NULL OR fo.snapshot_count = 0) AS zero,
-               COUNT(*) FILTER (WHERE fo.snapshot_count BETWEEN 1 AND 5) AS bucket_1_5,
-               COUNT(*) FILTER (WHERE fo.snapshot_count BETWEEN 6 AND 20) AS bucket_6_20,
-               COUNT(*) FILTER (WHERE fo.snapshot_count BETWEEN 21 AND 50) AS bucket_21_50,
-               COUNT(*) FILTER (WHERE fo.snapshot_count BETWEEN 51 AND 100) AS bucket_51_100,
-               COUNT(*) FILTER (WHERE fo.snapshot_count > 100) AS bucket_100_plus,
-               ROUND(AVG(COALESCE(fo.snapshot_count, 0))::numeric, 1) AS avg_snaps,
-               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(fo.snapshot_count, 0)) AS median_snaps
-        FROM futures_markets fm
-        JOIN futures_outcomes fo ON fo.market_id = fm.id
-        WHERE 1=1 {status_clause}
-        GROUP BY fm.source
-        ORDER BY fm.source
-    """))).all()
+    await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
-    has_snapshot_count = True
-    if not rows or (rows and all(r.avg_snaps == 0 for r in rows)):
-        has_snapshot_count = False
-        rows = (await db.execute(text(f"""
-            WITH sampled_outcomes AS (
-                SELECT fo.id AS outcome_id, fm.source
-                FROM futures_markets fm
-                JOIN futures_outcomes fo ON fo.market_id = fm.id
-                WHERE 1=1 {status_clause}
-                  AND fo.id % 100 < 5
-            ),
-            snap_counts AS (
-                SELECT s.outcome_id, s.source,
-                       (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                        WHERE fos.outcome_id = s.outcome_id) AS snap_count
-                FROM sampled_outcomes s
-            )
-            SELECT source,
-                   COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE snap_count = 0) AS zero,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 1 AND 5) AS bucket_1_5,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 6 AND 20) AS bucket_6_20,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 21 AND 50) AS bucket_21_50,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 51 AND 100) AS bucket_51_100,
-                   COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
-                   ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
-                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
-            FROM snap_counts
-            GROUP BY source
-            ORDER BY source
-        """))).all()
+    rows = (await db.execute(text(f"""
+        WITH target_ids AS (
+            SELECT fo.id AS outcome_id, fm.source
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE 1=1 {status_clause}
+        ),
+        agg AS (
+            SELECT fos.outcome_id, COUNT(*) AS snap_count
+            FROM futures_odds_snapshots fos
+            WHERE fos.outcome_id IN (SELECT outcome_id FROM target_ids)
+            GROUP BY fos.outcome_id
+        )
+        SELECT t.source,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE COALESCE(a.snap_count, 0) = 0) AS zero,
+               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 1 AND 5) AS bucket_1_5,
+               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 6 AND 20) AS bucket_6_20,
+               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 21 AND 50) AS bucket_21_50,
+               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 51 AND 100) AS bucket_51_100,
+               COUNT(*) FILTER (WHERE a.snap_count > 100) AS bucket_100_plus,
+               ROUND(AVG(COALESCE(a.snap_count, 0))::numeric, 1) AS avg_snaps,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(a.snap_count, 0)) AS median_snaps
+        FROM target_ids t
+        LEFT JOIN agg a ON a.outcome_id = t.outcome_id
+        GROUP BY t.source
+        ORDER BY t.source
+    """))).all()
 
     return {
         "status_filter": status_filter,
-        "method": "snapshot_count column" if has_snapshot_count else "5% sample (id % 100 < 5)",
+        "method": "pre-aggregated snapshot counts filtered to target outcomes",
         "sources": [
             {
                 "source": r.source,
