@@ -1582,7 +1582,7 @@ async def _poll_live_prediction_market_prices():
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.models.models import (
-        FuturesMarket, FuturesOutcome, Event, WinProbSnapshot,
+        FuturesMarket, FuturesOddsSnapshot, FuturesOutcome, Event, WinProbSnapshot,
     )
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
     from app.utils.odds_math import probability_to_american
@@ -1593,6 +1593,7 @@ async def _poll_live_prediction_market_prices():
         "kalshi_fetched": 0,
         "polymarket_fetched": 0,
         "outcomes_updated": 0,
+        "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
         "errors": [],
@@ -1707,6 +1708,21 @@ async def _poll_live_prediction_market_prices():
                             outcome.current_american_odds = american
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
+
+                            # Write FuturesOddsSnapshot for chart history
+                            await session.execute(
+                                pg_insert(FuturesOddsSnapshot).values(
+                                    outcome_id=outcome.id,
+                                    bookmaker="kalshi",
+                                    probability=prob,
+                                    american_odds=american,
+                                    yes_bid=yes_bid,
+                                    yes_ask=yes_ask,
+                                    last_price=last_price,
+                                    captured_at=now,
+                                )
+                            )
+                            stats["futures_snapshots_written"] += 1
 
                         # Rate limit between Kalshi requests
                         await asyncio.sleep(0.3)
@@ -1831,6 +1847,24 @@ async def _poll_live_prediction_market_prices():
 
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
+
+                            # Write FuturesOddsSnapshot for chart history
+                            best_bid_val = float(best_bid) if best_bid is not None else None
+                            best_ask_val = float(best_ask) if best_ask is not None else None
+                            ltp_val = float(ltp) if ltp is not None else None
+                            await session.execute(
+                                pg_insert(FuturesOddsSnapshot).values(
+                                    outcome_id=outcome.id,
+                                    bookmaker="polymarket",
+                                    probability=prob,
+                                    american_odds=american,
+                                    yes_bid=best_bid_val,
+                                    yes_ask=best_ask_val,
+                                    last_price=ltp_val,
+                                    captured_at=now,
+                                )
+                            )
+                            stats["futures_snapshots_written"] += 1
 
                         # Rate limit between Polymarket requests
                         await asyncio.sleep(0.3)
@@ -1978,11 +2012,12 @@ async def _poll_live_prediction_market_prices():
 
     logger.info(
         "Live prediction market poll: events=%d, markets=%d, "
-        "kalshi=%d, polymarket=%d, outcomes=%d, snapshots=%d (deduped=%d)",
+        "kalshi=%d, polymarket=%d, outcomes=%d, "
+        "futures_snaps=%d, wp_snaps=%d (deduped=%d)",
         stats["live_events"], stats["linked_markets"],
         stats["kalshi_fetched"], stats["polymarket_fetched"],
-        stats["outcomes_updated"], stats["snapshots_written"],
-        stats["snapshots_deduped"],
+        stats["outcomes_updated"], stats["futures_snapshots_written"],
+        stats["snapshots_written"], stats["snapshots_deduped"],
     )
     return stats
 
