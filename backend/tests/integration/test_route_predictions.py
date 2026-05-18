@@ -8,15 +8,19 @@ from app.routes.predictions import _identity_filter
 
 
 class _Result:
-    def __init__(self, one=None, all_rows=None):
+    def __init__(self, one=None, all_rows=None, scalar_value=None):
         self._one = one
         self._all_rows = all_rows or []
+        self._scalar_value = scalar_value
 
     def one(self):
         return self._one
 
     def all(self):
         return self._all_rows
+
+    def scalar(self):
+        return self._scalar_value
 
 
 class _Session:
@@ -43,6 +47,19 @@ class _QueuedSession:
     async def execute(self, statement):
         self.statements.append(str(statement))
         return self._results.pop(0)
+
+
+class _WriteSession(_QueuedSession):
+    def __init__(self, results):
+        super().__init__(results)
+        self.added = []
+        self.committed = False
+
+    def add(self, instance):
+        self.added.append(instance)
+
+    async def commit(self):
+        self.committed = True
 
 
 class _SessionContext:
@@ -159,6 +176,36 @@ async def test_detailed_stats_response_includes_dashboard_collections(client, mo
     assert isinstance(body["recent"], list)
 
 
+async def test_detailed_stats_empty_mocked_data_returns_zero_contract(client, monkeypatch):
+    """Empty stats should still return the full dashboard contract."""
+    from app.routes import predictions
+
+    session = _QueuedSession([
+        _Result(one=SimpleNamespace(total=0, correct=0)),
+        _Result(all_rows=[]),
+        _Result(all_rows=[]),
+        _Result(all_rows=[]),
+        _Result(all_rows=[]),
+    ])
+    monkeypatch.setattr(predictions, "get_session", lambda: _SessionContext(session))
+
+    resp = await client.get("/api/predictions/detailed-stats", headers={"x-session-id": "anon-empty"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "total": 0,
+        "correct": 0,
+        "accuracy": 0,
+        "current_streak": 0,
+        "best_streak": 0,
+        "by_category": {},
+        "trend": [],
+        "badges": [],
+        "recent": [],
+    }
+
+
 async def test_resolutions_response_shape(client, monkeypatch):
     """Resolved predictions should serialize the recent prediction card shape."""
     from app.routes import predictions
@@ -195,6 +242,79 @@ async def test_resolutions_response_shape(client, monkeypatch):
     ]
 
 
+async def test_resolutions_empty_mocked_data_returns_empty_list(client, monkeypatch):
+    """No resolved predictions should serialize as an empty resolutions list."""
+    from app.routes import predictions
+
+    session = _QueuedSession([_Result(all_rows=[])])
+    monkeypatch.setattr(predictions, "get_session", lambda: _SessionContext(session))
+
+    resp = await client.get("/api/predictions/resolutions", headers={"x-session-id": "anon-empty"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"resolutions": []}
+    assert session.statements
+    assert "futures_markets.status IN" in session.statements[0]
+
+
+async def test_submit_prediction_records_anonymous_session_prediction(client, monkeypatch):
+    """Submit should persist the request payload when no server probability exists."""
+    from app.routes import predictions
+
+    session = _WriteSession([_Result(scalar_value=None)])
+    monkeypatch.setattr(predictions, "get_session", lambda: _SessionContext(session))
+
+    resp = await client.post(
+        "/api/predictions",
+        headers={"x-session-id": "anon-submit"},
+        json={
+            "market_id": 123,
+            "guess": "higher",
+            "threshold": 50,
+            "actual_probability": 0.58,
+            "correct": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+    assert session.committed is True
+    assert len(session.added) == 1
+    pred = session.added[0]
+    assert pred.user_id is None
+    assert pred.session_id == "anon-submit"
+    assert pred.market_id == 123
+    assert pred.guess == "higher"
+    assert pred.threshold == 50
+    assert pred.actual_probability == 0.58
+    assert pred.correct is True
+
+
+async def test_submit_prediction_uses_server_probability_when_available(client, monkeypatch):
+    """Server-side current probability is authoritative for correctness."""
+    from app.routes import predictions
+
+    session = _WriteSession([_Result(scalar_value=0.62)])
+    monkeypatch.setattr(predictions, "get_session", lambda: _SessionContext(session))
+
+    resp = await client.post(
+        "/api/predictions",
+        headers={"x-session-id": "anon-submit"},
+        json={
+            "market_id": 456,
+            "guess": "higher",
+            "threshold": 55,
+            "actual_probability": 0.10,
+            "correct": False,
+        },
+    )
+
+    assert resp.status_code == 200
+    pred = session.added[0]
+    assert pred.actual_probability == 0.62
+    assert pred.correct is True
+
+
 async def test_submit_prediction_requires_full_payload(client):
     resp = await client.post("/api/predictions", json={"market_id": 1, "guess": "higher"})
 
@@ -206,18 +326,28 @@ async def test_submit_prediction_requires_full_payload(client):
     assert ("body", "correct") in missing_fields
 
 
+async def test_submit_prediction_requires_json_body(client):
+    resp = await client.post("/api/predictions")
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body"]
+
+
 async def test_submit_prediction_rejects_invalid_field_types(client):
     resp = await client.post(
         "/api/predictions",
         json={
             "market_id": "not-an-int",
             "guess": "higher",
-            "threshold": 50,
-            "actual_probability": 0.58,
-            "correct": True,
+            "threshold": "not-an-int",
+            "actual_probability": "not-a-float",
+            "correct": "not-a-bool",
         },
     )
 
     assert resp.status_code == 422
     errors = resp.json()["detail"]
     assert any(tuple(error["loc"]) == ("body", "market_id") for error in errors)
+    assert any(tuple(error["loc"]) == ("body", "threshold") for error in errors)
+    assert any(tuple(error["loc"]) == ("body", "actual_probability") for error in errors)
+    assert any(tuple(error["loc"]) == ("body", "correct") for error in errors)
