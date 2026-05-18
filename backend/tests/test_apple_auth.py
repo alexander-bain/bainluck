@@ -197,6 +197,70 @@ class TestVerifyAppleIdToken:
 
 
 # =============================================================================
+# apple_sign_in endpoint wiring
+# =============================================================================
+class TestAppleSignInEndpoint:
+    """Tests for Apple auth endpoint wiring around token verification."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_uses_web_and_native_audiences(self):
+        """Malformed Apple tokens are verified against both web and iOS audiences."""
+        import os
+        import app.routes.auth as auth
+        from fastapi import HTTPException
+
+        with patch.dict(
+            os.environ,
+            {
+                "APPLE_SERVICES_ID": "com.bainluck.web",
+                "APPLE_BUNDLE_ID": "com.bainluck.Bain-Luck",
+            },
+        ):
+            with patch(
+                "app.routes.auth.verify_apple_id_token", return_value=None
+            ) as mock_verify:
+                with pytest.raises(HTTPException) as exc_info:
+                    await auth.apple_sign_in(
+                        auth.AppleAuthRequest(id_token="malformed.jwt"),
+                        db=MagicMock(),
+                    )
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid or expired Apple id_token"
+        mock_verify.assert_called_once_with(
+            "malformed.jwt",
+            ["com.bainluck.web", "com.bainluck.Bain-Luck"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_native_bundle_audience_when_env_missing(self):
+        """The endpoint keeps accepting native iOS tokens when APPLE_BUNDLE_ID is unset."""
+        import os
+        import app.routes.auth as auth
+        from fastapi import HTTPException
+
+        env = os.environ.copy()
+        env["APPLE_SERVICES_ID"] = "com.bainluck.web"
+        env.pop("APPLE_BUNDLE_ID", None)
+
+        with patch.dict(os.environ, env, clear=True):
+            with patch(
+                "app.routes.auth.verify_apple_id_token", return_value=None
+            ) as mock_verify:
+                with pytest.raises(HTTPException) as exc_info:
+                    await auth.apple_sign_in(
+                        auth.AppleAuthRequest(id_token="native.jwt"),
+                        db=MagicMock(),
+                    )
+
+        assert exc_info.value.status_code == 401
+        mock_verify.assert_called_once_with(
+            "native.jwt",
+            ["com.bainluck.web", "com.bainluck.Bain-Luck"],
+        )
+
+
+# =============================================================================
 # auth_status provider list logic
 # =============================================================================
 class TestAuthStatusProviders:

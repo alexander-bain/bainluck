@@ -6,15 +6,59 @@ Tests cover:
 - Data structures and validation
 """
 
+from types import SimpleNamespace
+
 import pytest
+from app.models.models import UserPreference
 from app.routes.user import (
     _expand_location_query,
     _expand_sport_affinities,
     _compress_sport_affinities,
+    get_preferences,
+    submit_onboarding,
     METRO_ALIASES,
+    OnboardingRequest,
     SPORT_AFFINITY_MAPPING,
     SPORT_KEY_TO_CATEGORY,
 )
+
+
+class _FakeScalarResult:
+    def __init__(self, value=None):
+        self.value = value
+
+    def all(self):
+        return []
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class _FakeRowsResult:
+    def all(self):
+        return []
+
+
+class _FakeOnboardingDb:
+    def __init__(self):
+        self.added = []
+        self.preferences = None
+        self.execute_count = 0
+        self.flush_count = 0
+
+    async def execute(self, _statement):
+        self.execute_count += 1
+        if self.execute_count in (2, 3):
+            return _FakeScalarResult(self.preferences)
+        return _FakeRowsResult()
+
+    def add(self, item):
+        self.added.append(item)
+        if isinstance(item, UserPreference):
+            self.preferences = item
+
+    async def flush(self):
+        self.flush_count += 1
 
 
 # =============================================================================
@@ -244,6 +288,60 @@ class TestSportAffinityCompression:
         # Old "football" key expands to both NFL and NCAAF at 1.0,
         # then compresses to split keys
         assert compressed == {"nfl": 1.0, "college_football": 1.0}
+
+
+# =============================================================================
+# Onboarding Route Persistence Tests
+# =============================================================================
+
+
+class TestOnboardingRoutes:
+    """Route-level guardrails for onboarding preferences."""
+
+    @pytest.mark.asyncio
+    async def test_submit_onboarding_persists_and_returns_category_interests(self):
+        user = SimpleNamespace(id=42)
+        db = _FakeOnboardingDb()
+        body = OnboardingRequest(
+            home_location="Boston",
+            sport_affinities={
+                "politics": 1.0,
+                "entertainment": 0.3,
+                "nfl": 0.1,
+            },
+            raw_inputs={"source": "onboarding-test"},
+        )
+
+        result = await submit_onboarding(body=body, user=user, db=db)
+        preferences = await get_preferences(user=user, db=db)
+
+        assert result == {"status": "ok", "onboarding_completed": True}
+        assert db.flush_count == 1
+        assert db.preferences.home_location == "Boston"
+        assert db.preferences.onboarding_completed is True
+        assert db.preferences.onboarding_raw == {"source": "onboarding-test"}
+        assert db.preferences.sport_affinities == {
+            "politics": 1.0,
+            "entertainment": 0.3,
+            "americanfootball_nfl": 0.1,
+        }
+        assert preferences.sport_affinities == {
+            "politics": 1.0,
+            "entertainment": 0.3,
+            "nfl": 0.1,
+        }
+
+    @pytest.mark.asyncio
+    async def test_anonymous_preferences_return_empty_onboarding_defaults(self):
+        db = _FakeOnboardingDb()
+
+        preferences = await get_preferences(user=None, db=db)
+
+        assert preferences.home_location is None
+        assert preferences.sport_affinities == {}
+        assert preferences.onboarding_completed is False
+        assert preferences.favorites == []
+        assert db.execute_count == 0
 
 
 # =============================================================================

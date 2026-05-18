@@ -77,6 +77,16 @@ class TestLiveGames:
         result = _filter_stale_bookmaker_snapshots(snaps, "live", commence_time)
         assert len(result) == 2
 
+    def test_filters_stale_outlier_without_dropping_active_books(self, commence_time, pregame, live):
+        """Pregame outlier is suppressed while active live books remain."""
+        snaps = [
+            _snap("stale_outlier", pregame, 0.98),
+            _snap("live_book_a", live, 0.02),
+            _snap("live_book_b", live + timedelta(minutes=2), 0.03),
+        ]
+        result = _filter_stale_bookmaker_snapshots(snaps, "live", commence_time)
+        assert [snap.bookmaker for snap in result] == ["live_book_a", "live_book_b"]
+
     def test_falls_back_when_no_live_probs(self, commence_time, pregame, live):
         """If live snapshots have no probability, fall back to all."""
         snaps = [

@@ -7,8 +7,10 @@ Covers:
 
 import pytest
 
+from app.tasks import redis_state
 from app.tasks.redis_state import (
     compute_odds_hash,
+    get_odds_api_quota,
     TASK_METRICS_PREFIX,
     TASK_METRICS_TTL,
     _utc_now_iso,
@@ -120,3 +122,40 @@ class TestTaskMetricsConstants:
         assert callable(record_task_failure)
         assert callable(get_task_metrics)
         assert callable(get_all_task_metrics)
+
+
+class _FakeQuotaRedis:
+    def __init__(self, data):
+        self.data = data
+
+    def hgetall(self, _key):
+        return self.data
+
+
+class TestOddsApiQuotaState:
+    """Guardrails for quota state fallback and malformed cached values."""
+
+    def test_quota_guard_fails_open_when_redis_unavailable(self, monkeypatch):
+        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: None)
+
+        assert redis_state.check_quota_guard("poll_futures") == (True, "no_redis")
+
+    def test_quota_guard_fails_open_on_malformed_remaining_value(self, monkeypatch):
+        monkeypatch.setattr(redis_state, "QUOTA_GUARD_EXPIRY", "2999-01-01T00:00:00+00:00")
+        monkeypatch.setattr(
+            redis_state,
+            "get_redis_client",
+            lambda: _FakeQuotaRedis({b"remaining": b"not-an-int"}),
+        )
+
+        assert redis_state.check_quota_guard("discover_events") == (True, "redis_error")
+
+    def test_get_odds_api_quota_reports_error_for_malformed_cached_numbers(self, monkeypatch):
+        monkeypatch.setattr(
+            redis_state,
+            "get_redis_client",
+            lambda: _FakeQuotaRedis({b"remaining": b"250000", b"used": b"not-an-int"}),
+        )
+
+        assert get_odds_api_quota() == {"status": "error"}
