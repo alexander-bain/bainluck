@@ -103,7 +103,7 @@ export default function AboutPage() {
   useEngagementTime({ pageType: "about" });
 
   const [techOpen, setTechOpen] = useState(false);
-  const [caseStudyOpen, setCaseStudyOpen] = useState(false);
+  const [caseStudyOpen, setCaseStudyOpen] = useState(true);
 
   // Fetch real stats from calibration API
   const [stats, setStats] = useState({
@@ -178,73 +178,7 @@ export default function AboutPage() {
         </div>
       </RevealSection>
 
-      {/* ── What You Can Explore ── */}
-      <RevealSection>
-        <section className="space-y-5">
-          <h2 className="text-title-1 text-text-primary">What You Can Explore</h2>
-          <p className="text-body text-text-secondary">
-            We aggregate prediction markets and betting odds across every
-            category &mdash; not just sports.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {categories.map((c, i) => (
-              <RevealSection key={c.label} delay={i * 80}>
-                <div className="p-4 bg-surface-card rounded-xl border border-surface-border shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300">
-                  <div className="text-2xl mb-2">{c.emoji}</div>
-                  <div className="text-caption-strong text-text-primary">
-                    {c.label}
-                  </div>
-                  <div className="text-micro text-text-secondary mt-1">
-                    {c.desc}
-                  </div>
-                </div>
-              </RevealSection>
-            ))}
-          </div>
-        </section>
-      </RevealSection>
-
-      {/* ── Calibration CTA ── */}
-      <RevealSection>
-        <section>
-          <Link
-            href="/calibration"
-            className="block bg-surface-card rounded-2xl p-6 sm:p-8 border border-surface-border shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 group"
-          >
-            <div className="flex items-start gap-4 sm:gap-5">
-              <div className="text-3xl sm:text-4xl flex-shrink-0">📊</div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-title-2 text-text-primary group-hover:text-accent-brand transition-colors">
-                  Do Prediction Markets Predict Anything?
-                </h2>
-                <p className="text-caption text-text-secondary mt-2 leading-relaxed">
-                  We analyzed {stats.outcomes} resolved outcomes across Kalshi,
-                  Polymarket, and sportsbooks. When markets say something has a
-                  30% chance, does it really happen 30% of the time?
-                </p>
-                <span className="inline-flex items-center gap-1.5 text-caption-strong text-accent-brand mt-4">
-                  View calibration report
-                  <svg
-                    className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-200"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={2}
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
-                    />
-                  </svg>
-                </span>
-              </div>
-            </div>
-          </Link>
-        </section>
-      </RevealSection>
-
-      {/* ── Case Studies ── */}
+      {/* ── Case Studies (lead with the hook) ── */}
       <RevealSection>
         <section className="space-y-4">
           <button
@@ -328,6 +262,72 @@ export default function AboutPage() {
               </div>
             </div>
           </div>
+        </section>
+      </RevealSection>
+
+      {/* ── What You Can Explore ── */}
+      <RevealSection>
+        <section className="space-y-5">
+          <h2 className="text-title-1 text-text-primary">What You Can Explore</h2>
+          <p className="text-body text-text-secondary">
+            We aggregate prediction markets and betting odds across every
+            category &mdash; not just sports.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {categories.map((c, i) => (
+              <RevealSection key={c.label} delay={i * 80}>
+                <div className="p-4 bg-surface-card rounded-xl border border-surface-border shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300">
+                  <div className="text-2xl mb-2">{c.emoji}</div>
+                  <div className="text-caption-strong text-text-primary">
+                    {c.label}
+                  </div>
+                  <div className="text-micro text-text-secondary mt-1">
+                    {c.desc}
+                  </div>
+                </div>
+              </RevealSection>
+            ))}
+          </div>
+        </section>
+      </RevealSection>
+
+      {/* ── Calibration CTA ── */}
+      <RevealSection>
+        <section>
+          <Link
+            href="/calibration"
+            className="block bg-surface-card rounded-2xl p-6 sm:p-8 border border-surface-border shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 group"
+          >
+            <div className="flex items-start gap-4 sm:gap-5">
+              <div className="text-3xl sm:text-4xl flex-shrink-0">📊</div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-title-2 text-text-primary group-hover:text-accent-brand transition-colors">
+                  Do Prediction Markets Predict Anything?
+                </h2>
+                <p className="text-caption text-text-secondary mt-2 leading-relaxed">
+                  We analyzed {stats.outcomes} resolved outcomes across Kalshi,
+                  Polymarket, and sportsbooks. When markets say something has a
+                  30% chance, does it really happen 30% of the time?
+                </p>
+                <span className="inline-flex items-center gap-1.5 text-caption-strong text-accent-brand mt-4">
+                  View calibration report
+                  <svg
+                    className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-200"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+                    />
+                  </svg>
+                </span>
+              </div>
+            </div>
+          </Link>
         </section>
       </RevealSection>
 
@@ -546,8 +546,8 @@ export default function AboutPage() {
                   desc: "Aggregate across all markets, not just one",
                 },
                 {
-                  title: "No gambling",
-                  desc: "Informational only, always",
+                  title: "Insight-first",
+                  desc: "Understand probability without placing a bet",
                 },
               ].map((item) => (
                 <li key={item.title} className="flex gap-3 items-start">
