@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.tasks.enrich_markets import (
     DISCOVER_LLM_METADATA_KEY,
     DISCOVER_LLM_SCHEMA_VERSION,
     _discover_llm_feature_tokens,
     _discover_llm_score_adjustment,
+    enrich_discover_llm_metadata,
     _get_discover_llm_metadata,
     _json_from_llm_response,
     _metadata_needs_discover_llm_refresh,
@@ -106,6 +109,33 @@ def test_get_discover_llm_metadata_requires_current_schema():
     assert _get_discover_llm_metadata(stale) is None
 
 
+def test_cached_discover_llm_metadata_helpers_tolerate_partial_values():
+    cached = {
+        DISCOVER_LLM_METADATA_KEY: {
+            "schema_version": DISCOVER_LLM_SCHEMA_VERSION,
+            "topic": None,
+            "subtopic": "ai",
+            "archetype": "",
+            "audience_scope": "mainstream",
+            "salience_score": "not-a-number",
+            "entities": [None, "OpenAI", ""],
+            "junk_flags": [],
+            "comparison_axes": ["AI vs markets", 123],
+        }
+    }
+
+    metadata = _get_discover_llm_metadata(cached)
+
+    assert metadata is not None
+    assert _discover_llm_score_adjustment(metadata) == 2
+    assert _discover_llm_feature_tokens(metadata) == [
+        "llm_subtopic:ai",
+        "llm_audience_scope:mainstream",
+        "llm_entity:openai",
+        "llm_axis:ai_vs_markets",
+    ]
+
+
 def test_metadata_needs_refresh_after_max_age():
     now = datetime(2026, 5, 17, tzinfo=timezone.utc)
     fresh = {
@@ -123,3 +153,17 @@ def test_metadata_needs_refresh_after_max_age():
 
     assert not _metadata_needs_discover_llm_refresh(fresh, now=now)
     assert _metadata_needs_discover_llm_refresh(old, now=now)
+
+
+@pytest.mark.asyncio
+async def test_enrich_discover_llm_metadata_skips_without_llm_client(monkeypatch):
+    from app.services import llm
+
+    monkeypatch.setattr(llm, "_get_client", lambda: None)
+
+    def fail_if_session_is_opened():
+        raise AssertionError("metadata enrichment should not open a DB session without an LLM client")
+
+    monkeypatch.setattr("app.tasks.enrich_markets.get_task_session", fail_if_session_is_opened)
+
+    assert await enrich_discover_llm_metadata(limit=1) == {"skipped": True}

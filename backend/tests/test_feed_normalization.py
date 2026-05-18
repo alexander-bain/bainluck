@@ -71,6 +71,33 @@ class TestNormalizeFeedProbabilities:
         assert result[1]["probability"] == round(0.35 / 1.20, 4)
         assert result[2]["probability"] == round(0.20 / 1.20, 4)
 
+    def test_independent_binary_normalization_preserves_feed_shape(self):
+        """Normalization must not drop or rewrite non-probability card fields."""
+        top = [
+            {"id": 101, "name": "Alpha", "probability": 0.42, "rank": 1, "movement": 0.03},
+            {"id": 102, "name": "Beta", "probability": 0.36, "rank": 2, "movement": -0.01},
+            {"id": 103, "name": "Gamma", "probability": 0.24, "rank": 3, "movement": None},
+        ]
+        all_outcomes = [
+            _make_outcome(0.42),
+            _make_outcome(0.36),
+            _make_outcome(0.24),
+            _make_outcome(0.18),
+        ]
+
+        result = _normalize_feed_probabilities(top, all_outcomes)
+
+        assert result is top
+        assert [outcome["id"] for outcome in result] == [101, 102, 103]
+        assert [outcome["name"] for outcome in result] == ["Alpha", "Beta", "Gamma"]
+        assert [outcome["rank"] for outcome in result] == [1, 2, 3]
+        assert [outcome["movement"] for outcome in result] == [0.03, -0.01, None]
+        assert [outcome["probability"] for outcome in result] == [
+            round(0.42 / 1.20, 4),
+            round(0.36 / 1.20, 4),
+            round(0.24 / 1.20, 4),
+        ]
+
     def test_binary_market_stricter_threshold(self):
         """Two-outcome markets use a 1.01 threshold, not 1.05."""
         top = [

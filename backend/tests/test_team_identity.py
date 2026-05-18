@@ -17,6 +17,22 @@ from app.services.team_identity import (
 )
 
 
+class _FakeScalarResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalarResult(self._rows)
+
+
 # =============================================================================
 # normalize_name
 # =============================================================================
@@ -243,6 +259,81 @@ class TestTeamIdentityServiceResolve:
                 source_id="nonexistent"
             )
             assert result is None
+
+
+class TestTeamIdentityServiceFuzzyTeams:
+    """Test real fuzzy matching behavior on Team rows."""
+
+    @pytest.fixture
+    def service(self):
+        return TeamIdentityService()
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_team_match_uses_alternate_names(self, service):
+        """Cross-source aliases should resolve against Team.alternate_names."""
+        celtics = MagicMock()
+        celtics.id = 1
+        celtics.name = "Boston Celtics"
+        celtics.alternate_names = ["Celts", "Boston C's"]
+
+        session = AsyncMock()
+        session.execute.return_value = _FakeExecuteResult([celtics])
+
+        result = await service._fuzzy_match_teams(
+            session, "Celts", "basketball_nba"
+        )
+
+        assert result == celtics
+
+    @pytest.mark.asyncio
+    async def test_resolve_rejects_short_ambiguous_abbreviation(self, service):
+        """A short abbreviation like LA must not fuzzy-match same-city aliases."""
+        lakers = MagicMock()
+        lakers.id = 1
+        lakers.name = "Los Angeles Lakers"
+        lakers.alternate_names = ["Lakers", "LA Lakers"]
+        clippers = MagicMock()
+        clippers.id = 2
+        clippers.name = "Los Angeles Clippers"
+        clippers.alternate_names = ["Clippers", "LA Clippers"]
+
+        session = AsyncMock()
+        session.execute.return_value = _FakeExecuteResult([lakers, clippers])
+
+        with patch.object(service, "_lookup_by_source_id", return_value=None), \
+             patch.object(service, "_lookup_by_source_name", return_value=None), \
+             patch.object(service, "_fuzzy_match_mappings", return_value=None), \
+             patch.object(service, "register_team_identity") as mock_register:
+            result = await service.resolve_team(
+                session, "statpal", "basketball_nba",
+                source_abbreviation="LA"
+            )
+
+        assert result is None
+        mock_register.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_team_query_is_scoped_to_sport_family(self, service):
+        """Fuzzy team scans should stay inside the requested sport family."""
+        captured_statements = []
+
+        async def execute(statement):
+            captured_statements.append(statement)
+            return _FakeExecuteResult([])
+
+        session = AsyncMock()
+        session.execute.side_effect = execute
+
+        result = await service._fuzzy_match_teams(
+            session, "Giants", "basketball_nba"
+        )
+
+        assert result is None
+        assert len(captured_statements) == 1
+        statement_text = str(captured_statements[0])
+        assert "JOIN sports" in statement_text
+        assert "sports.key LIKE" in statement_text
+        assert list(captured_statements[0].compile().params.values()) == ["basketball%"]
 
 
 class TestTeamIdentityServiceFindTeams:

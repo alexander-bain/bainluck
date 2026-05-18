@@ -39,6 +39,7 @@
 - ✅ **Quota/context scoring guardrails** — added backend tests for polling tier/quota behavior, Odds API polling helper parsing/dedupe, league context response shape, excitement-index edge cases, and fixed Power 4 team matching false positives for ambiguous school names.
 - ✅ **Probability and momentum guardrails** — added backend tests for event taxonomy feed facets, win-probability clamping/final-state overrides, line-movement threshold/order handling, pulse noisy-source resistance, and NCAA seed-matchup helper behavior.
 - ✅ **Auth/preferences resilience guardrails** — added backend tests for Apple Sign-In web/native audience handling, Redis quota-state fail-open/malformed cache behavior, onboarding category-interest round trips, and stale bookmaker outlier filtering.
+- ✅ **Calibration and identity guardrails** — added backend tests for calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 
