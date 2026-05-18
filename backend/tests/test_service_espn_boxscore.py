@@ -155,6 +155,35 @@ class TestParseBoxscore:
         result = client._parse_boxscore(fixtures["boxscore_mismatched_lengths"])
         assert "Bad Data Player" not in result
 
+    def test_unknown_and_blank_stats_do_not_drop_player(self, client):
+        """Bad individual stat cells are ignored while valid player stats survive."""
+        result = client._parse_boxscore(
+            {
+                "boxscore": {
+                    "players": [
+                        {
+                            "statistics": [
+                                {
+                                    "names": ["PTS", "REB", "MYSTERY", "AST", "BLK"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Partial Data Player"},
+                                            "stats": ["12", "--", "999", "", "2"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+
+        assert result["Partial Data Player"] == {
+            "points": 12.0,
+            "blocks": 2.0,
+        }
+
     def test_empty_boxscore(self, client, fixtures):
         result = client._parse_boxscore(fixtures["boxscore_empty"])
         assert result == {}

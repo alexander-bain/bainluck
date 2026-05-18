@@ -7,6 +7,8 @@ that our event team names match ESPN team data during live sync.
 from dataclasses import dataclass
 from typing import Optional
 
+import pytest
+
 from app.tasks.espn_sync import espn_names_match
 
 
@@ -67,3 +69,24 @@ class TestESPNNamesMatch:
         """Handle None fields in ESPN team data."""
         team = MockESPNTeam("Boston Celtics", "", "", "")
         assert espn_names_match(["Boston Celtics"], team)
+
+    @pytest.mark.parametrize(
+        ("our_names", "team"),
+        [
+            (
+                ["Montreal Canadiens"],
+                MockESPNTeam("Montréal Canadiens", "MTL", "Canadiens", "Montréal"),
+            ),
+            (
+                ["St Louis Cardinals"],
+                MockESPNTeam("St. Louis Cardinals", "STL", "Cardinals", "St. Louis"),
+            ),
+            (
+                ["Sao Paulo"],
+                MockESPNTeam("São Paulo FC", "", "São Paulo", "São Paulo"),
+            ),
+        ],
+    )
+    def test_punctuation_and_diacritics_normalized(self, our_names, team):
+        """ESPN accents and punctuation should not break legitimate team matches."""
+        assert espn_names_match(our_names, team)

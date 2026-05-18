@@ -4,9 +4,7 @@ Covers methods not in test_datagolf.py:
 - _first_int: correctly handles zero (even par), multi-key fallback
 """
 
-import pytest
-
-from app.services.datagolf_api import _first_int
+from app.services.datagolf_api import DataGolfAPIService, _first_int
 
 
 class TestFirstInt:
@@ -53,3 +51,72 @@ class TestFirstInt:
 
     def test_negative_value(self):
         assert _first_int({"score": -5}, "score") == -5
+
+
+class TestParsePlayersGuardrails:
+    """Parser-level guardrails for DataGolf's loose endpoint payloads."""
+
+    def test_invalid_probability_alias_falls_back_to_valid_value(self):
+        service = DataGolfAPIService(api_key="test")
+        data = {
+            "data": [
+                {
+                    "dg_id": 18417,
+                    "player_name": "Scheffler, Scottie",
+                    "win_prob": "not-a-probability",
+                    "win": "0.125",
+                    "top_5_prob": 1.5,
+                    "top_5": 0.4,
+                    "top_10_prob": -0.1,
+                    "top_10": "0.55",
+                },
+            ]
+        }
+
+        players = service._parse_players(data, in_play=False)
+
+        assert len(players) == 1
+        assert players[0].win == 0.125
+        assert players[0].top_5 == 0.4
+        assert players[0].top_10 == 0.55
+
+    def test_in_play_even_par_scores_do_not_fall_through_to_later_fields(self):
+        service = DataGolfAPIService(api_key="test")
+        data = {
+            "data": [
+                {
+                    "dg_id": 18417,
+                    "player_name": "Scheffler, Scottie",
+                    "current_score": 0,
+                    "total": -4,
+                    "today": "0",
+                    "today_to_par": -2,
+                    "thru": 18,
+                },
+            ]
+        }
+
+        players = service._parse_players(data, in_play=True)
+
+        assert len(players) == 1
+        assert players[0].total_score == 0
+        assert players[0].today_score == 0
+        assert players[0].thru == "18"
+
+    def test_baseline_history_fit_payload_is_accepted_without_data_key(self):
+        service = DataGolfAPIService(api_key="test")
+        data = {
+            "baseline_history_fit": [
+                {
+                    "dg_id": 100,
+                    "player_name": "Hovland, Viktor",
+                    "win_prob": 0.07,
+                },
+            ]
+        }
+
+        players = service._parse_players(data, in_play=False)
+
+        assert len(players) == 1
+        assert players[0].player_name == "Viktor Hovland"
+        assert players[0].win == 0.07

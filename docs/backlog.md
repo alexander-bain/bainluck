@@ -1199,6 +1199,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ Probability/momentum guardrails: event taxonomy feed facets, win-probability clamping and final-state overrides, line-movement threshold/order handling, pulse noisy-source resistance, and NCAA seed-matchup helper behavior
 - ✅ Auth/preferences resilience guardrails: Apple Sign-In web/native audience handling, Redis quota-state fail-open/malformed cache behavior, onboarding category-interest round trips, and stale bookmaker outlier filtering
 - ✅ Calibration/identity guardrails: calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching
+- ✅ Provider parser guardrails: DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience
 
 **Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`
 **Parallel Safety:** Green

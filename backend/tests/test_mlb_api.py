@@ -4,6 +4,28 @@ import pytest
 from datetime import datetime, timedelta, timezone
 
 
+class _FakeResponse:
+    def __init__(self, data):
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._data
+
+
+class _FakeClient:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    async def get(self, path, params=None):
+        self.calls.append((path, params))
+        data = self.responses[path]
+        return _FakeResponse(data)
+
+
 # =============================================================================
 # Name matching
 # =============================================================================
@@ -163,6 +185,123 @@ class TestMLBAPIServiceStructure:
         assert asyncio.iscoroutinefunction(service.get_live_games)
         assert asyncio.iscoroutinefunction(service.get_win_probability_history)
         assert asyncio.iscoroutinefunction(service.find_game_pk_for_teams)
+
+
+# =============================================================================
+# MLB API parsing
+# =============================================================================
+
+class TestMLBAPIParsing:
+    """No-network tests for MLB Stats API response parsing."""
+
+    @pytest.mark.asyncio
+    async def test_context_win_probability_prefers_top_level_percentage(self):
+        from app.services.mlb_api import MLBAPIService
+
+        service = MLBAPIService.__new__(MLBAPIService)
+        service.client = _FakeClient({
+            "/v1/game/717404/contextMetrics": {
+                "homeWinProbability": 62.7,
+                "game": {"homeWinProbability": 12.3},
+            },
+        })
+
+        wp = await service._get_context_win_probability(717404)
+
+        assert wp == pytest.approx(0.627)
+        assert service.client.calls == [("/v1/game/717404/contextMetrics", None)]
+
+    @pytest.mark.asyncio
+    async def test_context_win_probability_falls_back_to_game_object(self):
+        from app.services.mlb_api import MLBAPIService
+
+        service = MLBAPIService.__new__(MLBAPIService)
+        service.client = _FakeClient({
+            "/v1/game/717404/contextMetrics": {
+                "game": {"homeWinProbability": "41.5"},
+            },
+        })
+
+        assert await service._get_context_win_probability(717404) == pytest.approx(0.415)
+
+    @pytest.mark.asyncio
+    async def test_live_games_include_review_and_exclude_completed_games(self):
+        from app.services.mlb_api import MLBAPIService
+
+        service = MLBAPIService.__new__(MLBAPIService)
+
+        async def fake_get_todays_games():
+            return [
+                {
+                    "gamePk": 1,
+                    "gameDate": "2026-05-17T19:05:00Z",
+                    "status": {"statusCode": "IR"},
+                    "teams": {
+                        "home": {"team": {"id": 147, "name": "New York Yankees"}, "score": 4},
+                        "away": {"team": {"id": 111, "name": "Boston Red Sox"}, "score": 3},
+                    },
+                    "linescore": {"currentInning": 7, "inningHalf": "Bottom"},
+                },
+                {
+                    "gamePk": 2,
+                    "status": {"statusCode": "F"},
+                    "teams": {
+                        "home": {"team": {"id": 121, "name": "New York Mets"}, "score": 2},
+                        "away": {"team": {"id": 112, "name": "Chicago Cubs"}, "score": 1},
+                    },
+                },
+            ]
+
+        async def fake_context_wp(game_pk):
+            assert game_pk == 1
+            return 0.7342
+
+        service.get_todays_games = fake_get_todays_games
+        service._get_context_win_probability = fake_context_wp
+
+        games = await service.get_live_games()
+
+        assert len(games) == 1
+        game = games[0]
+        assert game.game_pk == 1
+        assert game.status == "In Progress"
+        assert game.inning == 7
+        assert game.inning_half == "bottom"
+        assert game.home_score == 4
+        assert game.away_score == 3
+        assert game.home_win_probability == pytest.approx(0.7342)
+        assert game.away_win_probability == pytest.approx(0.2658)
+
+    @pytest.mark.asyncio
+    async def test_win_probability_history_skips_rows_missing_home_probability(self):
+        from app.services.mlb_api import MLBAPIService
+
+        service = MLBAPIService.__new__(MLBAPIService)
+        service.client = _FakeClient({
+            "/v1/game/717404/winProbability": [
+                {
+                    "homeTeamWinProbability": 55.5,
+                    "atBatIndex": 12,
+                    "about": {"inning": 3, "halfInning": "bottom"},
+                    "result": {"description": "Single to right field"},
+                },
+                {
+                    "awayTeamWinProbability": 47.0,
+                    "atBatIndex": 13,
+                    "about": {"inning": 3, "halfInning": "bottom"},
+                },
+            ],
+        })
+
+        entries = await service.get_win_probability_history(717404)
+
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.home_win_probability == pytest.approx(0.555)
+        assert entry.away_win_probability == pytest.approx(0.445)
+        assert entry.inning == 3
+        assert entry.inning_half == "bottom"
+        assert entry.description == "Single to right field"
 
 
 # =============================================================================
