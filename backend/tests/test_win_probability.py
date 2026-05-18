@@ -1002,3 +1002,59 @@ class TestPregamePrior:
         )
         assert result is not None
         assert 0.25 < result < 0.35
+
+    def test_extreme_opening_probs_are_clamped(self):
+        """Bad upstream prior values should stay finite and directionally useful."""
+        low = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=-0.25,
+        )
+        zero = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.0,
+        )
+        one = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=1.0,
+        )
+        high = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock="15:00", period="Q1",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=1.25,
+        )
+
+        assert low == pytest.approx(zero)
+        assert high == pytest.approx(one)
+        assert 0.009 < low < 0.011
+        assert 0.989 < high < 0.991
+
+    def test_final_clock_score_overrides_contradictory_prior(self):
+        """At 0:00, live score should dominate even an extreme opening prior."""
+        leading_home = compute_statistical_win_prob(
+            home_score=10, away_score=7,
+            clock="0:00", period="Q4",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.01,
+        )
+        trailing_home = compute_statistical_win_prob(
+            home_score=7, away_score=10,
+            clock="0:00", period="Q4",
+            sport_key="football_nfl",
+            pregame_spread=None,
+            opening_home_probability=0.99,
+        )
+
+        assert leading_home == 0.999
+        assert trailing_home == 0.001

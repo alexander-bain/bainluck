@@ -540,6 +540,58 @@ class TestComputeMarketTags:
         assert tags == sorted(tags)
 
 
+class TestDiscoverMarketTagGuardrails:
+    def test_discover_topic_uses_sport_namespace_not_category(self):
+        tags = compute_market_tags(
+            llm_sport_category="politics",
+            category="politics",
+            status="open",
+            source="kalshi",
+        )
+
+        assert "sport:politics" in tags
+        assert "market_status:open" in tags
+        assert "source:kalshi" in tags
+        assert "category:politics" not in tags
+
+    def test_game_prop_category_beats_championship_tier(self):
+        tags = compute_market_tags(
+            llm_sport_category="basketball",
+            llm_league="NBA",
+            market_tier=1,
+            category="game_prop",
+            status="open",
+            source="kalshi",
+        )
+
+        assert "category:game_prop" in tags
+        assert "category:championship" not in tags
+
+    @pytest.mark.parametrize(
+        ("market_tier", "expected_category"),
+        [
+            (1, "championship"),
+            (2, "conference"),
+            (3, "awards"),
+            (4, "division"),
+            (5, "prop"),
+        ],
+    )
+    def test_market_tier_category_mapping_for_feed_facets(
+        self,
+        market_tier,
+        expected_category,
+    ):
+        tags = compute_market_tags(
+            llm_sport_category="basketball",
+            market_tier=market_tier,
+            status="open",
+            source="odds_api",
+        )
+
+        assert f"category:{expected_category}" in tags
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Market tag validation
 # ══════════════════════════════════════════════════════════════════════

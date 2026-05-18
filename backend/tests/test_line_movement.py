@@ -136,6 +136,47 @@ class TestDetectMovements:
         result = detect_line_movements(snaps)
         assert result.movement_count >= 1
 
+    def test_exact_threshold_detected(self):
+        """A move exactly at the 5pp threshold should be card-worthy."""
+        snaps = _make_snapshots([0.50, 0.55])
+        result = detect_line_movements(snaps)
+
+        assert result.movement_count == 1
+        assert result.movements[0].magnitude == pytest.approx(SIGNIFICANT_MOVE_THRESHOLD)
+        assert result.max_single_move == pytest.approx(SIGNIFICANT_MOVE_THRESHOLD)
+
+    def test_missing_snapshot_fields_are_ignored(self):
+        """Malformed rows should not block movement detection from valid rows."""
+        base = datetime(2026, 2, 20, 18, 0, tzinfo=timezone.utc)
+        snaps = [
+            {"timestamp": base, "home_probability": 0.50, "bookmaker_count": 6},
+            {"timestamp": base + timedelta(minutes=5), "bookmaker_count": 7},
+            {"home_probability": 0.54, "bookmaker_count": 8},
+            {"timestamp": base + timedelta(minutes=10), "home_probability": 0.57, "bookmaker_count": 9},
+        ]
+        result = detect_line_movements(snaps)
+
+        assert result.movement_count == 1
+        move = result.movements[0]
+        assert move.home_prob_before == pytest.approx(0.50)
+        assert move.home_prob_after == pytest.approx(0.57)
+        assert move.bookmaker_count_before == 6
+        assert move.bookmaker_count_after == 9
+
+    def test_bookmaker_counts_preserved_on_detected_movement(self):
+        """Cards can show source depth for the snapshots that defined a move."""
+        base = datetime(2026, 2, 20, 18, 0, tzinfo=timezone.utc)
+        snaps = [
+            {"timestamp": base, "home_probability": 0.48, "bookmaker_count": 3},
+            {"timestamp": base + timedelta(minutes=5), "home_probability": 0.52, "bookmaker_count": 6},
+            {"timestamp": base + timedelta(minutes=10), "home_probability": 0.56, "bookmaker_count": 10},
+        ]
+        result = detect_line_movements(snaps)
+
+        assert result.movement_count == 1
+        assert result.movements[0].bookmaker_count_before == 3
+        assert result.movements[0].bookmaker_count_after == 10
+
 
 class TestDetectDirection:
     """Tests for movement direction classification."""
@@ -184,6 +225,20 @@ class TestTotalSwing:
         snaps = _make_snapshots([0.60, 0.65, 0.70])
         result = detect_line_movements(snaps)
         assert result.total_swing == 0.0
+
+    def test_total_swing_uses_latest_timestamp_not_input_order(self):
+        """Out-of-order snapshots should still calculate swing from the latest row."""
+        base = datetime(2026, 2, 20, 18, 0, tzinfo=timezone.utc)
+        snaps = [
+            {"timestamp": base + timedelta(minutes=10), "home_probability": 0.62},
+            {"timestamp": base, "home_probability": 0.50},
+            {"timestamp": base + timedelta(minutes=5), "home_probability": 0.56},
+        ]
+        result = detect_line_movements(snaps, opening_home_prob=0.50)
+
+        assert result.total_swing == pytest.approx(0.12)
+        assert "Current odds" in result.summary_context
+        assert "62.0%" in result.summary_context
 
 
 # ── _build_movement_context tests ─────────────────────────────────────

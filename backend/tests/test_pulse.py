@@ -429,6 +429,24 @@ class TestCalculatePulse:
         assert result.components.lead_changes == 0
         assert result.components.heart_rate < 0.2
 
+    def test_noisy_source_does_not_create_fake_momentum(
+        self, game_start, current_time, make_multi_bookmaker_snapshots
+    ):
+        """One flapping source should not create fake pulse movement."""
+        groups = []
+        for i in range(12):
+            noisy_probability = 0.10 if i % 2 == 0 else 0.90
+            groups.append([0.54, 0.55, 0.56, noisy_probability])
+
+        snapshots = make_multi_bookmaker_snapshots(groups)
+        result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
+
+        assert result is not None
+        assert result.snapshot_count == 12
+        assert result.components.lead_changes == 0
+        assert result.components.heart_rate == 0.0
+        assert result.components.amplitude < 0.07
+
     def test_identical_probabilities(self, game_start, current_time, make_snapshots):
         """All identical probabilities should produce minimal score."""
         probs = [0.50] * 10
