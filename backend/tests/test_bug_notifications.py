@@ -34,6 +34,7 @@ def _report(**overrides):
         "id": 123,
         "user_email": "jane.doe@example.com",
         "notification_sent_at": None,
+        "status": "fixed",
         "description": "The Discover card was blank.",
         "resolution_summary": "We fixed the image fallback.",
         "app_state": {"user_name": "Jane Doe"},
@@ -77,6 +78,8 @@ def test_build_gmail_message_includes_plain_text_and_html_parts():
     assert message["Auto-Submitted"] == "auto-generated"
     assert message["Precedence"] == "bulk"
     assert message["X-Auto-Response-Suppress"] == "All"
+    assert "List-Unsubscribe" not in message
+    assert "List-Unsubscribe-Post" not in message
     assert message.is_multipart()
 
     plain_body = message.get_body(preferencelist=("plain",)).get_content()
@@ -152,6 +155,42 @@ async def test_send_bug_fixed_email_skips_already_notified():
     sent = await send_bug_fixed_email(
         123,
         _Session(_report(notification_sent_at=datetime.now(timezone.utc))),
+        send_email=send_email,
+    )
+
+    assert sent is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_bug_fixed_email_skips_unresolved_report():
+    calls = []
+
+    async def send_email(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    sent = await send_bug_fixed_email(
+        123,
+        _Session(_report(status="reviewed")),
+        send_email=send_email,
+    )
+
+    assert sent is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_bug_fixed_email_skips_missing_resolution_summary():
+    calls = []
+
+    async def send_email(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    sent = await send_bug_fixed_email(
+        123,
+        _Session(_report(resolution_summary=" ")),
         send_email=send_email,
     )
 

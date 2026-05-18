@@ -101,7 +101,11 @@ def _sanitize_discover_llm_metadata(data: dict[str, Any], *, now: datetime) -> d
 
 
 def _discover_llm_score_adjustment(metadata: dict[str, Any] | None) -> int:
-    """Small deterministic score nudge from cached LLM metadata."""
+    """Deterministic score nudge from cached LLM metadata.
+
+    Keep this bounded, but let LLM-derived low-signal labels matter enough to
+    move local/niche junk out of the first-page candidate set.
+    """
     if not metadata:
         return 0
     try:
@@ -111,14 +115,25 @@ def _discover_llm_score_adjustment(metadata: dict[str, Any] | None) -> int:
     salience = max(1, min(5, salience))
     adjustment = (salience - 3) * 3
     audience_scope = metadata.get("audience_scope")
-    if audience_scope in {"local", "niche", "specialist"}:
-        adjustment -= 4
+    adjustment += {
+        "niche": -15,
+        "local": -25,
+        "specialist": -20,
+    }.get(audience_scope, 0)
     junk_flags = metadata.get("junk_flags") or []
-    if junk_flags:
-        adjustment -= min(10, 4 + 2 * len(junk_flags))
+    junk_penalties = {
+        "local_election": -20,
+        "low_tier_sports": -15,
+        "minor_soccer": -15,
+        "procedural_politics": -15,
+        "commodity_ladder": -15,
+    }
+    for flag in junk_flags:
+        normalized = str(flag).strip().lower().replace(" ", "_")
+        adjustment += junk_penalties.get(normalized, -6)
     if metadata.get("entities"):
         adjustment += 2
-    return max(-14, min(10, adjustment))
+    return max(-30, min(10, adjustment))
 
 
 def _discover_llm_feature_tokens(metadata: dict[str, Any] | None) -> list[str]:
@@ -570,7 +585,8 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                 "- salience_score: integer 1-5 for whether a normal curious person would care.\n"
                 "- audience_scope: one of broad, mainstream, niche, local, specialist.\n"
                 "- junk_flags: short strings for low-signal cards such as local_election, low_tier_sports, "
-                "commodity_ladder, repetitive_bucket, thin_liquidity, stale_context. Empty if none.\n"
+                "minor_soccer, procedural_politics, commodity_ladder, repetitive_bucket, thin_liquidity, "
+                "stale_context. Empty if none.\n"
                 "- comparison_axes: dimensions useful for game pairings, like sports_vs_music, culture, macro, election, ai_tech.\n\n"
                 f"Market: {market.name}\n"
                 f"Category: {market.llm_sport_category or market.category or 'other'}\n"

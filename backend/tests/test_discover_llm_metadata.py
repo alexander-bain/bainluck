@@ -70,7 +70,31 @@ def test_discover_llm_score_adjustment_penalizes_junk_local_cards():
             "junk_flags": ["local_election", "thin_liquidity"],
         }
     )
-    assert adjustment <= -10
+    assert adjustment == -30
+
+
+def test_discover_llm_score_adjustment_penalizes_specific_junk_flags():
+    adjustment = _discover_llm_score_adjustment(
+        {
+            "salience_score": 3,
+            "audience_scope": "mainstream",
+            "entities": [],
+            "junk_flags": ["minor_soccer", "procedural_politics", "commodity_ladder"],
+        }
+    )
+    assert adjustment == -30
+
+
+def test_discover_llm_score_adjustment_stronger_for_niche_scope():
+    adjustment = _discover_llm_score_adjustment(
+        {
+            "salience_score": 3,
+            "audience_scope": "niche",
+            "entities": [],
+            "junk_flags": [],
+        }
+    )
+    assert adjustment == -15
 
 
 def test_discover_llm_feature_tokens_include_entities_and_axes():

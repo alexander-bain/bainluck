@@ -14,7 +14,8 @@ struct EventDetailView: View {
     @State private var lastRefreshDate: Date = Date()
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
-              let ct = event.commenceTime, let scheduledStart = ct.asDate else { return nil }
+              let commenceTime = event.commenceTime,
+              let scheduledStart = commenceTime.asDate else { return nil }
 
         // Use actual game start (first ESPN data point) instead of scheduled time
         let actualStart: Date
@@ -221,9 +222,9 @@ struct EventDetailView: View {
                         )
                     }
                     // Market Maps (margin + total density curves)
-                    if let gm = vm.gameMarkets {
+                    if let gameMarkets = vm.gameMarkets {
                         MarketMapView(
-                            gameMarkets: gm,
+                            gameMarkets: gameMarkets,
                             eventStatus: event.status,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
@@ -241,9 +242,11 @@ struct EventDetailView: View {
                         )
                     }
                     // Player Props (from game-markets endpoint)
-                    if let gm = vm.gameMarkets, let pp = gm.playerProps, !pp.isEmpty {
+                    if let gameMarkets = vm.gameMarkets,
+                       let playerProps = gameMarkets.playerProps,
+                       !playerProps.isEmpty {
                         PlayerPropsCardView(
-                            playerProps: pp,
+                            playerProps: playerProps,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
                             homeColor: teamColors(event).home,
@@ -253,9 +256,11 @@ struct EventDetailView: View {
                         )
                     }
                     // Special Event Markets (game props, novelty, MVP)
-                    if let gm = vm.gameMarkets, let other = gm.other, other.count >= 3 {
+                    if let gameMarkets = vm.gameMarkets,
+                       let otherMarkets = gameMarkets.other,
+                       otherMarkets.count >= 3 {
                         SpecialEventMarketsView(
-                            markets: other,
+                            markets: otherMarkets,
                             eventStatus: event.status
                         )
                     }
@@ -376,7 +381,7 @@ struct EventDetailView: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                if let ct = event.commenceTime, let date = ct.asDate {
+                if let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -431,9 +436,9 @@ struct EventDetailView: View {
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
                         }
                         // Pre-game odds as secondary context
-                        if let ap = event.openingOdds?.awayProbability,
-                           let hp = event.openingOdds?.homeProbability {
-                            Text("Opened \(formatProbability(ap)) – \(formatProbability(hp))")
+                        if let awayOpeningProbability = event.openingOdds?.awayProbability,
+                           let homeOpeningProbability = event.openingOdds?.homeProbability {
+                            Text("Opened \(formatProbability(awayOpeningProbability)) – \(formatProbability(homeOpeningProbability))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -475,8 +480,8 @@ struct EventDetailView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
-                    if let ct = countdownText, !isLive, !isFinished {
-                        Text("In \(ct)")
+                    if let countdownText, !isLive, !isFinished {
+                        Text("In \(countdownText)")
                             .font(.caption)
                             .fontWeight(.medium)
                             .foregroundStyle(.blue)
@@ -583,7 +588,7 @@ struct EventDetailView: View {
                         .background(Color.secondary.opacity(0.08))
                         .clipShape(Capsule())
                     }
-                    if let ct = event.commenceTime, let date = ct.asDate {
+                    if let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                         HStack(spacing: 5) {
                             Image(systemName: "clock")
                                 .font(.system(size: 10))
@@ -682,19 +687,19 @@ struct EventDetailView: View {
                         .frame(width: 90, alignment: .leading)
                         .lineLimit(1)
 
-                    if let ap = awayProb, let hp = homeProb {
+                    if let awayProbability = awayProb, let homeProbability = homeProb {
                         ProbabilityBar(
-                            awayProb: ap, homeProb: hp,
+                            awayProb: awayProbability, homeProb: homeProbability,
                             awayColor: colors.away,
                             homeColor: colors.home,
                             height: 6
                         )
                         .frame(maxWidth: .infinity)
 
-                        Text(formatProbability(ap))
+                        Text(formatProbability(awayProbability))
                             .font(.caption2.monospacedDigit())
                             .frame(width: 36, alignment: .trailing)
-                        Text(formatProbability(hp))
+                        Text(formatProbability(homeProbability))
                             .font(.caption2.monospacedDigit())
                             .frame(width: 36, alignment: .trailing)
                     }
@@ -830,8 +835,8 @@ struct EventDetailView: View {
     }
 
     private func updateCountdown() {
-        guard let ct = vm.event?.commenceTime,
-              let date = ct.asDate else {
+        guard let commenceTime = vm.event?.commenceTime,
+              let date = commenceTime.asDate else {
             countdownText = nil
             return
         }

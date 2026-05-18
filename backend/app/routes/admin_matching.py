@@ -148,6 +148,20 @@ def _should_exclude_stale_open_unlinked_game_market(
     return game_time < now - _STALE_OPEN_GAME_MARKET_GRACE
 
 
+def _is_polymarket_matcher_game_level(
+    name: str | None,
+    category: str | None,
+    external_id: str | None,
+) -> bool:
+    """Use the matching task's Polymarket game-level predicate for diagnostics."""
+    if not name:
+        return False
+
+    from app.utils.prediction_market_matching import is_game_level_market
+
+    return is_game_level_market(name, category, external_id=external_id)
+
+
 @router.post("/prediction-markets/match")
 async def trigger_prediction_market_matching(
     secret: str = Query(..., description="Admin secret for authorization"),
@@ -477,15 +491,20 @@ async def prediction_market_link_rate(
         for k in kalshi_totals:
             kalshi_totals[k] += sport_data[k]
 
-    # Polymarket: game-level = has "vs"/"at" in name + sports category
+    # Polymarket: start with the old broad SQL denominator, then apply the same
+    # Python game-level predicate used by the matcher. The broad "vs"/"at"
+    # filter catches many tournament labels that the matcher will never scan
+    # (e.g. "World Championships: Team A vs Team B"), so counting them as
+    # health gaps makes the headline rate noisy.
     poly_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),
             FuturesMarket.llm_league.label("league"),
-            func.count().label("total"),
-            func.count(FuturesMarket.event_id).label("linked"),
-            func.count().filter(FuturesMarket.status == "open").label("open_total"),
-            func.count(FuturesMarket.event_id).filter(FuturesMarket.status == "open").label("open_linked"),
+            FuturesMarket.event_id,
+            FuturesMarket.status,
+            FuturesMarket.name,
+            FuturesMarket.category,
+            FuturesMarket.external_id,
         )
         .where(
             FuturesMarket.source == "polymarket",
@@ -498,25 +517,69 @@ async def prediction_market_link_rate(
             ),
             _game_name_filter,
         )
-        .group_by(FuturesMarket.llm_sport_category, FuturesMarket.llm_league)
-        .order_by(func.count().desc())
     )
-    poly_by_sport = []
+    poly_rows_by_bucket = {}
     poly_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    poly_excluded_not_matcher_game_level = 0
+    poly_excluded_open_not_matcher_game_level = 0
+    poly_excluded_samples = []
     for row in poly_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
             continue
-        sport_data = {
-            "sport": row.sport,
-            "league": row.league,
-            "total": row.total,
-            "linked": row.linked,
-            "link_rate": round(row.open_linked / row.open_total * 100, 1) if row.open_total else 0,
-            "open_total": row.open_total,
-            "open_linked": row.open_linked,
-            "link_rate_all": round(row.linked / row.total * 100, 1) if row.total else 0,
-        }
-        poly_by_sport.append(sport_data)
+        if not _is_polymarket_matcher_game_level(
+            row.name,
+            row.category,
+            row.external_id,
+        ):
+            poly_excluded_not_matcher_game_level += 1
+            if (row.status or "").lower() == "open":
+                poly_excluded_open_not_matcher_game_level += 1
+                if len(poly_excluded_samples) < 10:
+                    poly_excluded_samples.append(
+                        {
+                            "sport": row.sport,
+                            "league": row.league,
+                            "name": row.name,
+                            "category": row.category,
+                            "external_id": row.external_id,
+                        }
+                    )
+            continue
+
+        bucket = (row.sport, row.league)
+        sport_data = poly_rows_by_bucket.setdefault(
+            bucket,
+            {
+                "sport": row.sport,
+                "league": row.league,
+                "total": 0,
+                "linked": 0,
+                "open_total": 0,
+                "open_linked": 0,
+            },
+        )
+        sport_data["total"] += 1
+        if row.event_id is not None:
+            sport_data["linked"] += 1
+        if (row.status or "").lower() == "open":
+            sport_data["open_total"] += 1
+            if row.event_id is not None:
+                sport_data["open_linked"] += 1
+
+    poly_by_sport = sorted(
+        poly_rows_by_bucket.values(),
+        key=lambda item: item["total"],
+        reverse=True,
+    )
+    for sport_data in poly_by_sport:
+        sport_data["link_rate"] = (
+            round(sport_data["open_linked"] / sport_data["open_total"] * 100, 1)
+            if sport_data["open_total"] else 0
+        )
+        sport_data["link_rate_all"] = (
+            round(sport_data["linked"] / sport_data["total"] * 100, 1)
+            if sport_data["total"] else 0
+        )
         for k in poly_totals:
             poly_totals[k] += sport_data[k]
 
@@ -550,8 +613,14 @@ async def prediction_market_link_rate(
                 **poly_totals,
                 "link_rate_pct": round(poly_totals["open_linked"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
                 "link_rate_all_pct": round(poly_totals["linked"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
+                "excluded_not_matcher_game_level": poly_excluded_not_matcher_game_level,
+                "excluded_open_not_matcher_game_level": poly_excluded_open_not_matcher_game_level,
             },
             "by_sport": poly_by_sport,
+            "denominator_diagnostics": {
+                "note": "Excluded rows match the old broad sport + vs/at SQL denominator but fail the matcher is_game_level_market() predicate.",
+                "sample_excluded_open": poly_excluded_samples,
+            },
         },
     }
 

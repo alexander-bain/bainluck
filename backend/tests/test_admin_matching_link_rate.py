@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from app.routes.admin_matching import (
     _LINK_RATE_SPORT_CATEGORIES,
     _is_obvious_non_game_market_name,
+    _is_polymarket_matcher_game_level,
     _should_include_link_rate_bucket,
     _should_exclude_stale_open_unlinked_game_market,
 )
@@ -63,4 +64,27 @@ def test_active_or_linked_game_markets_stay_in_link_rate():
         status="open",
         event_id=None,
         now=now,
+    ) is False
+
+
+def test_polymarket_link_rate_uses_matcher_game_level_predicate():
+    assert _is_polymarket_matcher_game_level(
+        "Celtics vs Knicks",
+        "championship",
+        "123",
+    ) is True
+    assert _is_polymarket_matcher_game_level(
+        "CF Estrela da Amadora vs. FC Porto - More Markets",
+        "championship",
+        "456",
+    ) is True
+    assert _is_polymarket_matcher_game_level(
+        "Internationaux de Strasbourg (Doubles): Kichenok/Krawczyk vs Mihalikova/Nicholls",
+        "championship",
+        "493607",
+    ) is False
+    assert _is_polymarket_matcher_game_level(
+        "World Championships: Czechia vs. Italy",
+        "championship",
+        "490611",
     ) is False

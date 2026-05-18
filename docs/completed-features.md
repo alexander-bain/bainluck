@@ -27,8 +27,11 @@
 - ✅ **Sport/league taxonomy guardrails** — added regression tests for the exact impossible sport/league pairs that polluted link-rate diagnostics.
 - ✅ **Durable docs deep sync** — refreshed `CLAUDE.md`, architecture, feature reference, quality audit, gotchas, completed features, and iOS quality docs with the May 18 search, bug notification, link-rate, interestingness, notification-test, and native cleanup details.
 - ✅ **Link-rate stale settlement exclusion** — headline link-rate metrics now exclude stale open/unlinked Kalshi game markets when the ticker game date is more than 36 hours old, matching the Tier-1 gaps closed-game exclusion.
+- ✅ **Polymarket link-rate denominator diagnosis** — Polymarket link-rate metrics now apply the same `is_game_level_market()` predicate used by the matcher and expose excluded open-market samples so tournament-label noise can be separated from real matching gaps.
 - ✅ **Bug-fixed email auto-reply suppression headers** — Gmail bug-fix notifications now include standard automated-email suppression headers and focused MIME tests.
+- ✅ **Bug-fixed email compliance gates** — the task now refuses unresolved reports and reports without a resolution summary, and tests lock in that `List-Unsubscribe` is omitted until a real one-click unsubscribe route/token exists.
 - ✅ **Native naming/access cleanup slice 5** — cleaned low-risk local abbreviations in Menu Bar, Search, Market Map, Discover Event Card, and Related-by-Tag components; native build passed.
+- ✅ **Native naming/access cleanup slice 6** — cleaned local abbreviations in Event Detail and Related Futures, and tightened RelatedFuturesView stored-property visibility.
 - ✅ **Discover event demotion gate** — "upset"/"comeback"/"historic" event exceptions now require top-tier league context, and raw high event score requires EI >= 50 to avoid Discover demotion.
 - ✅ **Russia-war story cap** — Ukraine-omitted Russia territory/capture markets now share the capped `story:russia_ukraine` diversity family.
 - ✅ **Discover dismiss persistence** — web Discover dismissals now persist to localStorage so refreshed anonymous sessions do not immediately replay dismissed cards.
@@ -36,6 +39,7 @@
 - ✅ **Minor soccer futures suppression** — non-top-tier soccer futures now receive an obscure-soccer penalty and share a capped minor-soccer story family.
 - ✅ **Dismiss story/group propagation** — recent Discover dismiss/unlike feedback now suppresses related futures that share a group_id or story key, with My Teams mode exempted.
 - ✅ **Non-major election penalty** — politics/election futures outside the major-election allowlist now receive a foreign/local election penalty while major US presidential-style markets are preserved.
+- ✅ **Discover LLM metadata penalties** — cached LLM audience scope and junk flags now apply stronger bounded downranks, and the enrichment prompt includes minor soccer, procedural politics, and commodity ladder flags.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

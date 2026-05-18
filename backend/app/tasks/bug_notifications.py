@@ -31,6 +31,7 @@ GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN")
 GMAIL_SENDER_EMAIL = os.environ.get("GMAIL_SENDER_EMAIL", "bugs@bainluck.com")
 
 BUG_FIXED_EMAIL_SUBJECT = "Your bug report was fixed"
+BUG_FIXED_EMAIL_STATUSES = frozenset({"fixed", "actioned"})
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _HEADER_CONTROL_RE = re.compile(r"[\r\n]")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -103,6 +104,8 @@ def _build_gmail_message(to_email: str, subject: str, body_html: str) -> EmailMe
     message["Auto-Submitted"] = "auto-generated"
     message["Precedence"] = "bulk"
     message["X-Auto-Response-Suppress"] = "All"
+    # Do not add List-Unsubscribe until a real one-click unsubscribe route/token
+    # exists. A dead or generic link would be worse than omitting the header.
     message.set_content(_html_to_plain_text(body_html))
     message.add_alternative(body_html, subtype="html")
     return message
@@ -295,6 +298,14 @@ async def send_bug_fixed_email(
 
     if report.notification_sent_at:
         logger.info("Bug report %d already notified, skipping", report_id)
+        return False
+
+    if getattr(report, "status", None) not in BUG_FIXED_EMAIL_STATUSES:
+        logger.info("Bug report %d is not fixed/actioned, skipping", report_id)
+        return False
+
+    if not (report.resolution_summary or "").strip():
+        logger.info("Bug report %d has no resolution summary, skipping", report_id)
         return False
 
     prompt_input = build_bug_fixed_email_prompt_input(report)

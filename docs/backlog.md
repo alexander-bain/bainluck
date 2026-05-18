@@ -49,7 +49,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem (discovered May 18 health check):** The link rate endpoint reports misleadingly low rates for several sport/source combinations because the denominator includes markets that *cannot* be linked (season futures, non-game markets) and because league classification errors put markets under the wrong sport.
 
-**May 18 slices shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. It also excludes stale open/unlinked Kalshi game markets whose ticker game date is more than 36 hours old, preventing settlement-open closed games from depressing the headline health rate. Guardrail tests cover unsupported esports, season/futures name filters, stale settlement-open game markets, and the exact impossible pairs from this item (`esports/PGA`, `esports/MLB`, `cricket/EPL`, `cricket/FIFA_WC`, `cricket/UCL`, `tennis/PGA`).
+**May 18 slices shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. It also excludes stale open/unlinked Kalshi game markets whose ticker game date is more than 36 hours old, preventing settlement-open closed games from depressing the headline health rate. Production follow-up aligned the Polymarket denominator with the matcher’s `is_game_level_market()` predicate after samples showed tennis/hockey tournament labels such as `Internationaux de Strasbourg (Doubles): ... vs ...` and `World Championships: Czechia vs. Italy` were counted by broad SQL `vs` matching even though the matcher never scans them. The endpoint now reports excluded Polymarket counts and samples under `denominator_diagnostics`. Guardrail tests cover unsupported esports, season/futures name filters, stale settlement-open game markets, Polymarket matcher-predicate filtering, and the exact impossible pairs from this item (`esports/PGA`, `esports/MLB`, `cricket/EPL`, `cricket/FIFA_WC`, `cricket/UCL`, `tennis/PGA`).
 
 **Four distinct issues:**
 
@@ -75,7 +75,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 **Impact:** These issues don't affect users directly (the markets still display correctly). They make the link rate dashboard unreliable as a health metric — we can't tell real matching gaps from denominator noise. Fixing the denominator is prerequisite to the next hill-climb iteration.
 
 **Remaining hill-climb approach:**
-1. Re-measure production link rate after deploy and inspect the remaining unlinked open markets per source/sport
+1. Re-measure production link rate after deploy and inspect `polymarket.denominator_diagnostics.sample_excluded_open` plus remaining unlinked open markets per source/sport
 2. Classify remaining misses as `game_level` vs `season_level` vs `unsupported_league`
 3. Fix any remaining taxonomy rules where the market itself is misclassified, not just filtered from health metrics
 4. Use the corrected rate to target real matching bugs
@@ -370,13 +370,15 @@ The interestingness scoring scaffold (`utils/market_interestingness.py`, shipped
 
 **Depends on:** Ground-truth labels (item 5 in existing next phases), calibration script (shipped)
 
-**0u-N2. Strengthen LLM metadata consumption**
+**~~0u-N2. Strengthen LLM metadata consumption~~** — SHIPPED May 18
 
 The `discover_llm` enrichment already produces `audience_scope` (broad/mainstream/niche/local/specialist) and `junk_flags` (local_election, low_tier_sports, etc.) but the penalty in `_discover_llm_score_adjustment()` is too small (-4 for niche scope, -4 to -16 for junk flags). Steps:
 1. Increase `audience_scope` penalties: niche → -15, local → -25, specialist → -20
 2. Increase `junk_flags` penalties: `local_election` → -20, `low_tier_sports` → -15
 3. Add new junk flags to the LLM prompt: `minor_soccer`, `procedural_politics`, `commodity_ladder`
 4. Re-run enrichment for feed-shaped candidates and measure impact on `audit_feed_quality.py`
+
+**Fix shipped:** `_discover_llm_score_adjustment()` now applies stronger bounded penalties for niche/local/specialist scope and specific junk flags (`local_election`, `low_tier_sports`, `minor_soccer`, `procedural_politics`, `commodity_ladder`), with the lower bound widened to -30. The enrichment prompt now explicitly names the new junk flags. Tests cover local junk, new flag penalties, and niche scope.
 
 **Files:** `backend/app/routes/feed.py` (`_discover_llm_score_adjustment()`), LLM enrichment prompt
 
@@ -903,7 +905,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 6. **Email provider migration** — Gmail API with OAuth refresh tokens is fragile for production (tokens expire, rate limits). Before scaling, migrate to a proper transactional email provider (SendGrid, Postmark, or AWS SES). Keep `bugs@bainluck.com` as from address via domain authentication.
 7. **Digest task queries opted-in users** — replace `DAILY_DIGEST_RECIPIENTS` env var with a DB query of users where `email_preferences->>'digest' = 'true'`.
 
-**Current state (May 13):** Gmail API working, daily digest scheduled at 8am ET, only sending to Alex via env var. Bug fix notifications work with opt-in checkbox on rage shake form.
+**Current state (May 18):** Gmail API working, daily digest scheduled at 8am ET, only sending to Alex via env var. Bug-fixed notification task is limited to one resolved bug report at a time and now refuses unresolved reports or reports without a resolution summary. There is still no persisted email preference model or one-click unsubscribe token/route, so `List-Unsubscribe` must not be added yet and emails must not be broadened beyond this lifecycle notification path.
 
 **Files:** `backend/app/models/models.py`, `backend/app/tasks/daily_digest.py`, `backend/app/tasks/bug_notifications.py`, `frontend/app/preferences/page.tsx`, `ios/.../Views/PreferencesView.swift`, new `backend/app/routes/unsubscribe.py`
 **Parallel Safety:** Yellow
@@ -924,7 +926,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, Celery task registration, multipart plain-text+HTML Gmail messages, sender/recipient validation, CR/LF header-injection rejection, and automated-email suppression headers (`Auto-Submitted`, `Precedence`, `X-Auto-Response-Suppress`). Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
+**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email, already-sent reports, unresolved reports, and missing resolution summaries; stable prompt input/body builders; Gmail/OpenAI side-effect seams for tests; Celery task registration; multipart plain-text+HTML Gmail messages; sender/recipient validation; CR/LF header-injection rejection; and automated-email suppression headers (`Auto-Submitted`, `Precedence`, `X-Auto-Response-Suppress`). Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. `List-Unsubscribe` was intentionally not added because there is no existing one-click unsubscribe URL/token path. Remaining integration: finalize preferences, unsubscribe, and production delivery/compliance settings before broad user-facing sends.
 
 **Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
