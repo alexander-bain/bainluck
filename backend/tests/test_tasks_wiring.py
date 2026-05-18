@@ -208,6 +208,8 @@ class TestBeatScheduleCompleteness:
         "daily-digest",
         "backfill-polymarket-price-history",
         "backfill-kalshi-price-history",
+        "backfill-polymarket-open-sparse",
+        "backfill-kalshi-open-sparse",
         "backfill-historical-links",
     }
 

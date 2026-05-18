@@ -813,17 +813,25 @@ async def _fix_hockey_commence_times() -> int:
         return total_fixed
 
 
-async def _backfill_kalshi_price_history(limit: int = 500):
-    """Backfill historical price data for Kalshi outcomes with zero snapshots.
+async def _backfill_kalshi_price_history(
+    limit: int = 500,
+    mode: str = "resolved_zero",
+):
+    """Backfill historical price data for Kalshi outcomes.
+
+    Modes:
+      resolved_zero — resolved markets with zero snapshots (calibration).
+      open_sparse   — open/active feed-visible markets with no snapshots
+                      in the last 7 days (chart quality for Discover).
 
     Uses the Kalshi candlesticks API (GET /markets/{ticker}/candlesticks)
-    to fetch hourly price history. Targets resolved markets first since
-    those are the outcomes affecting calibration accuracy.
+    to fetch hourly price history.
     """
     import asyncio
     from app.models.models import FuturesOddsSnapshot
 
     stats = {
+        "mode": mode,
         "outcomes_processed": 0, "outcomes_skipped": 0,
         "snapshots_created": 0, "api_empty": 0, "errors": [],
     }
@@ -832,24 +840,46 @@ async def _backfill_kalshi_price_history(limit: int = 500):
         from app.services.kalshi_api import KalshiAPIService
 
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT fo.id AS outcome_id, fo.external_id AS ticker,
-                        fm.external_id AS event_ticker
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fo.market_id = fm.id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
-                      AND fo.opening_probability IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM futures_odds_snapshots fos
-                          WHERE fos.outcome_id = fo.id
-                      )
-                    ORDER BY fm.updated_at DESC
-                    LIMIT :limit
-                """),
-                {"limit": limit},
-            )
+            if mode == "open_sparse":
+                result = await session.execute(
+                    text("""
+                        SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                               fm.external_id AS event_ticker
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fo.market_id = fm.id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status IN ('open', 'active')
+                          AND (fm.image_url IS NOT NULL
+                               OR fm.hook_description IS NOT NULL)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM futures_odds_snapshots fos
+                              WHERE fos.outcome_id = fo.id
+                                AND fos.captured_at > NOW() - INTERVAL '7 days'
+                          )
+                        ORDER BY fm.updated_at DESC
+                        LIMIT :limit
+                    """),
+                    {"limit": limit},
+                )
+            else:
+                result = await session.execute(
+                    text("""
+                        SELECT fo.id AS outcome_id, fo.external_id AS ticker,
+                               fm.external_id AS event_ticker
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fo.market_id = fm.id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND fo.opening_probability IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM futures_odds_snapshots fos
+                              WHERE fos.outcome_id = fo.id
+                          )
+                        ORDER BY fm.updated_at DESC
+                        LIMIT :limit
+                    """),
+                    {"limit": limit},
+                )
             outcomes = result.fetchall()
 
             if not outcomes:

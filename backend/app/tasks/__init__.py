@@ -312,17 +312,17 @@ def poll_polymarket_markets(self):
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_polymarket_history")
-def backfill_polymarket_history(self, limit: int = 500, fidelity: int = 60, interval: str = "max"):
+def backfill_polymarket_history(self, limit: int = 500, fidelity: int = 60, interval: str = "max", mode: str = "resolved_zero"):
     """Backfill historical prices from Polymarket CLOB API for outcomes with sparse data."""
     from app.tasks.polymarket import _backfill_polymarket_price_history
-    return _tracked_run("polymarket_history", _backfill_polymarket_price_history(limit, fidelity, interval))
+    return _tracked_run("polymarket_history", _backfill_polymarket_price_history(limit, fidelity, interval, mode))
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_history")
-def backfill_kalshi_history(self, limit: int = 500):
+def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero"):
     """Backfill historical prices from Kalshi candlesticks API for outcomes with sparse data."""
     from app.tasks.kalshi import _backfill_kalshi_price_history
-    return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit))
+    return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit, mode))
 
 
 # --- Categorization ---
@@ -1069,6 +1069,18 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_history",
         "schedule": crontab(minute=30, hour="4,10,16,22"),  # Every 6h, 30min after Polymarket
         "kwargs": {"limit": 500},
+        "options": {"queue": "background"},
+    },
+    "backfill-polymarket-open-sparse": {
+        "task": "app.tasks.backfill_polymarket_history",
+        "schedule": crontab(minute=15, hour="3,9,15,21"),  # Every 6h, offset from resolved
+        "kwargs": {"limit": 100, "mode": "open_sparse"},
+        "options": {"queue": "background"},
+    },
+    "backfill-kalshi-open-sparse": {
+        "task": "app.tasks.backfill_kalshi_history",
+        "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6h, 30min after Polymarket
+        "kwargs": {"limit": 100, "mode": "open_sparse"},
         "options": {"queue": "background"},
     },
     "backfill-canonical-keys-daily": {

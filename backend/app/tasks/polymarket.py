@@ -878,21 +878,24 @@ async def _backfill_polymarket_price_history(
     limit: int = 500,
     fidelity: int = 60,
     interval: str = "max",
+    mode: str = "resolved_zero",
 ):
     """Backfill historical price data for Polymarket outcomes.
 
-    Targets RESOLVED markets with zero snapshots first — these are the
-    outcomes hurting calibration accuracy. Uses the CLOB API /prices-history
-    endpoint which serves data for both active and resolved markets.
+    Modes:
+      resolved_zero — resolved markets with zero snapshots (calibration).
+      open_sparse   — open/active feed-visible markets with no snapshots
+                      in the last 7 days (chart quality for Discover).
 
-    Tracks outcomes where the API returned no data so we don't re-request
-    them on subsequent runs (marks calibration_probability = -1 as sentinel).
+    Uses the CLOB API /prices-history endpoint (works for both active
+    and resolved markets, no API key required).
     """
     import asyncio
     import json as json_module
     from app.models.models import FuturesOddsSnapshot
 
     stats = {
+        "mode": mode,
         "outcomes_processed": 0, "outcomes_skipped": 0,
         "snapshots_created": 0, "events_fetched": 0,
         "api_empty": 0, "errors": [],
@@ -902,23 +905,46 @@ async def _backfill_polymarket_price_history(
         from app.services.polymarket_api import PolymarketAPIService
 
         async with get_task_session() as session:
-            result = await session.execute(
-                text("""
-                    SELECT fo.id, fo.external_id, fm.external_id AS market_external_id
-                    FROM futures_outcomes fo
-                    JOIN futures_markets fm ON fo.market_id = fm.id
-                    WHERE fm.source = 'polymarket'
-                      AND fm.status = 'resolved'
-                      AND fo.opening_probability IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM futures_odds_snapshots fos
-                          WHERE fos.outcome_id = fo.id
-                      )
-                    ORDER BY fm.updated_at DESC
-                    LIMIT :limit
-                """),
-                {"limit": limit},
-            )
+            if mode == "open_sparse":
+                result = await session.execute(
+                    text("""
+                        SELECT fo.id, fo.external_id,
+                               fm.external_id AS market_external_id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fo.market_id = fm.id
+                        WHERE fm.source = 'polymarket'
+                          AND fm.status IN ('open', 'active')
+                          AND (fm.image_url IS NOT NULL
+                               OR fm.hook_description IS NOT NULL)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM futures_odds_snapshots fos
+                              WHERE fos.outcome_id = fo.id
+                                AND fos.captured_at > NOW() - INTERVAL '7 days'
+                          )
+                        ORDER BY fm.updated_at DESC
+                        LIMIT :limit
+                    """),
+                    {"limit": limit},
+                )
+            else:
+                result = await session.execute(
+                    text("""
+                        SELECT fo.id, fo.external_id,
+                               fm.external_id AS market_external_id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fo.market_id = fm.id
+                        WHERE fm.source = 'polymarket'
+                          AND fm.status = 'resolved'
+                          AND fo.opening_probability IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM futures_odds_snapshots fos
+                              WHERE fos.outcome_id = fo.id
+                          )
+                        ORDER BY fm.updated_at DESC
+                        LIMIT :limit
+                    """),
+                    {"limit": limit},
+                )
             outcomes_to_backfill = result.fetchall()
 
             if not outcomes_to_backfill:
