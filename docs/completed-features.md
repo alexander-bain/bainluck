@@ -35,6 +35,7 @@
 - ✅ **Swipe penalty escalation** — category dislikes now escalate at 5+ and 8+ negative swipes, feature dislike caps are stronger, and the personalization multiplier lower bound is 0.15.
 - ✅ **Minor soccer futures suppression** — non-top-tier soccer futures now receive an obscure-soccer penalty and share a capped minor-soccer story family.
 - ✅ **Dismiss story/group propagation** — recent Discover dismiss/unlike feedback now suppresses related futures that share a group_id or story key, with My Teams mode exempted.
+- ✅ **Non-major election penalty** — politics/election futures outside the major-election allowlist now receive a foreign/local election penalty while major US presidential-style markets are preserved.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

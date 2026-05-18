@@ -461,6 +461,23 @@ class TestDeterministicFuturesHeadlines:
         assert not any(reason.startswith("compelling") for reason in result.reasons)
         assert result.primary_reason is None
 
+    def test_non_major_election_gets_foreign_local_penalty(self):
+        result = compute_futures_highlight(
+            sport_category="politics",
+            market_name="Who will win the Andalusia regional election?",
+        )
+
+        assert "foreign_local_election" in result.reasons
+        assert result.score < 50
+
+    def test_major_election_avoids_foreign_local_penalty(self):
+        result = compute_futures_highlight(
+            sport_category="politics",
+            market_name="Who will win the 2028 US presidential election?",
+        )
+
+        assert "foreign_local_election" not in result.reasons
+
 
 class TestMinorLeagueDetection:
     """Tests for minor league market detection and feed penalty."""

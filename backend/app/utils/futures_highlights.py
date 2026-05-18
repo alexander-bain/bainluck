@@ -193,8 +193,24 @@ _COMPELLING_PATTERNS = [
 
 BORING_PENALTY = -25
 OBSCURE_ELECTION_PENALTY = -20
+FOREIGN_LOCAL_ELECTION_PENALTY = -30
 COMPELLING_BOOST = 8  # per matching pattern, max 3
 SPORTS_POSTSEASON_STORY_BOOST = 55
+
+_ELECTION_MARKET_RE = re.compile(
+    r"\b(election|electoral|nominee|primary|presidential|president|parliamentary|congressional)\b",
+    re.IGNORECASE,
+)
+
+_MAJOR_ELECTION_RE = re.compile(
+    r"\b("
+    r"u\.?s\.?|united states|american|president|presidential|senate|house|congress|"
+    r"uk|united kingdom|britain|british|prime minister|"
+    r"france|french|germany|german|canada|canadian|brazil|brazilian|india|indian|"
+    r"european parliament|eu parliament|eu election"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _SPORTS_POSTSEASON_STORY_RE = re.compile(
     r"(?=.*\b(advance|reach|make|win|winner)\b)"
@@ -339,6 +355,15 @@ def compute_futures_highlight(
     if _market_name and _OBSCURE_ELECTION_PATTERNS.search(_market_name):
         result.score += OBSCURE_ELECTION_PENALTY
         result.reasons.append("obscure_election")
+
+    if (
+        _sport_lower in {"politics", "elections"}
+        and _market_name
+        and _ELECTION_MARKET_RE.search(_market_name)
+        and not _MAJOR_ELECTION_RE.search(_market_name)
+    ):
+        result.score += FOREIGN_LOCAL_ELECTION_PENALTY
+        result.reasons.append("foreign_local_election")
 
     # === Non-major election penalty (allowlist inversion) ===
     if (

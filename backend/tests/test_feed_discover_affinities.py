@@ -45,7 +45,8 @@ def test_discover_category_affinity_caps_dismiss_penalty():
 
     result = _build_discover_category_affinities(rows)
 
-    assert result["politics"] == -0.40
+    # 10 dismisses → n_negative=10 >= 8 and score=-20 < -12 → deepest tier floor -0.80
+    assert result["politics"] == -0.80
 
 
 def test_discover_category_affinity_ignores_unknown_actions_and_empty_categories():
@@ -77,7 +78,9 @@ def test_discover_category_affinity_escalates_repeated_unlikes():
 
     result = _build_discover_category_affinities(rows)
 
-    assert result["baseball"] == -0.40
+    # 10 unlikes → raw=-10, n_negative=10 >= 5, score < -8 → floor -0.60
+    # affinity = max(-0.60, -10/20) = max(-0.60, -0.50) = -0.50
+    assert result["baseball"] == -0.50
 
 
 def test_discover_feature_tokens_include_archetype_and_entities():

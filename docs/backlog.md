@@ -313,9 +313,11 @@ The `is_exceptional` check in `feed.py:626` lets any event with "upset" in its h
 
 **Files:** `frontend/app/discover/page.tsx` (~line 537)
 
-**0u-R4. Election allowlist: penalize non-major elections**
+**~~0u-R4. Election allowlist: penalize non-major elections~~** — SHIPPED May 18
 
 Instead of blocklisting obscure elections (whack-a-mole), define `_MAJOR_ELECTION_RE` — an allowlist of elections that deserve the full politics base score (US federal, UK/French/German/Canadian/Brazilian/Indian national, EU Parliament). Markets containing "election/winner/nominee" that don't match get `FOREIGN_LOCAL_ELECTION_PENALTY = -30`.
+
+**Fix shipped:** Politics/election futures now receive `FOREIGN_LOCAL_ELECTION_PENALTY = -30` when they look election-related but do not match the major-election allowlist. Tests cover Andalusia-style regional election penalty and US presidential election preservation.
 
 **Files:** `backend/app/utils/futures_highlights.py`
 
@@ -347,7 +349,7 @@ Currently dismissing market #12345 only suppresses that exact ID. Add `recent_di
 
 Unit tests for: league-gated event demotion (Ligue 2 upset demoted, NBA upset kept), Russia-war story key matching and cap, election/soccer allowlists, escalated penalty tiers, story-key dismiss propagation.
 
-**May 18 coverage shipped:** R1, R2, R3, R5, R6, and R7 have focused tests/build coverage. Remaining test work tracks R4 after it is implemented.
+**May 18 coverage shipped:** R1-R7 now have focused tests/build coverage.
 
 **Files:** `backend/tests/test_feed_market_quality.py`, `backend/tests/test_personalization.py`, new test files as needed
 
