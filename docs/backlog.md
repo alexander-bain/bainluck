@@ -1288,7 +1288,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-8 | Extract DiscoverViewModel | New `ViewModels/DiscoverViewModel.swift` | Move class + NativeDiscoverProfile + debug state out of the 2,259-line view file |
+| ~~CQ-8~~ | ~~Extract DiscoverViewModel~~ | `ViewModels/DiscoverViewModel.swift` | ✅ DONE May 17 — moved the Discover state/load/personalization class out of `DiscoverView.swift`. View-local profile/debug helpers remain with the view. |
 | CQ-9 | Extract discover cards | New `Components/DiscoverFuturesCard.swift`, `DiscoverEventCard.swift` | Move `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` to own files |
 | CQ-10 | Extract daily challenge card | New `Components/DailyChallengeCard.swift` | Move `NativeDailyChallengeCard` + `NativeChallengeSheet` out |
 | CQ-11 | Extract resolution card | New `Components/ResolutionCard.swift` | Move `NativeResolutionCard` out |
@@ -1299,7 +1299,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 | # | Item | Files | What to do |
 |---|------|-------|------------|
-| CQ-12 | Create ViewModels/ directory — partial | Moved Preferences, Onboarding, EventDetail, Economics, Weather, Politics, and Entertainment view models | Remaining embedded view models still need later slices. |
+| ~~CQ-12~~ | ~~Create ViewModels/ directory~~ | All native view models | ✅ DONE May 17 — moved embedded `ObservableObject` view models out of view files into `ViewModels/`. |
 | ~~CQ-13~~ | ~~Extract EventDetailViewModel~~ | ✅ DONE May 17 — added `ViewModels/EventDetailViewModel.swift`; `EventDetailView.swift` now owns view rendering only. | Public API and behavior preserved. |
 | ~~CQ-14~~ | ~~Split Extensions.swift~~ | ✅ DONE May 17 — split into `Utilities/ColorExtensions.swift`, `Utilities/FormattingUtilities.swift`, `Utilities/SportDisplayNames.swift`, `Utilities/FlagUtilities.swift`, `Utilities/FlowLayout.swift` | APIs preserved; existing filesystem-synchronized Xcode project picked up new files without pbxproj edits. |
 
