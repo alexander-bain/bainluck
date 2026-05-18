@@ -46,6 +46,36 @@ class TestCalculateEI:
         assert result.score <= 25  # Should be in the "quiet" range
         assert result.raw_ei < 1.0
 
+    def test_closeness_without_movement_stays_flat(self):
+        """A close but static game should not score as exciting."""
+        snapshots = [_make_dp(i, 0.50) for i in range(30)]
+        end_time = GAME_START + timedelta(minutes=48)
+
+        result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
+
+        assert result is not None
+        assert result.raw_ei == 0
+        assert result.score == 1
+        assert result.metadata.lead_changes == 0
+        assert result.metadata.comeback_factor == 0.5
+
+    def test_raw_ei_is_total_probability_travel(self):
+        """Raw EI should equal normalized absolute probability movement."""
+        snapshots = [
+            _make_dp(0, 0.50),
+            _make_dp(1, 0.60),
+            _make_dp(2, 0.55),
+            _make_dp(3, 0.75),
+        ]
+        end_time = GAME_START + timedelta(minutes=48)
+
+        result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
+
+        assert result is not None
+        assert result.raw_ei == pytest.approx(0.35)
+        assert result.metadata.raw_ei == pytest.approx(0.35)
+        assert result.score == 37
+
     def test_blowout_scores_low(self):
         """Home team dominates from start — low EI."""
         snapshots = [_make_dp(i, 0.85 + 0.002 * i) for i in range(60)]
@@ -107,6 +137,43 @@ class TestCalculateEI:
         assert result is not None
         assert abs(result.metadata.comeback_factor - 0.20) < 0.01
 
+    def test_live_comeback_factor_uses_current_leader(self):
+        """Live games use the latest leader as the presumed winner."""
+        home_leads_late = [
+            _make_dp(0, 0.50),
+            _make_dp(30, 0.22),
+            _make_dp(60, 0.48),
+            _make_dp(90, 0.66),
+        ]
+        away_leads_late = [
+            _make_dp(0, 0.50),
+            _make_dp(30, 0.85),
+            _make_dp(60, 0.70),
+            _make_dp(90, 0.42),
+        ]
+        end_time = GAME_START + timedelta(hours=2)
+
+        home_result = calculate_ei(home_leads_late, GAME_START, end_time, "basketball_nba")
+        away_result = calculate_ei(away_leads_late, GAME_START, end_time, "basketball_nba")
+
+        assert home_result is not None
+        assert away_result is not None
+        assert home_result.metadata.comeback_factor == pytest.approx(0.22)
+        assert away_result.metadata.comeback_factor == pytest.approx(0.15)
+
+    def test_scheduled_game_pregame_snapshots_return_none(self):
+        """Pregame-only snapshots should not create an EI result."""
+        snapshots = [
+            _make_dp(-30, 0.50),
+            _make_dp(-20, 0.53),
+            _make_dp(-10, 0.47),
+            _make_dp(-1, 0.51),
+        ]
+
+        result = calculate_ei(snapshots, GAME_START, GAME_START, "basketball_nba")
+
+        assert result is None
+
     def test_time_normalization_overtime(self):
         """OT game should be normalized down so it doesn't auto-inflate."""
         # Create a standard 2.5h game and a 3h OT game with same movements
@@ -125,6 +192,22 @@ class TestCalculateEI:
         assert result_reg is not None and result_ot is not None
         # The OT game's raw_ei should NOT be proportionally higher than regulation
         # (it has ~33% more snapshots but normalization scales it down)
+        assert result_ot.raw_ei < result_reg.raw_ei * 1.33
+
+    def test_short_live_window_time_ratio_is_capped(self):
+        """Thin early live data should not extrapolate beyond the 2x cap."""
+        snapshots = [
+            _make_dp(0, 0.50),
+            _make_dp(2, 0.65),
+            _make_dp(4, 0.40),
+            _make_dp(6, 0.30),
+        ]
+        end_time = GAME_START + timedelta(minutes=10)
+
+        result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
+
+        assert result is not None
+        assert result.raw_ei == pytest.approx(1.0)
 
     def test_pre_game_snapshots_excluded(self):
         """Snapshots before game_start should be excluded."""

@@ -5,6 +5,8 @@ Centralizes league metadata: pro vs college, Power 4 conference membership,
 and league class (pro_major, pro_minor, college, international, other).
 """
 
+import re
+
 # League class: how we categorize each sport_key for scoring purposes.
 # "pro_major"    — NFL, NBA, MLB, NHL, WNBA, top international soccer
 # "pro_minor"    — XFL, CFL, UFL, AHL, etc.
@@ -118,6 +120,14 @@ POWER_4_TEAMS: set[str] = {
 # Lowercased set for fast fuzzy matching
 _POWER_4_LOWER: set[str] = {name.lower() for name in POWER_4_TEAMS}
 
+_POWER_4_ALIASES: dict[str, str] = {
+    "california": "cal",
+}
+
+_AMBIGUOUS_NON_POWER_4_RE = re.compile(
+    r"\b(?:northwestern state|miami\s+(?:oh|ohio)|california baptist|southern california college)\b"
+)
+
 
 def get_league_class(sport_key: str) -> str:
     """Get league classification for a sport key.
@@ -137,8 +147,14 @@ def is_power_4_team(team_name: str) -> bool:
     if not team_name:
         return False
     name_lower = team_name.lower()
+    if _AMBIGUOUS_NON_POWER_4_RE.search(name_lower):
+        return False
     for p4_name in _POWER_4_LOWER:
-        # Check if the Power 4 name appears as a substring
-        if p4_name in name_lower:
+        # Token-boundary matching handles "Alabama Crimson Tide" without
+        # letting short names like "Cal" match unrelated words.
+        if re.search(rf"(?<![a-z0-9]){re.escape(p4_name)}(?![a-z0-9])", name_lower):
+            return True
+    for alias in _POWER_4_ALIASES:
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", name_lower):
             return True
     return False

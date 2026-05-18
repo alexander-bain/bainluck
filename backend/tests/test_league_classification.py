@@ -65,6 +65,8 @@ class TestIsPower4Team:
         assert is_power_4_team("Clemson") is True
         assert is_power_4_team("Duke") is True
         assert is_power_4_team("Notre Dame") is True
+        assert is_power_4_team("California Golden Bears") is True
+        assert is_power_4_team("Cal Golden Bears") is True
         assert is_power_4_team("SMU") is True
 
     def test_mid_major_teams(self):
@@ -72,6 +74,8 @@ class TestIsPower4Team:
         assert is_power_4_team("Boise State") is False
         assert is_power_4_team("UTEP") is False
         assert is_power_4_team("Coastal Carolina") is False
+        assert is_power_4_team("California Baptist") is False
+        assert is_power_4_team("Southern California College") is False
 
     def test_case_insensitive(self):
         assert is_power_4_team("alabama") is True
@@ -82,6 +86,12 @@ class TestIsPower4Team:
         """Power 4 name appearing as substring should match."""
         assert is_power_4_team("Florida Gators") is True
         assert is_power_4_team("North Carolina Tar Heels") is True
+
+    def test_token_boundary_match_avoids_embedded_school_names(self):
+        assert is_power_4_team("Northwestern Wildcats") is True
+        assert is_power_4_team("Northwestern State Demons") is False
+        assert is_power_4_team("Miami Hurricanes") is True
+        assert is_power_4_team("Miami OH RedHawks") is False
 
     def test_empty_and_none(self):
         assert is_power_4_team("") is False

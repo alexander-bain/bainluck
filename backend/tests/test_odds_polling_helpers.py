@@ -4,14 +4,20 @@ Covers:
 - get_max_duration_for_sport: sport key → max duration lookup
 - _snapshots_are_equal: write-time dedup comparison logic
 - get_statpal_end_time: StatPal end time extraction (column + JSONB fallback)
+- _parse_snapshot_values: bookmaker payload parsing and market filtering
 """
 
 import pytest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.tasks.odds_polling import get_max_duration_for_sport, _snapshots_are_equal, get_statpal_end_time
-from app.tasks.config import SPORT_MAX_DURATIONS
+from app.tasks.odds_polling import (
+    get_max_duration_for_sport,
+    _parse_snapshot_values,
+    _snapshots_are_equal,
+    get_statpal_end_time,
+)
+from app.tasks.config import SPORT_MAX_DURATIONS, SPORT_REGION_OVERRIDES
 
 
 # ── get_max_duration_for_sport ──────────────────────────────────────────
@@ -66,6 +72,17 @@ class TestGetMaxDurationForSport:
         """Verify the default key exists in the config dict."""
         assert "default" in SPORT_MAX_DURATIONS
         assert SPORT_MAX_DURATIONS["default"] == 4.0
+
+
+# ── quota-safe polling config ───────────────────────────────────────────
+
+
+class TestQuotaSafePollingConfig:
+    """Guardrails for high-volume sports that intentionally use lighter requests."""
+
+    def test_mlb_region_override_stays_single_region(self):
+        """MLB has high event volume, so it must not silently return to us+us2."""
+        assert SPORT_REGION_OVERRIDES["baseball_mlb"] == "us"
 
 
 # ── _snapshots_are_equal ────────────────────────────────────────────────
@@ -130,6 +147,22 @@ class TestSnapshotsAreEqual:
         vals = _make_values(home_win_probability=0.65)
         assert _snapshots_are_equal(snap, vals) is False
 
+    def test_spread_and_total_price_changes_do_not_break_snapshot_dedupe(self):
+        """Deduping keys on line/probability values, not spread/total juice-only moves."""
+        snap = _make_snapshot(
+            home_spread_odds=-110,
+            away_spread_odds=-110,
+            over_odds=-110,
+            under_odds=-110,
+        )
+        vals = _make_values(
+            home_spread_odds=-105,
+            away_spread_odds=-115,
+            over_odds=-108,
+            under_odds=-112,
+        )
+        assert _snapshots_are_equal(snap, vals) is True
+
     def test_both_none_are_equal(self):
         snap = _make_snapshot(home_moneyline=None)
         vals = _make_values(home_moneyline=None)
@@ -170,6 +203,127 @@ class TestSnapshotsAreEqual:
             home_win_probability=None,
         )
         assert _snapshots_are_equal(snap, vals) is True
+
+
+# ── _parse_snapshot_values ──────────────────────────────────────────────
+
+
+def _event_data(**kwargs):
+    defaults = {
+        "home_team": "Los Angeles Lakers",
+        "away_team": "Boston Celtics",
+    }
+    defaults.update(kwargs)
+    return defaults
+
+
+class TestParseSnapshotValues:
+    """Tests for parsing The Odds API bookmaker market payloads."""
+
+    def test_parses_core_markets_into_snapshot_values(self):
+        bookmaker = {
+            "key": "fanduel",
+            "markets": [
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Los Angeles Lakers", "price": -150},
+                        {"name": "Boston Celtics", "price": 130},
+                    ],
+                },
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {"name": "Los Angeles Lakers", "point": -3.5, "price": -110},
+                        {"name": "Boston Celtics", "point": 3.5, "price": -110},
+                    ],
+                },
+                {
+                    "key": "totals",
+                    "outcomes": [
+                        {"name": "Over", "point": 210.5, "price": -108},
+                        {"name": "Under", "point": 210.5, "price": -112},
+                    ],
+                },
+            ],
+        }
+
+        values = _parse_snapshot_values(bookmaker, _event_data())
+
+        assert values["home_moneyline"] == -150
+        assert values["away_moneyline"] == 130
+        assert values["home_win_probability"] == pytest.approx(0.5798)
+        assert values["away_win_probability"] == pytest.approx(0.4202)
+        assert values["home_spread"] == -3.5
+        assert values["home_spread_odds"] == -110
+        assert values["away_spread_odds"] == -110
+        assert values["over_under"] == 210.5
+        assert values["over_odds"] == -108
+        assert values["under_odds"] == -112
+        assert values["projected_home_score"] == 107.0
+        assert values["projected_away_score"] == 103.5
+
+    def test_missing_markets_payload_returns_empty_snapshot_values(self):
+        values = _parse_snapshot_values({"key": "draftkings"}, _event_data())
+
+        assert all(value is None for value in values.values())
+
+    def test_ignores_markets_outside_h2h_spreads_and_totals(self):
+        bookmaker = {
+            "key": "betmgm",
+            "markets": [
+                {
+                    "key": "player_points",
+                    "outcomes": [
+                        {"name": "Star Player Over 25.5", "point": 25.5, "price": -120},
+                    ],
+                },
+            ],
+        }
+
+        values = _parse_snapshot_values(bookmaker, _event_data())
+
+        assert all(value is None for value in values.values())
+
+    def test_partial_upstream_market_data_does_not_cross_assign_teams(self):
+        bookmaker = {
+            "key": "espnbet",
+            "markets": [
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Los Angeles Lakers", "price": -150},
+                    ],
+                },
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "point": 3.5, "price": -110},
+                    ],
+                },
+                {
+                    "key": "totals",
+                    "outcomes": [
+                        {"name": "Under", "point": 210.5, "price": -112},
+                    ],
+                },
+            ],
+        }
+
+        values = _parse_snapshot_values(bookmaker, _event_data())
+
+        assert values["home_moneyline"] == -150
+        assert values["away_moneyline"] is None
+        assert values["home_win_probability"] is None
+        assert values["away_win_probability"] is None
+        assert values["home_spread"] is None
+        assert values["home_spread_odds"] is None
+        assert values["away_spread_odds"] == -110
+        assert values["over_under"] is None
+        assert values["over_odds"] is None
+        assert values["under_odds"] == -112
+        assert values["projected_home_score"] is None
+        assert values["projected_away_score"] is None
 
 
 # ── get_statpal_end_time ──────────────────────────────────────────────

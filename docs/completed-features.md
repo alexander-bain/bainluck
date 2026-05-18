@@ -36,6 +36,7 @@
 - ✅ **Source matching and quality guardrails** — added backend tests for event-registry duplicate prevention/source claims, Kalshi ticker parsing/category fallbacks, aggregate probability fallbacks/completed-game behavior, and feed-quality suppression/preservation rules.
 - ✅ **Market ingestion and quota guardrails** — added backend tests for prediction-market matching sport gates, Polymarket parsing/placeholders, Odds API quota-sensitive requests/fallbacks, rate-limit behavior, and bookmaker consensus math.
 - ✅ **Deterministic display guardrails** — added backend tests for feed-reason stale-copy suppression, futures highlight Yes/No humanization, baseball/live game-state labels, playoff probability normalization, and binary spread/total interpolation.
+- ✅ **Quota/context scoring guardrails** — added backend tests for polling tier/quota behavior, Odds API polling helper parsing/dedupe, league context response shape, excitement-index edge cases, and fixed Power 4 team matching false positives for ambiguous school names.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 

@@ -1,6 +1,8 @@
 """Tests for league context service and league_configs lookups."""
 
 import json
+from types import SimpleNamespace
+
 import pytest
 from app.config.league_configs import (
     get_league_config,
@@ -9,9 +11,13 @@ from app.config.league_configs import (
     LEAGUE_TO_SPORT,
     LEAGUE_CONFIGS,
 )
+from app.services import league_context as league_context_service
 from app.services.league_context import (
     TeamLeagueContext,
     LeagueContext,
+    _compute_league_context,
+    enrich_event_with_context,
+    get_team_context,
 )
 from app.routes.playoffs import _volume_confidence
 
@@ -72,6 +78,34 @@ class TestLeagueConfigLookups:
         for slug, config in LEAGUE_CONFIGS.items():
             assert len(config.matching_rules) >= 1, f"League {slug} has no matching rules"
 
+    def test_all_league_configs_have_user_facing_labels(self):
+        """League and column labels feed detail pages and must be presentable."""
+        for slug, config in LEAGUE_CONFIGS.items():
+            assert config.name.strip(), f"League {slug} has blank display name"
+            assert config.sport_category.strip(), f"League {slug} has blank sport category"
+            assert slug in LEAGUE_TO_SPORT, f"League {slug} has no sport group"
+
+            column_keys = [column.key for column in config.columns]
+            assert len(column_keys) == len(set(column_keys)), f"League {slug} has duplicate column keys"
+            for column in config.columns:
+                assert column.key.strip(), f"League {slug} has blank column key"
+                assert column.label.strip(), f"League {slug} column {column.key} has blank label"
+
+    def test_sport_key_mapping_stays_in_league_scope(self):
+        """Sport keys should resolve to their owning league, not just sport group."""
+        scoped_examples = {
+            "basketball_nba": ("nba", "basketball"),
+            "basketball_ncaab": ("ncaa-basketball", "basketball"),
+            "soccer_epl": ("epl", "soccer"),
+            "soccer_usa_mls": ("mls", "soccer"),
+        }
+
+        for sport_key, (expected_slug, expected_group) in scoped_examples.items():
+            config = get_league_for_sport_key(sport_key)
+            assert config is not None
+            assert config.slug == expected_slug
+            assert LEAGUE_TO_SPORT[config.slug] == expected_group
+
 
 class TestLeagueContextDataModel:
     """Tests for TeamLeagueContext and LeagueContext serialization."""
@@ -114,6 +148,220 @@ class TestLeagueContextDataModel:
         restored = LeagueContext.from_json(ctx.to_json())
         assert restored.league_slug == "test"
         assert len(restored.teams) == 0
+
+
+class TestLeagueContextService:
+    """Tests for computed and event-facing league context behavior."""
+
+    @pytest.mark.asyncio
+    async def test_compute_league_context_from_grouped_teams_with_missing_rows_skipped(
+        self,
+        monkeypatch,
+    ):
+        async def fake_grid(**kwargs):
+            assert kwargs["league_slug"] == "nba"
+            return {
+                "grouped_teams": {
+                    "Eastern": [
+                        {
+                            "name": "Boston Celtics",
+                            "team_id": 1,
+                            "conference": "Eastern",
+                            "record": "64-18",
+                            "stages": [
+                                {
+                                    "key": "make_playoffs",
+                                    "probability": 0.98,
+                                    "trend_24h": 0.01,
+                                    "sources": [{"source": "kalshi"}, {"source": ""}],
+                                },
+                                {
+                                    "key": "championship",
+                                    "probability": 0.22,
+                                    "sources": [{"source": "polymarket"}],
+                                },
+                            ],
+                        },
+                        {"name": "No Cells", "stages": []},
+                        {"stages": [{"key": "championship", "probability": 0.3}]},
+                    ],
+                },
+            }
+
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", fake_grid)
+
+        ctx = await _compute_league_context("nba", db=object())
+
+        assert ctx is not None
+        assert ctx.league_slug == "nba"
+        assert ctx.league_name == "NBA Playoffs 2025-26"
+        assert ctx.sport_group == "basketball"
+        assert {"key": "championship", "label": "Champion"} in ctx.columns
+        assert list(ctx.teams) == ["boston celtics"]
+
+        team = ctx.teams["boston celtics"]
+        assert team.team_name == "Boston Celtics"
+        assert team.team_id == 1
+        assert team.league_slug == "nba"
+        assert team.conference == "Eastern"
+        assert team.record == "64-18"
+        assert team.cells == {"make_playoffs": 0.98, "championship": 0.22}
+        assert team.changes_24h == {"make_playoffs": 0.01}
+        assert team.column_labels["make_playoffs"] == "Make Playoffs"
+        assert team.sources_available == ["kalshi", "polymarket"]
+
+    @pytest.mark.asyncio
+    async def test_compute_league_context_unknown_or_missing_grid_returns_none(self, monkeypatch):
+        async def missing_grid(**kwargs):
+            return None
+
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", missing_grid)
+
+        assert await _compute_league_context("not-a-league", db=object()) is None
+        assert await _compute_league_context("nba", db=object()) is None
+
+    @pytest.mark.asyncio
+    async def test_compute_league_context_empty_team_payload_keeps_league_metadata(
+        self,
+        monkeypatch,
+    ):
+        async def empty_grid(**kwargs):
+            return {"teams": []}
+
+        monkeypatch.setattr("app.routes.playoffs.get_playoff_grid", empty_grid)
+
+        ctx = await _compute_league_context("nba", db=object())
+
+        assert ctx is not None
+        assert ctx.league_slug == "nba"
+        assert ctx.league_name == "NBA Playoffs 2025-26"
+        assert ctx.sport_group == "basketball"
+        assert ctx.teams == {}
+
+    @pytest.mark.asyncio
+    async def test_get_team_context_uses_sport_key_scope_and_normalized_name(
+        self,
+        monkeypatch,
+    ):
+        league_calls = []
+
+        async def fake_league_context(league_slug, db):
+            league_calls.append(league_slug)
+            return LeagueContext(
+                league_slug=league_slug,
+                teams={
+                    "boston celtics": TeamLeagueContext(
+                        team_name="Boston Celtics",
+                        league_slug=league_slug,
+                        cells={"championship": 0.22},
+                    ),
+                    "new york liberty": TeamLeagueContext(
+                        team_name="New York Liberty",
+                        league_slug=league_slug,
+                        cells={"championship": 0.31},
+                    ),
+                },
+            )
+
+        monkeypatch.setattr(league_context_service, "get_league_context", fake_league_context)
+
+        team = await get_team_context("Celtics", "basketball_nba", db=object())
+        assert team is not None
+        assert team.team_name == "Boston Celtics"
+        assert team.league_slug == "nba"
+        assert league_calls == ["nba"]
+
+        assert await get_team_context("Boston Celtics", "cricket_test", db=object()) is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_event_with_context_returns_detail_page_shape_for_matching_team(
+        self,
+        monkeypatch,
+    ):
+        class FakeScalarResult:
+            def scalar(self):
+                return "basketball_nba"
+
+        class FakeDB:
+            async def execute(self, statement):
+                return FakeScalarResult()
+
+        async def fake_league_context(league_slug, db):
+            assert league_slug == "nba"
+            return LeagueContext(
+                league_slug="nba",
+                league_name="NBA Playoffs 2025-26",
+                sport_group="basketball",
+                columns=[{"key": "championship", "label": "Champion"}],
+                teams={
+                    "boston celtics": TeamLeagueContext(
+                        team_name="Boston Celtics",
+                        league_slug="nba",
+                        conference="Eastern",
+                        record="64-18",
+                        cells={"championship": 0.22},
+                        changes_24h={"championship": 0.02},
+                        sources_available=["kalshi"],
+                    ),
+                },
+            )
+
+        monkeypatch.setattr(league_context_service, "get_league_context", fake_league_context)
+        event = SimpleNamespace(
+            sport_id=7,
+            home_team_name="Boston Celtics",
+            away_team_name="Los Angeles Lakers",
+        )
+
+        result = await enrich_event_with_context(event, FakeDB())
+
+        assert result == {
+            "league_slug": "nba",
+            "league_name": "NBA Playoffs 2025-26",
+            "columns": [{"key": "championship", "label": "Champion"}],
+            "league_page_url": "/basketball/nba",
+            "home_team": {
+                "cells": {"championship": 0.22},
+                "changes_24h": {"championship": 0.02},
+                "record": "64-18",
+                "conference": "Eastern",
+                "sources_available": ["kalshi"],
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_enrich_event_with_context_returns_none_when_no_team_matches(
+        self,
+        monkeypatch,
+    ):
+        class FakeScalarResult:
+            def scalar(self):
+                return "basketball_nba"
+
+        class FakeDB:
+            async def execute(self, statement):
+                return FakeScalarResult()
+
+        async def fake_league_context(league_slug, db):
+            return LeagueContext(
+                league_slug="nba",
+                teams={
+                    "boston celtics": TeamLeagueContext(
+                        team_name="Boston Celtics",
+                        league_slug="nba",
+                        cells={"championship": 0.22},
+                    ),
+                },
+            )
+
+        monkeypatch.setattr(league_context_service, "get_league_context", fake_league_context)
+        event = SimpleNamespace(
+            sport_id=7,
+            home_team_name="Miami Heat",
+            away_team_name="Denver Nuggets",
+        )
+
+        assert await enrich_event_with_context(event, FakeDB()) is None
 
 
 class TestVolumeConfidence:
