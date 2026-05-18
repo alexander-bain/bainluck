@@ -22,15 +22,15 @@ private let themeLabel: [String: String] = [
 // MARK: - View
 
 struct PoliticsView: View {
-    @StateObject private var vm = PoliticsViewModel()
+    @StateObject private var viewModel = PoliticsViewModel()
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView("Loading politics data...")
-            } else if let error = vm.error, vm.data == nil {
+            } else if let error = viewModel.error, viewModel.data == nil {
                 ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
-            } else if let data = vm.data {
+            } else if let data = viewModel.data {
                 politicsContent(data)
             }
         }
@@ -39,8 +39,8 @@ struct PoliticsView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .onAppear { AnalyticsService.trackScreen(name: "politics", type: "politics") }
-        .task { await vm.load() }
-        .refreshable { await vm.load() }
+        .task { await viewModel.load() }
+        .refreshable { await viewModel.load() }
     }
 
     private func politicsContent(_ data: PoliticsResponse) -> some View {

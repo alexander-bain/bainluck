@@ -98,3 +98,27 @@ async def test_submit_bug_report_persists_auto_category():
     assert db.committed is True
     assert db.report.category == "data_quality"
     assert db.report.session_id == "session-123"
+    assert db.report.user_id is None
+    assert db.report.user_email is None
+
+
+@pytest.mark.asyncio
+async def test_submit_bug_report_stores_authenticated_user_email_without_notification_opt_in():
+    db = _FakeDB()
+    request = SimpleNamespace(headers={"x-session-id": "session-456"})
+    body = BugReportSubmission(
+        description="The chart label is cut off.",
+        notify_on_fix=False,
+    )
+    user = SimpleNamespace(id=123, email="filer@example.com")
+
+    response = await submit_bug_report(
+        body=body,
+        request=request,
+        db=db,
+        user=user,
+    )
+
+    assert response == {"status": "ok", "id": 456, "category": "ui"}
+    assert db.report.user_id == 123
+    assert db.report.user_email == "filer@example.com"

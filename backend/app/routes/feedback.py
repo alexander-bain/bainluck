@@ -209,9 +209,7 @@ async def submit_bug_report(
     session_id = request.headers.get("x-session-id")
     user_id = user.id if user else None
 
-    user_email = None
-    if user and body.notify_on_fix:
-        user_email = user.email
+    user_email = user.email if user else None
 
     report = BugReport(
         user_id=user_id,

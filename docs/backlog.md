@@ -786,11 +786,11 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 **Phases:**
 
-### Phase 1: Backend data foundations — ✅ DONE (May 16)
+### Phase 1: Backend data foundations — ✅ DONE (May 18)
 - ~~Add `resolution_summary` text field to `BugReport` model~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
 - ~~Add `backlog_ref` field~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
-- Look up and store the filer's email at submission time (join `users` table via `user_id`) — store as `user_email` on the report so it's available without a join later
-- Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`
+- ~~Look up and store the filer's email at submission time~~ — ✅ SHIPPED May 18. Authenticated submissions store `user_email` directly on `BugReport`; anonymous reports remain email-free.
+- ~~Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`~~ — ✅ SHIPPED May 16
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
@@ -1248,6 +1248,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ Retention/taxonomy guardrails: snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries
 - ✅ May 18 docs sync: verified the guardrail commits were already pushed, carried gotchas 71-75 into `CLAUDE.md`, and fixed the stale gotchas-reference range header.
 - ✅ May 18 guardrails: playoff championship overround normalization, StatPal raw-period preservation, DataGolf tour metadata classification, bug-report categorization, and line-movement prompt focus.
+- ✅ May 18 notification route contracts: device-token registration/upsert shape, admin list redaction, Firebase send-test payloads, invalid-token hints, and unconfigured Firebase errors.
 
 **Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`, plus focused backend guardrail tests under `backend/tests/` and `backend/app/utils/league_classification.py`
 **Parallel Safety:** Green
@@ -1375,7 +1376,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, and Futures List views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
+| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, and Preferences views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)

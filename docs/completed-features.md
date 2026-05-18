@@ -18,6 +18,9 @@
 - ✅ **Search weighted ranking first slice** — `/api/events/search` now adds query-time PostgreSQL full-text ranking with team names weighted A, market names B, and outcome names C, while preserving existing ILIKE matching and typeahead behavior.
 - ✅ **Bug-fixed email MIME hardening** — Gmail send path now builds multipart plain-text plus HTML messages, validates recipient/sender headers, and rejects CR/LF header injection.
 - ✅ **Native naming cleanup slice** — renamed local `vm` references to `viewModel` in low-risk economics, weather, friend challenge, and futures-list views.
+- ✅ **Bug report filer email capture** — authenticated rage-shake submissions now store `user_email` at submission time so later fix notifications do not need a user-table join; anonymous submissions remain email-free.
+- ✅ **Notification route guardrails** — added focused tests for device-token registration, admin token listing redaction, Firebase test-send payloads, invalid-token hints, and unconfigured Firebase errors.
+- ✅ **Native naming cleanup slice 2** — continued `vm` to `viewModel` cleanup in Calibration, Politics, Entertainment, and Preferences views.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

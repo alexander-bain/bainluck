@@ -28,15 +28,15 @@ private let relationLabel: [String: String] = [
 
 struct PreferencesView: View {
     @EnvironmentObject private var authManager: AuthManager
-    @StateObject private var vm = PreferencesViewModel()
+    @StateObject private var viewModel = PreferencesViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showOnboarding = false
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView("Loading preferences...")
-            } else if let error = vm.error, vm.prefs == nil {
+            } else if let error = viewModel.error, viewModel.prefs == nil {
                 ContentUnavailableView(
                     "Couldn't Load Preferences",
                     systemImage: "wifi.exclamationmark",
@@ -51,7 +51,7 @@ struct PreferencesView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .task {
-            await vm.load()
+            await viewModel.load()
             AnalyticsService.trackScreen(name: "preferences", type: "preferences")
         }
         #if os(iOS)
@@ -68,7 +68,7 @@ struct PreferencesView: View {
         #endif
         .onChange(of: showOnboarding) { _, isShowing in
             if !isShowing {
-                Task { await vm.load() }
+                Task { await viewModel.load() }
                 Task { await authManager.refreshProfile() }
             }
         }
@@ -134,18 +134,18 @@ struct PreferencesView: View {
             HStack(spacing: 20) {
                 statBadge(
                     icon: "heart.fill",
-                    value: "\(vm.followTeams.count + vm.localTeams.count + vm.almaMaterTeams.count + vm.rivalTeams.count)",
+                    value: "\(viewModel.followTeams.count + viewModel.localTeams.count + viewModel.almaMaterTeams.count + viewModel.rivalTeams.count)",
                     label: "Teams"
                 )
                 statBadge(
                     icon: "sparkles",
-                    value: "\(vm.sportAffinities.filter { $0.value > 0 }.count)",
+                    value: "\(viewModel.sportAffinities.filter { $0.value > 0 }.count)",
                     label: "Interests"
                 )
-                if vm.prefs?.homeLocation != nil {
+                if viewModel.prefs?.homeLocation != nil {
                     statBadge(
                         icon: "location.fill",
-                        value: vm.prefs?.homeLocation ?? "",
+                        value: viewModel.prefs?.homeLocation ?? "",
                         label: "Location"
                     )
                 }
@@ -215,17 +215,17 @@ struct PreferencesView: View {
             sectionHeader(
                 emoji: "\u{1F3C6}", // trophy
                 title: "Your Teams",
-                count: vm.followTeams.count + vm.localTeams.count + vm.almaMaterTeams.count + vm.rivalTeams.count
+                count: viewModel.followTeams.count + viewModel.localTeams.count + viewModel.almaMaterTeams.count + viewModel.rivalTeams.count
             )
 
-            if !vm.hasAnyTeams {
+            if !viewModel.hasAnyTeams {
                 emptyTeamsCard
             } else {
                 VStack(spacing: 10) {
-                    teamGroupCard(type: "follow", items: vm.followTeams)
-                    teamGroupCard(type: "local", items: vm.localTeams)
-                    teamGroupCard(type: "alma_mater", items: vm.almaMaterTeams)
-                    teamGroupCard(type: "rival", items: vm.rivalTeams)
+                    teamGroupCard(type: "follow", items: viewModel.followTeams)
+                    teamGroupCard(type: "local", items: viewModel.localTeams)
+                    teamGroupCard(type: "alma_mater", items: viewModel.almaMaterTeams)
+                    teamGroupCard(type: "rival", items: viewModel.rivalTeams)
                 }
                 .padding(.horizontal)
 
@@ -313,7 +313,7 @@ struct PreferencesView: View {
 
             Button(role: .destructive) {
                 withAnimation(.easeInOut(duration: 0.25)) {
-                    vm.removeFavorite(teamId: item.teamId, relationType: item.relationType)
+                    viewModel.removeFavorite(teamId: item.teamId, relationType: item.relationType)
                 }
             } label: {
                 Image(systemName: "xmark.circle.fill")
@@ -359,7 +359,7 @@ struct PreferencesView: View {
             sectionHeader(
                 emoji: "\u{2728}", // sparkles
                 title: "Your Interests",
-                count: vm.sportAffinities.filter { $0.value > 0 }.count
+                count: viewModel.sportAffinities.filter { $0.value > 0 }.count
             )
 
             // Legend
@@ -414,7 +414,7 @@ struct PreferencesView: View {
     }
 
     private func affinityCard(item: SportItem) -> some View {
-        let currentLevel = vm.affinityLevel(for: item.key)
+        let currentLevel = viewModel.affinityLevel(for: item.key)
         let isActive = currentLevel != .nah
         let activeColor = affinityColor[currentLevel] ?? .gray
 
@@ -442,7 +442,7 @@ struct PreferencesView: View {
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            vm.setAffinity(item.key, level: level)
+                            viewModel.setAffinity(item.key, level: level)
                         }
                     } label: {
                         Text(level.shortLabel)

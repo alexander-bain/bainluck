@@ -31,15 +31,15 @@ private let kindAccent: [String: Color] = [
 // MARK: - View
 
 struct EntertainmentView: View {
-    @StateObject private var vm = EntertainmentViewModel()
+    @StateObject private var viewModel = EntertainmentViewModel()
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView("Loading entertainment data...")
-            } else if let error = vm.error, vm.data == nil {
+            } else if let error = viewModel.error, viewModel.data == nil {
                 ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
-            } else if let data = vm.data {
+            } else if let data = viewModel.data {
                 entertainmentContent(data)
             }
         }
@@ -48,8 +48,8 @@ struct EntertainmentView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .onAppear { AnalyticsService.trackScreen(name: "entertainment", type: "entertainment") }
-        .task { await vm.load() }
-        .refreshable { await vm.load() }
+        .task { await viewModel.load() }
+        .refreshable { await viewModel.load() }
     }
 
     private func entertainmentContent(_ data: EntertainmentResponse) -> some View {
