@@ -7,6 +7,8 @@ from sqlalchemy.dialects import postgresql
 from scripts.export_discover_interestingness import (
     build_export_statement,
     format_export_row,
+    summarize_rows,
+    write_summary,
     write_rows,
 )
 
@@ -126,3 +128,77 @@ def test_write_rows_supports_csv_and_jsonl():
     write_rows(rows, jsonl_handle, fmt="jsonl")
     assert '"id": "futures:1"' in jsonl_handle.getvalue()
     assert '"label": ""' in jsonl_handle.getvalue()
+
+
+def test_summarize_rows_groups_by_category_and_score_bucket():
+    rows = [
+        {
+            "category": "tech",
+            "impressions": 30,
+            "positive_engagements": 6,
+            "negative_engagements": 1,
+            "avg_rank": 14,
+            "avg_feed_score": 86,
+            "label": "positive",
+        },
+        {
+            "category": "tech",
+            "impressions": 20,
+            "positive_engagements": 5,
+            "negative_engagements": 0,
+            "avg_rank": 13,
+            "avg_feed_score": 92,
+            "label": "positive",
+        },
+        {
+            "category": "politics",
+            "impressions": 40,
+            "positive_engagements": 0,
+            "negative_engagements": 12,
+            "avg_rank": 5,
+            "avg_feed_score": 99,
+            "label": "negative",
+        },
+    ]
+
+    summary = summarize_rows(rows)
+
+    assert summary["rows"] == 3
+    assert summary["overall"]["impressions"] == 90
+    assert summary["labels"] == {"positive": 2, "negative": 1, "unlabeled": 0}
+    assert summary["categories"][0]["key"] == "tech"
+    assert summary["categories"][0]["positive_rate"] == 0.22
+    assert summary["categories"][0]["avg_feed_score"] == 88.4
+    assert {row["key"] for row in summary["score_buckets"]} == {"80-89", "90-99"}
+    assert any(
+        item["kind"] == "under-ranked_category" and item["category"] == "tech"
+        for item in summary["opportunities"]
+    )
+    assert any(
+        item["kind"] == "over-ranked_category" and item["category"] == "politics"
+        for item in summary["opportunities"]
+    )
+
+
+def test_write_summary_supports_json_and_text():
+    summary = summarize_rows(
+        [
+            {
+                "category": "tech",
+                "impressions": 20,
+                "positive_engagements": 3,
+                "negative_engagements": 0,
+                "avg_rank": 11,
+                "avg_feed_score": 91,
+            }
+        ]
+    )
+
+    text_handle = StringIO()
+    write_summary(summary, text_handle, as_json=False)
+    assert "Discover engagement calibration summary" in text_handle.getvalue()
+    assert "tech" in text_handle.getvalue()
+
+    json_handle = StringIO()
+    write_summary(summary, json_handle, as_json=True)
+    assert '"score_buckets"' in json_handle.getvalue()

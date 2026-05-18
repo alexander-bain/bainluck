@@ -294,6 +294,18 @@ def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
     assert summary == "Sources disagree (3); Sentimental Favorite leads at 37%"
 
 
+def test_futures_context_summary_avoids_repeating_market_title_prefix():
+    summary = generate_futures_context_summary(
+        headline="Trump out as President by May 31 leads; resolves this month",
+        highlight_reasons=["resolving_soon_30d"],
+        market_name="Trump out as President by May 31?",
+        leader_name="Trump out as President by May 31",
+        leader_probability=0.82,
+    )
+
+    assert summary == "Resolution window is this month"
+
+
 def test_event_reason_uses_category_tag_context_when_odds_reason_absent():
     reason = generate_event_reason(
         home_team="Liberty",

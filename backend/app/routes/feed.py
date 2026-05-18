@@ -1349,6 +1349,7 @@ def _score_market_trace(
     context_summary = generate_futures_context_summary(
         headline=headline,
         highlight_reasons=highlight_result.reasons,
+        market_name=market.name,
         leader_name=leader_name,
         leader_probability=leader_prob,
         source_count=source_count,
@@ -3005,6 +3006,7 @@ async def _score_futures(
         context_summary = generate_futures_context_summary(
             headline=headline,
             highlight_reasons=highlight_result.reasons,
+            market_name=market.name,
             leader_name=_h_leader,
             leader_probability=leader_prob,
             source_count=source_count,

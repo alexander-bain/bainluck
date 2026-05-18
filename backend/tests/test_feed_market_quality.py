@@ -333,6 +333,18 @@ class TestMarketQualityClassification:
 
         assert "sports_personnel_story" not in quality.reasons
 
+    def test_non_sports_release_market_is_not_sports_personnel_story(self):
+        quality = classify_market_quality(
+            "When will The Last of Us Season 3 be released?",
+            sport_category="entertainment",
+        )
+
+        assert "sports_personnel_story" not in quality.reasons
+        assert editorial_archetype(
+            "When will The Last of Us Season 3 be released?",
+            "entertainment",
+        ) == "culture_moment"
+
     def test_major_geopolitics_not_suppressed(self):
         quality = classify_market_quality(
             "Will Israel and Iran agree to a ceasefire before July?",

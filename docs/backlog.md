@@ -279,7 +279,7 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 - ✅ Sports futures staleness guard tightened: Discover now treats sports futures at 90%+ leader probability as effectively resolved unless the leader had a real underdog/surprise journey.
 - ✅ Regional/team personalization guardrails are covered: Red Sox/Boston interactions bridge to Massachusetts/New England topics, unlike remains a bounded soft downrank, low-signal sports are grouped/downranked, and regional public-interest markets can still qualify as compelling.
 - ✅ Deterministic Discover explanation guardrails are covered: non-sports boosts, low-signal sports suppression, first-page diversity, named movers, source disagreement, opening-probability surprises, stale copy suppression, and context-summary fallbacks.
-- ✅ Deterministic futures copy polish shipped: movement is described in probability points, source-disagreement and monthly-resolution snippets name the leader when available, and stale past-resolution cards suppress generated copy.
+- ✅ Deterministic futures copy polish shipped: movement is described in probability points, source-disagreement and monthly-resolution snippets name the leader when available, stale past-resolution cards suppress generated copy, and context snippets avoid repeating the card title prefix.
 - ✅ Dedicated `/daily` page shipped: five curated Higher/Lower calls, progress, streak/local completion tracking, countdown, replay, prediction submission, and shareable text summary.
 - ✅ Friend challenge landing page shipped at `/challenge/[id]`: loads existing challenge codes, handles Higher/Lower acceptance, participants/results states, and share/copy affordances.
 - ✅ Shareable prediction scorecards shipped (May 17): OG image generation via Next.js `ImageResponse`, share button on `/discover/stats`, scorecard page at `/discover/scorecard`.
@@ -419,7 +419,7 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 
 **Files:** `backend/scripts/calibrate_interestingness.py`, new export script, admin panel
 
-**May 18 first export slice shipped:** `backend/scripts/export_discover_interestingness.py` exports Discover interactions joined with futures/event metadata to CSV or JSONL, including impression/action counts, positive/negative engagement rates, labels, category share, probability, movement, volume, and source count. It is read-only, supports `--print-sql`, and feeds directly into `scripts/calibrate_interestingness.py`. Remaining work: scheduled export/import, score-bucket analysis, admin scatterplots, and human-reviewed weight changes.
+**May 18 export/reporting slices shipped:** `backend/scripts/export_discover_interestingness.py` exports Discover interactions joined with futures/event metadata to CSV or JSONL, including impression/action counts, positive/negative engagement rates, labels, category share, probability, movement, volume, and source count. It is read-only, supports `--print-sql`, feeds directly into `scripts/calibrate_interestingness.py`, and now has `--summary` / `--summary-json` reporting for engagement by category and feed-score bucket plus over/under-ranked category opportunities. Remaining work: scheduled export/import, admin scatterplots, and human-reviewed weight changes.
 
 ---
 

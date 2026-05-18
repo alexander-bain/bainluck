@@ -8,6 +8,7 @@ can be matched, and writes CSV or JSONL rows accepted by
 Usage:
     python3 scripts/export_discover_interestingness.py --output /tmp/discover.csv
     python3 scripts/export_discover_interestingness.py --format jsonl --days 14
+    python3 scripts/export_discover_interestingness.py --summary --summary-json
 """
 
 from __future__ import annotations
@@ -387,6 +388,73 @@ def write_rows(rows: Iterable[dict[str, Any]], handle: TextIO, *, fmt: str) -> N
         writer.writerow(_compact_row(row))
 
 
+def summarize_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate export rows into category and score-bucket engagement diagnostics."""
+    rows = list(rows)
+    total = _aggregate_group(rows)
+    categories = _summarize_grouped(rows, key_fn=lambda row: row.get("category") or "other")
+    score_buckets = _summarize_grouped(rows, key_fn=_score_bucket)
+    labels = {
+        "positive": sum(1 for row in rows if row.get("label") == "positive"),
+        "negative": sum(1 for row in rows if row.get("label") == "negative"),
+        "unlabeled": sum(1 for row in rows if not row.get("label")),
+    }
+
+    return {
+        "rows": len(rows),
+        "labels": labels,
+        "overall": total,
+        "categories": categories,
+        "score_buckets": score_buckets,
+        "opportunities": _ranking_opportunities(categories),
+    }
+
+
+def write_summary(summary: dict[str, Any], handle: TextIO, *, as_json: bool) -> None:
+    if as_json:
+        handle.write(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+        return
+
+    overall = summary["overall"]
+    handle.write("Discover engagement calibration summary\n")
+    handle.write("=" * 72 + "\n")
+    handle.write(
+        f"Rows: {summary['rows']} | impressions: {overall['impressions']} | "
+        f"positive_rate: {overall['positive_rate']:.1%} | "
+        f"negative_rate: {overall['negative_rate']:.1%} | "
+        f"engagement_score: {overall['engagement_score']:.3f}\n\n"
+    )
+
+    handle.write("Categories\n")
+    handle.write("-" * 72 + "\n")
+    for row in summary["categories"][:20]:
+        handle.write(
+            f"{row['key'][:18]:18s} imp={row['impressions']:5d} "
+            f"pos={row['positive_rate']:.1%} neg={row['negative_rate']:.1%} "
+            f"score={row['engagement_score']:.3f} avg_rank={_format_float(row['avg_rank'])} "
+            f"avg_feed={_format_float(row['avg_feed_score'])}\n"
+        )
+
+    handle.write("\nScore buckets\n")
+    handle.write("-" * 72 + "\n")
+    for row in summary["score_buckets"]:
+        handle.write(
+            f"{row['key']:>7s} imp={row['impressions']:5d} "
+            f"pos={row['positive_rate']:.1%} neg={row['negative_rate']:.1%} "
+            f"score={row['engagement_score']:.3f}\n"
+        )
+
+    if summary["opportunities"]:
+        handle.write("\nReview opportunities\n")
+        handle.write("-" * 72 + "\n")
+        for item in summary["opportunities"]:
+            handle.write(
+                f"{item['kind']}: {item['category']} "
+                f"(score={item['engagement_score']:.3f}, "
+                f"impressions={item['impressions']})\n"
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", help="Output path. Defaults to stdout.")
@@ -395,6 +463,16 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=5000)
     parser.add_argument("--min-impressions", type=int, default=3)
     parser.add_argument("--surface", choices=("web", "native", "unknown"))
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print category and score-bucket engagement diagnostics instead of rows.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        action="store_true",
+        help="Print --summary output as JSON.",
+    )
     parser.add_argument(
         "--print-sql",
         action="store_true",
@@ -433,13 +511,111 @@ async def _run_cli(*, args: argparse.Namespace, since: datetime) -> int:
             surface=args.surface,
         )
 
-    if args.output:
+    if args.summary:
+        write_summary(summarize_rows(rows), sys.stdout, as_json=args.summary_json)
+    elif args.output:
         path = Path(args.output)
         with path.open("w", newline="") as handle:
             write_rows(rows, handle, fmt=args.format)
     else:
         write_rows(rows, sys.stdout, fmt=args.format)
     return 0
+
+
+def _summarize_grouped(rows: list[dict[str, Any]], *, key_fn) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = key_fn(row)
+        grouped.setdefault(str(key), []).append(row)
+    summaries = [
+        {"key": key, **_aggregate_group(group_rows)}
+        for key, group_rows in grouped.items()
+    ]
+    summaries.sort(
+        key=lambda row: (
+            row["impressions"],
+            row["positive_engagements"] - row["negative_engagements"],
+        ),
+        reverse=True,
+    )
+    return summaries
+
+
+def _aggregate_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    impressions = sum(_as_int(row.get("impressions")) or 0 for row in rows)
+    positives = sum(_as_int(row.get("positive_engagements")) or 0 for row in rows)
+    negatives = sum(_as_int(row.get("negative_engagements")) or 0 for row in rows)
+    positive_rate = positives / impressions if impressions else 0.0
+    negative_rate = negatives / impressions if impressions else 0.0
+    return {
+        "rows": len(rows),
+        "impressions": impressions,
+        "positive_engagements": positives,
+        "negative_engagements": negatives,
+        "positive_rate": round(positive_rate, 6),
+        "negative_rate": round(negative_rate, 6),
+        "engagement_score": round(positive_rate - negative_rate, 6),
+        "avg_rank": _weighted_average(rows, value_key="avg_rank", weight_key="impressions"),
+        "avg_feed_score": _weighted_average(
+            rows,
+            value_key="avg_feed_score",
+            weight_key="impressions",
+        ),
+    }
+
+
+def _ranking_opportunities(category_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    opportunities: list[dict[str, Any]] = []
+    for row in category_rows:
+        if row["impressions"] < 20:
+            continue
+        category = row["key"]
+        if row["engagement_score"] >= 0.12 and (
+            row["avg_rank"] is None or row["avg_rank"] > 10
+        ):
+            opportunities.append({"kind": "under-ranked_category", "category": category, **row})
+        elif row["engagement_score"] <= -0.20 and (
+            row["avg_rank"] is None or row["avg_rank"] <= 20
+        ):
+            opportunities.append({"kind": "over-ranked_category", "category": category, **row})
+    return opportunities[:10]
+
+
+def _score_bucket(row: dict[str, Any]) -> str:
+    score = _round_float(row.get("avg_feed_score"), 4)
+    if score is None:
+        return "unknown"
+    floor = int(score // 10) * 10
+    floor = max(0, min(100, floor))
+    if floor == 100:
+        return "100"
+    return f"{floor:02d}-{floor + 9:02d}"
+
+
+def _weighted_average(
+    rows: list[dict[str, Any]],
+    *,
+    value_key: str,
+    weight_key: str,
+) -> float | None:
+    total_weight = 0
+    weighted = 0.0
+    for row in rows:
+        value = _round_float(row.get(value_key), 6)
+        weight = _as_int(row.get(weight_key)) or 0
+        if value is None or weight <= 0:
+            continue
+        total_weight += weight
+        weighted += value * weight
+    if total_weight <= 0:
+        return None
+    return round(weighted / total_weight, 4)
+
+
+def _format_float(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.1f}"
 
 
 def _engagement_label(

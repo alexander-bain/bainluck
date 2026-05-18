@@ -163,6 +163,14 @@ _SPORTS_PERSONNEL_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SPORTS_CONTEXT_RE = re.compile(
+    r"\b("
+    r"nba|wnba|nfl|mlb|nhl|ufc|pga|mls|epl|team|coach|player|manager|"
+    r"next game|patriots|lakers|yankees|knicks|celtics|dodgers|cowboys"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _OUTBREAK_RE = re.compile(
     r"\b("
     r"hantavirus|outbreak|pandemic|epidemic|bird flu|avian flu|h5n1|"
@@ -436,7 +444,7 @@ def classify_market_quality(
         reasons.append("low_signal_sport")
 
     compelling = bool(_COMPELLING_RE.search(name))
-    personnel = bool(_SPORTS_PERSONNEL_RE.search(name)) and has_salient
+    personnel = _has_sports_personnel_context(name, category) and has_salient
     outbreak = bool(_OUTBREAK_RE.search(name))
     if compelling:
         reasons.append("compelling_topic")
@@ -526,10 +534,7 @@ def editorial_archetype(
         return "absurd_but_real"
     if _OUTBREAK_RE.search(text) or re.search(r"\b(hurricane|tornado|earthquake|wildfire|flood|rain|snow)\b", text, re.I):
         return "health_weather_risk"
-    if _SPORTS_PERSONNEL_RE.search(text) and (
-        category in {"golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis", "chess", "squash", "mma"}
-        or re.search(r"\b(nba|nfl|mlb|nhl|ufc|pga|team|coach|player|next game|patriots|lakers|yankees)\b", text, re.I)
-    ):
+    if _has_sports_personnel_context(name, category):
         return "sports_drama"
     if _BREAKING_NEWS_RE.search(text) and re.search(r"\b(iran|israel|russia|ukraine|china|trump|gaza|taiwan|nuclear)\b", text, re.I):
         return "breaking_news"
@@ -556,6 +561,17 @@ def editorial_archetype(
     if _WEIRD_NEWS_RE.search(text):
         return "weird_news"
     return "other"
+
+
+def _has_sports_personnel_context(name: str, category: str) -> bool:
+    """Return true for personnel verbs only in sports contexts."""
+    text = f"{name} {category}"
+    if not _SPORTS_PERSONNEL_RE.search(text):
+        return False
+    return category in {
+        "golf", "football", "basketball", "baseball", "hockey",
+        "soccer", "tennis", "chess", "squash", "mma",
+    } or bool(_SPORTS_CONTEXT_RE.search(text))
 
 
 def _discover_category_group(item: dict) -> str:
