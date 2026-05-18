@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Golf Leaderboard Models
 
+/// Live golf leaderboard response with event status and player probabilities.
 nonisolated struct GolfLeaderboardResponse: Decodable, Sendable {
     let status: String // "live" or "no_event"
     let eventName: String?
@@ -31,6 +32,7 @@ nonisolated struct GolfLeaderboardResponse: Decodable, Sendable {
     }
 }
 
+/// Player row on a live golf leaderboard.
 nonisolated struct GolfLeaderboardPlayer: Decodable, Sendable, Identifiable {
     let position: String
     let name: String
@@ -53,6 +55,7 @@ nonisolated struct GolfLeaderboardPlayer: Decodable, Sendable, Identifiable {
 
 // MARK: - Golf Landing Page Models
 
+/// Golf landing response with tournaments, movers, current event, and schedule.
 nonisolated struct GolfLandingResponse: Decodable, Sendable {
     let tournaments: [GolfTournamentData]
     let biggestMovers: [GolfMoverData]
@@ -74,6 +77,7 @@ nonisolated struct GolfLandingResponse: Decodable, Sendable {
     }
 }
 
+/// Golf tournament market data with participating golfers.
 nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
     let key: String?
     let name: String
@@ -120,6 +124,7 @@ nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
     }
 }
 
+/// Golfer probability row inside a tournament market.
 nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
     let name: String
     let probability: Double
@@ -145,6 +150,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
     }
 }
 
+/// Summary of the currently active golf event.
 nonisolated struct GolfCurrentEventData: Decodable, Sendable {
     let key: String?
     let name: String?
@@ -172,6 +178,7 @@ nonisolated struct GolfCurrentEventData: Decodable, Sendable {
     }
 }
 
+/// Golfer with notable movement on the golf landing page.
 nonisolated struct GolfMoverData: Decodable, Sendable, Identifiable {
     let name: String
     let tournamentKey: String?
@@ -182,6 +189,7 @@ nonisolated struct GolfMoverData: Decodable, Sendable, Identifiable {
     var id: String { name + (tournamentKey ?? "") }
 }
 
+/// Scheduled golf event shown on the golf landing page.
 nonisolated struct GolfScheduleEntry: Decodable, Sendable, Identifiable {
     let eventName: String?
     let course: String?

@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Event History Response
 
+/// Historical probability, score, and source data for an event.
 nonisolated struct EventHistoryResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
@@ -24,6 +25,7 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
 
 // MARK: - History Points
 
+/// Aggregated odds history point for an event.
 nonisolated struct HistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
@@ -33,6 +35,7 @@ nonisolated struct HistoryPoint: Decodable, Sendable {
     let projectedAwayScore: Double?
 }
 
+/// Bookmaker-specific odds history point for an event.
 nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
@@ -43,12 +46,14 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let projectedAwayScore: Double?
 }
 
+/// Score snapshot captured during an event.
 nonisolated struct ScoreHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeScore: Int
     let awayScore: Int
 }
 
+/// ESPN win-probability and game-state snapshot.
 nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
@@ -58,12 +63,14 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
     let awayScore: Int?
 }
 
+/// Source-specific win-probability snapshot with optional game state.
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
     let gameState: WinProbGameState?
 }
 
+/// Game-state fields paired with a win-probability snapshot.
 nonisolated struct WinProbGameState: Decodable, Sendable {
     let period: String?
     let clock: String?
@@ -74,6 +81,7 @@ nonisolated struct WinProbGameState: Decodable, Sendable {
 
 // MARK: - Win Prob Source Info
 
+/// Display and attribution metadata for a win-probability source.
 nonisolated struct WinProbSourceInfo: Decodable, Sendable {
     let displayName: String?
     let type: String?
@@ -85,6 +93,7 @@ nonisolated struct WinProbSourceInfo: Decodable, Sendable {
 
 // MARK: - Scoring Play
 
+/// Scoring event shown on the event history timeline.
 nonisolated struct ScoringPlay: Decodable, Sendable {
     let timestamp: String?
     let team: String?
@@ -99,6 +108,7 @@ nonisolated struct ScoringPlay: Decodable, Sendable {
 
 // MARK: - Aggregate Line
 
+/// Aggregated home and away probability point for charting.
 nonisolated struct AggregateLinePoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double

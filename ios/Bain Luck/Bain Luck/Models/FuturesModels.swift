@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Team Progression (Championship Path)
 
+/// Championship-path probabilities for both teams in an event.
 nonisolated struct TeamProgressionResponse: Decodable, Sendable {
     let eventId: Int
     let league: String?
@@ -10,6 +11,7 @@ nonisolated struct TeamProgressionResponse: Decodable, Sendable {
     let awayTeam: TeamProgressionData?
 }
 
+/// Team metadata and stage probabilities for a championship path.
 nonisolated struct TeamProgressionData: Decodable, Sendable {
     let name: String
     let shortName: String?
@@ -19,6 +21,7 @@ nonisolated struct TeamProgressionData: Decodable, Sendable {
     let stages: [ProgressionStageData]
 }
 
+/// Probability and movement for one stage in a team's progression path.
 nonisolated struct ProgressionStageData: Decodable, Sendable {
     let key: String
     let label: String
@@ -28,6 +31,7 @@ nonisolated struct ProgressionStageData: Decodable, Sendable {
 
 // MARK: - Game Markets Response
 
+/// Full set of prediction markets attached to a game detail page.
 nonisolated struct GameMarketsResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String?
@@ -44,6 +48,7 @@ nonisolated struct GameMarketsResponse: Decodable, Sendable {
     let pace: GameMarketPace?
 }
 
+/// Miscellaneous game market outcome that does not fit a primary section.
 nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
@@ -52,6 +57,7 @@ nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
     let source: String?
 }
 
+/// Live scoring pace context for totals and in-game markets.
 nonisolated struct GameMarketPace: Decodable, Sendable {
     let totalScored: Int?
     let projectedTotal: Double?
@@ -59,6 +65,7 @@ nonisolated struct GameMarketPace: Decodable, Sendable {
     let timeRemainingDisplay: String?
 }
 
+/// Player prop market with threshold, probability, and player metadata.
 nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
@@ -71,6 +78,7 @@ nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
     let playerTeam: String?
 }
 
+/// Generic game market outcome used for spreads, totals, team totals, and periods.
 nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
@@ -86,6 +94,7 @@ nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
 
 // MARK: - Futures Market Detail
 
+/// Detailed futures market response including metadata and all outcomes.
 nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
@@ -108,6 +117,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
 
 // MARK: - Futures Outcome
 
+/// Individual outcome within a futures market.
 nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
@@ -124,6 +134,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
 
 // MARK: - Related Futures Response
 
+/// Outcome row for a series-level market related to an event.
 nonisolated struct SeriesMarketOutcome: Decodable, Identifiable, Sendable {
     let outcomeId: Int
     let name: String
@@ -133,6 +144,7 @@ nonisolated struct SeriesMarketOutcome: Decodable, Identifiable, Sendable {
     var id: Int { outcomeId }
 }
 
+/// Series-level market related to an event detail page.
 nonisolated struct SeriesMarket: Decodable, Identifiable, Sendable {
     let marketId: Int
     let marketName: String
@@ -144,6 +156,7 @@ nonisolated struct SeriesMarket: Decodable, Identifiable, Sendable {
     var id: Int { marketId }
 }
 
+/// Related futures and context shown alongside a game event.
 nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
@@ -159,6 +172,7 @@ nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let gameClock: String?
 }
 
+/// Team, player, or shared futures outcome related to a specific event.
 nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let marketId: Int
     let marketName: String
@@ -190,6 +204,7 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     var id: Int { outcomeId }
 }
 
+/// Matched player metadata attached to a related future.
 nonisolated struct MatchedPlayer: Decodable, Sendable {
     let name: String?
     let headshot: String?
@@ -198,12 +213,14 @@ nonisolated struct MatchedPlayer: Decodable, Sendable {
 
 // MARK: - Team Futures (My Stuff)
 
+/// Collection of futures tied to the user's followed teams.
 nonisolated struct TeamFuturesResponse: Decodable, Sendable {
     let items: [TeamFutureItem]
     let teamIds: [Int]
     let totalCount: Int
 }
 
+/// Single futures outcome associated with one of the user's teams.
 nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let outcomeId: Int
     let outcomeName: String
@@ -223,6 +240,7 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     var id: Int { outcomeId }
 }
 
+/// Team metadata attached to a team futures item.
 nonisolated struct TeamFutureTeam: Decodable, Sendable {
     let id: Int
     let name: String
@@ -232,6 +250,7 @@ nonisolated struct TeamFutureTeam: Decodable, Sendable {
 
 // MARK: - Probability Timeline
 
+/// Time-series probability response for a futures market.
 nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     let marketId: Int
     let marketName: String
@@ -244,11 +263,13 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     let outcomes: [TimelineOutcomeMeta]
 }
 
+/// Probability snapshot for all tracked outcomes at one timestamp.
 nonisolated struct TimelineEntry: Decodable, Sendable {
     let timestamp: String
     let outcomes: [String: Double]
 }
 
+/// Display metadata for an outcome included in a probability timeline.
 nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let id: Int?
     let name: String

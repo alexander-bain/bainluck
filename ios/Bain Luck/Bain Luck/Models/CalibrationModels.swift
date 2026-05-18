@@ -1,5 +1,6 @@
 import Foundation
 
+/// Aggregated calibration metrics for one probability bucket.
 nonisolated struct CalibrationBucket: Decodable, Sendable {
     let bucketIdx: Int
     let source: String
@@ -14,6 +15,7 @@ nonisolated struct CalibrationBucket: Decodable, Sendable {
     let avgProb: Double?
 }
 
+/// Top-level calibration response with bucket data and summary error metrics.
 nonisolated struct CalibrationData: Decodable, Sendable {
     let buckets: [CalibrationBucket]
     let totalMarkets: Int

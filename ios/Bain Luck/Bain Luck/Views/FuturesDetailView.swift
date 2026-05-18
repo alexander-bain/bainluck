@@ -97,7 +97,7 @@ struct FuturesDetailView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 HStack(spacing: 4) {
-                    ShareLink(item: URL(string: "https://bainluck.com/futures/\(marketId)")!) {
+                    ShareLink(item: URL(string: futuresShareURL(marketId)) ?? bainLuckFallbackURL) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 14))
                     }

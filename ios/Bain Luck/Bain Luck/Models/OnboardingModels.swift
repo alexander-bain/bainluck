@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Team Search Response
 
+/// Sport-specific variant for a team returned during onboarding search.
 nonisolated struct TeamSportVariant: Decodable, Identifiable, Sendable {
     let id: Int
     let sportKey: String?
@@ -21,6 +22,7 @@ nonisolated struct TeamSearchResult: Decodable, Identifiable, Sendable {
 
 // MARK: - Selected Team (local UI state)
 
+/// Local selection state for a team chosen during onboarding.
 nonisolated struct SelectedTeam: Identifiable, Sendable {
     let id: Int
     let name: String
@@ -31,10 +33,12 @@ nonisolated struct SelectedTeam: Identifiable, Sendable {
 
 // MARK: - Onboarding Submission
 
+/// Encodable reference to a team included in onboarding preferences.
 nonisolated struct TeamRef: Encodable, Sendable {
     let teamId: Int
 }
 
+/// Payload that saves a user's onboarding location, teams, and sport affinities.
 nonisolated struct OnboardingSubmission: Encodable, Sendable {
     let homeLocation: String?
     let localTeams: [TeamRef]
@@ -45,6 +49,7 @@ nonisolated struct OnboardingSubmission: Encodable, Sendable {
     let rawInputs: [String: [String]]
 }
 
+/// Backend status returned after onboarding preferences are saved.
 nonisolated struct OnboardingResponse: Decodable, Sendable {
     let status: String
     let onboardingCompleted: Bool
@@ -52,6 +57,7 @@ nonisolated struct OnboardingResponse: Decodable, Sendable {
 
 // MARK: - Affinity Levels
 
+/// Discrete preference levels used to convert onboarding choices into affinity weights.
 enum AffinityLevel: Double, CaseIterable, Sendable {
     case loveIt = 1.0
     case bigMoments = 0.3
@@ -79,6 +85,7 @@ enum AffinityLevel: Double, CaseIterable, Sendable {
 
 // MARK: - Sport / Category Grid Data
 
+/// Display metadata for an onboarding sport or category preference item.
 nonisolated struct SportItem: Identifiable, Sendable {
     let key: String
     let name: String
@@ -87,6 +94,7 @@ nonisolated struct SportItem: Identifiable, Sendable {
     var id: String { key }
 }
 
+/// Static catalog of sports and non-sports categories shown during onboarding.
 enum OnboardingSportsData {
     static let sports: [SportItem] = [
         SportItem(key: "football", name: "NFL", emoji: "\u{1F3C8}", isDefault: true),

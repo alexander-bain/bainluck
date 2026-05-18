@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Championship Grid Response
 
+/// Championship grid response for a league, including teams, columns, and movers.
 nonisolated struct ChampionshipGridResponse: Decodable, Sendable {
     let league: String
     let name: String
@@ -16,6 +17,7 @@ nonisolated struct ChampionshipGridResponse: Decodable, Sendable {
     let championshipMarketId: Int?
 }
 
+/// Column definition for one stage in a championship grid.
 nonisolated struct GridColumn: Decodable, Sendable {
     let key: String
     let label: String
@@ -24,6 +26,7 @@ nonisolated struct GridColumn: Decodable, Sendable {
     let marketId: Int?
 }
 
+/// Team row and probabilities across championship grid columns.
 nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
     var id: String { name }
 
@@ -41,6 +44,7 @@ nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
     let cells: [String: GridCell]
 }
 
+/// Probability cell for a team at one championship stage.
 nonisolated struct GridCell: Decodable, Sendable {
     let mergedProbability: Double?
     let sources: [GridCellSource]?
@@ -53,12 +57,14 @@ nonisolated struct GridCell: Decodable, Sendable {
     }
 }
 
+/// Source-specific probability inside a championship grid cell.
 nonisolated struct GridCellSource: Decodable, Sendable {
     let source: String
     let probability: Double
     let marketName: String?
 }
 
+/// Team with notable 24-hour movement in a championship grid column.
 nonisolated struct GridMover: Decodable, Sendable, Identifiable {
     var id: String { "\(name)-\(column)" }
 

@@ -1,7 +1,5 @@
 import SwiftUI
 
-private let eventDetailFallbackURL = URL(string: "https://bainluck.com") ?? URL(fileURLWithPath: "/")
-
 // MARK: - View
 
 struct EventDetailView: View {
@@ -81,7 +79,7 @@ struct EventDetailView: View {
     }
 
     private var shareURL: URL {
-        URL(string: "https://bainluck.com/events/\(eventId)") ?? eventDetailFallbackURL
+        URL(string: eventShareURL(eventId)) ?? bainLuckFallbackURL
     }
 
     var body: some View {

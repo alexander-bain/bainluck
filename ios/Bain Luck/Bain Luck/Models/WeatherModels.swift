@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Weather Featured
 
+/// Featured weather market displayed on the weather page.
 nonisolated struct WeatherFeaturedItem: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
@@ -14,6 +15,7 @@ nonisolated struct WeatherFeaturedItem: Decodable, Identifiable, Sendable {
 
 // MARK: - Weather City
 
+/// City weather market summary with high and low distributions.
 nonisolated struct WeatherCity: Decodable, Identifiable, Sendable {
     var id: String { cityId }
     let cityId: String
@@ -30,12 +32,14 @@ nonisolated struct WeatherCity: Decodable, Identifiable, Sendable {
     }
 }
 
+/// Probability distribution for a weather value such as high or low temperature.
 nonisolated struct WeatherDistribution: Decodable, Sendable {
     let unit: String
     let mode: Double?
     let dist: [WeatherBracket]
 }
 
+/// Labeled probability bracket within a weather distribution.
 nonisolated struct WeatherBracket: Decodable, Identifiable, Sendable {
     var id: String { label }
     let label: String
@@ -44,12 +48,14 @@ nonisolated struct WeatherBracket: Decodable, Identifiable, Sendable {
 
 // MARK: - Economics
 
+/// Economics dashboard response organized by market theme.
 nonisolated struct EconomicsResponse: Decodable, Sendable {
     let totalMarkets: Int
     let updatedAt: String?
     let themes: EconomicsThemes
 }
 
+/// Theme buckets returned for the economics dashboard.
 nonisolated struct EconomicsThemes: Decodable, Sendable {
     let fed: EconomicsFedTheme?
     let inflation: EconomicsInflationTheme?
@@ -62,12 +68,14 @@ nonisolated struct EconomicsThemes: Decodable, Sendable {
     let government: EconomicsGenericTheme?
 }
 
+/// Fed-focused economics markets including FOMC meetings.
 nonisolated struct EconomicsFedTheme: Decodable, Sendable {
     let count: Int
     let fomcMeetings: [FOMCMeeting]?
     let sideMarkets: [EconomicsMarket]?
 }
 
+/// Probability distribution for a specific FOMC meeting.
 nonisolated struct FOMCMeeting: Decodable, Identifiable, Sendable {
     var id: String { date }
     let date: String
@@ -78,12 +86,14 @@ nonisolated struct FOMCMeeting: Decodable, Identifiable, Sendable {
     let sortKey: Int?
 }
 
+/// Inflation-focused economics markets including CPI releases.
 nonisolated struct EconomicsInflationTheme: Decodable, Sendable {
     let count: Int
     let cpiReleases: [CPIRelease]?
     let sideMarkets: [EconomicsMarket]?
 }
 
+/// CPI release market distribution and display metadata.
 nonisolated struct CPIRelease: Decodable, Identifiable, Sendable {
     var id: String { mo }
     let mo: String
@@ -93,12 +103,14 @@ nonisolated struct CPIRelease: Decodable, Identifiable, Sendable {
     let marketId: Int?
 }
 
+/// Generic economics theme containing primary and side markets.
 nonisolated struct EconomicsGenericTheme: Decodable, Sendable {
     let count: Int
     let markets: [EconomicsMarket]?
     let sideMarkets: [EconomicsMarket]?
 }
 
+/// Single economics market row with probability and movement.
 nonisolated struct EconomicsMarket: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
@@ -108,6 +120,7 @@ nonisolated struct EconomicsMarket: Decodable, Identifiable, Sendable {
     let marketId: Int?
 }
 
+/// Flexible decoded value used by weather and economics matrix payloads.
 nonisolated enum WeatherValue: Decodable, Sendable {
     case double(Double)
     case string(String)
@@ -125,6 +138,7 @@ nonisolated enum WeatherValue: Decodable, Sendable {
     }
 }
 
+/// Type-erased decodable wrapper for mixed weather and economics values.
 nonisolated struct WeatherAnyCodable: Decodable, Sendable {
     let value: WeatherValue
 

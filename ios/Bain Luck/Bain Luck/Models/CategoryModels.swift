@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Shared Market Row (Politics + Entertainment)
 
+/// Shared category market row used by politics and entertainment dashboards.
 nonisolated struct CategoryMarketRow: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId ?? 0)-\(q)" }
     let q: String
@@ -12,6 +13,7 @@ nonisolated struct CategoryMarketRow: Decodable, Identifiable, Sendable {
     let outcomeCount: Int
 }
 
+/// Outcome probability embedded in a category market row.
 nonisolated struct CategoryOutcome: Decodable, Sendable {
     let name: String
     let prob: Double
@@ -19,6 +21,7 @@ nonisolated struct CategoryOutcome: Decodable, Sendable {
 
 // MARK: - Source counts (shared)
 
+/// Count of available markets by prediction market source.
 nonisolated struct SourceCounts: Decodable, Sendable {
     let kalshi: Int
     let polymarket: Int
@@ -26,6 +29,7 @@ nonisolated struct SourceCounts: Decodable, Sendable {
 
 // MARK: - Politics
 
+/// Politics dashboard response with themed sections and source comparison.
 nonisolated struct PoliticsResponse: Decodable, Sendable {
     let totalMarkets: Int
     let updatedAt: String?
@@ -34,6 +38,7 @@ nonisolated struct PoliticsResponse: Decodable, Sendable {
     let bySource: SourceCounts
 }
 
+/// Theme buckets returned by the politics dashboard.
 nonisolated struct PoliticsThemes: Decodable, Sendable {
     let presidential: PoliticsPresidential?
     let congressional: PoliticsCongressional?
@@ -44,6 +49,7 @@ nonisolated struct PoliticsThemes: Decodable, Sendable {
     let other: PoliticsSimple?
 }
 
+/// Presidential market section with candidates and related markets.
 nonisolated struct PoliticsPresidential: Decodable, Sendable {
     let count: Int
     let headlineQ: String?
@@ -54,6 +60,7 @@ nonisolated struct PoliticsPresidential: Decodable, Sendable {
     let sideMarkets: [CategoryMarketRow]?
 }
 
+/// Candidate probability row for presidential markets.
 nonisolated struct PoliticsCandidate: Decodable, Identifiable, Sendable {
     var id: String { name }
     let name: String
@@ -65,11 +72,13 @@ nonisolated struct PoliticsCandidate: Decodable, Identifiable, Sendable {
     let history: [ProbPoint]?
 }
 
+/// Historical probability point for a politics candidate.
 nonisolated struct ProbPoint: Decodable, Sendable {
     let t: String
     let p: Double
 }
 
+/// Congressional market section with chamber control context.
 nonisolated struct PoliticsCongressional: Decodable, Sendable {
     let count: Int
     let markets: [CategoryMarketRow]?
@@ -77,17 +86,20 @@ nonisolated struct PoliticsCongressional: Decodable, Sendable {
     let senateMap: [String: Double]?
 }
 
+/// Senate and House control probabilities.
 nonisolated struct ChamberControlData: Decodable, Sendable {
     let senate: ChamberControl?
     let house: ChamberControl?
 }
 
+/// Party control probabilities for one chamber.
 nonisolated struct ChamberControl: Decodable, Sendable {
     let gop: Double
     let dem: Double
     let marketId: Int?
 }
 
+/// Matched Kalshi and Polymarket rows for the same political question.
 nonisolated struct CrossSourceMatch: Decodable, Identifiable, Sendable {
     var id: String { "\(kalshiMarketId)-\(polyMarketId)" }
     let q: String
@@ -99,6 +111,7 @@ nonisolated struct CrossSourceMatch: Decodable, Identifiable, Sendable {
     let polyMarketId: Int
 }
 
+/// Simple politics theme containing a market count and rows.
 nonisolated struct PoliticsSimple: Decodable, Sendable {
     let count: Int
     let markets: [CategoryMarketRow]?
@@ -106,6 +119,7 @@ nonisolated struct PoliticsSimple: Decodable, Sendable {
 
 // MARK: - Entertainment
 
+/// Entertainment dashboard response with themed market sections.
 nonisolated struct EntertainmentResponse: Decodable, Sendable {
     let totalMarkets: Int
     let updatedAt: String?
@@ -115,12 +129,14 @@ nonisolated struct EntertainmentResponse: Decodable, Sendable {
     let bySource: SourceCounts
 }
 
+/// Theme buckets returned by the entertainment dashboard.
 nonisolated struct EntThemes: Decodable, Sendable {
     let music: EntThemeMusic?
     let moviesTv: EntThemeMoviesTV?
     let techCulture: EntThemeTechCulture?
 }
 
+/// Entertainment market row with outcomes, media, and hook metadata.
 nonisolated struct EntMarketRow: Decodable, Identifiable, Sendable {
     var id: String { "\(marketId)-\(q)" }
     let q: String
@@ -137,12 +153,14 @@ nonisolated struct EntMarketRow: Decodable, Identifiable, Sendable {
     let hook: String?
 }
 
+/// Outcome probability and movement for an entertainment market.
 nonisolated struct EntOutcome: Decodable, Sendable {
     let name: String
     let prob: Double
     let delta24h: Double?
 }
 
+/// Group of related entertainment threshold markets for one title or entity.
 nonisolated struct EntThresholdGroup: Decodable, Identifiable, Sendable {
     var id: String { title }
     let title: String
@@ -150,12 +168,14 @@ nonisolated struct EntThresholdGroup: Decodable, Identifiable, Sendable {
     let thresholds: [EntThreshold]
 }
 
+/// One threshold probability inside an entertainment threshold group.
 nonisolated struct EntThreshold: Decodable, Sendable {
     let label: String
     let prob: Double
     let marketId: Int
 }
 
+/// Music-focused entertainment market groups.
 nonisolated struct EntThemeMusic: Decodable, Sendable {
     let count: Int
     let spotifyRace: [EntMarketRow]?
@@ -166,6 +186,7 @@ nonisolated struct EntThemeMusic: Decodable, Sendable {
     let sideMarkets: [EntMarketRow]?
 }
 
+/// Movie and TV-focused entertainment market groups.
 nonisolated struct EntThemeMoviesTV: Decodable, Sendable {
     let count: Int
     let rtGroups: [EntThresholdGroup]?
@@ -176,6 +197,7 @@ nonisolated struct EntThemeMoviesTV: Decodable, Sendable {
     let sideMarkets: [EntMarketRow]?
 }
 
+/// Tech and culture entertainment market group.
 nonisolated struct EntThemeTechCulture: Decodable, Sendable {
     let count: Int
     let markets: [EntMarketRow]?
@@ -183,12 +205,14 @@ nonisolated struct EntThemeTechCulture: Decodable, Sendable {
 
 // MARK: - League Markets
 
+/// League-level futures markets grouped into display sections.
 nonisolated struct LeagueMarketsResponse: Decodable, Sendable {
     let sportKey: String
     let sections: [String: [LeagueMarketItem]]
     let totalMarkets: Int
 }
 
+/// Single league market row in a league market section.
 nonisolated struct LeagueMarketItem: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
