@@ -102,6 +102,20 @@ class TestMarketQualityClassification:
             assert quality.explanation_required is False, name
             assert apply_quality_score(100, quality) <= 70, name
 
+    def test_daily_equity_direction_markets_are_low_quality(self):
+        examples = [
+            "SPY (SPY) Up or Down on May 18?",
+            "Google (GOOGL) closes above ___ on May 18?",
+            "Rocket Lab (RKLB) Up or Down on May 18?",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="economics")
+            assert quality.quality_class == "low_quality", name
+            assert "daily_equity_direction" in quality.reasons, name
+            assert quality.story_key == "story:daily_equity_direction", name
+            assert apply_quality_score(100, quality) <= 70, name
+
     def test_social_filler_is_suppressed(self):
         quality = classify_market_quality(
             'Will Trump post "tariffs" this week on Truth?',
@@ -314,6 +328,17 @@ class TestMarketQualityClassification:
             assert quality_score_adjustment(quality) > 0, name
             if expected_story_key is not None:
                 assert quality.story_key == expected_story_key, name
+
+    def test_absurd_public_interest_markets_are_compelling(self):
+        quality = classify_market_quality(
+            "Will the U.S. confirm that aliens exist before 2027?",
+            sport_category="culture",
+        )
+
+        assert quality.quality_class == "compelling"
+        assert "absurd_but_real" in quality.reasons
+        assert quality.story_key == "story:aliens_disclosure"
+        assert apply_quality_score(88, quality) == 100
 
     def test_sports_personnel_story_gets_extra_boost(self):
         quality = classify_market_quality(

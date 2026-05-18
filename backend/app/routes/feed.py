@@ -3353,10 +3353,6 @@ async def _score_futures(
         story_family_cap=5,
     )
     mark_timing("caps")
-    for item in scored_items:
-        item.pop("_quality_class", None)
-        item.pop("_quality_family_key", None)
-        item.pop("_quality_story_key", None)
 
     return scored_items
 

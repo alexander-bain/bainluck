@@ -78,6 +78,22 @@ _DATED_FINANCE_METRIC_RE = re.compile(
     re.IGNORECASE,
 )
 
+_DAILY_EQUITY_DIRECTION_RE = re.compile(
+    r"\b("
+    r"s&p\s*500|spx|spy|nasdaq|qqq|dow|russell|iwm|"
+    r"nvidia|nvda|tesla|tsla|apple|aapl|microsoft|msft|"
+    r"google|alphabet|googl|amazon|amzn|meta|netflix|nflx|"
+    r"robinhood|hood|rocket lab|rklb|ewy|gme|gamestop"
+    r")\b.*\b("
+    r"up or down|closes? above|closes? below|close above|close below"
+    r")\b.*\b("
+    r"today|tomorrow|on|"
+    rf"{_MONTH_RE}|"
+    r"\d{1,2}/\d{1,2}"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _WEATHER_BUCKET_RE = re.compile(
     r"\b("
     r"temperature|degrees?|rainfall|snowfall|precipitation|weather|"
@@ -372,6 +388,12 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
         return "story:oil"
 
+    if re.search(r"\b(aliens?|ufo|extraterrestrial)\b", lower):
+        return "story:aliens_disclosure"
+
+    if _DAILY_EQUITY_DIRECTION_RE.search(name):
+        return "story:daily_equity_direction"
+
     if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
         return "story:basketball_finals_path"
 
@@ -417,6 +439,7 @@ def classify_market_quality(
         or _DATED_FINANCE_METRIC_RE.search(name)
     )
     weather_bucket = bool(_WEATHER_BUCKET_RE.search(name))
+    daily_equity_direction = bool(_DAILY_EQUITY_DIRECTION_RE.search(name))
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
     entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
@@ -434,6 +457,8 @@ def classify_market_quality(
         reasons.append("narrow_range")
     if social_filler:
         reasons.append("social_filler")
+    if daily_equity_direction:
+        reasons.append("daily_equity_direction")
     if entertainment_metric:
         reasons.append("entertainment_metric")
     if obscure:
@@ -446,12 +471,15 @@ def classify_market_quality(
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
     outbreak = bool(_OUTBREAK_RE.search(name))
+    absurd_public_interest = bool(_ABSURD_BUT_REAL_RE.search(name))
     if compelling:
         reasons.append("compelling_topic")
     if personnel:
         reasons.append("sports_personnel_story")
     if outbreak:
         reasons.append("health_outbreak")
+    if absurd_public_interest:
+        reasons.append("absurd_but_real")
     if has_salient:
         reasons.append("salient_entity")
 
@@ -466,11 +494,11 @@ def classify_market_quality(
 
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
-    elif entertainment_metric or regional_election or low_signal_sport:
+    elif daily_equity_direction or entertainment_metric or regional_election or low_signal_sport:
         quality = "low_quality"
     elif (price_bucket or weather_bucket) and (is_narrow or not compelling):
         quality = "low_quality"
-    elif personnel or outbreak or compelling:
+    elif personnel or outbreak or compelling or absurd_public_interest:
         quality = "compelling"
     else:
         quality = "normal"
@@ -510,6 +538,8 @@ def quality_score_adjustment(quality: MarketQuality) -> int:
             boost += 12
         if "sports_personnel_story" in quality.reasons:
             boost += 10
+        if "absurd_but_real" in quality.reasons:
+            boost += 8
         return boost
     if quality.quality_class == "low_quality":
         penalty = -35
