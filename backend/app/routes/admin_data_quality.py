@@ -2114,6 +2114,55 @@ async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
         LIMIT 10
     """))
 
+    # Snapshot distribution for stuck midrange markets — how much trading actually happened?
+    snap_dist = await db.execute(text("""
+        WITH stuck AS (
+            SELECT fm.id AS mid, fm.source
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved' AND fo.current_probability IS NOT NULL
+            GROUP BY fm.id, fm.source
+            HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+               AND MAX(fo.current_probability) BETWEEN 0.10 AND 0.95
+        ),
+        outcome_snaps AS (
+            SELECT st.source, fo.id AS oid,
+                   fo.calibration_probability AS cp,
+                   fo.opening_probability AS op,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = fo.id) AS snaps
+            FROM stuck st JOIN futures_outcomes fo ON fo.market_id = st.mid
+        )
+        SELECT source, COUNT(*) AS total_outcomes,
+               COUNT(*) FILTER(WHERE snaps = 0) AS snap_0,
+               COUNT(*) FILTER(WHERE snaps BETWEEN 1 AND 2) AS snap_1_2,
+               COUNT(*) FILTER(WHERE snaps BETWEEN 3 AND 5) AS snap_3_5,
+               COUNT(*) FILTER(WHERE snaps BETWEEN 6 AND 20) AS snap_6_20,
+               COUNT(*) FILTER(WHERE snaps BETWEEN 21 AND 100) AS snap_21_100,
+               COUNT(*) FILTER(WHERE snaps > 100) AS snap_100_plus,
+               COUNT(*) FILTER(WHERE cp IS NULL) AS cal_null,
+               COUNT(*) FILTER(WHERE cp IS NOT NULL AND op IS NOT NULL AND cp = op) AS cal_eq_open,
+               ROUND(AVG(snaps)::numeric, 1) AS avg_snaps,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snaps) AS median_snaps
+        FROM outcome_snaps GROUP BY source ORDER BY source
+    """))
+
+    # Category breakdown for stuck markets
+    cat_breakdown = await db.execute(text("""
+        WITH stuck AS (
+            SELECT fm.id, fm.source, fm.category, fm.llm_sport_category
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved' AND fo.current_probability IS NOT NULL
+            GROUP BY fm.id, fm.source, fm.category, fm.llm_sport_category
+            HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+               AND MAX(fo.current_probability) BETWEEN 0.10 AND 0.95
+        )
+        SELECT source, COALESCE(llm_sport_category, category, 'null') AS cat,
+               COUNT(*) AS markets
+        FROM stuck GROUP BY source, cat ORDER BY source, markets DESC
+    """))
+
     return {
         "by_source": [
             {
@@ -2130,6 +2179,27 @@ async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
         "midrange_samples": [
             {"source": r.source, "name": r.name, "probs": r.outcome_probs}
             for r in sample.all()
+        ],
+        "snapshot_distribution": [
+            {
+                "source": r.source,
+                "total_outcomes": r.total_outcomes,
+                "snap_0": r.snap_0,
+                "snap_1_2": r.snap_1_2,
+                "snap_3_5": r.snap_3_5,
+                "snap_6_20": r.snap_6_20,
+                "snap_21_100": r.snap_21_100,
+                "snap_100_plus": r.snap_100_plus,
+                "cal_null": r.cal_null,
+                "cal_eq_open": r.cal_eq_open,
+                "avg_snaps": float(r.avg_snaps) if r.avg_snaps else 0,
+                "median_snaps": float(r.median_snaps) if r.median_snaps else 0,
+            }
+            for r in snap_dist.all()
+        ],
+        "category_breakdown": [
+            {"source": r.source, "category": r.cat, "markets": r.markets}
+            for r in cat_breakdown.all()
         ],
     }
 
