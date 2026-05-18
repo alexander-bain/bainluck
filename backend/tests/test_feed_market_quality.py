@@ -909,6 +909,11 @@ class TestFeedQualityDebug:
                     "recommended_action": "No ranking fix.",
                 },
             },
+            {
+                "name": "Pistons vs. Magic",
+                "triage_bucket": "game_market_noise",
+                "db_trace": {"trace_status": "no_db_match"},
+            },
         ]
 
         summary = apply_db_trace_missing_ground_truth_triage(missing)
@@ -916,10 +921,12 @@ class TestFeedQualityDebug:
         assert summary["bucket_counts"] == {
             "related_market_only": 1,
             "db_blocked_not_open": 1,
+            "game_market_noise": 1,
         }
         assert [item["triage_bucket"] for item in missing] == [
             "related_market_only",
             "db_blocked_not_open",
+            "game_market_noise",
         ]
 
     def test_missing_ground_truth_db_trace_explains_game_market_block(self):

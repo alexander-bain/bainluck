@@ -586,7 +586,15 @@ def apply_db_trace_missing_ground_truth_triage(
     missing_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Fold DB trace root causes back into missing ground-truth bucket counts."""
+    actionable_buckets = {
+        "candidate_recall_gap",
+        "ranking_too_low",
+        "quality_filter_too_harsh",
+    }
     for item in missing_items:
+        if item.get("triage_bucket") not in actionable_buckets:
+            continue
+
         trace = item.get("db_trace") or {}
         status = str(trace.get("trace_status") or "")
         if status == "related_market_only":
