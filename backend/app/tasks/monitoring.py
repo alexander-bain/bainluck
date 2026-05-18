@@ -160,3 +160,91 @@ async def check_tier1_event_coverage():
         "tier1_gaps": len(alerts),
         "alerts": alerts,
     }
+
+
+SNAPSHOT_DIST_KEY = "bainluck:snapshot_distribution"
+SNAPSHOT_DIST_TTL = 86400  # 24h
+
+
+async def compute_snapshot_distribution_impl():
+    """Compute snapshot count distribution per source for open markets.
+
+    Samples 200 most-recent markets per source, counts snapshots for each
+    outcome. Writes result to Redis. Designed to run as a Celery task
+    (too slow for a web request due to 90M-row snapshot table).
+    """
+    from sqlalchemy import text
+    from app.tasks.redis_state import get_redis
+
+    async with get_task_session() as session:
+        sources_result = (await session.execute(text(
+            "SELECT DISTINCT source FROM futures_markets WHERE status IN ('open', 'active')"
+        ))).all()
+
+        all_sources = []
+        for source_row in sources_result:
+            src = source_row.source
+
+            sample = (await session.execute(text("""
+                WITH sample_markets AS (
+                    SELECT id FROM futures_markets
+                    WHERE source = :src AND status IN ('open', 'active')
+                    ORDER BY id DESC LIMIT 200
+                ),
+                outcome_snaps AS (
+                    SELECT fo.id,
+                           (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                            WHERE fos.outcome_id = fo.id) AS snap_count
+                    FROM futures_outcomes fo
+                    WHERE fo.market_id IN (SELECT id FROM sample_markets)
+                )
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE snap_count = 0) AS zero,
+                       COUNT(*) FILTER (WHERE snap_count BETWEEN 1 AND 5) AS bucket_1_5,
+                       COUNT(*) FILTER (WHERE snap_count BETWEEN 6 AND 20) AS bucket_6_20,
+                       COUNT(*) FILTER (WHERE snap_count BETWEEN 21 AND 50) AS bucket_21_50,
+                       COUNT(*) FILTER (WHERE snap_count BETWEEN 51 AND 100) AS bucket_51_100,
+                       COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
+                       ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
+                FROM outcome_snaps
+            """), {"src": src})).first()
+
+            total_outcomes = (await session.execute(text("""
+                SELECT COUNT(*) FROM futures_outcomes fo
+                JOIN futures_markets fm ON fm.id = fo.market_id
+                WHERE fm.source = :src AND fm.status IN ('open', 'active')
+            """), {"src": src})).scalar()
+
+            if sample and sample.total > 0:
+                r = sample
+                all_sources.append({
+                    "source": src,
+                    "total_outcomes": total_outcomes or 0,
+                    "sampled_outcomes": r.total,
+                    "zero_snapshots": r.zero,
+                    "1_to_5": r.bucket_1_5,
+                    "6_to_20": r.bucket_6_20,
+                    "21_to_50": r.bucket_21_50,
+                    "51_to_100": r.bucket_51_100,
+                    "100_plus": r.bucket_100_plus,
+                    "avg_snapshots": float(r.avg_snaps) if r.avg_snaps else 0,
+                    "median_snapshots": float(r.median_snaps) if r.median_snaps else 0,
+                    "sparse_pct": round(
+                        100 * (r.zero + r.bucket_1_5) / max(r.total, 1), 1
+                    ),
+                })
+
+    result = {
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "method": "200 most-recent markets per source (open/active only)",
+        "sources": sorted(all_sources, key=lambda s: s["source"]),
+    }
+
+    redis = get_redis()
+    redis.setex(SNAPSHOT_DIST_KEY, SNAPSHOT_DIST_TTL, json.dumps(result))
+    logger.info(
+        "Snapshot distribution computed: %d sources, written to Redis",
+        len(all_sources),
+    )
+    return result

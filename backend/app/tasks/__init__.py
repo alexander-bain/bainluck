@@ -656,6 +656,13 @@ def check_tier1_coverage(self):
     return run_async(check_tier1_event_coverage())
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.compute_snapshot_distribution")
+def compute_snapshot_distribution(self):
+    """Compute snapshot count distribution and cache in Redis."""
+    from app.tasks.monitoring import compute_snapshot_distribution_impl
+    return run_async(compute_snapshot_distribution_impl())
+
+
 # --- Data Quality Monitoring ---
 
 @celery_app.task(bind=True, name="app.tasks.check_data_quality")

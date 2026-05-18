@@ -109,92 +109,38 @@ async def get_snapshot_stats(
     }
 
 
-@router.get("/snapshots/distribution")
-async def get_snapshot_distribution(
+@router.post("/snapshots/distribution")
+async def trigger_snapshot_distribution(
     secret: str = Query(..., description="Admin secret for authorization"),
-    status_filter: str = Query("open", description="Market status filter: open, resolved, all"),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Snapshot count distribution per outcome by source.
-
-    Uses a fast per-market sampling approach: picks ~200 random markets per
-    source, then counts snapshots for just those outcomes.
-    """
+    """Queue a Celery task to compute snapshot distribution (too slow for a request)."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    status_clause = ""
-    if status_filter == "open":
-        status_clause = "AND fm.status IN ('open', 'active')"
-    elif status_filter == "resolved":
-        status_clause = "AND fm.status = 'resolved'"
+    from app.tasks import compute_snapshot_distribution
+    task = compute_snapshot_distribution.delay()
+    return {"status": "queued", "task_id": str(task.id)}
 
-    await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
-    sources_result = (await db.execute(text(f"""
-        SELECT DISTINCT source FROM futures_markets WHERE 1=1 {status_clause}
-    """))).all()
+@router.get("/snapshots/distribution")
+async def get_snapshot_distribution(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Read cached snapshot distribution from Redis (computed by Celery task)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    all_sources = []
-    for source_row in sources_result:
-        src = source_row.source
-        src_clause = status_clause.replace("fm.", "fm2.")
+    import json as _json
+    from app.tasks.redis_state import get_redis
 
-        sample_rows = (await db.execute(text(f"""
-            WITH sample_markets AS (
-                SELECT fm2.id
-                FROM futures_markets fm2
-                WHERE fm2.source = :src {src_clause}
-                ORDER BY fm2.id DESC
-                LIMIT 200
-            ),
-            outcome_snaps AS (
-                SELECT fo.id AS outcome_id,
-                       (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                        WHERE fos.outcome_id = fo.id) AS snap_count
-                FROM futures_outcomes fo
-                WHERE fo.market_id IN (SELECT id FROM sample_markets)
-            )
-            SELECT COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE snap_count = 0) AS zero,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 1 AND 5) AS bucket_1_5,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 6 AND 20) AS bucket_6_20,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 21 AND 50) AS bucket_21_50,
-                   COUNT(*) FILTER (WHERE snap_count BETWEEN 51 AND 100) AS bucket_51_100,
-                   COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
-                   ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
-                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
-            FROM outcome_snaps
-        """), {"src": src})).first()
-
-        total_result = (await db.execute(text(f"""
-            SELECT COUNT(*) FROM futures_outcomes fo
-            JOIN futures_markets fm ON fm.id = fo.market_id
-            WHERE fm.source = :src {status_clause}
-        """), {"src": src})).scalar()
-
-        if sample_rows and sample_rows.total > 0:
-            r = sample_rows
-            all_sources.append({
-                "source": src,
-                "total_outcomes": total_result or 0,
-                "sampled_outcomes": r.total,
-                "zero_snapshots": r.zero,
-                "1_to_5": r.bucket_1_5,
-                "6_to_20": r.bucket_6_20,
-                "21_to_50": r.bucket_21_50,
-                "51_to_100": r.bucket_51_100,
-                "100_plus": r.bucket_100_plus,
-                "avg_snapshots": float(r.avg_snaps) if r.avg_snaps else 0,
-                "median_snapshots": float(r.median_snaps) if r.median_snaps else 0,
-                "sparse_pct": round(100 * (r.zero + r.bucket_1_5) / max(r.total, 1), 1),
-            })
-
-    return {
-        "status_filter": status_filter,
-        "method": "200 most-recent markets per source",
-        "sources": sorted(all_sources, key=lambda s: s["source"]),
-    }
+    redis = get_redis()
+    cached = redis.get("bainluck:snapshot_distribution")
+    if not cached:
+        raise HTTPException(
+            status_code=404,
+            detail="No cached result. POST /api/admin/snapshots/distribution to compute.",
+        )
+    return _json.loads(cached)
 
 
 # =============================================================================
