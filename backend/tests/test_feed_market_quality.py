@@ -7,6 +7,7 @@ from app.routes.feed import _market_base_trace, _market_runtime_filter_trace, _o
 from app.utils.feed_market_quality import (
     apply_explanation_quality_score,
     apply_quality_score,
+    backfill_discover_editorial_tail,
     balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
@@ -1607,6 +1608,38 @@ class TestDiscoverFirstPageMixer:
             ) in {"culture_moment", "absurd_but_real", "big_name", "sports_drama", "weird_news"}
             for item in top10
         )
+
+    def test_editorial_tail_backfill_preserves_top_20_and_adds_recall_story(self):
+        items = [
+            self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
+            for i in range(55)
+        ]
+        items.extend([
+            self._item(1000, "entertainment", 99, name="Who will win Survivor Season 50?"),
+            self._item(1001, "geopolitics", 93, name="Xi Jinping out before 2027?"),
+        ])
+
+        mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
+
+        assert [item["data"]["id"] for item in mixed[:20]] == list(range(20))
+        top50_names = [item["data"]["name"] for item in mixed[:50]]
+        assert "Who will win Survivor Season 50?" in top50_names
+        assert "Xi Jinping out before 2027?" in top50_names
+
+    def test_editorial_tail_backfill_does_not_replace_much_stronger_cards(self):
+        items = [
+            self._item(i, "economics", 100, name=f"Strong macro story {i}")
+            for i in range(50)
+        ]
+        items.append(
+            self._item(1000, "soccer", 70, name="2026 FIFA World Cup: Nation to Reach Final")
+        )
+
+        mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
+
+        assert "2026 FIFA World Cup: Nation to Reach Final" not in [
+            item["data"]["name"] for item in mixed[:50]
+        ]
 
     def test_event_category_mix_defers_over_budget_soccer_events(self):
         items = [

@@ -45,6 +45,7 @@ from app.utils.feed_market_quality import (
     _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
+    backfill_discover_editorial_tail,
     balance_discover_event_category_mix,
     cap_low_quality_families,
     classify_market_quality,
@@ -785,6 +786,11 @@ async def get_feed(
 
     if not my_teams_only and ((event_pct is not None and event_pct < 0.3) or not include_events):
         feed_items = diversify_discover_first_page(feed_items, first_page_size=min(20, limit))
+        feed_items = backfill_discover_editorial_tail(
+            feed_items,
+            window_size=min(50, len(feed_items)),
+            preserve_top=min(20, len(feed_items)),
+        )
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "ranking")
 
     total = len(feed_items)

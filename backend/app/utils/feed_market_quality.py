@@ -819,6 +819,92 @@ def diversify_discover_first_page(
     return selected + remainder
 
 
+_DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
+    ("survivor", re.compile(r"\bsurvivor\b", re.IGNORECASE), 88),
+    ("music_charts", re.compile(r"\b(spotify|billboard)\b", re.IGNORECASE), 88),
+    ("film_tv_scores", re.compile(r"\brotten tomatoes\b", re.IGNORECASE), 88),
+    ("macro_recession", re.compile(r"\brecession\b", re.IGNORECASE), 88),
+    ("china_leadership", re.compile(r"\bxi\s+jinping\b", re.IGNORECASE), 88),
+    ("fifa_world_cup", re.compile(r"\b(fifa\s+)?world cup\b", re.IGNORECASE), 82),
+)
+
+
+def backfill_discover_editorial_tail(
+    items: list[dict],
+    *,
+    window_size: int = 50,
+    preserve_top: int = 20,
+    max_insertions: int = 4,
+) -> list[dict]:
+    """Pull a few high-texture eligible stories into the top-50 tail.
+
+    Discover scoring often saturates at 100, so good but slightly less timely
+    culture/macro stories can sit at rank 100+ behind many same-score finance
+    and politics cards. This pass leaves the first page untouched and only
+    swaps strong recall candidates into positions 21-50.
+    """
+    if window_size <= preserve_top or max_insertions <= 0 or len(items) <= window_size:
+        return items
+
+    selected = list(items[:window_size])
+    remainder = list(items[window_size:])
+    insertions = 0
+
+    def item_name(item: dict) -> str:
+        return str((item.get("data") or {}).get("name") or "")
+
+    def matches_rule(item: dict, pattern: re.Pattern[str]) -> bool:
+        return bool(pattern.search(item_name(item)))
+
+    def is_recall_item(item: dict) -> bool:
+        name = item_name(item)
+        return any(pattern.search(name) for _, pattern, _ in _DISCOVER_TAIL_RECALL_RULES)
+
+    def can_replace(item: dict, candidate: dict) -> bool:
+        if is_recall_item(item):
+            return False
+        if float(item.get("score") or 0) > float(candidate.get("score") or 0) + 15:
+            return False
+        return True
+
+    for _, pattern, min_score in _DISCOVER_TAIL_RECALL_RULES:
+        if insertions >= max_insertions:
+            break
+        if any(matches_rule(item, pattern) for item in selected):
+            continue
+
+        candidate_idx = next(
+            (
+                idx for idx, item in enumerate(remainder)
+                if matches_rule(item, pattern)
+                and item.get("_quality_class") not in {"low_quality", "suppress"}
+                and float(item.get("score") or 0) >= min_score
+            ),
+            None,
+        )
+        if candidate_idx is None:
+            continue
+        candidate = remainder[candidate_idx]
+
+        replacement_idx = next(
+            (
+                idx for idx in range(window_size - 1, preserve_top - 1, -1)
+                if can_replace(selected[idx], candidate)
+            ),
+            None,
+        )
+        if replacement_idx is None:
+            continue
+
+        removed = selected[replacement_idx]
+        selected[replacement_idx] = candidate
+        remainder.pop(candidate_idx)
+        remainder.append(removed)
+        insertions += 1
+
+    return selected + remainder
+
+
 def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None:
     """Give a strong missing category one first-page slot when possible."""
     if not selected:
