@@ -117,8 +117,8 @@ async def get_snapshot_distribution(
 ):
     """Snapshot count distribution per outcome by source.
 
-    Shows how many outcomes fall into each snapshot-count bucket,
-    revealing sparse-data problems beyond just zero-snapshot counts.
+    Uses a fast per-market sampling approach: picks ~200 random markets per
+    source, then counts snapshots for just those outcomes.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -131,42 +131,54 @@ async def get_snapshot_distribution(
 
     await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
-    rows = (await db.execute(text(f"""
-        WITH target_ids AS (
-            SELECT fo.id AS outcome_id, fm.source
-            FROM futures_markets fm
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            WHERE 1=1 {status_clause}
-        ),
-        agg AS (
-            SELECT fos.outcome_id, COUNT(*) AS snap_count
-            FROM futures_odds_snapshots fos
-            WHERE fos.outcome_id IN (SELECT outcome_id FROM target_ids)
-            GROUP BY fos.outcome_id
-        )
-        SELECT t.source,
-               COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE COALESCE(a.snap_count, 0) = 0) AS zero,
-               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 1 AND 5) AS bucket_1_5,
-               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 6 AND 20) AS bucket_6_20,
-               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 21 AND 50) AS bucket_21_50,
-               COUNT(*) FILTER (WHERE a.snap_count BETWEEN 51 AND 100) AS bucket_51_100,
-               COUNT(*) FILTER (WHERE a.snap_count > 100) AS bucket_100_plus,
-               ROUND(AVG(COALESCE(a.snap_count, 0))::numeric, 1) AS avg_snaps,
-               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(a.snap_count, 0)) AS median_snaps
-        FROM target_ids t
-        LEFT JOIN agg a ON a.outcome_id = t.outcome_id
-        GROUP BY t.source
-        ORDER BY t.source
+    sources_result = (await db.execute(text(f"""
+        SELECT DISTINCT source FROM futures_markets WHERE 1=1 {status_clause}
     """))).all()
 
-    return {
-        "status_filter": status_filter,
-        "method": "pre-aggregated snapshot counts filtered to target outcomes",
-        "sources": [
-            {
-                "source": r.source,
-                "outcomes_measured": r.total,
+    all_sources = []
+    for source_row in sources_result:
+        src = source_row.source
+        src_clause = status_clause.replace("fm.", "fm2.")
+
+        sample_rows = (await db.execute(text(f"""
+            WITH sample_markets AS (
+                SELECT fm2.id
+                FROM futures_markets fm2
+                WHERE fm2.source = :src {src_clause}
+                ORDER BY fm2.id DESC
+                LIMIT 200
+            ),
+            outcome_snaps AS (
+                SELECT fo.id AS outcome_id,
+                       (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                        WHERE fos.outcome_id = fo.id) AS snap_count
+                FROM futures_outcomes fo
+                WHERE fo.market_id IN (SELECT id FROM sample_markets)
+            )
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE snap_count = 0) AS zero,
+                   COUNT(*) FILTER (WHERE snap_count BETWEEN 1 AND 5) AS bucket_1_5,
+                   COUNT(*) FILTER (WHERE snap_count BETWEEN 6 AND 20) AS bucket_6_20,
+                   COUNT(*) FILTER (WHERE snap_count BETWEEN 21 AND 50) AS bucket_21_50,
+                   COUNT(*) FILTER (WHERE snap_count BETWEEN 51 AND 100) AS bucket_51_100,
+                   COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
+                   ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
+                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
+            FROM outcome_snaps
+        """), {"src": src})).first()
+
+        total_result = (await db.execute(text(f"""
+            SELECT COUNT(*) FROM futures_outcomes fo
+            JOIN futures_markets fm ON fm.id = fo.market_id
+            WHERE fm.source = :src {status_clause}
+        """), {"src": src})).scalar()
+
+        if sample_rows and sample_rows.total > 0:
+            r = sample_rows
+            all_sources.append({
+                "source": src,
+                "total_outcomes": total_result or 0,
+                "sampled_outcomes": r.total,
                 "zero_snapshots": r.zero,
                 "1_to_5": r.bucket_1_5,
                 "6_to_20": r.bucket_6_20,
@@ -176,9 +188,12 @@ async def get_snapshot_distribution(
                 "avg_snapshots": float(r.avg_snaps) if r.avg_snaps else 0,
                 "median_snapshots": float(r.median_snaps) if r.median_snaps else 0,
                 "sparse_pct": round(100 * (r.zero + r.bucket_1_5) / max(r.total, 1), 1),
-            }
-            for r in rows
-        ],
+            })
+
+    return {
+        "status_filter": status_filter,
+        "method": "200 most-recent markets per source",
+        "sources": sorted(all_sources, key=lambda s: s["source"]),
     }
 
 
