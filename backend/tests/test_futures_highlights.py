@@ -241,6 +241,172 @@ class TestShouldHighlightFutures:
         assert should_highlight_futures(result) is False
 
 
+class TestDeterministicFuturesHeadlines:
+    """Focused coverage for deterministic futures card explanations."""
+
+    def test_named_negative_mover_drives_highlight_and_headline(self):
+        """The biggest absolute mover should keep the named outcome for display."""
+        from app.utils.feed_reasons import generate_futures_headline
+
+        result = compute_futures_highlight(
+            market_tier=1,
+            sport_category="football",
+            market_name="NFL MVP",
+            outcomes=[
+                {
+                    "name": "Patrick Mahomes",
+                    "probability": 0.18,
+                    "probability_change_24h": -0.07,
+                    "rank": 2,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.24,
+                },
+                {
+                    "name": "Josh Allen",
+                    "probability": 0.24,
+                    "probability_change_24h": 0.03,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.20,
+                },
+            ],
+        )
+
+        assert result.flags.has_major_movement is True
+        assert result.primary_reason == "Big odds movement"
+        assert result.top_mover_name == "Patrick Mahomes"
+        assert result.top_mover_change == 0.07
+
+        headline = generate_futures_headline(
+            result.reasons,
+            top_mover_name=result.top_mover_name,
+            top_mover_change=-0.07,
+        )
+        assert headline == "Patrick Mahomes down 7.0 points today"
+
+    def test_source_disagreement_headline_takes_priority_over_movement(self):
+        """Cross-source disagreement should be the deterministic top story."""
+        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+
+        result = compute_futures_highlight(
+            market_tier=1,
+            sport_category="basketball",
+            source_count=3,
+            max_source_divergence=0.09,
+            outcomes=[
+                {
+                    "name": "Thunder",
+                    "probability": 0.31,
+                    "probability_change_24h": 0.06,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.25,
+                }
+            ],
+        )
+
+        assert result.flags.has_source_divergence is True
+        assert result.flags.has_major_movement is True
+        assert result.primary_reason == "Sources disagree"
+
+        headline = generate_futures_headline(
+            result.reasons,
+            leader_name="Thunder",
+            leader_probability=0.31,
+            source_count=3,
+        )
+        reason = generate_futures_reason(
+            "NBA Championship",
+            result.reasons,
+            leader_name="Thunder",
+            leader_probability=0.31,
+            source_count=3,
+        )
+        assert headline == "Sources disagree (3)"
+        assert reason == "3 sources disagree, but Thunder leads NBA Championship at 31%"
+
+    def test_opening_probability_surprise_gets_named_headline(self):
+        """Opening-line surprises should produce specific deterministic copy."""
+        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+
+        result = compute_futures_highlight(
+            market_tier=3,
+            sport_category="tech",
+            market_name="Will OpenAI release GPT-5 before July?",
+            outcomes=[
+                {
+                    "name": "Yes",
+                    "probability": 0.62,
+                    "probability_change_24h": None,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.35,
+                }
+            ],
+        )
+
+        assert "major_surprise" in result.reasons
+        assert result.primary_reason == "Big shift from opening"
+
+        headline = generate_futures_headline(
+            result.reasons,
+            top_surprise_name="OpenAI release",
+            top_surprise_change=0.27,
+        )
+        reason = generate_futures_reason(
+            "Will OpenAI release GPT-5 before July?",
+            result.reasons,
+            top_surprise_name="OpenAI release",
+            top_surprise_change=0.27,
+        )
+        assert headline == "OpenAI release up 27.0 points from opening"
+        assert reason == (
+            "OpenAI release moved up 27.0 points from opening in "
+            "Will OpenAI release GPT-5 before July?"
+        )
+
+    def test_stale_market_suppresses_deterministic_copy(self):
+        """Resolved stale markets should not get explanatory card text."""
+        from app.utils.feed_reasons import generate_futures_headline, generate_futures_reason
+
+        now = datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc)
+        result = compute_futures_highlight(
+            market_tier=5,
+            sport_category="weather",
+            market_name="Temperature in NYC on May 16",
+            resolution_date=now - timedelta(days=1),
+            now=now,
+        )
+
+        assert "stale_past_resolution" in result.reasons
+        assert result.score < 25
+        assert should_highlight_futures(result) is False
+        assert generate_futures_headline(result.reasons, leader_name="Yes", leader_probability=0.9) == ""
+        assert generate_futures_reason("Temperature in NYC on May 16", result.reasons) == ""
+
+    def test_boring_pattern_does_not_get_compelling_or_primary_reason(self):
+        """Boring social-count buckets should be flagged without a headline hook."""
+        result = compute_futures_highlight(
+            market_tier=5,
+            sport_category="culture",
+            market_name='Will Trump post "tariff" this week on Truth?',
+            outcomes=[
+                {
+                    "name": "Yes",
+                    "probability": 0.51,
+                    "probability_change_24h": None,
+                    "rank": 1,
+                    "rank_change_24h": 0,
+                    "opening_probability": 0.50,
+                }
+            ],
+        )
+
+        assert "boring_pattern" in result.reasons
+        assert not any(reason.startswith("compelling") for reason in result.reasons)
+        assert result.primary_reason is None
+
+
 class TestMinorLeagueDetection:
     """Tests for minor league market detection and feed penalty."""
 

@@ -6,6 +6,7 @@
 - ✅ **Native Discover swipe/replenishment fixes** — positive swipes now complete, dismissed cards are replaced instead of emptying the feed, refresh resets local visible/dismissed state, and guess cards skip nil-probability markets.
 - ✅ **Native Discover feed quality pass** — sports-heavy first pages were downranked with stronger category diversity, regional/context signals, and Red Sox/Boston-style affinity hooks. Backend feed now emits stable grouping metadata for native dedupe.
 - ✅ **Discover regional personalization guardrails** — added backend tests proving Red Sox/Boston/New England affinity bridges, bounded unlike downranks, regional public-interest preservation, and low-signal sports suppression behavior.
+- ✅ **Discover deterministic explanation guardrails** — added backend tests for feed scoring, futures highlights, and reason/context generation so cards stay understandable without live LLM hooks.
 - ✅ **Sports/My Stuff/native page decode fixes** — Sports feed now backfills beyond live cards; My Stuff hides noisy global category futures; league/native pages use corrected probability field types and response decoding.
 - ✅ **Futures tab removed from prod navigation** — The unfinished native Futures browser entry point is hidden from production sidebar/tab navigation and tracked as iOS-7 for rebuild. The 🍀 Bain Luck sidebar title and Calibration entry point remain visible.
 - ✅ **Native onboarding/sidebar polish** — fixed truncated percentage text, line-broken sidebar labels, and the oversized placeholder icon in the sidebar title.

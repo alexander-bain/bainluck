@@ -11,6 +11,33 @@ from app.utils.feed_scoring import (
     compute_content_richness_penalty,
     TAG_BOOSTS,
 )
+from app.utils.feed_market_quality import (
+    apply_quality_score,
+    classify_market_quality,
+    diversify_discover_first_page,
+    quality_score_adjustment,
+)
+
+
+def _market_item(
+    item_id: int,
+    *,
+    name: str,
+    category: str,
+    score: int = 100,
+    item_type: str = "futures",
+    story_key: str | None = None,
+) -> dict:
+    return {
+        "type": item_type,
+        "score": score,
+        "data": {
+            "id": item_id,
+            "name": name,
+            "llm_sport_category": category,
+        },
+        "_quality_story_key": story_key,
+    }
 
 
 class TestComputeBaseScore:
@@ -344,6 +371,233 @@ class TestContentRichnessPenalty:
         assert "flat_line" in reasons
         assert "scoreless_stalemate" in reasons
         assert "rich_data" in reasons
+
+
+class TestDiscoverMarketQuality:
+    """Test Discover futures quality adjustments used after base scoring."""
+
+    def test_compelling_non_sports_market_gets_boost_and_can_reach_100(self):
+        quality = classify_market_quality(
+            "Will OpenAI announce GPT-5 before the end of June?",
+            sport_category="tech",
+        )
+
+        assert quality.quality_class == "compelling"
+        assert "compelling_topic" in quality.reasons
+        assert quality_score_adjustment(quality) == 12
+        assert apply_quality_score(92, quality) == 100
+
+    def test_health_outbreak_gets_extra_compelling_boost(self):
+        quality = classify_market_quality(
+            "Will there be a measles outbreak in the United States this year?",
+            sport_category="health",
+        )
+
+        assert quality.quality_class == "compelling"
+        assert "health_outbreak" in quality.reasons
+        assert quality_score_adjustment(quality) == 24
+
+    def test_low_signal_sports_are_suppressed_below_normal_feed_cards(self):
+        quality = classify_market_quality(
+            "Will Lin Yun-Ju win the WTT table tennis final?",
+            sport_category="table_tennis",
+        )
+
+        assert quality.quality_class == "low_quality"
+        assert "low_signal_sport" in quality.reasons
+        assert quality_score_adjustment(quality) == -35
+        assert apply_quality_score(99, quality) == 64
+
+    def test_social_filler_market_is_hard_suppressed(self):
+        quality = classify_market_quality(
+            'Will Donald Trump say "tariff" on Truth Social this week?',
+            sport_category="politics",
+        )
+
+        assert quality.quality_class == "suppress"
+        assert "social_filler" in quality.reasons
+        assert apply_quality_score(100, quality) == 0
+
+    def test_quality_score_boundaries_for_normal_and_low_quality_markets(self):
+        normal_salient = classify_market_quality(
+            "Will Nvidia launch a new chip before September?",
+            sport_category="tech",
+        )
+        normal_generic = classify_market_quality(
+            "Will a new app reach number one by Friday?",
+            sport_category="tech",
+        )
+        low_quality = classify_market_quality(
+            "Will WTI oil close above $75 on Friday?",
+            sport_category="economics",
+        )
+
+        assert normal_salient.quality_class == "normal"
+        assert apply_quality_score(99, normal_salient) == 94
+        assert normal_generic.quality_class == "normal"
+        assert apply_quality_score(99, normal_generic) == 88
+        assert low_quality.quality_class == "low_quality"
+        assert apply_quality_score(120, low_quality) == 70
+
+    def test_sports_personnel_story_gets_sports_drama_boost(self):
+        quality = classify_market_quality(
+            "Will Steve Kerr be fired as Warriors coach before next season?",
+            sport_category="basketball",
+        )
+
+        assert quality.quality_class == "compelling"
+        assert "sports_personnel_story" in quality.reasons
+        assert quality_score_adjustment(quality) == 22
+
+
+class TestDiscoverFirstPageDiversity:
+    """Test first-page category diversity for the Discover feed."""
+
+    def test_first_page_caps_repeated_sports_items_when_other_categories_exist(self):
+        sports = [
+            _market_item(
+                idx,
+                item_type="event",
+                name=f"NBA playoff game {idx}",
+                category="basketball",
+                score=100 - idx,
+            )
+            for idx in range(1, 8)
+        ]
+        politics = [
+            _market_item(
+                100 + idx,
+                name=f"Will candidate {idx} win the presidential election?",
+                category="politics",
+                score=90 - idx,
+            )
+            for idx in range(1, 5)
+        ]
+        alternatives = [
+            _market_item(
+                201,
+                name="Will OpenAI announce GPT-5?",
+                category="tech",
+                score=89,
+            ),
+            _market_item(
+                202,
+                name="Will the Fed cut rates?",
+                category="economics",
+                score=88,
+            ),
+            _market_item(
+                203,
+                name="Will Taylor Swift announce a new album?",
+                category="entertainment",
+                score=87,
+            ),
+        ]
+
+        diversified = diversify_discover_first_page(
+            sports + politics + alternatives,
+            first_page_size=10,
+        )
+        first_page = diversified[:10]
+        sports_count = sum(1 for item in first_page if item["type"] == "event")
+
+        assert sports_count == 3
+        assert len(first_page) == 10
+
+    def test_first_page_keeps_non_political_cards_in_top_ten(self):
+        political = [
+            _market_item(
+                idx,
+                name=f"Will candidate {idx} win the presidential election?",
+                category="politics",
+                score=100,
+            )
+            for idx in range(1, 11)
+        ]
+        non_political = [
+            _market_item(
+                101,
+                name="Will OpenAI announce GPT-5?",
+                category="tech",
+                score=95,
+            ),
+            _market_item(
+                102,
+                name="Will Nvidia beat earnings?",
+                category="tech",
+                score=94,
+            ),
+            _market_item(
+                103,
+                name="Will the Fed cut rates?",
+                category="economics",
+                score=93,
+            ),
+            _market_item(
+                104,
+                name="Will Taylor Swift announce a new album?",
+                category="entertainment",
+                score=92,
+            ),
+        ]
+
+        diversified = diversify_discover_first_page(
+            political + non_political,
+            first_page_size=10,
+        )
+        top_ten = diversified[:10]
+        non_political_count = sum(
+            1
+            for item in top_ten
+            if item["data"]["llm_sport_category"] != "politics"
+        )
+
+        assert non_political_count >= 4
+
+    def test_first_page_story_cap_limits_near_duplicate_markets(self):
+        duplicate_story = [
+            _market_item(
+                idx,
+                name=f"Will there be a ceasefire in Israel by month {idx}?",
+                category="geopolitics",
+                score=100 - idx,
+                story_key="story:middle_east_conflict",
+            )
+            for idx in range(1, 7)
+        ]
+        alternatives = [
+            _market_item(
+                101,
+                name="Will OpenAI announce GPT-5?",
+                category="tech",
+                score=90,
+            ),
+            _market_item(
+                102,
+                name="Will the Fed cut rates?",
+                category="economics",
+                score=89,
+            ),
+            _market_item(
+                103,
+                name="Will Taylor Swift announce a new album?",
+                category="entertainment",
+                score=88,
+            ),
+        ]
+
+        diversified = diversify_discover_first_page(
+            duplicate_story + alternatives,
+            first_page_size=5,
+        )
+        first_page = diversified[:5]
+        story_count = sum(
+            1
+            for item in first_page
+            if item.get("_quality_story_key") == "story:middle_east_conflict"
+        )
+
+        assert story_count == 2
 
 
 class TestTagBoostsCompleteness:

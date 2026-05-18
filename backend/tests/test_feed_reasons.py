@@ -1,4 +1,5 @@
 from app.utils.feed_reasons import (
+    generate_event_reason,
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
@@ -70,6 +71,79 @@ def test_futures_reason_names_leader_for_monthly_resolution():
     )
 
     assert reason == "Fed Decision in June? resolves this month, No change leads at 64%"
+
+
+def test_futures_reason_names_new_favorite_without_llm_hook():
+    reason = generate_futures_reason(
+        market_name="2028 Democratic nominee",
+        highlight_reasons=["leader_change"],
+        leader_name="Gretchen Whitmer",
+        leader_probability=0.28,
+    )
+
+    assert reason == "New favorite: Gretchen Whitmer (28%) now leads 2028 Democratic nominee"
+
+
+def test_futures_headline_names_new_favorite_without_llm_hook():
+    headline = generate_futures_headline(
+        highlight_reasons=["leader_change"],
+        leader_name="Gretchen Whitmer",
+        leader_probability=0.28,
+    )
+
+    assert headline == "New favorite: Gretchen Whitmer (28%)"
+
+
+def test_futures_reason_describes_moderate_mover_deterministically():
+    reason = generate_futures_reason(
+        market_name="Best Actor",
+        highlight_reasons=["moderate_movement_24h"],
+        top_mover_name="Colman Domingo",
+        top_mover_change=-0.047,
+    )
+
+    assert reason == "Colman Domingo odds shifted down 4.7 points today in Best Actor"
+
+
+def test_futures_headline_describes_moderate_opening_change_deterministically():
+    headline = generate_futures_headline(
+        highlight_reasons=["moderate_surprise"],
+        top_surprise_name="Yes",
+        top_surprise_change=-0.052,
+    )
+
+    assert headline == "Yes side down 5.2 points from opening"
+
+
+def test_futures_context_summary_uses_leader_when_headline_missing():
+    summary = generate_futures_context_summary(
+        headline="",
+        highlight_reasons=[],
+        leader_name="Shohei Ohtani",
+        leader_probability=0.51,
+    )
+
+    assert summary == "Shohei Ohtani leads at 51%"
+
+
+def test_futures_context_summary_does_not_repeat_leader_already_in_headline():
+    summary = generate_futures_context_summary(
+        headline="Shohei Ohtani leads at 51%",
+        highlight_reasons=[],
+        leader_name="Shohei Ohtani",
+        leader_probability=0.51,
+    )
+
+    assert summary == "Shohei Ohtani leads at 51%"
+
+
+def test_futures_reason_falls_back_to_market_name_without_signal_detail():
+    reason = generate_futures_reason(
+        market_name="Will a recession begin in 2026?",
+        highlight_reasons=[],
+    )
+
+    assert reason == "Will a recession begin in 2026?"
 
 
 def test_futures_copy_suppresses_stale_past_resolution_markets():
@@ -151,6 +225,43 @@ def test_futures_context_summary_combines_signal_and_leader():
     )
 
     assert summary == "Yes side up 10.2 points today; No leads at 88%"
+
+
+def test_event_reason_uses_category_tag_context_when_odds_reason_absent():
+    reason = generate_event_reason(
+        home_team="Liberty",
+        away_team="Aces",
+        status="scheduled",
+        highlight_reasons=[],
+        event_tags=["stakes:elimination"],
+    )
+
+    assert reason == "Elimination game"
+
+
+def test_event_reason_prefers_odds_movement_over_category_tag_context():
+    reason = generate_event_reason(
+        home_team="Liberty",
+        away_team="Aces",
+        status="scheduled",
+        highlight_reasons=["major_prob_swing"],
+        home_probability=0.63,
+        opening_home_prob=0.48,
+        event_tags=["stakes:elimination"],
+    )
+
+    assert reason == "Liberty odds shifted 15% since open"
+
+
+def test_event_reason_falls_back_to_empty_string_when_card_context_is_enough():
+    reason = generate_event_reason(
+        home_team="Liberty",
+        away_team="Aces",
+        status="scheduled",
+        highlight_reasons=[],
+    )
+
+    assert reason == ""
 
 
 # ── BR49: humanize_binary_outcome_name ─────────────────────────────
