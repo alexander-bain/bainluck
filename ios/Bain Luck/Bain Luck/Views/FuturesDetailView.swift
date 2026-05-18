@@ -12,27 +12,27 @@ private enum FuturesSortField: String, CaseIterable {
 
 struct FuturesDetailView: View {
     private let marketId: Int
-    @StateObject private var vm: FuturesDetailViewModel
+    @StateObject private var viewModel: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
     @State private var showAllOutcomes = false
 
     init(marketId: Int) {
         self.marketId = marketId
-        _vm = StateObject(wrappedValue: FuturesDetailViewModel(marketId: marketId))
+        _viewModel = StateObject(wrappedValue: FuturesDetailViewModel(marketId: marketId))
     }
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView()
-            } else if let error = vm.error, vm.market == nil {
+            } else if let error = viewModel.error, viewModel.market == nil {
                 ContentUnavailableView(
                     "Error",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
-            } else if let market = vm.market {
+            } else if let market = viewModel.market {
                 ScrollView {
                     VStack(spacing: 16) {
                         headerSection(market)
@@ -74,14 +74,14 @@ struct FuturesDetailView: View {
             }
         }
         .task {
-            await vm.load()
-            if let market = vm.market {
+            await viewModel.load()
+            if let market = viewModel.market {
                 AnalyticsService.trackScreen(name: "futures_detail", type: "futures_detail")
                 AnalyticsService.trackFuturesDetailView(marketId: marketId, category: market.category)
             }
         }
         .refreshable {
-            await vm.load()
+            await viewModel.load()
         }
     }
 

@@ -11,36 +11,36 @@ private let sourceLabels: [String: String] = [
 
 struct LeagueGridView: View {
     let slug: String
-    @StateObject private var vm: LeagueGridViewModel
+    @StateObject private var viewModel: LeagueGridViewModel
 
     init(slug: String) {
         self.slug = slug
-        _vm = StateObject(wrappedValue: LeagueGridViewModel(slug: slug))
+        _viewModel = StateObject(wrappedValue: LeagueGridViewModel(slug: slug))
     }
 
     var body: some View {
         Group {
-            if vm.loading && vm.grid == nil {
+            if viewModel.loading && viewModel.grid == nil {
                 gridSkeleton
-            } else if let error = vm.error, vm.grid == nil {
+            } else if let error = viewModel.error, viewModel.grid == nil {
                 ContentUnavailableView(
                     "Error",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
-            } else if let grid = vm.grid {
+            } else if let grid = viewModel.grid {
                 gridContent(grid)
             }
         }
-        .navigationTitle(vm.displayName)
+        .navigationTitle(viewModel.displayName)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
         .task {
-            await vm.load()
+            await viewModel.load()
         }
         .refreshable {
-            await vm.load()
+            await viewModel.load()
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "league_grid_\(slug)", type: "playoff_grid")
@@ -115,16 +115,16 @@ struct LeagueGridView: View {
             }
 
             // Conference filter
-            if vm.conferences.count > 1 {
+            if viewModel.conferences.count > 1 {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
-                            filterButton("All", isActive: vm.conferenceFilter == nil) {
-                                vm.conferenceFilter = nil
+                            filterButton("All", isActive: viewModel.conferenceFilter == nil) {
+                                viewModel.conferenceFilter = nil
                             }
-                            ForEach(vm.conferences, id: \.self) { conf in
-                                filterButton(conf, isActive: vm.conferenceFilter == conf) {
-                                    vm.conferenceFilter = vm.conferenceFilter == conf ? nil : conf
+                            ForEach(viewModel.conferences, id: \.self) { conf in
+                                filterButton(conf, isActive: viewModel.conferenceFilter == conf) {
+                                    viewModel.conferenceFilter = viewModel.conferenceFilter == conf ? nil : conf
                                 }
                             }
                         }
@@ -162,7 +162,7 @@ struct LeagueGridView: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-                ForEach(vm.visibleTeams) { team in
+                ForEach(viewModel.visibleTeams) { team in
                     teamRow(team, columns: grid.columns)
                 }
             }
@@ -195,7 +195,7 @@ struct LeagueGridView: View {
 
     @ViewBuilder
     private var leagueMarketSections: some View {
-        if let lm = vm.leagueMarkets {
+        if let lm = viewModel.leagueMarkets {
             ForEach(Self.sectionOrder, id: \.self) { key in
                 if let markets = lm.sections[key], !markets.isEmpty {
                     Section {

@@ -8,7 +8,7 @@ import UIKit
 struct SportCategoryView: View {
     let categoryKey: String
     let categoryName: String
-    @StateObject private var vm: SportCategoryViewModel
+    @StateObject private var viewModel: SportCategoryViewModel
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -19,14 +19,14 @@ struct SportCategoryView: View {
     init(categoryKey: String, categoryName: String) {
         self.categoryKey = categoryKey
         self.categoryName = categoryName
-        _vm = StateObject(wrappedValue: SportCategoryViewModel(categoryKey: categoryKey))
+        _viewModel = StateObject(wrappedValue: SportCategoryViewModel(categoryKey: categoryKey))
     }
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 SkeletonFeedView()
-            } else if let error = vm.error, vm.items.isEmpty {
+            } else if let error = viewModel.error, viewModel.items.isEmpty {
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: "wifi.exclamationmark")
@@ -40,13 +40,13 @@ struct SportCategoryView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                     Button("Try Again") {
-                        Task { await vm.load() }
+                        Task { await viewModel.load() }
                     }
                     .buttonStyle(.borderedProminent)
                     Spacer()
                 }
                 .padding(.horizontal, 40)
-            } else if vm.items.isEmpty {
+            } else if viewModel.items.isEmpty {
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: sportIcon(for: categoryKey))
@@ -74,10 +74,10 @@ struct SportCategoryView: View {
             AnalyticsService.trackScreen(name: "sport_category", type: "category")
         }
         .task {
-            await vm.load()
+            await viewModel.load()
         }
         .refreshable {
-            await vm.load()
+            await viewModel.load()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
@@ -103,21 +103,21 @@ struct SportCategoryView: View {
 
     private var categoryList: some View {
         List {
-            if !vm.liveNow.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
+            if !viewModel.liveNow.isEmpty {
+                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: viewModel.liveNow)
             }
-            if !vm.justHappened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)
+            if !viewModel.justHappened.isEmpty {
+                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: viewModel.justHappened)
             }
-            if !vm.upcoming.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming)
+            if !viewModel.upcoming.isEmpty {
+                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: viewModel.upcoming)
             }
-            if !vm.topMarkets.isEmpty {
-                feedSection(title: "Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
+            if !viewModel.topMarkets.isEmpty {
+                feedSection(title: "Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: viewModel.topMarkets)
             }
 
             // League market sections (awards, series, playoff props)
-            if let lm = vm.leagueMarkets {
+            if let lm = viewModel.leagueMarkets {
                 let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
                 let sectionLabels: [String: String] = [
                     "series": "Playoff Series",
@@ -146,9 +146,9 @@ struct SportCategoryView: View {
                 }
             }
 
-            if vm.hasMore {
+            if viewModel.hasMore {
                 Section {
-                    if vm.loadingMore {
+                    if viewModel.loadingMore {
                         HStack {
                             Spacer()
                             ProgressView()
@@ -159,7 +159,7 @@ struct SportCategoryView: View {
                         Color.clear
                             .frame(height: 1)
                             .onAppear {
-                                Task { await vm.loadMore() }
+                                Task { await viewModel.loadMore() }
                             }
                             .listRowBackground(Color.clear)
                     }

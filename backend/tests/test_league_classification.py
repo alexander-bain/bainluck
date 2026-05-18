@@ -50,6 +50,20 @@ class TestSportLeaguePairValidation:
         assert is_valid_sport_league_pair("soccer", "UCL") is True
         assert is_valid_sport_league_pair("esports", "LOL") is True
 
+    @pytest.mark.parametrize(
+        ("sport_category", "league"),
+        [
+            ("esports", "PGA"),
+            ("esports", "MLB"),
+            ("cricket", "EPL"),
+            ("cricket", "FIFA_WC"),
+            ("cricket", "UCL"),
+            ("tennis", "PGA"),
+        ],
+    )
+    def test_backlog_impossible_pairs(self, sport_category, league):
+        assert is_valid_sport_league_pair(sport_category, league) is False
+
     def test_impossible_pairs(self):
         assert is_valid_sport_league_pair("basketball", "NHL") is False
         assert is_valid_sport_league_pair("hockey", "NBA") is False

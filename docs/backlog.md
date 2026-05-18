@@ -49,7 +49,7 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem (discovered May 18 health check):** The link rate endpoint reports misleadingly low rates for several sport/source combinations because the denominator includes markets that *cannot* be linked (season futures, non-game markets) and because league classification errors put markets under the wrong sport.
 
-**May 18 first slice shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. Guardrail tests cover unsupported esports, season/futures name filters, and impossible pairs.
+**May 18 first slice shipped:** `link-rate` now uses a stricter Kalshi denominator prefix set, excludes the esports sport bucket from event-link health metrics, filters obvious season/non-game market names from Kalshi and Polymarket denominator queries, and skips impossible sport/league bucket combinations via `is_valid_sport_league_pair()`. Guardrail tests cover unsupported esports, season/futures name filters, and the exact impossible pairs from this item (`esports/PGA`, `esports/MLB`, `cricket/EPL`, `cricket/FIFA_WC`, `cricket/UCL`, `tennis/PGA`).
 
 **Four distinct issues:**
 
@@ -1376,7 +1376,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, and Search views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
+| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, Search, Futures Detail, League Grid, and Sport Category views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)

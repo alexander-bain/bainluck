@@ -23,6 +23,8 @@
 - ✅ **Native naming cleanup slice 2** — continued `vm` to `viewModel` cleanup in Calibration, Politics, Entertainment, and Preferences views.
 - ✅ **Market interestingness scorer scaffold** — added pure 0-100 interestingness scoring utilities and a local CSV/JSON/JSONL calibration script with labeled precision/recall metrics; no feed-ranking integration yet.
 - ✅ **Native naming cleanup slice 3** — continued `vm` to `viewModel` cleanup in SearchView.
+- ✅ **Native naming cleanup slice 4** — continued `vm` to `viewModel` cleanup in Futures Detail, League Grid, and Sport Category views.
+- ✅ **Sport/league taxonomy guardrails** — added regression tests for the exact impossible sport/league pairs that polluted link-rate diagnostics.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 
