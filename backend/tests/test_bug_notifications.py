@@ -5,8 +5,10 @@ import pytest
 
 from app.tasks.bug_notifications import (
     BUG_FIXED_EMAIL_SUBJECT,
+    _build_gmail_message,
     build_bug_fixed_email_prompt_body,
     build_bug_fixed_email_prompt_input,
+    format_bug_fixed_email_html,
     send_bug_fixed_email,
 )
 
@@ -55,6 +57,49 @@ def test_build_prompt_body_contains_report_context():
     assert "Write a short email to Jane" in prompt_body
     assert 'Bug they reported: "The Discover card was blank."' in prompt_body
     assert 'What we fixed: "We fixed the image fallback."' in prompt_body
+
+
+def test_build_gmail_message_includes_plain_text_and_html_parts():
+    body_html = format_bug_fixed_email_html(
+        "Jane",
+        "Thanks for the report.\nWe fixed <the> image fallback.",
+    )
+
+    message = _build_gmail_message(
+        "jane.doe@example.com",
+        BUG_FIXED_EMAIL_SUBJECT,
+        body_html,
+    )
+
+    assert message["To"] == "jane.doe@example.com"
+    assert message["From"] == "Bain Luck <bugs@bainluck.com>"
+    assert message["Subject"] == BUG_FIXED_EMAIL_SUBJECT
+    assert message.is_multipart()
+
+    plain_body = message.get_body(preferencelist=("plain",)).get_content()
+    html_body = message.get_body(preferencelist=("html",)).get_content()
+    assert "Hi Jane," in plain_body
+    assert "We fixed <the> image fallback." in plain_body
+    assert "<div" not in plain_body
+    assert "We fixed &lt;the&gt; image fallback." in html_body
+
+
+def test_build_gmail_message_rejects_invalid_headers():
+    body_html = format_bug_fixed_email_html("Jane", "Fixed.")
+
+    with pytest.raises(ValueError):
+        _build_gmail_message(
+            "jane.doe@example.com",
+            "Your bug report was fixed\nBcc: attacker@example.com",
+            body_html,
+        )
+
+    with pytest.raises(ValueError):
+        _build_gmail_message(
+            "jane.doe@example.com\nBcc: attacker@example.com",
+            BUG_FIXED_EMAIL_SUBJECT,
+            body_html,
+        )
 
 
 @pytest.mark.asyncio

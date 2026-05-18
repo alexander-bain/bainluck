@@ -15,6 +15,9 @@
 - ✅ **Link-rate denominator guardrails** — admin link-rate metrics now exclude obvious season/non-game market names, event-uncovered esports buckets, and impossible sport/league combinations before aggregating health rates.
 - ✅ **Bug report category backfill** — admin bug-report listing backfills missing categories from the existing deterministic classifier when metadata is decisive, while leaving ambiguous reports uncategorized for human review.
 - ✅ **Native access-control sweep slice** — tightened additional view-local properties/helpers in Futures Detail, Leagues, and My Stuff with no behavior change.
+- ✅ **Search weighted ranking first slice** — `/api/events/search` now adds query-time PostgreSQL full-text ranking with team names weighted A, market names B, and outcome names C, while preserving existing ILIKE matching and typeahead behavior.
+- ✅ **Bug-fixed email MIME hardening** — Gmail send path now builds multipart plain-text plus HTML messages, validates recipient/sender headers, and rejects CR/LF header injection.
+- ✅ **Native naming cleanup slice** — renamed local `vm` references to `viewModel` in low-risk economics, weather, friend challenge, and futures-list views.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

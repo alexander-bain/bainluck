@@ -3,14 +3,14 @@ import SwiftUI
 // MARK: - View
 
 struct FuturesListView: View {
-    @StateObject private var vm = FuturesListViewModel()
+    @StateObject private var viewModel = FuturesListViewModel()
 
     private var categoryOptions: [FuturesCategoryOption] {
-        FuturesCategoryOption.makeOptions(from: vm.categoryFacets)
+        FuturesCategoryOption.makeOptions(from: viewModel.categoryFacets)
     }
 
     private var selectedCategoryTitle: String {
-        categoryOptions.first { $0.tag == vm.selectedCategory }?.title ?? "All markets"
+        categoryOptions.first { $0.tag == viewModel.selectedCategory }?.title ?? "All markets"
     }
 
     var body: some View {
@@ -18,7 +18,7 @@ struct FuturesListView: View {
             VStack(spacing: 0) {
                 FuturesCategoryRail(
                     options: categoryOptions,
-                    selectedTag: vm.selectedCategory,
+                    selectedTag: viewModel.selectedCategory,
                     onSelect: selectCategory
                 )
 
@@ -31,7 +31,7 @@ struct FuturesListView: View {
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
         .task {
-            await vm.load()
+            await viewModel.load()
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "futures_list", type: "futures_list")
@@ -40,23 +40,23 @@ struct FuturesListView: View {
 
     @ViewBuilder
     private var content: some View {
-        if vm.loading {
+        if viewModel.loading {
             FuturesBrowseLoadingView()
-        } else if let error = vm.error, vm.markets.isEmpty {
+        } else if let error = viewModel.error, viewModel.markets.isEmpty {
             FuturesBrowseStateView(
                 title: "Couldn't Load Futures",
                 message: error,
                 systemImage: "wifi.exclamationmark",
                 actionTitle: "Try Again",
-                action: { Task { await vm.load() } }
+                action: { Task { await viewModel.load() } }
             )
-        } else if vm.markets.isEmpty {
+        } else if viewModel.markets.isEmpty {
             FuturesBrowseStateView(
                 title: "No \(selectedCategoryTitle)",
                 message: emptyMessage,
                 systemImage: "chart.line.uptrend.xyaxis",
-                actionTitle: vm.selectedCategory.isEmpty ? nil : "Show All",
-                action: vm.selectedCategory.isEmpty ? nil : { selectCategory("") }
+                actionTitle: viewModel.selectedCategory.isEmpty ? nil : "Show All",
+                action: viewModel.selectedCategory.isEmpty ? nil : { selectCategory("") }
             )
         } else {
             marketList
@@ -65,7 +65,7 @@ struct FuturesListView: View {
 
     private var marketList: some View {
         List {
-            if let error = vm.error {
+            if let error = viewModel.error {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
@@ -75,7 +75,7 @@ struct FuturesListView: View {
             }
 
             Section {
-                ForEach(vm.markets) { market in
+                ForEach(viewModel.markets) { market in
                     NavigationLink(value: Route.futuresDetail(id: market.id)) {
                         FuturesBrowseMarketRow(market: market)
                     }
@@ -83,17 +83,17 @@ struct FuturesListView: View {
             } header: {
                 Text(sectionTitle)
             } footer: {
-                if !vm.hasMore {
-                    Text("Showing \(vm.markets.count) markets")
+                if !viewModel.hasMore {
+                    Text("Showing \(viewModel.markets.count) markets")
                 }
             }
 
-            if vm.hasMore {
+            if viewModel.hasMore {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
                     .task {
-                        await vm.loadMore()
+                        await viewModel.loadMore()
                     }
             }
         }
@@ -101,29 +101,29 @@ struct FuturesListView: View {
         .listStyle(.insetGrouped)
         #endif
         .refreshable {
-            await vm.load()
+            await viewModel.load()
         }
     }
 
     private var sectionTitle: String {
-        if vm.selectedCategory.isEmpty {
+        if viewModel.selectedCategory.isEmpty {
             return "All markets"
         }
         return selectedCategoryTitle
     }
 
     private var emptyMessage: String {
-        if vm.selectedCategory.isEmpty {
+        if viewModel.selectedCategory.isEmpty {
             return "There are no browseable futures markets right now."
         }
         return "No markets matched this category. Try another category or return to all futures."
     }
 
     private func selectCategory(_ tag: String) {
-        guard vm.selectedCategory != tag else { return }
+        guard viewModel.selectedCategory != tag else { return }
         withAnimation(.easeInOut(duration: 0.18)) {
-            vm.selectedCategory = tag
+            viewModel.selectedCategory = tag
         }
-        vm.onCategoryChange()
+        viewModel.onCategoryChange()
     }
 }

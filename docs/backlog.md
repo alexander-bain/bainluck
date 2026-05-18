@@ -794,7 +794,7 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, and Celery task registration. Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
+**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, Celery task registration, multipart plain-text+HTML Gmail messages, sender/recipient validation, and CR/LF header-injection rejection. Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
 
 **Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
@@ -1289,11 +1289,13 @@ Economics, Politics, Entertainment all live on web + iOS. Details in `completed-
 
 **REMAINING:**
 
-### P4c. Weighted `ts_vector` Full-Text Search
+### P4c. Weighted `ts_vector` Full-Text Search — FIRST SLICE SHIPPED May 18
 
 Team names weight A, market names weight B, outcome names weight C. Use PostgreSQL full-text search with weighted ranking.
 
-**Files:** `backend/app/routes/events.py`, new migration for ts_vector columns
+**May 18 first slice shipped:** `/api/events/search` now uses query-time PostgreSQL full-text ranking (`websearch_to_tsquery`, weighted vectors) without a migration. Event/team names rank at weight A, futures market names at B, and futures outcome names at C. Existing ILIKE matching/fallback behavior and typeahead remain unchanged. A stored/indexed `ts_vector` migration can come later only if production search latency needs it.
+
+**Files:** `backend/app/routes/events.py`, future migration only if indexing becomes necessary
 **Parallel Safety:** Yellow
 
 ### ~~P5b. Trending/Popular Searches~~ — ALREADY SHIPPED
@@ -1373,7 +1375,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
 | CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | `vm` → `viewModel`, `ct` → `commenceTime`, `ap`/`hp` → `awayProb`/`homeProb`, `gm` → `gameMarkets` |
+| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, and Futures List views. Remaining: broader `vm`, `ct`, `ap`/`hp`, and `gm` cleanup in small low-conflict slices. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)

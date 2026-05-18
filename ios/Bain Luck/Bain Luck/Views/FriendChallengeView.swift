@@ -3,13 +3,13 @@ import SwiftUI
 struct FriendChallengeView: View {
     let challengeCode: String
 
-    @StateObject private var vm = FriendChallengeViewModel()
+    @StateObject private var viewModel = FriendChallengeViewModel()
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView("Loading challenge...")
-            } else if let error = vm.error {
+            } else if let error = viewModel.error {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
@@ -18,11 +18,11 @@ struct FriendChallengeView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    Button("Retry") { Task { await vm.load(code: challengeCode) } }
+                    Button("Retry") { Task { await viewModel.load(code: challengeCode) } }
                         .buttonStyle(.borderedProminent)
                 }
                 .padding()
-            } else if let challenge = vm.challenge {
+            } else if let challenge = viewModel.challenge {
                 challengeContent(challenge)
             }
         }
@@ -30,7 +30,7 @@ struct FriendChallengeView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task { await vm.load(code: challengeCode) }
+        .task { await viewModel.load(code: challengeCode) }
     }
 
     @ViewBuilder
@@ -59,30 +59,30 @@ struct FriendChallengeView: View {
                         .font(.system(size: 56, weight: .bold, design: .monospaced))
                 }
 
-                if c.friendGuess == nil && !vm.submitted {
+                if c.friendGuess == nil && !viewModel.submitted {
                     VStack(spacing: 12) {
                         Text("What's your pick?")
                             .font(.subheadline.weight(.medium))
                         HStack(spacing: 16) {
                             Button {
-                                Task { await vm.accept(code: challengeCode, guess: "higher") }
+                                Task { await viewModel.accept(code: challengeCode, guess: "higher") }
                             } label: {
                                 Label("Higher", systemImage: "arrow.up")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.green)
-                            .disabled(vm.submitting)
+                            .disabled(viewModel.submitting)
 
                             Button {
-                                Task { await vm.accept(code: challengeCode, guess: "lower") }
+                                Task { await viewModel.accept(code: challengeCode, guess: "lower") }
                             } label: {
                                 Label("Lower", systemImage: "arrow.down")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.red)
-                            .disabled(vm.submitting)
+                            .disabled(viewModel.submitting)
                         }
                     }
                 } else {
@@ -103,8 +103,8 @@ struct FriendChallengeView: View {
             )
             participantRow(
                 label: "You",
-                guess: vm.submitted ? vm.submittedGuess : c.friendGuess,
-                correct: vm.submitted ? nil : c.friendCorrect
+                guess: viewModel.submitted ? viewModel.submittedGuess : c.friendGuess,
+                correct: viewModel.submitted ? nil : c.friendCorrect
             )
         }
         .padding()

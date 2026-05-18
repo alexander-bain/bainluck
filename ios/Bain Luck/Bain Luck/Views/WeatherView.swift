@@ -3,14 +3,14 @@ import SwiftUI
 // MARK: - View
 
 struct WeatherView: View {
-    @StateObject private var vm = WeatherViewModel()
+    @StateObject private var viewModel = WeatherViewModel()
     @State private var citySearch = ""
 
     var body: some View {
         Group {
-            if vm.loading {
+            if viewModel.loading {
                 ProgressView("Loading weather markets...")
-            } else if let error = vm.error, vm.featured.isEmpty {
+            } else if let error = viewModel.error, viewModel.featured.isEmpty {
                 ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
             } else {
                 weatherContent
@@ -21,8 +21,8 @@ struct WeatherView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .onAppear { AnalyticsService.trackScreen(name: "weather", type: "weather") }
-        .task { await vm.load() }
-        .refreshable { await vm.load() }
+        .task { await viewModel.load() }
+        .refreshable { await viewModel.load() }
     }
 
     private var weatherContent: some View {
@@ -30,10 +30,10 @@ struct WeatherView: View {
             VStack(spacing: 20) {
                 pageHeader
 
-                if !vm.featured.isEmpty {
+                if !viewModel.featured.isEmpty {
                     featuredSection
                 }
-                if !vm.cities.isEmpty {
+                if !viewModel.cities.isEmpty {
                     citiesSection
                 }
 
@@ -46,7 +46,7 @@ struct WeatherView: View {
     // MARK: - Page Header
 
     private var pageHeader: some View {
-        let totalCount = vm.featured.count + vm.cities.count
+        let totalCount = viewModel.featured.count + viewModel.cities.count
         return VStack(alignment: .leading, spacing: 8) {
             Text("Live temperature and weather probabilities from prediction markets.")
                 .font(.subheadline)
@@ -92,10 +92,10 @@ struct WeatherView: View {
 
     private var featuredSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(emoji: "\u{1F324}\u{FE0F}", title: "Featured", count: vm.featured.count)
+            sectionHeader(emoji: "\u{1F324}\u{FE0F}", title: "Featured", count: viewModel.featured.count)
                 .padding(.horizontal)
 
-            ForEach(vm.featured) { item in
+            ForEach(viewModel.featured) { item in
                 if let marketId = item.marketId {
                     NavigationLink(value: Route.futuresDetail(id: marketId)) {
                         featuredCard(item)
@@ -201,9 +201,9 @@ struct WeatherView: View {
 
     private var filteredCities: [WeatherCity] {
         if citySearch.trimmingCharacters(in: .whitespaces).isEmpty {
-            return vm.cities
+            return viewModel.cities
         }
-        return vm.cities.filter { $0.name.localizedCaseInsensitiveContains(citySearch) }
+        return viewModel.cities.filter { $0.name.localizedCaseInsensitiveContains(citySearch) }
     }
 
     private var citiesSection: some View {

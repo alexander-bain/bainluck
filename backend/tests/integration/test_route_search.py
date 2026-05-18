@@ -6,6 +6,15 @@ Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 """
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
+
+from app.routes.events import (
+    _event_search_vector,
+    _futures_search_vector,
+    _search_rank,
+    _team_search_vector,
+)
 
 
 # ============================================================================
@@ -193,6 +202,53 @@ class TestSearchEndpoint:
             assert "id" in item
             assert "name" in item
             assert "sport_key" in item
+
+    def test_event_search_rank_compiles_weighted_team_names(self):
+        stmt = select(_search_rank(_event_search_vector(), "Lakers Celtics"))
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).lower()
+
+        assert "websearch_to_tsquery" in sql
+        assert "to_tsvector" in sql
+        assert "setweight" in sql
+        assert "'a'" in sql
+        assert "events.home_team_name" in sql
+        assert "events.away_team_name" in sql
+
+    def test_team_search_rank_compiles_weighted_team_names(self):
+        stmt = select(_search_rank(_team_search_vector(), "NY Knicks"))
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).lower()
+
+        assert "'a'" in sql
+        assert "teams.name" in sql
+        assert "teams.abbreviation" in sql
+        assert "teams.alternate_names" in sql
+
+    def test_futures_search_rank_compiles_weighted_market_and_outcomes(self):
+        stmt = select(_search_rank(_futures_search_vector(), "best picture"))
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        ).lower()
+
+        assert "websearch_to_tsquery" in sql
+        assert "setweight" in sql
+        assert "'b'" in sql
+        assert "'c'" in sql
+        assert "futures_markets.name" in sql
+        assert "string_agg" in sql
+        assert "futures_outcomes.market_id = futures_markets.id" in sql
 
 
 # ============================================================================

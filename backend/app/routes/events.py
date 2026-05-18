@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import select, and_, or_, func, case, cast, Integer, String
+from sqlalchemy import select, and_, or_, func, case, cast, Integer, String, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
@@ -143,6 +143,67 @@ _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "golf": ["golf_pga", "golf_lpga"],
     "tennis": ["tennis_atp", "tennis_wta"],
 }
+
+
+_SEARCH_TS_CONFIG_SQL = literal_column("'english'")
+_SEARCH_EVENT_TEAM_WEIGHT = "A"
+_SEARCH_FUTURES_MARKET_WEIGHT = "B"
+_SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
+
+
+def _search_tsquery(q: str):
+    """Build a PostgreSQL query parser expression for user search text."""
+    return func.websearch_to_tsquery(_SEARCH_TS_CONFIG_SQL, q.strip())
+
+
+def _weighted_search_vector(column, weight: str):
+    """Build a weighted query-time tsvector for a nullable text expression."""
+    return func.setweight(
+        func.to_tsvector(_SEARCH_TS_CONFIG_SQL, func.coalesce(column, "")),
+        weight,
+    )
+
+
+def _combine_search_vectors(*vectors):
+    combined = vectors[0]
+    for vector in vectors[1:]:
+        combined = combined.op("||")(vector)
+    return combined
+
+
+def _event_search_vector():
+    return _combine_search_vectors(
+        _weighted_search_vector(Event.home_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
+        _weighted_search_vector(Event.away_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
+    )
+
+
+def _team_search_vector():
+    return _combine_search_vectors(
+        _weighted_search_vector(Team.name, _SEARCH_EVENT_TEAM_WEIGHT),
+        _weighted_search_vector(Team.abbreviation, _SEARCH_EVENT_TEAM_WEIGHT),
+        _weighted_search_vector(
+            cast(Team.alternate_names, String),
+            _SEARCH_EVENT_TEAM_WEIGHT,
+        ),
+    )
+
+
+def _futures_search_vector():
+    outcome_names = (
+        select(func.string_agg(FuturesOutcome.name, " "))
+        .where(FuturesOutcome.market_id == FuturesMarket.id)
+        .correlate(FuturesMarket)
+        .scalar_subquery()
+    )
+    return _combine_search_vectors(
+        _weighted_search_vector(FuturesMarket.name, _SEARCH_FUTURES_MARKET_WEIGHT),
+        _weighted_search_vector(outcome_names, _SEARCH_FUTURES_OUTCOME_WEIGHT),
+    )
+
+
+def _search_rank(search_vector, q: str):
+    return func.ts_rank_cd(search_vector, _search_tsquery(q))
 
 
 @router.post("/discover")
@@ -782,6 +843,7 @@ async def search_events(
         (Event.event_tags.op("@>")(_lc("'[\"stakes:playoff_race\"]'::jsonb")), 5),
         else_=9
     )
+    search_rank = _search_rank(_event_search_vector(), q)
 
     # For scheduled: order by commence_time ASC (soonest first)
     # For completed: order by commence_time DESC (most recent first)
@@ -789,6 +851,7 @@ async def search_events(
     query = query.order_by(
         status_order,
         tag_boost,
+        search_rank.desc(),
         # For live/scheduled, sort ascending; for completed, we want descending
         # Using a compound sort: status priority, then time
         case(
@@ -836,7 +899,12 @@ async def search_events(
                     query = query.where(Event.status.in_(["live", "completed", "closed"]))
                 if sport:
                     query = query.where(Sport.key == sport)
-                query = query.order_by(status_order, Event.commence_time.desc().nulls_last())
+                fuzzy_search_rank = _search_rank(_event_search_vector(), fuzzy_corrected)
+                query = query.order_by(
+                    status_order,
+                    fuzzy_search_rank.desc(),
+                    Event.commence_time.desc().nulls_last(),
+                )
                 total_count_r = await db.execute(select(func.count()).select_from(query.subquery()))
                 total_count = total_count_r.scalar()
         except Exception:
@@ -964,6 +1032,7 @@ async def search_events(
             FuturesOutcome.name.ilike(search_pattern)
         )
 
+    futures_search_rank = _search_rank(_futures_search_vector(), q)
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
@@ -980,6 +1049,7 @@ async def search_events(
             ),
         )
         .order_by(
+            futures_search_rank.desc(),
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
             FuturesMarket.updated_at.desc(),
@@ -1030,7 +1100,7 @@ async def search_events(
                Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_search_filter)
-        .order_by(Team.name)
+        .order_by(_search_rank(_team_search_vector(), q).desc(), Team.name)
         .limit(5)
     )
     if sport:

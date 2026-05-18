@@ -14,7 +14,8 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
+from email.message import EmailMessage
+from email.utils import formataddr
 from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import select, update
@@ -31,6 +32,10 @@ GMAIL_SENDER_EMAIL = os.environ.get("GMAIL_SENDER_EMAIL", "bugs@bainluck.com")
 
 BUG_FIXED_EMAIL_SUBJECT = "Your bug report was fixed"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_HEADER_CONTROL_RE = re.compile(r"[\r\n]")
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_BLOCK_END_RE = re.compile(r"</(?:p|div|li|h[1-6])\s*>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 @dataclass(frozen=True)
@@ -51,7 +56,53 @@ def _valid_user_email(user_email: Optional[str]) -> bool:
     """Return whether the report has a usable recipient email."""
     if not user_email:
         return False
-    return bool(_EMAIL_RE.match(user_email.strip()))
+    cleaned = user_email.strip()
+    return not _HEADER_CONTROL_RE.search(cleaned) and bool(_EMAIL_RE.match(cleaned))
+
+
+def _safe_header_value(value: str, field_name: str) -> str:
+    """Reject CR/LF header injection before building a MIME message."""
+    if _HEADER_CONTROL_RE.search(value):
+        raise ValueError(f"{field_name} contains invalid header characters")
+    return value
+
+
+def _html_to_plain_text(body_html: str) -> str:
+    """Convert the simple notification HTML into a readable plain-text part."""
+    with_breaks = _BR_RE.sub("\n", body_html)
+    with_breaks = _BLOCK_END_RE.sub("\n", with_breaks)
+    without_tags = _TAG_RE.sub("", with_breaks)
+    unescaped = html.unescape(without_tags)
+
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in unescaped.splitlines()]
+    collapsed: list[str] = []
+    previous_blank = False
+    for line in lines:
+        is_blank = not line
+        if is_blank and previous_blank:
+            continue
+        collapsed.append(line)
+        previous_blank = is_blank
+    return "\n".join(collapsed).strip()
+
+
+def _build_gmail_message(to_email: str, subject: str, body_html: str) -> EmailMessage:
+    """Build a multipart Gmail message with validated headers."""
+    recipient = to_email.strip()
+    sender_email = GMAIL_SENDER_EMAIL.strip()
+
+    if not _valid_user_email(recipient):
+        raise ValueError("recipient email is invalid")
+    if not _valid_user_email(sender_email):
+        raise ValueError("Gmail sender email is invalid")
+
+    message = EmailMessage()
+    message["To"] = recipient
+    message["From"] = formataddr(("Bain Luck", sender_email))
+    message["Subject"] = _safe_header_value(subject, "subject")
+    message.set_content(_html_to_plain_text(body_html))
+    message.add_alternative(body_html, subtype="html")
+    return message
 
 
 def _derive_first_name(user_email: str, app_state: Optional[dict[str, Any]]) -> str:
@@ -167,10 +218,7 @@ def _send_gmail(to_email: str, subject: str, body_html: str) -> bool:
 
         access_token = _get_access_token()
 
-        message = MIMEText(body_html, "html")
-        message["to"] = to_email
-        message["from"] = f"Bain Luck <{GMAIL_SENDER_EMAIL}>"
-        message["subject"] = subject
+        message = _build_gmail_message(to_email, subject, body_html)
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
