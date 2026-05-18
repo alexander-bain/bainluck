@@ -20,7 +20,6 @@ Shipped:
 Still open:
 - CQ-6: unify `NativeGuessCard` and `NativeEventGuessCard`.
 - CQ-7: extract shared Discover/Feed context menu.
-- CQ-9/CQ-11: move Discover card and resolution UI into component files.
 - CQ-16: broad helper-method `private` cleanup.
 - CQ-17: broad abbreviation cleanup.
 
@@ -118,10 +117,10 @@ From ~2,200 lines → 6-8 files:
 - `DiscoverViewModel.swift` — ViewModel (~150 lines) — shipped
 - `Components/GuessCardView.swift` — unified guess card (~300 lines)
 - `Components/DailyChallengeCard.swift` — challenge UI (~150 lines)
-- `Components/DiscoverFuturesCard.swift` — futures card (~150 lines)
-- `Components/DiscoverEventCard.swift` — event card (~150 lines)
-- `Components/ResolutionCard.swift` — resolution card (~50 lines)
-**Status:** Partially shipped. ViewModel extracted; UI component extraction remains open.
+- `Components/DiscoverFuturesCard.swift` — futures card (~150 lines) — shipped
+- `Components/DiscoverEventCard.swift` — event card (~150 lines) — shipped
+- `Components/ResolutionCard.swift` — resolution card (~50 lines) — shipped
+**Status:** Partially shipped. ViewModel, daily challenge, resolution, and Discover event/futures cards extracted; unified guess card and shared context menu remain open.
 
 ### P4b. Create ViewModels/ directory
 Move all ViewModels out of View files:

@@ -1289,7 +1289,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | ~~CQ-8~~ | ~~Extract DiscoverViewModel~~ | `ViewModels/DiscoverViewModel.swift` | ✅ DONE May 17 — moved the Discover state/load/personalization class out of `DiscoverView.swift`. View-local profile/debug helpers remain with the view. |
-| CQ-9 | Extract discover cards | New `Components/DiscoverFuturesCard.swift`, `DiscoverEventCard.swift` | Move `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` to own files |
+| ~~CQ-9~~ | ~~Extract discover cards~~ | `Components/DiscoverFuturesCard.swift`, `Components/DiscoverEventCard.swift` | ✅ DONE May 17 — moved `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` out of `DiscoverView.swift`. |
 | ~~CQ-10~~ | ~~Extract daily challenge card~~ | `Components/DailyChallengeCard.swift` | ✅ DONE May 17 — moved `NativeDailyChallengeCard` and `NativeChallengeSheet` out of `DiscoverView.swift`. |
 | ~~CQ-11~~ | ~~Extract resolution card~~ | `Components/ResolutionCard.swift` | ✅ DONE May 17 — moved `NativeResolutionCard` out of `DiscoverView.swift`. |
 
