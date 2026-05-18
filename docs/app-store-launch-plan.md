@@ -1,8 +1,15 @@
 # App Store Launch Plan
 
-Everything needed to submit Bain Luck 1.0 to the App Store. Realistic time: **3-4 hours** (mostly screenshots).
+Everything needed to submit Bain Luck 1.0 to the App Store. Realistic time: **3-4 hours** (mostly screenshots + App Store Connect metadata).
 
-**Current state:** Build 3 on TestFlight, gambling language removed (commit `cea3892`), privacy policy live, privacy manifest in place. Main remaining work is screenshots + App Store Connect metadata.
+**Current state:** Build 3 on TestFlight, gambling language removed (commit `cea3892`), privacy policy live, privacy manifest in place, native code quality sweep complete, and push notification entitlement set to production. The production native navigation is intentionally launch-safe: the unfinished Futures browser entry point is hidden until iOS-7, the 🍀 Bain Luck sidebar branding is preserved, and Calibration remains visible. Main remaining work is screenshots, App Store Connect metadata, final archive/upload, and the explicit Watch/visionOS submission decision.
+
+**Review-safe native state for 1.0:**
+- Discover, Sports, My Stuff, Daily Challenge, category pages, event detail, market detail, and Calibration are available in production navigation.
+- The native Futures browser entry point is hidden from sidebar/tab navigation pending iOS-7. Futures detail pages still open from Discover, search, category pages, weather city cards, links, and related flows.
+- The iPad/macOS sidebar keeps the 🍀 Bain Luck title and includes Calibration.
+- Native ViewModels/utilities/model docs/access-control cleanup is complete, and the latest native Debug build was verified.
+- Push entitlement is production-ready; push infrastructure exists, but promotional push sending is not part of the 1.0 user-facing feature set.
 
 ---
 
@@ -194,6 +201,8 @@ Initial release — Bain Luck translates prediction markets into clear probabili
 • iPad and Mac support
 ```
 
+**Internal release note context:** This 1.0 build also includes the native launch-readiness cleanup: the unfinished Futures browser tab is hidden until iOS-7, Calibration remains available, the 🍀 Bain Luck sidebar branding is preserved, native ViewModels/utilities were organized, and production push entitlement is in place. Do not mention the hidden Futures browser in public App Store "What's New" copy unless Apple specifically asks about navigation.
+
 **Copyright:**
 
 ```
@@ -277,6 +286,12 @@ No demo account is needed — all content is accessible without signing in. Sign
 
 The "Higher or Lower" prediction game is purely for entertainment — it tests probability intuition. No money is wagered, won, or exchanged. No in-app purchases exist.
 
+The production native navigation includes Discover, Sports, My Stuff, Daily Challenge, category pages, event details, market details, and Calibration. The standalone native Futures browser entry point is intentionally hidden from the 1.0 sidebar/tab navigation while it is rebuilt for a later update; individual prediction market detail pages remain accessible from Discover, search, category pages, weather city cards, links, and related flows.
+
+On iPad and Mac, the sidebar intentionally keeps the "🍀 Bain Luck" branding and includes Calibration.
+
+Push notification entitlement is configured for production, but users are not required to enable notifications to use the app.
+
 The app is comparable to: FiveThirtyEight (election forecasts), ESPN (win probability charts), or PredictIt (market data display).
 ```
 
@@ -290,6 +305,7 @@ This app sits in a gray area Apple scrutinizes. Key things already done:
 - [x] No real-money transactions or IAP
 - [x] Age rating questionnaire: gambling = No
 - [x] Privacy policy is live
+- [x] Futures browser entry point hidden until rebuilt; launch navigation surfaces polished native screens only
 
 **If Apple flags it as gambling:**
 1. Respond to the rejection citing App Store Review Guideline 4.7 (Sports) — the app displays publicly available data, same as ESPN showing win probability
@@ -316,6 +332,10 @@ Apple may call during review if they have questions about the gambling angle. Ma
 
 **Technical:**
 - [ ] Build number bumped (> 3)
+- [ ] Final native smoke check: Discover, Sports, My Stuff, Daily Challenge, category pages, event detail, market detail, Calibration
+- [ ] Confirm Futures browser entry point remains hidden from production sidebar/tab navigation
+- [ ] Confirm iPad/macOS sidebar shows 🍀 Bain Luck title and Calibration
+- [ ] Confirm push entitlement is production, not development
 - [ ] Archive built successfully in Xcode
 - [ ] Build uploaded to App Store Connect
 - [ ] Build processed (check email — usually 15-30 min)

@@ -27,199 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
-# Static conference/division fallback maps
-# Used when a team's standings_data doesn't have conference info.
-# ---------------------------------------------------------------------------
-
-NBA_CONFERENCES: dict[str, str] = {
-    # Eastern Conference
-    "Atlanta Hawks": "Eastern", "Boston Celtics": "Eastern", "Brooklyn Nets": "Eastern",
-    "Charlotte Hornets": "Eastern", "Chicago Bulls": "Eastern", "Cleveland Cavaliers": "Eastern",
-    "Detroit Pistons": "Eastern", "Indiana Pacers": "Eastern", "Miami Heat": "Eastern",
-    "Milwaukee Bucks": "Eastern", "New York Knicks": "Eastern", "Orlando Magic": "Eastern",
-    "Philadelphia 76ers": "Eastern", "Toronto Raptors": "Eastern", "Washington Wizards": "Eastern",
-    # Western Conference
-    "Dallas Mavericks": "Western", "Denver Nuggets": "Western", "Golden State Warriors": "Western",
-    "Houston Rockets": "Western", "Los Angeles Clippers": "Western", "Los Angeles Lakers": "Western",
-    "Memphis Grizzlies": "Western", "Minnesota Timberwolves": "Western",
-    "New Orleans Pelicans": "Western", "Oklahoma City Thunder": "Western",
-    "Phoenix Suns": "Western", "Portland Trail Blazers": "Western",
-    "Sacramento Kings": "Western", "San Antonio Spurs": "Western", "Utah Jazz": "Western",
-}
-
-NFL_CONFERENCES: dict[str, str] = {
-    # AFC
-    "Baltimore Ravens": "AFC", "Buffalo Bills": "AFC", "Cincinnati Bengals": "AFC",
-    "Cleveland Browns": "AFC", "Denver Broncos": "AFC", "Houston Texans": "AFC",
-    "Indianapolis Colts": "AFC", "Jacksonville Jaguars": "AFC", "Kansas City Chiefs": "AFC",
-    "Las Vegas Raiders": "AFC", "Los Angeles Chargers": "AFC", "Miami Dolphins": "AFC",
-    "New England Patriots": "AFC", "New York Jets": "AFC", "Pittsburgh Steelers": "AFC",
-    "Tennessee Titans": "AFC",
-    # NFC
-    "Arizona Cardinals": "NFC", "Atlanta Falcons": "NFC", "Carolina Panthers": "NFC",
-    "Chicago Bears": "NFC", "Dallas Cowboys": "NFC", "Detroit Lions": "NFC",
-    "Green Bay Packers": "NFC", "Los Angeles Rams": "NFC", "Minnesota Vikings": "NFC",
-    "New Orleans Saints": "NFC", "New York Giants": "NFC", "Philadelphia Eagles": "NFC",
-    "San Francisco 49ers": "NFC", "Seattle Seahawks": "NFC", "Tampa Bay Buccaneers": "NFC",
-    "Washington Commanders": "NFC",
-}
-
-MLB_CONFERENCES: dict[str, str] = {
-    # American League
-    "Baltimore Orioles": "American League", "Boston Red Sox": "American League",
-    "Chicago White Sox": "American League", "Cleveland Guardians": "American League",
-    "Detroit Tigers": "American League", "Houston Astros": "American League",
-    "Kansas City Royals": "American League", "Los Angeles Angels": "American League",
-    "Minnesota Twins": "American League", "New York Yankees": "American League",
-    "Oakland Athletics": "American League", "A's": "American League",
-    "Athletics": "American League", "Seattle Mariners": "American League",
-    "Tampa Bay Rays": "American League", "Texas Rangers": "American League",
-    "Toronto Blue Jays": "American League",
-    # National League
-    "Arizona Diamondbacks": "National League", "Atlanta Braves": "National League",
-    "Chicago Cubs": "National League", "Cincinnati Reds": "National League",
-    "Colorado Rockies": "National League", "Los Angeles Dodgers": "National League",
-    "Miami Marlins": "National League", "Milwaukee Brewers": "National League",
-    "New York Mets": "National League", "Philadelphia Phillies": "National League",
-    "Pittsburgh Pirates": "National League", "San Diego Padres": "National League",
-    "San Francisco Giants": "National League", "St. Louis Cardinals": "National League",
-    "Washington Nationals": "National League",
-}
-
-NHL_CONFERENCES: dict[str, str] = {
-    # Eastern Conference
-    "Boston Bruins": "Eastern", "Buffalo Sabres": "Eastern", "Carolina Hurricanes": "Eastern",
-    "Columbus Blue Jackets": "Eastern", "Detroit Red Wings": "Eastern",
-    "Florida Panthers": "Eastern", "Montreal Canadiens": "Eastern",
-    "New Jersey Devils": "Eastern", "New York Islanders": "Eastern",
-    "New York Rangers": "Eastern", "Ottawa Senators": "Eastern",
-    "Philadelphia Flyers": "Eastern", "Pittsburgh Penguins": "Eastern",
-    "Tampa Bay Lightning": "Eastern", "Toronto Maple Leafs": "Eastern",
-    "Washington Capitals": "Eastern",
-    # Western Conference
-    "Anaheim Ducks": "Western", "Calgary Flames": "Western", "Chicago Blackhawks": "Western",
-    "Colorado Avalanche": "Western", "Dallas Stars": "Western", "Edmonton Oilers": "Western",
-    "Los Angeles Kings": "Western", "Minnesota Wild": "Western", "Nashville Predators": "Western",
-    "San Jose Sharks": "Western", "Seattle Kraken": "Western", "St. Louis Blues": "Western",
-    "Utah Hockey Club": "Western", "Vancouver Canucks": "Western",
-    "Vegas Golden Knights": "Western", "Winnipeg Jets": "Western",
-}
-
-MLS_CONFERENCES: dict[str, str] = {
-    # Eastern Conference (2026)
-    "Atlanta United": "Eastern", "Atlanta United FC": "Eastern",
-    "Charlotte FC": "Eastern", "Chicago Fire": "Eastern", "Chicago Fire FC": "Eastern",
-    "Cincinnati": "Eastern", "FC Cincinnati": "Eastern",
-    "Columbus Crew": "Eastern", "D.C. United": "Eastern",
-    "Inter Miami": "Eastern", "Inter Miami CF": "Eastern",
-    "CF Montréal": "Eastern", "Montréal": "Eastern", "Montreal": "Eastern",
-    "Nashville SC": "Eastern", "Nashville": "Eastern",
-    "New England Revolution": "Eastern", "New York City FC": "Eastern",
-    "New York Red Bulls": "Eastern", "New York RB": "Eastern",
-    "Orlando City": "Eastern", "Orlando City SC": "Eastern",
-    "Philadelphia Union": "Eastern", "Toronto FC": "Eastern",
-    # Western Conference (2026)
-    "Austin FC": "Western", "Colorado Rapids": "Western",
-    "FC Dallas": "Western", "Dallas": "Western",
-    "Houston Dynamo": "Western", "Houston Dynamo FC": "Western",
-    "LA Galaxy": "Western", "Los Angeles Galaxy": "Western", "Los Angeles G": "Western",
-    "Los Angeles FC": "Western", "LAFC": "Western",
-    "Minnesota United": "Western", "Minnesota United FC": "Western",
-    "Portland Timbers": "Western", "Real Salt Lake": "Western",
-    "San Diego FC": "Western", "San Jose Earthquakes": "Western",
-    "Seattle Sounders": "Western", "Seattle Sounders FC": "Western",
-    "Sporting Kansas City": "Western", "Sporting KC": "Western",
-    "St. Louis City": "Western", "St. Louis City SC": "Western",
-    "Saint Louis": "Western", "St Louis": "Western",
-    "Vancouver Whitecaps": "Western", "Vancouver Whitecaps FC": "Western",
-}
-
-WNBA_CONFERENCES: dict[str, str] = {
-    # Eastern Conference (2026)
-    "Atlanta Dream": "Eastern", "Chicago Sky": "Eastern",
-    "Connecticut Sun": "Eastern", "Indiana Fever": "Eastern",
-    "New York Liberty": "Eastern", "Washington Mystics": "Eastern",
-    # Western Conference (2026)
-    "Dallas Wings": "Western", "Golden State Valkyries": "Western",
-    "Las Vegas Aces": "Western", "Los Angeles Sparks": "Western",
-    "Minnesota Lynx": "Western", "Phoenix Mercury": "Western",
-    "Seattle Storm": "Western", "Portland": "Western",
-}
-
-NCAAF_CONFERENCES: dict[str, str] = {
-    # SEC
-    "Alabama Crimson Tide": "SEC", "Arkansas Razorbacks": "SEC",
-    "Auburn Tigers": "SEC", "Florida Gators": "SEC",
-    "Georgia Bulldogs": "SEC", "Kentucky Wildcats": "SEC",
-    "LSU Tigers": "SEC", "Mississippi State Bulldogs": "SEC",
-    "Missouri Tigers": "SEC", "Ole Miss Rebels": "SEC",
-    "South Carolina Gamecocks": "SEC", "Tennessee Volunteers": "SEC",
-    "Texas A&M Aggies": "SEC", "Texas Longhorns": "SEC",
-    "Vanderbilt Commodores": "SEC", "Oklahoma Sooners": "SEC",
-    # Big Ten
-    "Illinois Fighting Illini": "Big Ten", "Indiana Hoosiers": "Big Ten",
-    "Iowa Hawkeyes": "Big Ten", "Maryland Terrapins": "Big Ten",
-    "Michigan Wolverines": "Big Ten", "Michigan State Spartans": "Big Ten",
-    "Minnesota Golden Gophers": "Big Ten", "Nebraska Cornhuskers": "Big Ten",
-    "Northwestern Wildcats": "Big Ten", "Ohio State Buckeyes": "Big Ten",
-    "Oregon Ducks": "Big Ten", "Penn State Nittany Lions": "Big Ten",
-    "Purdue Boilermakers": "Big Ten", "Rutgers Scarlet Knights": "Big Ten",
-    "UCLA Bruins": "Big Ten", "USC Trojans": "Big Ten",
-    "Washington Huskies": "Big Ten", "Wisconsin Badgers": "Big Ten",
-    # Big 12
-    "Arizona Wildcats": "Big 12", "Arizona State Sun Devils": "Big 12",
-    "Baylor Bears": "Big 12", "BYU Cougars": "Big 12",
-    "Cincinnati Bearcats": "Big 12", "Colorado Buffaloes": "Big 12",
-    "Houston Cougars": "Big 12", "Iowa State Cyclones": "Big 12",
-    "Kansas Jayhawks": "Big 12", "Kansas State Wildcats": "Big 12",
-    "Oklahoma State Cowboys": "Big 12", "TCU Horned Frogs": "Big 12",
-    "Texas Tech Red Raiders": "Big 12", "UCF Knights": "Big 12",
-    "Utah Utes": "Big 12", "West Virginia Mountaineers": "Big 12",
-    # ACC
-    "Boston College Eagles": "ACC", "Clemson Tigers": "ACC",
-    "Duke Blue Devils": "ACC", "Florida State Seminoles": "ACC",
-    "Georgia Tech Yellow Jackets": "ACC", "Louisville Cardinals": "ACC",
-    "Miami Hurricanes": "ACC", "NC State Wolfpack": "ACC",
-    "North Carolina Tar Heels": "ACC", "North Carolina St.": "ACC",
-    "Pittsburgh Panthers": "ACC", "SMU Mustangs": "ACC",
-    "Syracuse Orange": "ACC", "Virginia Cavaliers": "ACC",
-    "Virginia Tech Hokies": "ACC", "Wake Forest Demon Deacons": "ACC",
-    # Independent
-    "Notre Dame Fighting Irish": "Independent",
-    # Group of 5 / FCS (common futures market appearances)
-    "Boise State Broncos": "Mountain West", "San Diego State Aztecs": "Mountain West",
-    "UNLV Rebels": "Mountain West", "Fresno State Bulldogs": "Mountain West",
-    "Colorado State Rams": "Mountain West", "Air Force Falcons": "Mountain West",
-    "Hawai'i Rainbow Warriors": "Mountain West", "Hawai'i": "Mountain West",
-    "Hawaii Rainbow Warriors": "Mountain West", "Hawaii": "Mountain West",
-    "San Jose State Spartans": "Mountain West", "Nevada Wolf Pack": "Mountain West",
-    "Wyoming Cowboys": "Mountain West", "Utah State Aggies": "Mountain West",
-    "Memphis Tigers": "AAC", "Tulane Green Wave": "AAC", "UTSA Roadrunners": "AAC",
-    "SMU Mustangs": "ACC", "East Carolina Pirates": "AAC",
-    "Jacksonville State Gamecocks": "CUSA", "Liberty Flames": "CUSA",
-    "Sam Houston Bearkats": "CUSA", "Louisiana Tech Bulldogs": "CUSA",
-    "Western Kentucky Hilltoppers": "CUSA", "Middle Tennessee Blue Raiders": "CUSA",
-    "Southern Miss Golden Eagles": "Sun Belt", "Southern Miss": "Sun Belt",
-    "Louisiana-Monroe": "Sun Belt", "ULM Warhawks": "Sun Belt",
-    "Appalachian State Mountaineers": "Sun Belt", "James Madison Dukes": "Sun Belt",
-    "Marshall Thundering Herd": "Sun Belt", "Georgia Southern Eagles": "Sun Belt",
-    "Troy Trojans": "Sun Belt", "Arkansas State Red Wolves": "Sun Belt",
-    "Sacramento St.": "Big Sky", "Sacramento State Hornets": "Big Sky",
-    "North Dakota St.": "MVFC", "North Dakota State Bison": "MVFC",
-    "Montana State Bobcats": "Big Sky", "South Dakota State Jackrabbits": "MVFC",
-}
-
-_CONFERENCE_FALLBACKS: dict[str, dict[str, str]] = {
-    "nba": NBA_CONFERENCES,
-    "nfl": NFL_CONFERENCES,
-    "mlb": MLB_CONFERENCES,
-    "nhl": NHL_CONFERENCES,
-    "mls": MLS_CONFERENCES,
-    "wnba": WNBA_CONFERENCES,
-    "ncaa-football": NCAAF_CONFERENCES,
-}
-
-# ---------------------------------------------------------------------------
 # NCAA Tournament 2026 bracket — regions and seeds
 # Source: ESPN API (Selection Sunday 2026)
 # ---------------------------------------------------------------------------
@@ -464,23 +271,23 @@ def _lookup_ncaa_bracket(team_name: str) -> dict | None:
     return None
 
 
-def _lookup_conference_fallback(league_slug: str, team_name: str) -> str | None:
-    """Look up a team's conference from the static fallback map.
+def _extract_standings_label(standings: dict, field: str) -> str | None:
+    """Return a display label from Team.standings_data.
 
-    Tries exact match first, then substring containment (handles names like
-    "Brooklyn" matching "Brooklyn Nets").
+    StatPal and ad hoc backfills can store group labels as plain strings or as
+    small objects. Keep this tolerant so playoff grouping stays data-driven.
     """
-    fallback = _CONFERENCE_FALLBACKS.get(league_slug)
-    if not fallback:
+    raw_value = standings.get(field)
+    if raw_value is None:
         return None
-    # Exact match
-    if team_name in fallback:
-        return fallback[team_name]
-    # Substring match — team_name might be "Nets" or "Brooklyn"
-    name_lower = team_name.lower()
-    for full_name, conf in fallback.items():
-        if name_lower in full_name.lower() or full_name.lower() in name_lower:
-            return conf
+    if isinstance(raw_value, str):
+        label = raw_value.strip()
+        return label or None
+    if isinstance(raw_value, dict):
+        for key in ("name", "display_name", "displayName", "short_name", "abbreviation"):
+            value = raw_value.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return None
 
 
@@ -972,11 +779,12 @@ async def _get_team_metadata(
     session: AsyncSession,
     team_names: set[str],
     league_slug: str = "",
+    conference_field: str = "conference",
 ) -> dict[str, dict]:
     """Look up team metadata (logo, colors, record, conference) by name.
 
     Returns {normalized_name: metadata_dict}.
-    Falls back to static conference maps when standings_data is missing.
+    Conference/division labels come from Team.standings_data.
     """
     if not team_names:
         return {}
@@ -1016,13 +824,9 @@ async def _get_team_metadata(
         # Extract standings info if available
         standings = team.standings_data or {}
         if isinstance(standings, dict):
-            meta["conference"] = standings.get("conference")
-            meta["division"] = standings.get("division")
+            meta["conference"] = _extract_standings_label(standings, conference_field)
+            meta["division"] = _extract_standings_label(standings, "division")
             meta["seed"] = standings.get("position") or standings.get("seed")
-
-        # Fallback to static conference map if standings didn't provide one
-        if not meta["conference"] and league_slug and team.name:
-            meta["conference"] = _lookup_conference_fallback(league_slug, team.name)
 
         # NCAA Tournament: look up region and seed from bracket data
         if league_slug == "ncaa-basketball" and team.name:
@@ -2795,7 +2599,12 @@ async def get_playoff_grid(
                 if oid in outcome_id_to_name:
                     team_names_raw.add(outcome_id_to_name[oid])
 
-    team_meta = await _get_team_metadata(db, team_names_raw, league_slug=config.slug)
+    team_meta = await _get_team_metadata(
+        db,
+        team_names_raw,
+        league_slug=config.slug,
+        conference_field=config.conference_field,
+    )
 
     # Second merge pass: use team metadata to identify teams that share
     # the same team_id but have different normalized names
@@ -2973,10 +2782,7 @@ async def get_playoff_grid(
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
 
-        # Fallback conference lookup for teams without a Team model match
         conference = meta.get("conference")
-        if not conference and league_slug:
-            conference = _lookup_conference_fallback(league_slug, display_name)
 
         team_row = {
             "name": display_name,
@@ -3520,7 +3326,12 @@ async def get_team_progression_for_event(
         team_names_raw.add(home_grid_name)
     if away_grid_name:
         team_names_raw.add(away_grid_name)
-    team_meta = await _get_team_metadata(db, team_names_raw, league_slug=config.slug)
+    team_meta = await _get_team_metadata(
+        db,
+        team_names_raw,
+        league_slug=config.slug,
+        conference_field=config.conference_field,
+    )
 
     # Compute 24h changes
     relevant_outcome_ids = []

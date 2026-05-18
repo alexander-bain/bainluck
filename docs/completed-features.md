@@ -8,15 +8,21 @@
 - ✅ **Sports/My Stuff/native page decode fixes** — Sports feed now backfills beyond live cards; My Stuff hides noisy global category futures; league/native pages use corrected probability field types and response decoding.
 - ✅ **Futures tab removed from prod navigation** — The unfinished native Futures browser entry point is hidden from production sidebar/tab navigation and tracked as iOS-7 for rebuild. The 🍀 Bain Luck sidebar title and Calibration entry point remain visible.
 - ✅ **Native onboarding/sidebar polish** — fixed truncated percentage text, line-broken sidebar labels, and the oversized placeholder icon in the sidebar title.
+- ✅ **App Store launch navigation state documented** — release notes and review notes now describe the launch-safe native state: Futures browser hidden pending iOS-7, Calibration visible, 🍀 sidebar branding preserved, and production push entitlement complete.
 
 ### Native Maintainability Sweep
 - ✅ **All native ViewModels moved into `ViewModels/`** — extracted embedded `ObservableObject` classes from view files, including Discover, Feed, My Stuff, Event Detail, category pages, Search, Calibration, Daily Challenge, league/category grids, and futures detail/list.
+- ✅ **Daily Challenge component extracted** — `NativeDailyChallengeCard` and `NativeChallengeSheet` moved out of `DiscoverView.swift` into `Components/DailyChallengeCard.swift`.
+- ✅ **Hidden Futures browser rebuild groundwork** — the native Futures browser remains hidden, but now has grouped category structure, polished market rows, reusable browse components, and loading/error/empty states for iOS-7 review.
 - ✅ **View-model state access tightened** — read-only view-model-owned `@Published` state is now `private(set)`; fields that views bind to or assign remain mutable.
 - ✅ **Shared native utilities** — extracted clipboard, share URL, formatting, sport display, flag URL, flow layout, and color helpers. Share links now avoid force-unwrapped URLs.
 - ✅ **Native model/service docs** — added concise doc comments across native model types and key API/auth/navigation service methods.
 - ✅ **Native build verified** — full `xcodebuild -project 'ios/Bain Luck/Bain Luck.xcodeproj' -scheme 'Bain Luck' -destination 'generic/platform=iOS Simulator' -configuration Debug build` passed for the pushed batches.
 
-**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`
+### Backend Cleanup
+- ✅ **Playoff conference maps made data-driven** — removed large static conference fallback maps from `routes/playoffs.py`; playoff grouping now uses `Team.standings_data` with tolerant label parsing and tests for string/object standings payloads.
+
+**Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 
 ## May 17, 2026 — Rage Shake Triage #7 + Infrastructure + Polish
 

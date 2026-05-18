@@ -31,6 +31,8 @@ from app.routes.playoffs import (
     _merge_probabilities,
     _normalize_team_name,
     _strip_diacritics,
+    _extract_standings_label,
+    _get_team_metadata,
     _is_playoff_relevant_market,
     _should_prefix_merge,
     _alias_matches,
@@ -558,6 +560,101 @@ class TestNameNormalization:
         # The regex strips ". " (period before space), so "F.C." → "F.C" then "." at end stays
         # What matters: the function is deterministic and consistent
         assert n == _normalize_team_name("F.C. Barcelona")
+
+
+# ============================================================================
+# Team standings metadata
+# ============================================================================
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalars(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, _stmt):
+        return _FakeResult(self._rows)
+
+
+class TestTeamStandingsMetadata:
+    def test_extract_standings_label_from_string(self):
+        assert _extract_standings_label({"conference": "Eastern"}, "conference") == "Eastern"
+
+    def test_extract_standings_label_from_object(self):
+        standings = {"conference": {"displayName": "American League"}}
+        assert _extract_standings_label(standings, "conference") == "American League"
+
+    def test_extract_standings_label_ignores_missing_or_blank(self):
+        assert _extract_standings_label({}, "conference") is None
+        assert _extract_standings_label({"conference": "  "}, "conference") is None
+
+    @pytest.mark.asyncio
+    async def test_get_team_metadata_uses_standings_conference(self):
+        team = MagicMock()
+        team.id = 7
+        team.name = "Boston Celtics"
+        team.abbreviation = "BOS"
+        team.logo_url_small = None
+        team.logo_url_large = None
+        team.primary_color = "#007A33"
+        team.secondary_color = "#BA9653"
+        team.current_record = "50-20"
+        team.standings_data = {
+            "conference": "Eastern",
+            "division": "Atlantic",
+            "seed": 2,
+        }
+        team.alternate_names = ["Celtics"]
+
+        metadata = await _get_team_metadata(
+            _FakeSession([team]),
+            {"Boston Celtics"},
+            league_slug="nba",
+        )
+
+        row = metadata["boston celtics"]
+        assert row["conference"] == "Eastern"
+        assert row["division"] == "Atlantic"
+        assert row["seed"] == 2
+        assert metadata["bos"] is row
+        assert metadata["celtics"] is row
+
+    @pytest.mark.asyncio
+    async def test_get_team_metadata_does_not_fallback_to_hardcoded_conference(self):
+        team = MagicMock()
+        team.id = 8
+        team.name = "Los Angeles Lakers"
+        team.abbreviation = "LAL"
+        team.logo_url_small = None
+        team.logo_url_large = None
+        team.primary_color = None
+        team.secondary_color = None
+        team.current_record = None
+        team.standings_data = {}
+        team.alternate_names = []
+
+        metadata = await _get_team_metadata(
+            _FakeSession([team]),
+            {"Los Angeles Lakers"},
+            league_slug="nba",
+        )
+
+        assert metadata["los angeles lakers"]["conference"] is None
 
 
 # ============================================================================

@@ -1197,7 +1197,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 | # | Item | What | Files | Safety |
 |---|------|------|-------|--------|
 | ~~9~~ | ~~**Structured Logging**~~ | ✅ DONE May 15. `python-json-logger`, production-only via `DYNO` env var. | `app/main.py`, `app/tasks/__init__.py` | |
-| 11 | **Hardcoded Conference Maps → Data-Driven** | Pull from `Team.standings_data` instead of static dicts | `routes/playoffs.py` | Yellow |
+| ~~11~~ | ~~**Hardcoded Conference Maps → Data-Driven**~~ | ✅ DONE May 17 — playoff grouping now reads conference/division labels from `Team.standings_data` with tolerant string/object parsing; large hardcoded fallback maps removed. | `routes/playoffs.py`, `tests/test_playoff_grid.py` | |
 
 ### Product Features
 
@@ -1256,7 +1256,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------------|-------|--------|
 | ~~iOS-4~~ | ~~Dead/stale views cleanup~~ | ✅ Audited May 16 — all 89 Swift files are live and referenced. No dead code found. | `ios/.../Views/` | Green |
 | ~~iOS-6~~ | ~~Feed `limit=200` override~~ | ✅ VERIFIED May 17 — native Sports feed build passed with supplemental event backfill. | `FeedView.swift` | Green |
-| iOS-7 | Rebuild native Futures browser before re-exposing | Native Futures entry points are hidden from production navigation until the tab has a polished, useful browse experience with clear category structure, stable card layouts, and parity with the web futures browser. | `FuturesListView.swift`, `MainTabView.swift`, `LeaguesView.swift` | Yellow |
+| iOS-7 | Rebuild native Futures browser before re-exposing — partial | Native Futures entry points remain hidden from production navigation. May 17 groundwork added grouped category structure, polished market rows, loading/error/empty states, and stable row sizing; still needs final product review before re-exposure. | `FuturesListView.swift`, `FuturesBrowseComponents.swift`, `MainTabView.swift`, `LeaguesView.swift` | Yellow |
 | ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
 
 ---
@@ -1290,7 +1290,7 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|-------|------------|
 | ~~CQ-8~~ | ~~Extract DiscoverViewModel~~ | `ViewModels/DiscoverViewModel.swift` | ✅ DONE May 17 — moved the Discover state/load/personalization class out of `DiscoverView.swift`. View-local profile/debug helpers remain with the view. |
 | CQ-9 | Extract discover cards | New `Components/DiscoverFuturesCard.swift`, `DiscoverEventCard.swift` | Move `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` to own files |
-| CQ-10 | Extract daily challenge card | New `Components/DailyChallengeCard.swift` | Move `NativeDailyChallengeCard` + `NativeChallengeSheet` out |
+| ~~CQ-10~~ | ~~Extract daily challenge card~~ | `Components/DailyChallengeCard.swift` | ✅ DONE May 17 — moved `NativeDailyChallengeCard` and `NativeChallengeSheet` out of `DiscoverView.swift`. |
 | CQ-11 | Extract resolution card | New `Components/ResolutionCard.swift` | Move `NativeResolutionCard` out |
 
 **Result:** DiscoverView.swift drops from 2,259 → ~300 lines.
@@ -1342,28 +1342,29 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 **Goal:** Get Bain Luck approved and live on the App Store.
 
-**Current state:** TestFlight Build 3 uploaded. 5 parity features shipped (May 15-16). macOS + iOS builds clean. No prior App Store submission attempted.
+**Current state:** TestFlight Build 3 uploaded. 5 parity features shipped (May 15-16). macOS + iOS builds clean. Native launch-readiness sweep is complete: the unfinished Futures browser entry point is hidden pending iOS-7, the 🍀 Bain Luck sidebar branding is preserved, Calibration remains visible, ViewModels/utilities/docs/access control cleanup is done, and APS entitlement is production-ready. No prior App Store submission attempted.
 
 ### Must Do (submission blockers)
 
 | # | Item | Status | Effort | Where |
 |---|------|--------|--------|-------|
-| AS-1 | App Store Connect listing: name, subtitle, description, keywords | TODO | 30 min | [App Store Connect](https://appstoreconnect.apple.com) |
-| AS-2 | Screenshots: iPhone 6.7" (required), 6.1", iPad 13" | TODO | 1-2 hrs | Simulator or real device — Discover, event detail, calibration, championship grid |
+| AS-1 | App Store Connect listing: name, subtitle, description, keywords | COPY READY | 30 min | Copy from `docs/app-store-launch-plan.md` into [App Store Connect](https://appstoreconnect.apple.com) |
+| AS-2 | Screenshots: iPhone 6.7" (required), 6.1", iPad 13" | TODO | 1-2 hrs | Simulator or real device — Discover, Higher/Lower, event detail, championship grid, category page, Calibration |
 | AS-3 | Age rating questionnaire | TODO | 5 min | App Store Connect |
 | AS-4 | APS entitlement → production | ✅ DONE | 2 min | Changed in `Bain Luck.entitlements` |
 | AS-5 | Privacy policy URL in App Store Connect | TODO | 1 min | Enter `https://bainluck.com/privacy` |
 | AS-6 | Support URL in App Store Connect | TODO | 1 min | Enter `https://bainluck.com/about` or create a support page |
-| AS-7 | "What's New" release notes | TODO | 5 min | App Store Connect |
-| AS-8 | App Review notes | TODO | 5 min | Explain what the app does. Note: no demo account needed (Apple/Google Sign-In available). |
+| AS-7 | "What's New" release notes | COPY READY | 5 min | Copy from `docs/app-store-launch-plan.md`; public copy does not mention hidden Futures browser |
+| AS-8 | App Review notes | COPY READY | 5 min | Copy from `docs/app-store-launch-plan.md`; notes explain no demo account needed, no wagering, Futures browser hidden pending iOS-7, Calibration visible, 🍀 sidebar branding intentional, push optional |
 
 ### Should Do (rejection risk)
 
 | # | Item | Risk | Status | Notes |
 |---|------|------|--------|-------|
-| AS-9 | Gambling disclaimer in App Review notes + About page | Medium | ✅ DONE | Already in AboutView line 115: "Bain Luck is for informational and entertainment purposes only. We do not encourage or facilitate gambling." Copy into App Review notes. |
+| AS-9 | Gambling disclaimer in App Review notes + About page | Medium | ✅ DONE | About copy exists and App Review notes now include an explicit no-wagering/no-payments disclaimer. |
 | AS-10 | Verify IDFA/ATT not needed | Medium | ✅ DONE | No IDFA collection, no ATTrackingManager, no ad personalization. Privacy manifest correct. No ATT prompt needed. |
 | AS-11 | Launch screen check | Low | TODO | SwiftUI auto-generates one — verify it's not blank white on first launch. |
+| AS-15 | Final native navigation smoke check | Medium | TODO | Before upload, verify Futures browser is hidden, Calibration is visible, 🍀 sidebar title is preserved, and market detail pages still open from Discover/search/category/weather/link flows. |
 
 ### Nice to Have (post-launch)
 
@@ -1385,6 +1386,11 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 - [x] TestFlight builds uploading
 - [x] Web/native parity (5 features shipped May 15-16)
 - [x] All Xcode warnings resolved
+- [x] Native code quality sweep completed
+- [x] Futures browser entry point hidden pending iOS-7
+- [x] Calibration visible in native navigation
+- [x] 🍀 Bain Luck sidebar branding preserved
+- [x] App Store release notes and review notes drafted in `docs/app-store-launch-plan.md`
 
 **Files:** `ios/Bain Luck/Bain Luck/Bain Luck.entitlements`, `ios/Bain Luck/Bain Luck/Views/AboutView.swift`
 **Parallel Safety:** Green
