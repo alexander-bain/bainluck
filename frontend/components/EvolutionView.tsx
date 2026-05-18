@@ -52,6 +52,7 @@ export function EvolutionView({
   const [highlightedOutcomeId, setHighlightedOutcomeId] = useState<number | null>(null);
   const [selectedOutcomeIds, setSelectedOutcomeIds] = useState<Set<number> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showCombinedProbability, setShowCombinedProbability] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>(
     tournamentStarted ? "tournament" : "7d"
   );
@@ -241,6 +242,7 @@ export function EvolutionView({
           className=""
           timeRange={timeRange}
           tournamentStart={tournamentStart ?? null}
+          showCombinedProbability={showCombinedProbability}
         />
       </div>
       <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-surface-border px-3 py-2 sm:overflow-y-auto">
@@ -327,6 +329,16 @@ export function EvolutionView({
                 </div>
               </>
             )}
+
+            <label className="flex h-7 items-center gap-1.5 rounded-md border border-surface-border px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary">
+              <input
+                type="checkbox"
+                checked={showCombinedProbability}
+                onChange={(e) => setShowCombinedProbability(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-surface-border accent-text-primary"
+              />
+              <span className="whitespace-nowrap">Combined</span>
+            </label>
           </div>
 
           {/* Expand/collapse button */}

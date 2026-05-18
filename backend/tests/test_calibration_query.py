@@ -94,6 +94,20 @@ async def test_public_calibration_falls_back_to_settled_price_for_winner_status(
 
 
 @pytest.mark.asyncio
+async def test_public_calibration_classifies_only_non_null_changed_prices_as_closing_line():
+    calibration._cache = {"data": None, "timestamp": 0}
+    db = _FakeDB()
+
+    await calibration.public_calibration(db=db, bust=1)
+
+    futures_sql = str(db.statements[0])
+    assert "COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability" in futures_sql
+    assert "fo.calibration_probability IS NOT NULL" in futures_sql
+    assert "fo.calibration_probability IS DISTINCT FROM fo.opening_probability" in futures_sql
+    assert "COALESCE(fo.calibration_probability, fo.opening_probability) IS DISTINCT FROM" not in futures_sql
+
+
+@pytest.mark.asyncio
 async def test_public_calibration_keeps_grouped_markets_multi_outcome_only_when_eligible():
     calibration._cache = {"data": None, "timestamp": 0}
     db = _FakeDB()

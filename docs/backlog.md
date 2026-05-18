@@ -792,14 +792,14 @@ Claude CLI failed to process these because screenshot image handling returned `A
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**May 18 first slice shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, and Celery task registration. Focused tests cover skip/send/update behavior. Remaining integration: enqueue the Celery task from the admin lifecycle transition and finalize production delivery/compliance settings.
+**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email and already-sent reports, stable prompt input/body builders, Gmail/OpenAI side-effect seams for tests, and Celery task registration. Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. Remaining integration: finalize production delivery/compliance settings before broad user-facing sends.
 
 **Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
 
 **Implementation steps:**
 1. Create a Google Cloud service account with domain-wide delegation, grant it the `https://www.googleapis.com/auth/gmail.send` scope for `bugs@bainluck.com` (or your chosen sender). Add the service account JSON key as a Heroku config var (`GOOGLE_SERVICE_ACCOUNT_JSON`).
 2. ~~Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`~~ — ✅ first task slice shipped May 18
-3. In the admin PATCH endpoint (`routes/admin.py`), when `status` changes to `"fixed"` and `resolution_summary` is provided:
+3. ~~In the admin PATCH endpoint, when `status` changes to `"fixed"`/`"actioned"` and `resolution_summary` is provided, enqueue the Celery task~~ — ✅ shipped May 18
    - Look up the bug report's `user_email` and `description`
    - If `user_email` exists and `notification_sent_at` is NULL, enqueue the Celery task
 4. The Celery task:
@@ -1003,6 +1003,7 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
+- ✅ Closing-line cohort predicate fixed: `price_moved=True` now requires non-null `calibration_probability` that differs from opening price, so fallback opening-price rows do not pollute closing-line cohorts.
 - ✅ Odds API ground-truth (18,568 outcomes from completed+closed games)
 - ✅ `backfill_winners` (every 6h) — is_winner, calibration_probability, null untradeable (≤5 snaps + <2pp spread)
 - ✅ `backfill_polymarket_history` (every 6h) — CLOB API price history for zero-snap outcomes
@@ -1264,7 +1265,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 | # | Item | What | Depends on | Safety |
 |---|------|------|-----------|--------|
-| 12 | **Evolution Chart: Combined Probability** | Multi-source merged trend line on charts | Nothing | Yellow |
+| ~~12~~ | ~~**Evolution Chart: Combined Probability**~~ | ✅ DONE May 18 — optional dashed Combined line sums currently selected/visible outcomes while preserving existing per-outcome chart behavior. | | |
 | ~~13~~ | ~~**Line Movement Explainer v2**~~ | ✅ DONE May 18 — largest-movement focus, before/after probabilities, nearby scoring-play ordering, and anti-filler prompt instructions. | | |
 | 14 | **Freshness-Weighted Blending** | Time-decay for stale prediction market prices | More eval data | Yellow |
 | 15 | **DS/Analytics Infrastructure** | Analytical columns, `v_completed_events` view, Brier scores | Migration slot | Red |
@@ -1525,7 +1526,7 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `
 
 | Priority | Feature | Web Component | Effort |
 |----------|---------|--------------|--------|
-| Medium | Game Segments (quarter/half breakdown) | `GameSegments.tsx` | Small |
+| ~~Medium~~ | ~~Game Segments (quarter/half breakdown)~~ | ~~`GameSegments.tsx`~~ | ✅ SHIPPED May 18 — native event detail derives segment scoring from ESPN history snapshots for live/final games. |
 | Medium | Total Points Spectrum (spread+total viz) | `TotalPointsSpectrum.tsx` | Medium |
 | Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
 | Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |

@@ -138,6 +138,18 @@ struct EventDetailView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     heroSection(event)
+                    if let history = vm.history, (isLive || isFinished) {
+                        GameSegmentsView(
+                            history: history,
+                            sportKey: event.sport,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation
+                        )
+                    }
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -888,6 +900,225 @@ struct EventDetailView: View {
             .frame(width: 28, height: 28)
         }
     }
+}
+
+// MARK: - Game Segments
+
+private struct GameSegmentsView: View {
+    let history: EventHistoryResponse
+    var sportKey: String?
+    let homeTeam: String
+    let awayTeam: String
+    let homeTeamColor: Color
+    let awayTeamColor: Color
+    var homeTeamAbbrev: String?
+    var awayTeamAbbrev: String?
+
+    private var homeShort: String {
+        homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
+    }
+
+    private var awayShort: String {
+        awayTeamAbbrev ?? awayTeam.split(separator: " ").last.map(String.init) ?? "Away"
+    }
+
+    var body: some View {
+        if let breakdown = SegmentBreakdown(history: history, sportKey: sportKey) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Game Segments")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("Score by period")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 8) {
+                        GridRow {
+                            Text("")
+                                .frame(width: 54, alignment: .leading)
+                            ForEach(breakdown.segments) { segment in
+                                Text(segment.label)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 28)
+                            }
+                            Text("T")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 28)
+                        }
+
+                        segmentRow(
+                            team: awayShort,
+                            color: awayTeamColor,
+                            scores: breakdown.segments.map(\.awayScore),
+                            total: breakdown.awayTotal
+                        )
+                        segmentRow(
+                            team: homeShort,
+                            color: homeTeamColor,
+                            scores: breakdown.segments.map(\.homeScore),
+                            total: breakdown.homeTotal
+                        )
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding()
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func segmentRow(team: String, color: Color, scores: [Int], total: Int) -> some View {
+        GridRow {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+                Text(team)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .frame(width: 54, alignment: .leading)
+
+            ForEach(Array(scores.enumerated()), id: \.offset) { _, score in
+                Text("\(score)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 28)
+            }
+
+            Text("\(total)")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(.primary)
+                .frame(minWidth: 28)
+        }
+    }
+}
+
+private struct SegmentBreakdown {
+    let segments: [GameSegment]
+    let homeTotal: Int
+    let awayTotal: Int
+
+    init?(history: EventHistoryResponse, sportKey: String?) {
+        guard let espnHistory = history.espnHistory else { return nil }
+
+        let cumulativeByPeriod = espnHistory
+            .compactMap { point -> CumulativeSegment? in
+                guard let rawPeriod = point.period,
+                      let homeScore = point.homeScore,
+                      let awayScore = point.awayScore,
+                      let date = point.timestamp.asDate else {
+                    return nil
+                }
+
+                let label = Self.formatPeriodLabel(rawPeriod, sportKey: sportKey)
+                guard !label.isEmpty else { return nil }
+                return CumulativeSegment(
+                    label: label,
+                    date: date,
+                    homeScore: homeScore,
+                    awayScore: awayScore
+                )
+            }
+            .sorted { $0.date < $1.date }
+
+        guard !cumulativeByPeriod.isEmpty else { return nil }
+
+        var latestByLabel: [String: CumulativeSegment] = [:]
+        var orderedLabels: [String] = []
+
+        for point in cumulativeByPeriod {
+            if latestByLabel[point.label] == nil {
+                orderedLabels.append(point.label)
+            }
+            latestByLabel[point.label] = point
+        }
+
+        var previousHome = 0
+        var previousAway = 0
+        var segments: [GameSegment] = []
+
+        for label in orderedLabels {
+            guard let point = latestByLabel[label] else { continue }
+            let homeSegmentScore = point.homeScore - previousHome
+            let awaySegmentScore = point.awayScore - previousAway
+            guard homeSegmentScore >= 0, awaySegmentScore >= 0 else { return nil }
+
+            segments.append(GameSegment(label: label, homeScore: homeSegmentScore, awayScore: awaySegmentScore))
+            previousHome = point.homeScore
+            previousAway = point.awayScore
+        }
+
+        guard !segments.isEmpty, previousHome + previousAway > 0 else { return nil }
+        self.segments = segments
+        self.homeTotal = previousHome
+        self.awayTotal = previousAway
+    }
+
+    private static func formatPeriodLabel(_ rawPeriod: String, sportKey: String?) -> String {
+        let trimmed = rawPeriod.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        let sport = sportKey?.lowercased() ?? ""
+
+        if lower == "halftime" || lower == "half time" || lower == "ht" { return "" }
+        if lower.contains("pre") || lower.contains("final") { return "" }
+        let number = firstNumber(in: lower)
+        if lower.contains("ot") || lower.contains("overtime") {
+            return number.map { "OT\($0)" } ?? "OT"
+        }
+
+        if sport.hasPrefix("basketball_") || sport.hasPrefix("americanfootball_") {
+            if let number { return "Q\(number)" }
+        } else if sport.hasPrefix("icehockey_") {
+            if let number { return "P\(number)" }
+        } else if sport.hasPrefix("soccer_") {
+            if let number { return number <= 1 ? "1H" : "2H" }
+        } else if sport.hasPrefix("baseball_") {
+            if let number { return "\(number)" }
+        }
+
+        if lower.hasPrefix("q"), let number { return "Q\(number)" }
+        if lower.contains("quarter"), let number { return "Q\(number)" }
+        if lower.contains("period"), let number { return "P\(number)" }
+        if lower.contains("half"), let number { return "\(number)H" }
+        if let number { return "\(number)" }
+        return trimmed
+    }
+
+    private static func firstNumber(in value: String) -> Int? {
+        var digits = ""
+        for character in value {
+            if character.isNumber {
+                digits.append(character)
+            } else if !digits.isEmpty {
+                break
+            }
+        }
+        return Int(digits)
+    }
+}
+
+private struct GameSegment: Identifiable {
+    let label: String
+    let homeScore: Int
+    let awayScore: Int
+
+    var id: String { label }
+}
+
+private struct CumulativeSegment {
+    let label: String
+    let date: Date
+    let homeScore: Int
+    let awayScore: Int
 }
 
 // MARK: - Line Movement Explainer

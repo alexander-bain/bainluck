@@ -878,7 +878,8 @@ async def public_calibration(
             SELECT
                 COALESCE(fo.calibration_probability, fo.opening_probability) AS adj_opening_probability,
                 (fo.is_winner = true OR fo.current_probability >= 0.95) AS is_winner,
-                (fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
+                (fo.calibration_probability IS NOT NULL
+                 AND fo.calibration_probability IS DISTINCT FROM fo.opening_probability) AS price_moved,
                 cv.vm_id, cv.source, cv.category,
                 cv.eligible, cv.is_grouped,
                 (cv.is_grouped OR cv.eligible >= 3) AS is_multi,

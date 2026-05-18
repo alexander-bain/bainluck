@@ -1,7 +1,6 @@
 """Admin endpoints for discover quality, engagement, bug reports, and feedback."""
 
 
-import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -27,6 +26,38 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
+
+
+_BUG_FIXED_EMAIL_STATUSES = {"fixed", "actioned"}
+_BUG_FIXED_EMAIL_TASK_NAME = "app.tasks.send_bug_fixed_email"
+
+
+def _has_resolution_summary(resolution_summary: Optional[str]) -> bool:
+    return bool(resolution_summary and resolution_summary.strip())
+
+
+def _should_enqueue_bug_fixed_email(
+    *,
+    previous_status: Optional[str],
+    final_status: Optional[str],
+    final_resolution_summary: Optional[str],
+    notification_sent_at: Optional[datetime],
+) -> bool:
+    return (
+        final_status in _BUG_FIXED_EMAIL_STATUSES
+        and previous_status not in _BUG_FIXED_EMAIL_STATUSES
+        and _has_resolution_summary(final_resolution_summary)
+        and notification_sent_at is None
+    )
+
+
+def _enqueue_bug_fixed_email(report_id: int) -> None:
+    try:
+        from app.tasks import celery_app
+
+        celery_app.send_task(_BUG_FIXED_EMAIL_TASK_NAME, args=[report_id])
+    except Exception as exc:
+        logger.warning("Bug fix email enqueue failed for report %d: %s", report_id, exc)
 
 
 @router.get("/hook-coverage")
@@ -953,7 +984,20 @@ async def update_bug_report(
     if user_email is not None:
         values["user_email"] = user_email or None
 
+    notification_state = None
     if values:
+        if status in _BUG_FIXED_EMAIL_STATUSES:
+            current_result = await db.execute(
+                select(
+                    BugReport.status,
+                    BugReport.resolution_summary,
+                    BugReport.notification_sent_at,
+                ).where(BugReport.id == report_id)
+            )
+            notification_state = current_result.first()
+            if notification_state is None:
+                raise HTTPException(404, f"Bug report {report_id} not found")
+
         result = await db.execute(
             update(BugReport).where(BugReport.id == report_id).values(**values)
         )
@@ -961,17 +1005,19 @@ async def update_bug_report(
             raise HTTPException(404, f"Bug report {report_id} not found")
         await db.commit()
 
-        if status == "actioned" and resolution_summary:
-            async def _send_notification(rid: int) -> None:
-                try:
-                    from app.services.database import async_session_maker
-                    from app.tasks.bug_notifications import send_bug_fixed_email
-                    async with async_session_maker() as bg_db:
-                        await send_bug_fixed_email(rid, bg_db)
-                except Exception as exc:
-                    logger.warning("Bug fix email failed for report %d: %s", rid, exc)
-
-            asyncio.create_task(_send_notification(report_id))
+        if notification_state is not None:
+            final_resolution_summary = (
+                resolution_summary
+                if resolution_summary is not None
+                else notification_state.resolution_summary
+            )
+            if _should_enqueue_bug_fixed_email(
+                previous_status=notification_state.status,
+                final_status=status,
+                final_resolution_summary=final_resolution_summary,
+                notification_sent_at=notification_state.notification_sent_at,
+            ):
+                _enqueue_bug_fixed_email(report_id)
 
     return {"status": "ok"}
 
@@ -1020,4 +1066,3 @@ async def test_daily_digest(
     from app.tasks.daily_digest import send_daily_digest
     success = await send_daily_digest(db, to_email=email)
     return {"status": "sent" if success else "no_content", "to": email}
-

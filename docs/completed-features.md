@@ -8,6 +8,10 @@
 - ✅ **Native line movement explainer** — iOS/macOS event detail fetches the existing line-movement endpoint and renders a compact "Why the Line Moved" card when explanation content exists.
 - ✅ **Line Movement Explainer v2 backend prompt** — prompt/context now anchors on the largest movement, before/after probabilities, beneficiary, and nearest scoring context while avoiding unsupported generic filler.
 - ✅ **Additional guardrails** — playoff championship overround normalization, StatPal raw-period preservation into `Event.period`, and native access-control tightening for obvious view-local properties.
+- ✅ **Bug fixed email enqueue wiring** — admin bug-report PATCH now enqueues the Celery notification task only on transition to `fixed`/`actioned` with a resolution summary and no prior notification.
+- ✅ **Calibration closing-line cohort fix** — `price_moved=True` now requires a non-null calibration price that differs from opening price, keeping fallback opening-price rows out of closing-line metrics.
+- ✅ **Evolution chart combined probability** — web Evolution charts can show an optional dashed Combined line summing currently selected/visible outcomes.
+- ✅ **Native game segments** — iOS/macOS event detail now shows compact score-by-period segments for live/final games using existing ESPN history snapshots.
 
 ## May 17, 2026 — Native iOS Code Quality + Navigation Cleanup
 

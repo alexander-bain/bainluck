@@ -31,6 +31,9 @@ const EVOLUTION_COLORS = [
   "#065f46", // emerald
 ];
 
+const COMBINED_PROBABILITY_KEY = "combined_probability";
+const COMBINED_PROBABILITY_COLOR = "#111827";
+
 type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
 
 interface RoundBoundary {
@@ -49,6 +52,8 @@ interface EvolutionChartProps {
   timeRange: TimeRange;
   /** ISO start date — required cutoff for the "tournament" time range */
   tournamentStart?: string | null;
+  /** Show the summed probability of all currently selected outcome lines */
+  showCombinedProbability?: boolean;
 }
 
 /** Merge all outcome histories into unified time-bucketed chart data */
@@ -56,7 +61,8 @@ function buildChartData(
   historyData: FuturesOutcomeHistory[],
   selectedIds: Set<number>,
   timeRange: TimeRange,
-  tournamentStart?: string | null
+  tournamentStart?: string | null,
+  showCombinedProbability = false
 ): { data: Record<string, number | string | null>[]; domain: [number, number] } {
   let cutoff = 0;
   if (timeRange === "7d") cutoff = subDays(new Date(), 7).getTime();
@@ -99,6 +105,7 @@ function buildChartData(
 
   let minProb = 1;
   let maxProb = 0;
+  const latestKnownProbabilities = new Map<number, number>();
 
   const data = sortedTs.map((ts) => {
     const row: Record<string, number | string | null> = {
@@ -109,8 +116,21 @@ function buildChartData(
       const val = map.get(ts) ?? null;
       row[`outcome_${oid}`] = val;
       if (val !== null) {
+        latestKnownProbabilities.set(oid, val);
         if (val < minProb) minProb = val;
         if (val > maxProb) maxProb = val;
+      }
+    }
+    if (showCombinedProbability && outcomeMaps.size > 1) {
+      let combined = 0;
+      for (const val of latestKnownProbabilities.values()) {
+        combined += val;
+      }
+      const combinedValue = latestKnownProbabilities.size > 0 ? Math.min(1, combined) : null;
+      row[COMBINED_PROBABILITY_KEY] = combinedValue;
+      if (combinedValue !== null) {
+        if (combinedValue < minProb) minProb = combinedValue;
+        if (combinedValue > maxProb) maxProb = combinedValue;
       }
     }
     return row;
@@ -135,6 +155,7 @@ export function EvolutionChart({
   className,
   timeRange,
   tournamentStart,
+  showCombinedProbability = false,
 }: EvolutionChartProps) {
   // Build name lookup and color assignment
   const outcomeInfo = useMemo(() => {
@@ -157,9 +178,17 @@ export function EvolutionChart({
   }, [historyData, selectedOutcomeIds]);
 
   const { data, domain } = useMemo(
-    () => buildChartData(historyData, selectedOutcomeIds, timeRange, tournamentStart),
-    [historyData, selectedOutcomeIds, timeRange, tournamentStart]
+    () => buildChartData(
+      historyData,
+      selectedOutcomeIds,
+      timeRange,
+      tournamentStart,
+      showCombinedProbability
+    ),
+    [historyData, selectedOutcomeIds, timeRange, tournamentStart, showCombinedProbability]
   );
+
+  const shouldShowCombinedProbability = showCombinedProbability && selectedOutcomeIds.size > 1;
 
   const formatXAxis = useCallback(
     (value: string) => {
@@ -220,6 +249,7 @@ export function EvolutionChart({
             let maxVal = -1;
             let maxId: number | null = null;
             for (const entry of state.activePayload) {
+              if (!entry.dataKey?.toString().startsWith("outcome_")) continue;
               const val = entry.value as number;
               if (val != null && val > maxVal) {
                 maxVal = val;
@@ -262,7 +292,7 @@ export function EvolutionChart({
                   (a, b) => ((b.value as number) ?? 0) - ((a.value as number) ?? 0)
                 );
               return (
-                <div className="bg-surface-card border border-surface-border rounded-lg p-3 text-sm shadow-lg">
+                <div className="bg-surface-card border border-surface-border rounded-lg p-3 text-sm shadow-lg max-w-[240px]">
                   <div className="text-text-muted mb-2 text-xs">
                     {(() => {
                       try {
@@ -273,6 +303,7 @@ export function EvolutionChart({
                     })()}
                   </div>
                   {sorted.map((entry) => {
+                    const isCombined = entry.dataKey === COMBINED_PROBABILITY_KEY;
                     const match = entry.dataKey?.toString().match(/outcome_(\d+)/);
                     const oid = match ? parseInt(match[1], 10) : 0;
                     const info = outcomeInfo.get(oid);
@@ -283,10 +314,14 @@ export function EvolutionChart({
                       >
                         <div
                           className="w-[7px] h-[7px] rounded-full flex-shrink-0"
-                          style={{ backgroundColor: info?.color ?? "var(--text-muted)" }}
+                          style={{
+                            backgroundColor: isCombined
+                              ? COMBINED_PROBABILITY_COLOR
+                              : info?.color ?? "var(--text-muted)",
+                          }}
                         />
                         <span className="text-text-secondary truncate max-w-[140px] text-xs font-medium">
-                          {info?.name ?? "Unknown"}
+                          {isCombined ? "Combined" : info?.name ?? "Unknown"}
                         </span>
                         <span className="text-text-primary font-mono text-xs font-semibold ml-auto tabular-nums">
                           {((entry.value as number) * 100).toFixed(1)}%
@@ -334,6 +369,22 @@ export function EvolutionChart({
               />
             );
           })}
+
+          {/* Combined selected-outcome probability */}
+          {shouldShowCombinedProbability && (
+            <Line
+              key={COMBINED_PROBABILITY_KEY}
+              type="monotone"
+              dataKey={COMBINED_PROBABILITY_KEY}
+              stroke={COMBINED_PROBABILITY_COLOR}
+              strokeWidth={2.2}
+              strokeOpacity={highlightedOutcomeId ? 0.45 : 0.9}
+              strokeDasharray="7 4"
+              dot={false}
+              connectNulls
+              name="Combined"
+            />
+          )}
 
           {/* One line per selected outcome */}
           {Array.from(outcomeInfo.entries()).map(([oid, info]) => (
