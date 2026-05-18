@@ -129,16 +129,31 @@ async def get_snapshot_distribution(
     elif status_filter == "resolved":
         status_clause = "AND fm.status = 'resolved'"
 
+    sample_size = 1000
+
     rows = (await db.execute(text(f"""
-        WITH outcome_snap_counts AS (
-            SELECT fo.id AS outcome_id,
-                   fm.source,
-                   COUNT(fos.id) AS snap_count
+        WITH source_list AS (
+            SELECT DISTINCT fm.source
             FROM futures_markets fm
-            JOIN futures_outcomes fo ON fo.market_id = fm.id
-            LEFT JOIN futures_odds_snapshots fos ON fos.outcome_id = fo.id
             WHERE 1=1 {status_clause}
-            GROUP BY fo.id, fm.source
+        ),
+        sampled AS (
+            SELECT fo.id AS outcome_id, fm.source
+            FROM source_list sl
+            JOIN LATERAL (
+                SELECT fm2.id, fm2.source
+                FROM futures_markets fm2
+                WHERE fm2.source = sl.source {status_clause.replace('fm.', 'fm2.')}
+                ORDER BY RANDOM()
+                LIMIT :sample_markets
+            ) fm ON true
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+        ),
+        snap_counts AS (
+            SELECT s.outcome_id, s.source,
+                   (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                    WHERE fos.outcome_id = s.outcome_id) AS snap_count
+            FROM sampled s
         )
         SELECT source,
                COUNT(*) AS total,
@@ -150,17 +165,28 @@ async def get_snapshot_distribution(
                COUNT(*) FILTER (WHERE snap_count > 100) AS bucket_100_plus,
                ROUND(AVG(snap_count)::numeric, 1) AS avg_snaps,
                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snap_count) AS median_snaps
-        FROM outcome_snap_counts
+        FROM snap_counts
         GROUP BY source
         ORDER BY source
+    """), {"sample_markets": sample_size})).all()
+
+    total_outcomes = (await db.execute(text(f"""
+        SELECT fm.source, COUNT(*) AS cnt
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE 1=1 {status_clause}
+        GROUP BY fm.source
     """))).all()
+    totals_map = {r.source: r.cnt for r in total_outcomes}
 
     return {
         "status_filter": status_filter,
+        "sampling": f"~{sample_size} markets per source",
         "sources": [
             {
                 "source": r.source,
-                "total_outcomes": r.total,
+                "total_outcomes_actual": totals_map.get(r.source, 0),
+                "sampled_outcomes": r.total,
                 "zero_snapshots": r.zero,
                 "1_to_5": r.bucket_1_5,
                 "6_to_20": r.bucket_6_20,
