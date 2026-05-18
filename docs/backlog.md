@@ -1190,6 +1190,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ Feed/events/playoffs routes: parameter validation, empty envelopes, mocked scored items, live-odds provider errors, playoff grid and league-futures contracts
 - ✅ Predictions and seeded routes: submit validation, anonymous persistence, detailed stats/resolutions, event detail nested contracts, seeded feed pagination and nested field stability
 - ✅ Game-market/related-futures grouping guardrails: period serialization, linked-market filter bypass, fallback period derivation, related-futures dedup/grouping, player metadata, and market `group_id` precedence/canonical fallback
+- ✅ Matching/categorization guardrails: market label cleanup, futures category/tier classification, name normalization, roster diacritics, and same-city team ambiguity handling
 
 **Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`
 **Parallel Safety:** Green

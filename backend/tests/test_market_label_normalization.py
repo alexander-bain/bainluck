@@ -107,6 +107,68 @@ class TestNormalizeMarketLabel:
         assert normalize_market_label(raw) == expected
 
 
+class TestDisplayFacingNormalizationGuardrails:
+    """Guardrails for labels used directly by cards and event detail rows."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        (
+            "Boston Celtics 2025-26 Season Win Total Over 48.5",
+            "Boston Celtics Win Total",
+        ),
+        (
+            "Boston Celtics 2025\u20132026 Season Win Total Under 48.5",
+            "Boston Celtics Win Total",
+        ),
+        (
+            "Los Angeles Dodgers 2025-2026 Season Win Total Over 93.5",
+            "Los Angeles Dodgers Win Total",
+        ),
+    ])
+    def test_team_win_total_thresholds_collapse_to_display_label(self, raw, expected):
+        clean = normalize_market_label(raw)
+
+        assert clean == expected
+        assert classify_market_category(clean, raw_name=raw) == "season_stat"
+        assert get_merge_group(clean) == "win_total"
+
+    @pytest.mark.parametrize("raw", [
+        "Celtics vs. Heat: First Half Winner",
+        "Celtics vs. Heat: 1H Moneyline",
+        "Celtics vs. Heat: Tyler Herro: Points O/U 22.5",
+    ])
+    def test_game_prop_labels_keep_market_qualifier(self, raw):
+        clean = normalize_market_label(raw)
+
+        assert clean == raw
+        assert classify_market_category(clean, raw_name=raw) == "game_prop"
+        assert get_merge_group(clean) is None
+        assert compute_playoff_stage(clean, raw_name=raw) == (None, None, None)
+
+    def test_league_year_prefix_preserves_conference_market_shape(self):
+        raw = "NBA: 2026 Eastern Conference Champion"
+        clean = normalize_market_label(raw)
+
+        assert clean == "Eastern Conference Champion"
+        assert classify_market_category(clean, raw_name=raw) == "playoff_path"
+        assert get_merge_group(clean) == "eastern_conf_champion"
+        assert compute_playoff_stage(clean, raw_name=raw) == (
+            "conference",
+            "Eastern Champ",
+            4,
+        )
+
+    @pytest.mark.parametrize("raw", [
+        "NHL President\u2019s Trophy Winner",
+        "NHL Presidents' Trophy Winner",
+    ])
+    def test_presidents_trophy_apostrophe_variants_normalize_for_grouping(self, raw):
+        clean = normalize_market_label(raw)
+
+        assert clean == "Presidents' Trophy"
+        assert classify_market_category(clean, raw_name=raw) == "season_stat"
+        assert get_merge_group(clean) == "presidents_trophy"
+
+
 class TestClassifyMarketCategory:
 
     @pytest.mark.parametrize("label,expected_cat", [

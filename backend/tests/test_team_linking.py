@@ -128,6 +128,13 @@ class TestMatchOutcomeToTeam:
     def test_warriors_full_name(self):
         assert match_outcome_to_team("Golden State Warriors", self.TEAMS) == 3
 
+    def test_city_only_outcome_does_not_pick_first_same_city_team(self):
+        """City-only outcomes are ambiguous when multiple teams share a city."""
+        assert match_outcome_to_team("Los Angeles", self.TEAMS) is None
+
+    def test_exact_team_match_wins_even_with_same_city_teams(self):
+        assert match_outcome_to_team("Clippers", self.TEAMS) == 4
+
 
 # =============================================================================
 # Match Outcome to Roster
@@ -196,6 +203,15 @@ class TestMatchOutcomeToRoster:
         rosters = {10: ["Aaron Judge", "Giancarlo Stanton"]}
         assert match_outcome_to_roster("Aaron Judge Over 2.5 Hits", rosters) == 10
         assert match_outcome_to_roster("Aaron Smith", rosters) is None
+
+    def test_roster_match_strips_diacritics(self):
+        rosters = {11: ["José Alvarado"]}
+        assert match_outcome_to_roster("Jose Alvarado Over 1.5 Steals", rosters) == 11
+
+    def test_draw_and_tie_are_generic_roster_outcomes(self):
+        rosters = {11: ["Drew Timme", "Ty Jerome"]}
+        assert match_outcome_to_roster("Draw", rosters) is None
+        assert match_outcome_to_roster("Tie", rosters) is None
 
 
 # =============================================================================

@@ -1,7 +1,14 @@
-"""Tests for the unified team name normalization and matching module."""
+"""Tests for the unified team/player/market name normalization module."""
 
 import pytest
-from app.utils.name_normalization import normalize_name, names_match, token_overlap_score
+from app.utils.name_normalization import (
+    clean_slug,
+    match_key,
+    names_match,
+    normalize_name,
+    normalize_team_name,
+    token_overlap_score,
+)
 
 
 # =============================================================================
@@ -74,6 +81,79 @@ class TestNormalizeName:
 
 
 # =============================================================================
+# normalize_team_name tests
+# =============================================================================
+
+class TestNormalizeTeamName:
+    """Tests for team-specific normalization used by event matching."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("St. Louis Cardinals", "st louis cardinals"),
+            ("Oklahoma City Thunder.", "oklahoma city thunder"),
+            ("Borussia Dortmund (Res)", "borussia dortmund"),
+            ("Borussia Dortmund (W)", "borussia dortmund"),
+        ],
+    )
+    def test_team_source_formatting_noise(self, raw, expected):
+        assert normalize_team_name(raw) == expected
+
+    def test_team_apostrophe_preserved_for_athletics_abbreviation(self):
+        """A's is a meaningful MLB source abbreviation, not punctuation noise."""
+        assert normalize_team_name("A's") == "a's"
+
+
+# =============================================================================
+# match_key tests
+# =============================================================================
+
+class TestMatchKey:
+    """Tests for player/nominee dedup keys used across market sources."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("Luka Dončić", "luka doncic"),
+            ("J.J. McCarthy", "jj mccarthy"),
+            ("D'Angelo Russell", "dangelo russell"),
+            ("D\u2019Angelo Russell", "dangelo russell"),
+            ("Shohei Ohtani: 2+ hits", "shohei ohtani"),
+        ],
+    )
+    def test_player_name_keys_strip_source_formatting(self, raw, expected):
+        assert match_key(raw) == expected
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("The Masters", "masters"),
+            ("The Open Championship: Winner", "open championship"),
+            ("Best Picture: Anora", "best picture"),
+        ],
+    )
+    def test_market_or_nominee_keys_drop_prefixes_and_suffixes(self, raw, expected):
+        assert match_key(raw) == expected
+
+
+# =============================================================================
+# clean_slug tests
+# =============================================================================
+
+class TestCleanSlug:
+    """Tests for market/tournament slug normalization."""
+
+    def test_strips_presented_by_sponsor_suffix(self):
+        assert clean_slug("Valero Texas Open presented by Mastercard") == "valero-texas-open"
+
+    def test_strips_powered_by_sponsor_suffix(self):
+        assert clean_slug("NBA Cup powered by Emirates") == "nba-cup"
+
+    def test_market_punctuation_becomes_single_hyphen_boundaries(self):
+        assert clean_slug("The Open Championship: Winner") == "the-open-championship-winner"
+
+
+# =============================================================================
 # names_match tests — positive cases
 # =============================================================================
 
@@ -121,6 +201,21 @@ class TestNamesMatchPositive:
         with the existing behavior in both feed.py and espn_sync.py."""
         assert names_match("South Carolina", "South Carolina State")
 
+    def test_la_lakers_vs_los_angeles_lakers(self):
+        """City abbreviation expansion: 'LA' -> 'Los Angeles'.
+        Token overlap after expansion: {'los', 'angeles', 'lakers'} = 1.0."""
+        assert names_match("LA Lakers", "Los Angeles Lakers")
+
+    def test_st_louis_period_variants_match(self):
+        assert names_match("St.Louis Cardinals", "St Louis Cardinals")
+
+    def test_city_abbreviation_matches_full_team_name(self):
+        assert names_match("NY Knicks", "New York Knicks")
+        assert names_match("KC Chiefs", "Kansas City Chiefs")
+
+    def test_womens_suffix_matches_shared_source_name(self):
+        assert names_match("Manchester City Women", "Manchester City")
+
 
 # =============================================================================
 # names_match tests — negative cases
@@ -158,11 +253,6 @@ class TestNamesMatchNegative:
 
     def test_georgia_southern_vs_south_florida_bulls(self):
         assert not names_match("Georgia Southern Eagles", "South Florida Bulls")
-
-    def test_la_lakers_vs_los_angeles_lakers(self):
-        """City abbreviation expansion: 'LA' -> 'Los Angeles'.
-        Token overlap after expansion: {'los', 'angeles', 'lakers'} = 1.0."""
-        assert names_match("LA Lakers", "Los Angeles Lakers")
 
 
 # =============================================================================

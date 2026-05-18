@@ -76,9 +76,13 @@ def match_outcome_to_team(
     if not outcome_name or outcome_name.lower() in ("yes", "no", "over", "under"):
         return None
 
+    matched_team_ids = []
     for team in teams:
         if _names_match(outcome_name, team["name"], team.get("alternate_names")):
-            return team["id"]
+            matched_team_ids.append(team["id"])
+
+    if len(matched_team_ids) == 1:
+        return matched_team_ids[0]
 
     return None
 

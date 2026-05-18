@@ -31,6 +31,7 @@
 - ✅ **Feed/events/playoff route contracts expanded** — added deterministic tests for feed scoring envelopes, query validation, event list/search/typeahead/live-odds error behavior, playoff grids, league futures, and golf schedule error handling.
 - ✅ **Prediction and seeded route contracts expanded** — added deterministic tests for prediction submit/stats/resolutions, seeded event detail nested contracts, and seeded feed pagination/nested payload stability.
 - ✅ **Game-market and related-futures grouping guardrails** — added backend tests for period-aware game-market serialization, linked-market filter bypass, fallback period derivation, related-futures dedup/formatting, player metadata, and market `group_id`/canonical precedence.
+- ✅ **Matching and categorization guardrails** — added tests for market-label cleanup, futures category/tier classification, name normalization, and team-linking edge cases. Ambiguous same-city futures outcomes now return no team instead of linking to the first matching city team.
 
 **Files:** `ios/Bain Luck/Bain Luck/ViewModels/`, `ios/Bain Luck/Bain Luck/Utilities/`, `ios/Bain Luck/Bain Luck/Components/`, `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`, `ios/Bain Luck/Bain Luck/Views/MainTabView.swift`, `ios/Bain Luck/Bain Luck/Models/`, `docs/backlog.md`, `docs/ios-code-quality-plan.md`, `docs/app-store-launch-plan.md`
 

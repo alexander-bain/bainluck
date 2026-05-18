@@ -11,6 +11,7 @@ from app.utils.futures_categorization import (
     detect_game_prop_sport, is_game_prop, generate_category_tags,
     LEAGUE_TO_SPORT_CATEGORY,
 )
+from app.utils.market_label_normalization import compute_market_tier
 
 
 # =============================================================================
@@ -1348,3 +1349,55 @@ class TestNewPatterns:
     def test_engagement_on_show(self):
         """Reality TV engagement markets should be entertainment."""
         assert categorize_by_rules("Will they get engaged on Love Is Blind Season 9?") == "entertainment"
+
+
+# =============================================================================
+# Discover/category page guardrails
+# =============================================================================
+class TestDiscoverCategoryGuardrails:
+    """Focused category and tier guardrails for feed-visible edge cases."""
+
+    @pytest.mark.parametrize(
+        ("market_name", "expected_category"),
+        [
+            ("Monte-Carlo Masters Winner", "tennis"),
+            ("Will Tesla report earnings above estimates?", "economics"),
+            ("Will OpenAI release GPT-5 before Google Gemini 3?", "tech"),
+            ("Hurricane makes landfall in Florida before September?", "weather"),
+            ("Oscar Best Picture winner", "entertainment"),
+            ("Which party will win the House race for FL-15?", "politics"),
+            ("Will Trump create a Bitcoin reserve?", "politics"),
+        ],
+    )
+    def test_feed_visible_market_names_land_in_expected_category(
+        self,
+        market_name,
+        expected_category,
+    ):
+        assert categorize_by_rules(market_name) == expected_category
+
+    @pytest.mark.parametrize(
+        ("market_name", "source_category", "sport_category", "expected_tier"),
+        [
+            ("2026 NBA Champion", "game_prop", "basketball", 1),
+            ("NBA Northwest Division Winner", "game_prop", "basketball", 4),
+            ("Make NBA Playoffs", "game_prop", "basketball", 4),
+            ("NBA MVP Award Winner", "championship", "basketball", 3),
+            ("NFC East Division Winner", "championship", "football", 4),
+            ("Celtics vs 76ers: First Half Winner", "championship", "basketball", 5),
+            ("76ers vs. Celtics", "championship", "basketball", 5),
+            ("Will the Fed cut rates in March?", "championship", "economics", 2),
+        ],
+    )
+    def test_tier_uses_market_name_before_unreliable_source_category(
+        self,
+        market_name,
+        source_category,
+        sport_category,
+        expected_tier,
+    ):
+        assert compute_market_tier(
+            market_name,
+            category=source_category,
+            sport_category=sport_category,
+        ) == expected_tier
