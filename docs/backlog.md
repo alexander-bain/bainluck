@@ -1054,6 +1054,23 @@ City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Ro
 
 Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map, Data Architecture, Metrics, Principles, Non-Goals. Present tense.
 
+### ACTION ITEM: Check Snapshot Distribution Results (May 18)
+
+**Deployed:** `GET /api/admin/snapshots/distribution` (reads from Redis cache, computed by Celery task).
+
+**Steps:**
+1. Trigger: `POST /api/admin/snapshots/distribution?secret=$ADMIN_TOKEN`
+2. Wait 2-5 min for Celery to finish
+3. Read: `GET /api/admin/snapshots/distribution?secret=$ADMIN_TOKEN`
+
+**What to look for:** `sparse_pct` (outcomes with 0-5 snapshots) and `median_snapshots` per source. If Polymarket or Kalshi median < 20, the "flat line" chart problem is widespread and the history backfill tasks need their limits raised or cadence increased. If sparse_pct > 30% on any source, investigate whether the backfill is targeting the right outcomes.
+
+**Context:** User reported flat-line charts on futures detail pages — single data point stretched across time. Zero-snapshot outcomes are down to 0.2%, but sparse snapshots (1-5) may still cause poor chart experiences.
+
+**Files:** `backend/app/tasks/monitoring.py` (task), `backend/app/routes/admin_data_quality.py` (endpoints)
+
+---
+
 ### Workstream: is_winner Backfill (ACTIVE — monitor every session)
 
 **Goal:** Every resolved outcome has correct `is_winner`. Without this, the calibration curve is built on a biased subset.
