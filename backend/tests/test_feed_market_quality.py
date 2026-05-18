@@ -425,6 +425,20 @@ class TestMarketQualityClassification:
         assert minor.story_key == "story:minor_soccer_leagues"
         assert major.story_key != "story:minor_soccer_leagues"
 
+    def test_story_key_groups_fifa_world_cup_futures(self):
+        germany = classify_market_quality(
+            "Will Germany win the 2026 FIFA World Cup?",
+            sport_category="soccer",
+        )
+        france = classify_market_quality(
+            "Will France win the 2026 FIFA World Cup?",
+            sport_category="soccer",
+        )
+
+        assert germany.story_key == "story:fifa_world_cup"
+        assert france.story_key == "story:fifa_world_cup"
+        assert germany.quality_class == "compelling"
+
     def test_story_key_groups_repeated_company_stake_and_tournament_props(self):
         stake = classify_market_quality(
             "Will the US federal government take a stake in Lockheed Martin Corporation?",

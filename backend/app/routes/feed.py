@@ -254,12 +254,17 @@ _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
     "%aliens%",
     "%ufo%",
     "%extraterrestrial%",
+    "%xi jinping%",
     "%openai%",
     "%anthropic%",
     "%claude%",
     "%gpt%",
     "%gemini%",
     "%deepseek%",
+    "%spacex%",
+    "%starship%",
+    "%best ai%",
+    "%recession%",
     "%eurovision%",
     "%oscars%",
     "%academy award%",
@@ -267,6 +272,9 @@ _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
     "%emmy%",
     "%survivor%",
     "%netflix%",
+    "%spotify%",
+    "%billboard%",
+    "%rotten tomatoes%",
     "%hurricane%",
     "%earthquake%",
     "%wildfire%",
@@ -275,11 +283,28 @@ _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
     "%hantavirus%",
 )
 
+_DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS = (
+    "%fifa world cup%",
+    "%world cup%",
+    "%champions league%",
+    "%super bowl%",
+    "%nba finals%",
+    "%stanley cup%",
+    "%world series%",
+)
+
 
 def _discover_editorial_recall_filter():
     """SQL filter for high-texture Discover candidates that can be low volume."""
     return or_(
         *(FuturesMarket.name.ilike(pattern) for pattern in _DISCOVER_EDITORIAL_RECALL_PATTERNS)
+    )
+
+
+def _discover_sports_editorial_recall_filter():
+    """SQL filter for sports futures that are broad enough for Discover."""
+    return or_(
+        *(FuturesMarket.name.ilike(pattern) for pattern in _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS)
     )
 
 # Sport keys allowed in My Stuff feed (Tier 1 + Tier 2 from SPORT_POLLING_TIERS).
@@ -1239,6 +1264,19 @@ async def _discover_candidate_pool_trace(
             _SPORTS_POSTSEASON_SQL_FILTER,
             [
                 FuturesMarket.resolution_date.asc().nulls_last(),
+                FuturesMarket.updated_at.desc().nulls_last(),
+            ],
+            80,
+        ),
+        (
+            "sports_editorial_recall",
+            and_(
+                FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+                _discover_sports_editorial_recall_filter(),
+            ),
+            [
+                FuturesMarket.market_tier.asc().nulls_last(),
+                FuturesMarket.volume_24h.desc().nulls_last(),
                 FuturesMarket.updated_at.desc().nulls_last(),
             ],
             80,
@@ -2730,6 +2768,24 @@ async def _score_futures(
         .limit(80)
     )
 
+    # Pool 1c: broad sports futures with mainstream Discover value. This keeps
+    # World Cup / Super Bowl / Finals style markets from being crowded out by
+    # generic tier ordering while still passing through normal story caps.
+    sports_editorial_recall_query = (
+        select(FuturesMarket.id)
+        .where(
+            *id_filters,
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+            _discover_sports_editorial_recall_filter(),
+        )
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(80)
+    )
+
     non_sports_filter = or_(
         ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
         FuturesMarket.llm_sport_category.is_(None),
@@ -2836,6 +2892,8 @@ async def _score_futures(
     mark_timing("pool_sports")
     sports_postseason_result = await db.execute(sports_postseason_query)
     mark_timing("pool_sports_postseason")
+    sports_editorial_recall_result = await db.execute(sports_editorial_recall_query)
+    mark_timing("pool_sports_editorial_recall")
     nonsports_result = await db.execute(nonsports_query)
     mark_timing("pool_nonsports_volume")
     nonsports_movement_result = await db.execute(nonsports_movement_query)
@@ -2851,6 +2909,7 @@ async def _score_futures(
     candidate_market_ids = (
         list(sports_result.scalars().all())
         + list(sports_postseason_result.scalars().all())
+        + list(sports_editorial_recall_result.scalars().all())
         + list(nonsports_result.scalars().all())
         + list(nonsports_movement_result.scalars().all())
         + list(nonsports_enriched_result.scalars().all())

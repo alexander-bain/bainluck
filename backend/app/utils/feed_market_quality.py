@@ -397,6 +397,9 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
         return "story:basketball_finals_path"
 
+    if category == "soccer" and re.search(r"\b(fifa\s+)?world cup\b", lower):
+        return "story:fifa_world_cup"
+
     if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model)\b", lower):
         return "story:ai"
 
@@ -1211,6 +1214,7 @@ def diversify_quality_families(
         "story:us_government_stakes": 2,
         "story:golf_truist_championship": 3,
         "story:basketball_finals_path": 4,
+        "story:fifa_world_cup": 3,
         "story:regional_us_elections": 1,
         "story:niche_low_signal_sports": 1,
         "story:minor_soccer_leagues": 1,
