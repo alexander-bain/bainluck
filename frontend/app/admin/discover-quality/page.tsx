@@ -226,6 +226,30 @@ interface DiscoverDiagnosticRowsResponse {
   rows: DiscoverDiagnosticRow[];
 }
 
+interface ExternalCuratorGroundTruthStatus {
+  metadata: {
+    configured: boolean;
+    source: string | null;
+    source_paths?: string[];
+    raw_row_count: number;
+    loaded_count: number;
+    latest_date?: string | null;
+    stale?: boolean | null;
+    stale_after_days?: number;
+    source_counts?: Record<string, number>;
+    source_health?: Array<{
+      source: string;
+      count: number;
+      latest_date: string | null;
+      stale: boolean | null;
+      platform_counts: Record<string, number>;
+    }>;
+    error?: string | null;
+  };
+  status_counts: Record<string, number>;
+  items: Array<Partial<MissingGroundTruthItem> & { name: string }>;
+}
+
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
@@ -662,6 +686,22 @@ async function triggerDiscoverDiagnosticSnapshot(secret: string): Promise<void> 
     { method: "POST" }
   );
   if (!res.ok) throw new Error(`Diagnostic snapshot trigger failed: ${res.status}`);
+}
+
+async function fetchExternalCuratorGroundTruthStatus(secret: string): Promise<ExternalCuratorGroundTruthStatus> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-external-curator-ground-truth/status?secret=${encodeURIComponent(secret)}&item_limit=8`
+  );
+  if (!res.ok) throw new Error(`Curator ground truth status API error: ${res.status}`);
+  return res.json();
+}
+
+async function triggerExternalCuratorGroundTruthImport(secret: string): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-external-curator-ground-truth/import?secret=${encodeURIComponent(secret)}`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error(`Curator ground truth import failed: ${res.status}`);
 }
 
 async function updateDiscoverRuntimeConfig(
@@ -2171,6 +2211,7 @@ export default function DiscoverQualityPage() {
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
   const [triggeringDiagnostics, setTriggeringDiagnostics] = useState(false);
+  const [triggeringCuratorImport, setTriggeringCuratorImport] = useState(false);
   const [engagementDays, setEngagementDays] = useState(7);
   const [selectedDiagnosticRunId, setSelectedDiagnosticRunId] = useState("");
   const [diagnosticSourceGroup, setDiagnosticSourceGroup] = useState("all");
@@ -2197,6 +2238,7 @@ export default function DiscoverQualityPage() {
   const launchHealthTrendsKey = submittedSecret ? ["discover-launch-health-trends", submittedSecret] : null;
   const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
   const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
+  const externalCuratorStatusKey = submittedSecret ? ["external-curator-ground-truth-status", submittedSecret] : null;
   const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
     ? [
         "discover-diagnostic-rows",
@@ -2257,6 +2299,12 @@ export default function DiscoverQualityPage() {
         offset: diagnosticOffset,
       }
     ),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: externalCuratorStatus } = useSWR(
+    externalCuratorStatusKey,
+    () => fetchExternalCuratorGroundTruthStatus(submittedSecret!),
     { refreshInterval: 60000 }
   );
 
@@ -2453,6 +2501,20 @@ export default function DiscoverQualityPage() {
     }
   };
 
+  const triggerCuratorImport = async () => {
+    if (!submittedSecret) return;
+    setTriggeringCuratorImport(true);
+    try {
+      await triggerExternalCuratorGroundTruthImport(submittedSecret);
+      setTimeout(() => {
+        mutate(externalCuratorStatusKey);
+        mutate(debugKey);
+      }, 5000);
+    } finally {
+      setTriggeringCuratorImport(false);
+    }
+  };
+
   const refreshAdminView = async () => {
     await Promise.all([
       debugKey ? mutate(debugKey) : Promise.resolve(),
@@ -2461,6 +2523,7 @@ export default function DiscoverQualityPage() {
       launchHealthTrendsKey ? mutate(launchHealthTrendsKey) : Promise.resolve(),
       diagnosticRunsKey ? mutate(diagnosticRunsKey) : Promise.resolve(),
       diagnosticTrendsKey ? mutate(diagnosticTrendsKey) : Promise.resolve(),
+      externalCuratorStatusKey ? mutate(externalCuratorStatusKey) : Promise.resolve(),
       diagnosticRowsKey ? mutate(diagnosticRowsKey) : Promise.resolve(),
     ]);
     setLastRefreshedAt(new Date());
@@ -2719,6 +2782,50 @@ export default function DiscoverQualityPage() {
                 </div>
               ) : (
                 <div className="text-sm text-text-muted">Loading hook coverage...</div>
+              )}
+            </div>
+            <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Curator Store</h2>
+                  <div className="text-xs text-text-muted mt-1">
+                    {externalCuratorStatus
+                      ? `${externalCuratorStatus.metadata.loaded_count}/${externalCuratorStatus.metadata.raw_row_count} accepted rows`
+                      : "Loading persisted rows..."}
+                  </div>
+                </div>
+                {externalCuratorStatus?.metadata.latest_date && (
+                  <StatusPill tone={externalCuratorStatus.metadata.stale ? "warn" : "ok"}>
+                    {externalCuratorStatus.metadata.latest_date}
+                  </StatusPill>
+                )}
+              </div>
+              {externalCuratorStatus ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(externalCuratorStatus.status_counts).slice(0, 4).map(([status, count]) => (
+                      <StatusPill key={status} tone={status === "accepted" ? "ok" : "muted"}>
+                        {`${formatTargetName(status)}: ${count}`}
+                      </StatusPill>
+                    ))}
+                    {(externalCuratorStatus.metadata.source_health || []).slice(0, 2).map((source) => (
+                      <StatusPill key={source.source} tone={source.stale ? "warn" : "muted"}>
+                        {`${source.source}: ${source.count}`}
+                      </StatusPill>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={triggerCuratorImport}
+                    disabled={triggeringCuratorImport}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-text-primary text-surface-deep text-xs font-medium disabled:opacity-50"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    {triggeringCuratorImport ? "Queueing..." : "Import curator rows"}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-sm text-text-muted">Loading curator status...</div>
               )}
             </div>
           </div>
