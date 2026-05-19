@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, FuturesMarket
 
-from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision
+from app.models.models import (
+    BugReport,
+    DiscoverGroundTruthDiagnostic,
+    DiscoverInteraction,
+    DiscoverReviewDecision,
+)
 
 from app.services import get_db
 
@@ -433,6 +438,86 @@ async def trigger_discover_ground_truth_diagnostic_snapshot(
         "queued": True,
         "task_id": task.id,
         "limit": limit,
+    }
+
+
+@router.get("/discover-ground-truth-diagnostics/runs/{run_id}/rows")
+async def list_discover_ground_truth_diagnostic_rows(
+    run_id: str,
+    secret: str = Query(...),
+    source_group: Optional[str] = Query(None, max_length=40),
+    status: Optional[str] = Query(None, max_length=20),
+    triage_bucket: Optional[str] = Query(None, max_length=80),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """List persisted Discover ground-truth diagnostic rows for a snapshot run."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    clauses = [DiscoverGroundTruthDiagnostic.run_id == run_id]
+    if source_group:
+        clauses.append(DiscoverGroundTruthDiagnostic.source_group == source_group)
+    if status:
+        clauses.append(DiscoverGroundTruthDiagnostic.status == status)
+    if triage_bucket:
+        clauses.append(DiscoverGroundTruthDiagnostic.triage_bucket == triage_bucket)
+
+    total_result = await db.execute(
+        select(func.count(DiscoverGroundTruthDiagnostic.id)).where(and_(*clauses))
+    )
+    total = int(total_result.scalar() or 0)
+    result = await db.execute(
+        select(DiscoverGroundTruthDiagnostic)
+        .where(and_(*clauses))
+        .order_by(
+            DiscoverGroundTruthDiagnostic.status.desc(),
+            DiscoverGroundTruthDiagnostic.triage_bucket.asc().nullslast(),
+            DiscoverGroundTruthDiagnostic.rank.asc().nullslast(),
+            DiscoverGroundTruthDiagnostic.id.asc(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = result.scalars().all()
+
+    return {
+        "run_id": run_id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "rows": [
+            {
+                "id": row.id,
+                "captured_at": row.captured_at.isoformat()
+                if row.captured_at
+                else None,
+                "source_group": row.source_group,
+                "source": row.source,
+                "status": row.status,
+                "item_name": row.item_name,
+                "feed_name": row.feed_name,
+                "category": row.category,
+                "probability": row.probability,
+                "source_url": row.source_url,
+                "published_at": row.published_at,
+                "rank": row.rank,
+                "score": row.score,
+                "quality_class": row.quality_class,
+                "archetype": row.archetype,
+                "family_key": row.family_key,
+                "story_key": row.story_key,
+                "triage_bucket": row.triage_bucket,
+                "recommended_action": row.recommended_action,
+                "matched_market_id": row.matched_market_id,
+                "trace_status": row.trace_status,
+                "trace_summary": row.trace_summary,
+                "db_match_count": row.db_match_count,
+                "raw": row.raw,
+            }
+            for row in rows
+        ],
     }
 
 
