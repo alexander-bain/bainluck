@@ -26,9 +26,20 @@ from app.models.models import (
 from app.services import get_db
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth
+from app.utils.external_curator_ground_truth import (
+    load_external_curator_ground_truth_report_from_env,
+)
 from app.utils.feed_quality_debug import stale_root_cause_for_reason
+from app.utils.ground_truth_health import (
+    assess_ground_truth_report_health,
+    summarize_ground_truth_health,
+)
 from app.utils.persisted_external_curator_ground_truth import (
     load_persisted_external_curator_ground_truth_report,
+    merge_external_curator_ground_truth_reports,
+)
+from app.utils.polymarket_email_ground_truth import (
+    load_polymarket_email_ground_truth_report_from_env,
 )
 
 import logging
@@ -586,6 +597,39 @@ async def get_discover_external_curator_ground_truth_status(
         "status_counts": status_counts,
         "items": report["items"][:item_limit],
     }
+
+
+@router.get("/discover-ground-truth-health")
+async def get_discover_ground_truth_health(
+    secret: str = Query(...),
+    min_load_rate: float = Query(0.25, ge=0, le=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect freshness and parse coverage for Discover ground-truth inputs."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    email_report = load_polymarket_email_ground_truth_report_from_env()
+    file_curator_report = load_external_curator_ground_truth_report_from_env()
+    persisted_curator_report = await load_persisted_external_curator_ground_truth_report(db)
+    curator_report = merge_external_curator_ground_truth_reports(
+        [file_curator_report, persisted_curator_report]
+    )
+
+    return summarize_ground_truth_health(
+        [
+            assess_ground_truth_report_health(
+                email_report,
+                label="polymarket_email",
+                min_load_rate=min_load_rate,
+            ),
+            assess_ground_truth_report_health(
+                curator_report,
+                label="external_curator",
+                min_load_rate=min_load_rate,
+            ),
+        ]
+    )
 
 
 @router.post("/discover-external-curator-ground-truth/import")
