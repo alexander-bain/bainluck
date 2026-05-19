@@ -835,19 +835,31 @@ function ReviewPathNav({
   groundTruthHits,
   missingCount,
   persistedRuns,
+  hardGateIssues,
+  topMissBucket,
   repeatRate,
   staleRate,
 }: {
   groundTruthHits: number;
   missingCount: number;
   persistedRuns: number;
+  hardGateIssues: number;
+  topMissBucket: string | null;
   repeatRate: number | null;
   staleRate: number | null;
 }) {
   const links = [
-    { href: "#health", label: "Health", sub: `${groundTruthHits}/50 GT` },
+    {
+      href: "#health",
+      label: "Health",
+      sub: hardGateIssues === 0 ? `clean / ${groundTruthHits} GT` : `${hardGateIssues} issues`,
+    },
     { href: "#diagnostics", label: "Diagnostics", sub: `${persistedRuns} runs` },
-    { href: "#misses", label: "Misses", sub: `${missingCount} open` },
+    {
+      href: "#misses",
+      label: "Misses",
+      sub: topMissBucket ? formatTargetName(topMissBucket) : `${missingCount} open`,
+    },
     {
       href: "#behavior",
       label: "Behavior",
@@ -2090,6 +2102,18 @@ export default function DiscoverQualityPage() {
     ? Object.entries(summary.positive_targets).filter(([, passed]) => !passed)
     : [];
   const launchHealth = engagementData?.launch_health;
+  const hardGateIssues = summary
+    ? summary.boring_count
+      + summary.ladder_count
+      + summary.duplicate_family_count
+      + Math.max(0, 20 - summary.explanation_ok_count)
+      + failedStrict.length
+      + failedPositive.length
+    : 0;
+  const topMissBucket = summary
+    ? Object.entries(data.missing_ground_truth_summary?.bucket_counts || {})
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || null
+    : null;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 pb-10">
@@ -2123,6 +2147,8 @@ export default function DiscoverQualityPage() {
             groundTruthHits={summary.ground_truth_hit_count_50}
             missingCount={data.missing_ground_truth?.length || 0}
             persistedRuns={diagnosticRunsData?.runs?.length || 0}
+            hardGateIssues={hardGateIssues}
+            topMissBucket={topMissBucket}
             repeatRate={launchHealth?.repeat_rate ?? null}
             staleRate={launchHealth?.stale_rate ?? null}
           />
