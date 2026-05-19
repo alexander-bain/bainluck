@@ -216,10 +216,10 @@ def test_env_report_includes_source_counts_and_freshness(monkeypatch, tmp_path):
     csv_path.write_text(
         "\n".join(
             [
-                "source,name,category,published_at",
-                "Curator A,Will OpenAI release GPT-6?,tech,2026-05-17",
-                "Curator A,Will Fed cut rates?,economics,2026-05-16",
-                "Curator B,Will a hurricane make landfall?,weather,2026-05-10",
+                "source,name,category,published_at,platform",
+                "Curator A,Will OpenAI release GPT-6?,tech,2026-05-17,x",
+                "Curator A,Will Fed cut rates?,economics,2026-05-16,newsletter",
+                "Curator B,Will a hurricane make landfall?,weather,2026-05-10,x",
             ]
         )
     )
@@ -233,6 +233,22 @@ def test_env_report_includes_source_counts_and_freshness(monkeypatch, tmp_path):
     assert report["metadata"]["stale"] is False
     assert report["metadata"]["stale_after_days"] == 7
     assert report["metadata"]["source_counts"] == {"Curator A": 2, "Curator B": 1}
+    assert report["metadata"]["source_health"] == [
+        {
+            "source": "Curator A",
+            "count": 2,
+            "latest_date": "2026-05-17",
+            "stale": False,
+            "platform_counts": {"newsletter": 1, "x": 1},
+        },
+        {
+            "source": "Curator B",
+            "count": 1,
+            "latest_date": "2026-05-10",
+            "stale": True,
+            "platform_counts": {"x": 1},
+        },
+    ]
 
 
 def test_env_report_is_inert_without_paths(monkeypatch):

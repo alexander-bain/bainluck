@@ -141,6 +141,13 @@ interface EmailGroundTruthDiagnostics {
   min_interestingness?: number;
   lookback_days?: number | null;
   source_counts?: Record<string, number>;
+  source_health?: Array<{
+    source: string;
+    count: number;
+    latest_date: string | null;
+    stale: boolean | null;
+    platform_counts: Record<string, number>;
+  }>;
   total: number;
   top20_hits: number;
   top50_hits: number;
@@ -2802,6 +2809,28 @@ export default function DiscoverQualityPage() {
                       <StatusPill key={source} tone="muted">
                         {`${source}: ${count}`}
                       </StatusPill>
+                    ))}
+                  </div>
+                )}
+                {(data.external_curator_ground_truth.source_health?.length || 0) > 0 && (
+                  <div className="mt-3 grid md:grid-cols-2 gap-2">
+                    {data.external_curator_ground_truth.source_health!.slice(0, 6).map((source) => (
+                      <div key={source.source} className="rounded-lg border border-surface-border bg-surface-elevated/40 p-2">
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <span className="font-medium text-text-primary truncate">{source.source}</span>
+                          <StatusPill tone={source.stale ? "warn" : source.latest_date ? "ok" : "muted"}>
+                            {source.latest_date || "undated"}
+                          </StatusPill>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          <StatusPill tone="muted">{`${source.count} rows`}</StatusPill>
+                          {Object.entries(source.platform_counts || {}).slice(0, 3).map(([platform, count]) => (
+                            <StatusPill key={platform} tone="muted">
+                              {`${platform}: ${count}`}
+                            </StatusPill>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}

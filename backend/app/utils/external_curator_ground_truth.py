@@ -226,6 +226,7 @@ def _report(
     stale_after = base.date() - timedelta(days=DEFAULT_STALE_AFTER_DAYS)
     stale = latest_date < stale_after if latest_date else None
     source_counts = Counter(item.get("source") or "external_curator" for item in items)
+    source_health = _source_health(items, stale_after=stale_after)
     return {
         "items": items,
         "metadata": {
@@ -238,9 +239,39 @@ def _report(
             "stale": stale,
             "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
             "source_counts": dict(sorted(source_counts.items())),
+            "source_health": source_health,
             "error": error,
         },
     }
+
+
+def _source_health(
+    items: list[dict[str, str]],
+    *,
+    stale_after: date,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    by_source: dict[str, list[dict[str, str]]] = {}
+    for item in items:
+        source = item.get("source") or "external_curator"
+        by_source.setdefault(source, []).append(item)
+
+    for source, source_items in sorted(by_source.items()):
+        latest_date = _latest_item_date(source_items)
+        platform_counts = Counter(
+            item.get("platform") or "unknown"
+            for item in source_items
+        )
+        rows.append(
+            {
+                "source": source,
+                "count": len(source_items),
+                "latest_date": latest_date.isoformat() if latest_date else None,
+                "stale": latest_date < stale_after if latest_date else None,
+                "platform_counts": dict(sorted(platform_counts.items())),
+            }
+        )
+    return rows
 
 
 def _latest_item_date(items: list[dict[str, str]]) -> date | None:
