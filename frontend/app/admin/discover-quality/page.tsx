@@ -1079,6 +1079,11 @@ function DiagnosticRunsPanel({
   setTriageBucket,
   onTrigger,
   triggering,
+  onToggleTrace,
+  expandedTraceId,
+  traceByMarketId,
+  traceLoadingId,
+  traceError,
 }: {
   runs: DiscoverDiagnosticRun[];
   rows?: DiscoverDiagnosticRowsResponse;
@@ -1093,6 +1098,11 @@ function DiagnosticRunsPanel({
   setTriageBucket: (value: string) => void;
   onTrigger: () => void;
   triggering: boolean;
+  onToggleTrace: (marketId: number) => void;
+  expandedTraceId: number | null;
+  traceByMarketId: Record<number, DiscoverMarketTrace>;
+  traceLoadingId: number | null;
+  traceError: string | null;
 }) {
   const selectedRun = runs.find((run) => run.run_id === selectedRunId);
   const sourceGroups = selectedRun
@@ -1204,66 +1214,95 @@ function DiagnosticRunsPanel({
             </thead>
             <tbody className="divide-y divide-surface-border/60">
               {rows.rows.map((row) => (
-                <tr key={row.id} className="hover:bg-surface-elevated/40 align-top">
-                  <td className="p-3 min-w-[320px]">
-                    <div className="font-medium text-text-primary">{row.item_name}</div>
-                    {row.feed_name && (
-                      <div className="text-xs text-text-secondary mt-1">{row.feed_name}</div>
-                    )}
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      <StatusPill tone="muted">{formatTargetName(row.source_group)}</StatusPill>
-                      {row.source && <StatusPill tone="muted">{row.source}</StatusPill>}
-                      {row.category && <StatusPill tone="muted">{row.category}</StatusPill>}
-                      {row.probability && <StatusPill tone="muted">{row.probability}</StatusPill>}
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap gap-1">
-                      <StatusPill tone={row.status === "hit" ? "ok" : "warn"}>
-                        {row.status}
-                      </StatusPill>
-                      {row.triage_bucket && (
-                        <StatusPill tone={row.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
-                          {formatTargetName(row.triage_bucket)}
-                        </StatusPill>
+                <Fragment key={row.id}>
+                  <tr className="hover:bg-surface-elevated/40 align-top">
+                    <td className="p-3 min-w-[320px]">
+                      <div className="font-medium text-text-primary">{row.item_name}</div>
+                      {row.feed_name && (
+                        <div className="text-xs text-text-secondary mt-1">{row.feed_name}</div>
                       )}
-                      {row.rank !== null && <StatusPill tone="ok">{`rank ${row.rank}`}</StatusPill>}
-                    </div>
-                  </td>
-                  <td className="p-3 min-w-[260px]">
-                    <div className="text-xs text-text-primary">
-                      {row.trace_status ? formatTargetName(row.trace_status) : "No trace"}
-                    </div>
-                    {row.trace_summary && (
-                      <div className="text-xs text-text-secondary mt-1 line-clamp-3">
-                        {row.trace_summary}
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        <StatusPill tone="muted">{formatTargetName(row.source_group)}</StatusPill>
+                        {row.source && <StatusPill tone="muted">{row.source}</StatusPill>}
+                        {row.category && <StatusPill tone="muted">{row.category}</StatusPill>}
+                        {row.probability && <StatusPill tone="muted">{row.probability}</StatusPill>}
                       </div>
-                    )}
-                    {row.recommended_action && (
-                      <div className="text-xs text-text-muted mt-1 line-clamp-2">
-                        {row.recommended_action}
+                    </td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-1">
+                        <StatusPill tone={row.status === "hit" ? "ok" : "warn"}>
+                          {row.status}
+                        </StatusPill>
+                        {row.triage_bucket && (
+                          <StatusPill tone={row.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                            {formatTargetName(row.triage_bucket)}
+                          </StatusPill>
+                        )}
+                        {row.rank !== null && <StatusPill tone="ok">{`rank ${row.rank}`}</StatusPill>}
                       </div>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {row.matched_market_id ? (
-                      <a
-                        href={`/futures/${row.matched_market_id}`}
-                        className="inline-flex items-center gap-1 text-xs text-accent-futures hover:underline"
-                      >
-                        #{row.matched_market_id}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    ) : (
-                      <span className="text-xs text-text-muted">none</span>
-                    )}
-                    {row.db_match_count !== null && (
-                      <div className="text-xs text-text-muted mt-1">
-                        {row.db_match_count} DB match{row.db_match_count === 1 ? "" : "es"}
+                    </td>
+                    <td className="p-3 min-w-[260px]">
+                      <div className="text-xs text-text-primary">
+                        {row.trace_status ? formatTargetName(row.trace_status) : "No trace"}
                       </div>
-                    )}
-                  </td>
-                </tr>
+                      {row.trace_summary && (
+                        <div className="text-xs text-text-secondary mt-1 line-clamp-3">
+                          {row.trace_summary}
+                        </div>
+                      )}
+                      {row.recommended_action && (
+                        <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                          {row.recommended_action}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {row.matched_market_id ? (
+                        <div className="flex flex-col items-start gap-2">
+                          <a
+                            href={`/futures/${row.matched_market_id}`}
+                            className="inline-flex items-center gap-1 text-xs text-accent-futures hover:underline"
+                          >
+                            #{row.matched_market_id}
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => onToggleTrace(row.matched_market_id!)}
+                            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+                          >
+                            <ChevronDown className={`w-3 h-3 transition-transform ${expandedTraceId === row.matched_market_id ? "rotate-180" : ""}`} />
+                            Trace
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-text-muted">none</span>
+                      )}
+                      {row.db_match_count !== null && (
+                        <div className="text-xs text-text-muted mt-1">
+                          {row.db_match_count} DB match{row.db_match_count === 1 ? "" : "es"}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                  {row.matched_market_id && expandedTraceId === row.matched_market_id && (
+                    <tr className="bg-surface-elevated/30">
+                      <td colSpan={4} className="p-3">
+                        {traceLoadingId === row.matched_market_id && (
+                          <div className="text-xs text-text-muted animate-pulse">Loading trace...</div>
+                        )}
+                        {traceError && traceLoadingId !== row.matched_market_id && (
+                          <div className="text-xs text-accent-danger">{traceError}</div>
+                        )}
+                        {traceByMarketId[row.matched_market_id] ? (
+                          <TracePanel trace={traceByMarketId[row.matched_market_id]} />
+                        ) : !traceError && traceLoadingId !== row.matched_market_id ? (
+                          <div className="text-xs text-text-muted">Open trace to load pipeline details.</div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -2573,6 +2612,11 @@ export default function DiscoverQualityPage() {
               setTriageBucket={setDiagnosticBucket}
               onTrigger={triggerDiagnosticSnapshot}
               triggering={triggeringDiagnostics}
+              onToggleTrace={toggleTrace}
+              expandedTraceId={expandedTraceId}
+              traceByMarketId={traceByMarketId}
+              traceLoadingId={traceLoadingId}
+              traceError={traceError}
             />
           </div>
 
