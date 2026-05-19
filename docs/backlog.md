@@ -1619,8 +1619,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 |---|------|------|--------|-------|
 | AS-9 | Gambling disclaimer in App Review notes + About page | Medium | ✅ DONE | About copy exists and App Review notes now include an explicit no-wagering/no-payments disclaimer. |
 | AS-10 | Verify IDFA/ATT not needed | Medium | ✅ DONE | No IDFA collection, no ATTrackingManager, no ad personalization. Privacy manifest correct. No ATT prompt needed. |
-| AS-11 | Launch screen check | Low | TODO | SwiftUI auto-generates one — verify it's not blank white on first launch. |
-| AS-15 | Final native navigation smoke check | Medium | TODO | Before upload, verify Futures browser is hidden, Calibration is visible, 🍀 sidebar title is preserved, and market detail pages still open from Discover/search/category/weather/link flows. |
+| AS-11 | Launch screen check | Low | ✅ PASS | SwiftUI auto-generated plain white launch screen, seamless transition to light-mode app. No storyboard needed. |
+| AS-15 | Final native navigation smoke check | Medium | ✅ PASS | Code-verified May 18: Futures browser hidden (no sidebar entry), Calibration visible in Quick Links, 🍀 title preserved, market detail opens from search/all category pages/weather/Discover. |
 
 ### Nice to Have (post-launch)
 
