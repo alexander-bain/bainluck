@@ -1970,6 +1970,25 @@ class TestDiscoverFirstPageMixer:
         assert "2028 U.S. Presidential Election winner?" in top50_names
         assert "World Cup Group A Winner" in top50_names
 
+    def test_editorial_tail_backfill_adds_major_us_civic_power_story(self):
+        items = [
+            self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
+            for i in range(55)
+        ]
+        items.append(
+            self._item(
+                1000,
+                "politics",
+                99,
+                name="Los Angeles Mayor winner?",
+            )
+        )
+
+        mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
+        top50_names = [item["data"]["name"] for item in mixed[:50]]
+
+        assert "Los Angeles Mayor winner?" in top50_names
+
     def test_editorial_tail_backfill_does_not_replace_much_stronger_cards(self):
         items = [
             self._item(i, "economics", 100, name=f"Strong macro story {i}")

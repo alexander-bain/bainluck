@@ -981,6 +981,15 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
         ),
         90,
     ),
+    (
+        "us_civic_power",
+        re.compile(
+            r"\b(2026\s+midterms|congress\s+balance|los angeles mayor|"
+            r"virginia redistricting referendum)\b",
+            re.IGNORECASE,
+        ),
+        90,
+    ),
     ("major_entertainment_events", re.compile(r"\bmet gala\b", re.IGNORECASE), 88),
     ("ai_frontier", re.compile(r"\bbest ai\b", re.IGNORECASE), 88),
     (
