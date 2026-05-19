@@ -20,12 +20,16 @@ from app.models.models import (
     DiscoverGroundTruthDiagnostic,
     DiscoverInteraction,
     DiscoverReviewDecision,
+    ExternalCuratorGroundTruthItem,
 )
 
 from app.services import get_db
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth
 from app.utils.feed_quality_debug import stale_root_cause_for_reason
+from app.utils.persisted_external_curator_ground_truth import (
+    load_persisted_external_curator_ground_truth_report,
+)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -552,6 +556,35 @@ async def trigger_discover_ground_truth_diagnostic_snapshot(
         "queued": True,
         "task_id": task.id,
         "limit": limit,
+    }
+
+
+@router.get("/discover-external-curator-ground-truth/status")
+async def get_discover_external_curator_ground_truth_status(
+    secret: str = Query(...),
+    item_limit: int = Query(20, ge=0, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect persisted reviewed external-curator/social ground truth."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    report = await load_persisted_external_curator_ground_truth_report(db)
+    status_result = await db.execute(
+        select(
+            ExternalCuratorGroundTruthItem.review_status,
+            func.count(ExternalCuratorGroundTruthItem.id),
+        ).group_by(ExternalCuratorGroundTruthItem.review_status)
+    )
+    status_counts = {
+        row[0] or "unknown": int(row[1] or 0)
+        for row in status_result.all()
+    }
+
+    return {
+        "metadata": report["metadata"],
+        "status_counts": status_counts,
+        "items": report["items"][:item_limit],
     }
 
 
