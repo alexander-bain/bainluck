@@ -407,6 +407,31 @@ class TestDiscoverInteractions:
 
         assert resp.status_code == 403
 
+    async def test_discover_launch_health_trends_shape(self, client, mock_db, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+        results = []
+        for _ in range(3):
+            total = MagicMock()
+            total.scalar.return_value = 0
+            repeat = MagicMock()
+            repeat.all.return_value = []
+            impressions = MagicMock()
+            impressions.all.return_value = []
+            results.extend([total, repeat, impressions])
+        mock_db.execute.side_effect = results
+
+        resp = await client.get(
+            "/api/admin/discover-engagement/launch-health-trends?secret=test-admin"
+        )
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert [row["window"] for row in body["windows"]] == ["1h", "24h", "7d"]
+        assert body["windows"][0]["repeat_rate"] == 0
+        assert body["windows"][0]["stale_rate"] == 0
+
     async def test_discover_engagement_summary_rolls_up_rates(self, client, mock_db, monkeypatch):
         from unittest.mock import MagicMock
 

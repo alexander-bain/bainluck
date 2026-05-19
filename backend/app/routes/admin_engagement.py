@@ -1290,6 +1290,173 @@ async def discover_engagement_summary(
     }
 
 
+@router.get("/discover-engagement/launch-health-trends")
+async def discover_launch_health_trends(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return repeat/stale launch-health rates across short, medium, and long windows."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    now = datetime.now(timezone.utc)
+    runtime_config = await _load_discover_runtime_config()
+    windows = [
+        ("1h", timedelta(hours=1)),
+        ("24h", timedelta(hours=24)),
+        ("7d", timedelta(days=7)),
+    ]
+    rows = []
+    for label, delta in windows:
+        rows.append(
+            await _compute_discover_launch_health_window(
+                db,
+                label=label,
+                cutoff=now - delta,
+                now=now,
+                runtime_config=runtime_config,
+            )
+        )
+    return {"windows": rows}
+
+
+async def _compute_discover_launch_health_window(
+    db: AsyncSession,
+    *,
+    label: str,
+    cutoff: datetime,
+    now: datetime,
+    runtime_config: dict,
+) -> dict:
+    total_result = await db.execute(
+        select(func.count(DiscoverInteraction.id)).where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action == "impression",
+        )
+    )
+    impressions = int(total_result.scalar() or 0)
+
+    repeat_result = await db.execute(
+        select(
+            DiscoverInteraction.session_id,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.count(DiscoverInteraction.id).label("impressions"),
+        )
+        .where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action == "impression",
+            DiscoverInteraction.session_id.isnot(None),
+        )
+        .group_by(
+            DiscoverInteraction.session_id,
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+        )
+        .having(func.count(DiscoverInteraction.id) > 1)
+    )
+    repeat_rows = repeat_result.all()
+    repeat_extra = sum(max(0, int(row.impressions or 0) - 1) for row in repeat_rows)
+    repeat_sessions = {row.session_id for row in repeat_rows if row.session_id}
+
+    impression_items_result = await db.execute(
+        select(
+            DiscoverInteraction.item_type,
+            DiscoverInteraction.item_id,
+            func.count(DiscoverInteraction.id).label("impressions"),
+        )
+        .where(
+            DiscoverInteraction.created_at >= cutoff,
+            DiscoverInteraction.action == "impression",
+            DiscoverInteraction.item_type.in_(("event", "futures")),
+        )
+        .group_by(DiscoverInteraction.item_type, DiscoverInteraction.item_id)
+    )
+    impression_items = impression_items_result.all()
+
+    futures_ids = []
+    event_ids = []
+    for row in impression_items:
+        try:
+            item_id_int = int(row.item_id)
+        except (TypeError, ValueError):
+            continue
+        if row.item_type == "futures":
+            futures_ids.append(item_id_int)
+        elif row.item_type == "event":
+            event_ids.append(item_id_int)
+
+    futures_by_id = {}
+    if futures_ids:
+        futures_result = await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.status,
+                FuturesMarket.updated_at,
+                FuturesMarket.resolution_date,
+            ).where(FuturesMarket.id.in_(futures_ids))
+        )
+        futures_by_id = {row.id: row for row in futures_result.all()}
+
+    events_by_id = {}
+    if event_ids:
+        events_result = await db.execute(
+            select(Event.id, Event.status, Event.commence_time).where(Event.id.in_(event_ids))
+        )
+        events_by_id = {row.id: row for row in events_result.all()}
+
+    stale_impressions = 0
+    stale_root_causes: dict[str, int] = {}
+    for row in impression_items:
+        try:
+            item_id_int = int(row.item_id)
+        except (TypeError, ValueError):
+            continue
+        stale_reason = None
+        if row.item_type == "futures":
+            market = futures_by_id.get(item_id_int)
+            if market:
+                updated_at = market.updated_at
+                if updated_at and updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                resolution_date = market.resolution_date
+                if resolution_date and resolution_date.tzinfo is None:
+                    resolution_date = resolution_date.replace(tzinfo=timezone.utc)
+                if market.status in ("closed", "resolved"):
+                    stale_reason = "closed"
+                elif resolution_date and resolution_date < now:
+                    stale_reason = "past_resolution"
+                elif updated_at and (now - updated_at).total_seconds() / 86400 > runtime_config["stale_no_movement_days"]:
+                    stale_reason = "stale_updated_at"
+        elif row.item_type == "event":
+            event = events_by_id.get(item_id_int)
+            if event and event.status in ("completed", "closed"):
+                commence_time = event.commence_time
+                if commence_time and commence_time.tzinfo is None:
+                    commence_time = commence_time.replace(tzinfo=timezone.utc)
+                if commence_time and (now - commence_time).total_seconds() > 8 * 3600:
+                    stale_reason = "completed_old"
+        if stale_reason:
+            stale_count = int(row.impressions or 0)
+            stale_impressions += stale_count
+            root_cause = stale_root_cause_for_reason(stale_reason)
+            code = root_cause["code"] if root_cause else stale_reason
+            stale_root_causes[code] = stale_root_causes.get(code, 0) + stale_count
+
+    return {
+        "window": label,
+        "impressions": impressions,
+        "repeat_extra_impressions": repeat_extra,
+        "repeat_rate": round(repeat_extra / impressions, 4) if impressions else 0,
+        "repeat_sessions": len(repeat_sessions),
+        "stale_impressions": stale_impressions,
+        "stale_rate": round(stale_impressions / impressions, 4) if impressions else 0,
+        "stale_root_causes": dict(
+            sorted(stale_root_causes.items(), key=lambda item: item[1], reverse=True)
+        ),
+    }
+
+
 def _score_bucket_label(score: int | None) -> str:
     if score is None:
         return "unknown"

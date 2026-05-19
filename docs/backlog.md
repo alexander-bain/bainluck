@@ -459,7 +459,7 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 3. Make launch-health remediation more automatic:
    - Add one-click "hide this stale card now" / "suppress this repeat family" actions with explicit expiry.
    - ✅ Root-cause labels shipped May 18 for stale cards in feed quality debug and admin engagement launch-health output: closed/resolved market, non-open status, past resolution date, no recent market update, no recent movement, settled outcomes, effectively resolved leaders, soft-settled sports binaries, and completed-old events.
-   - Add a small trend panel for repeat/stale rates over the last 1h/24h/7d so we can tell whether fixes are working.
+   - ✅ Added a small trend panel for repeat/stale rates over the last 1h/24h/7d so we can tell whether fixes are working.
 4. Automate ranking progress after manual hill-climb sessions:
    - Convert repeated manual fixes into durable rules: auto-hide stale root-cause classes, auto-cap repeat families, and auto-promote/downrank only when a reviewed pattern has enough impressions and confidence.
    - Add a background job that writes daily Discover ranking deltas: repeat/stale rates, cards fixed, cards newly offending, top root causes, and whether automated rules improved or regressed the launch-health metrics.

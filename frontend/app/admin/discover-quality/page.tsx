@@ -554,6 +554,21 @@ interface DiscoverEngagementResponse {
   top_items: DiscoverEngagementItem[];
 }
 
+interface DiscoverLaunchHealthTrend {
+  window: string;
+  impressions: number;
+  repeat_extra_impressions: number;
+  repeat_rate: number;
+  repeat_sessions: number;
+  stale_impressions: number;
+  stale_rate: number;
+  stale_root_causes: Record<string, number>;
+}
+
+interface DiscoverLaunchHealthTrendsResponse {
+  windows: DiscoverLaunchHealthTrend[];
+}
+
 async function fetchDiscoverDebug(secret: string): Promise<FeedDebugResponse> {
   const params = new URLSearchParams({
     limit: "50",
@@ -591,6 +606,14 @@ async function fetchDiscoverEngagement(secret: string, days: number): Promise<Di
     `${API_URL}/api/admin/discover-engagement?secret=${encodeURIComponent(secret)}&days=${days}`
   );
   if (!res.ok) throw new Error(`Engagement API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchDiscoverLaunchHealthTrends(secret: string): Promise<DiscoverLaunchHealthTrendsResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-engagement/launch-health-trends?secret=${encodeURIComponent(secret)}`
+  );
+  if (!res.ok) throw new Error(`Launch health trends API error: ${res.status}`);
   return res.json();
 }
 
@@ -1562,10 +1585,12 @@ function EngagementPanel({
   data,
   secret,
   engagementDays,
+  launchHealthTrends,
 }: {
   data: DiscoverEngagementResponse;
   secret: string;
   engagementDays: number;
+  launchHealthTrends: DiscoverLaunchHealthTrend[];
 }) {
   const [savingConfig, setSavingConfig] = useState<string | null>(null);
   const [reviewingKey, setReviewingKey] = useState<string | null>(null);
@@ -1686,6 +1711,8 @@ function EngagementPanel({
       {data.score_buckets?.length > 0 && (
         <ScoreBucketList rows={data.score_buckets} />
       )}
+
+      <LaunchHealthTrendPanel rows={launchHealthTrends} />
 
       <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2070,6 +2097,58 @@ function LaunchHealthList({
   );
 }
 
+function LaunchHealthTrendPanel({ rows }: { rows: DiscoverLaunchHealthTrend[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3">
+      <div className="mb-3">
+        <div className="text-xs font-medium text-text-primary">Launch Health Trend</div>
+        <div className="text-[11px] text-text-muted">
+          Repeat and stale impression rates across recent windows.
+        </div>
+      </div>
+      <div className="grid md:grid-cols-3 gap-2">
+        {rows.map((row) => {
+          const topRootCause = Object.entries(row.stale_root_causes || {})[0];
+          return (
+            <div key={row.window} className="rounded-lg border border-surface-border bg-surface-card p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-text-primary">{row.window}</div>
+                <StatusPill tone={row.stale_rate === 0 && row.repeat_rate === 0 ? "ok" : "warn"}>
+                  {`${row.impressions} impressions`}
+                </StatusPill>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <div className="text-text-muted">Repeat</div>
+                  <div className="font-semibold text-text-primary">{rateText(row.repeat_rate)}</div>
+                  <div className="text-[11px] text-text-muted">
+                    {row.repeat_extra_impressions} extra / {row.repeat_sessions} sessions
+                  </div>
+                </div>
+                <div>
+                  <div className="text-text-muted">Stale</div>
+                  <div className="font-semibold text-text-primary">{rateText(row.stale_rate)}</div>
+                  <div className="text-[11px] text-text-muted">
+                    {row.stale_impressions} impressions
+                  </div>
+                </div>
+              </div>
+              {topRootCause && (
+                <div className="mt-2">
+                  <StatusPill tone="muted">
+                    {`${formatTargetName(topRootCause[0])}: ${topRootCause[1]}`}
+                  </StatusPill>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function DiscoverQualityPage() {
   usePageTracking({
     pageType: "admin_discover_quality",
@@ -2112,6 +2191,7 @@ export default function DiscoverQualityPage() {
   const debugKey = submittedSecret ? ["discover-quality", submittedSecret] : null;
   const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
   const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
+  const launchHealthTrendsKey = submittedSecret ? ["discover-launch-health-trends", submittedSecret] : null;
   const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
   const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
   const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
@@ -2141,6 +2221,12 @@ export default function DiscoverQualityPage() {
   const { data: engagementData } = useSWR(
     engagementKey,
     () => fetchDiscoverEngagement(submittedSecret!, engagementDays),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: launchHealthTrendsData } = useSWR(
+    launchHealthTrendsKey,
+    () => fetchDiscoverLaunchHealthTrends(submittedSecret!),
     { refreshInterval: 60000 }
   );
 
@@ -2369,6 +2455,7 @@ export default function DiscoverQualityPage() {
       debugKey ? mutate(debugKey) : Promise.resolve(),
       hookKey ? mutate(hookKey) : Promise.resolve(),
       engagementKey ? mutate(engagementKey) : Promise.resolve(),
+      launchHealthTrendsKey ? mutate(launchHealthTrendsKey) : Promise.resolve(),
       diagnosticRunsKey ? mutate(diagnosticRunsKey) : Promise.resolve(),
       diagnosticTrendsKey ? mutate(diagnosticTrendsKey) : Promise.resolve(),
       diagnosticRowsKey ? mutate(diagnosticRowsKey) : Promise.resolve(),
@@ -2683,7 +2770,12 @@ export default function DiscoverQualityPage() {
               </select>
             </div>
             {engagementData ? (
-              <EngagementPanel data={engagementData} secret={submittedSecret!} engagementDays={engagementDays} />
+              <EngagementPanel
+                data={engagementData}
+                secret={submittedSecret!}
+                engagementDays={engagementDays}
+                launchHealthTrends={launchHealthTrendsData?.windows || []}
+              />
             ) : (
               <div className="bg-surface-card border border-surface-border rounded-lg p-4 text-sm text-text-muted">
                 Loading engagement...
