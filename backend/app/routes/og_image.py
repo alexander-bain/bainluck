@@ -5,10 +5,11 @@ Returns an HTML page that renders as a card image when shared on social media.
 Uses Vercel/Next.js OG image generation or server-side HTML rendering.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
-from app.services import get_db as get_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services import get_db
 from app.models.models import FuturesMarket, FuturesOutcome
 
 router = APIRouter(prefix="/api/og", tags=["og"])
@@ -21,20 +22,19 @@ async def prediction_card(
     correct: bool = True,
     threshold: int = 50,
     actual: int = 65,
+    db: AsyncSession = Depends(get_db),
 ):
     """Generate an OG-compatible HTML card for a prediction share."""
 
-    # Fetch market name
     market_name = "Prediction Market"
-    async with get_session() as session:
-        result = await session.execute(
-            select(FuturesMarket.name, FuturesMarket.llm_sport_category)
-            .where(FuturesMarket.id == market_id)
-        )
-        row = result.one_or_none()
-        if row:
-            market_name = row.name
-            category = row.llm_sport_category or "markets"
+    result = await db.execute(
+        select(FuturesMarket.name, FuturesMarket.llm_sport_category)
+        .where(FuturesMarket.id == market_id)
+    )
+    row = result.one_or_none()
+    if row:
+        market_name = row.name
+        category = row.llm_sport_category or "markets"
 
     badge_color = "#16a34a" if correct else "#dc2626"
     badge_text = "✓ Correct!" if correct else "✗ Not quite"
