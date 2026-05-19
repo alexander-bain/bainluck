@@ -22,11 +22,13 @@ class _FakeResult:
 
 
 class _FakeDB:
-    def __init__(self, *, futures_rows=None, events_rows=None, total_markets=0, closing_row=None):
+    def __init__(self, *, futures_rows=None, events_rows=None, spreads_rows=None, totals_rows=None, total_markets=0, closing_row=None):
         self.statements = []
         self._results = [
             _FakeResult(rows=futures_rows or []),
             _FakeResult(rows=events_rows or []),
+            _FakeResult(rows=spreads_rows or []),
+            _FakeResult(rows=totals_rows or []),
             _FakeResult(scalar_value=total_markets),
             _FakeResult(
                 one_value=closing_row
@@ -162,6 +164,30 @@ async def test_public_calibration_builds_bucket_output_shape_from_futures_and_ev
                 sum_sq_err=0.1352,
             )
         ],
+        spreads_rows=[
+            _bucket_row(
+                bucket_idx=4,
+                source="odds_api_spreads",
+                category="basketball_nba",
+                n=10,
+                winners=5,
+                avg_prob=0.524,
+                sum_prob=5.24,
+                sum_sq_err=2.5,
+            )
+        ],
+        totals_rows=[
+            _bucket_row(
+                bucket_idx=4,
+                source="odds_api_totals",
+                category="basketball_nba",
+                n=8,
+                winners=4,
+                avg_prob=0.524,
+                sum_prob=4.192,
+                sum_sq_err=2.0,
+            )
+        ],
         total_markets=9,
         closing_row=SimpleNamespace(
             has_closing=7,
@@ -173,8 +199,8 @@ async def test_public_calibration_builds_bucket_output_shape_from_futures_and_ev
     response = await calibration.public_calibration(db=db, bust=1)
 
     assert response["total_markets"] == 9
-    assert response["total_outcomes"] == 11
-    assert response["total_winners"] == 6
+    assert response["total_outcomes"] == 29  # 4+5 futures + 2 events + 10 spreads + 8 totals
+    assert response["total_winners"] == 15  # 1+3 futures + 2 events + 5 spreads + 4 totals
     assert response["closing_line_coverage"] == {
         "has_closing": 7,
         "needs_closing": 3,
@@ -222,5 +248,31 @@ async def test_public_calibration_builds_bucket_output_shape_from_futures_and_ev
             "sum_sq_err": 0.1352,
             "ci_lower": 0.3424,
             "ci_upper": 1.0,
+        },
+        {
+            "bucket_idx": 4,
+            "source": "odds_api_spreads",
+            "category": "basketball_nba",
+            "price_moved": None,
+            "n": 10,
+            "winners": 5,
+            "avg_prob": 0.524,
+            "sum_prob": 5.24,
+            "sum_sq_err": 2.5,
+            "ci_lower": 0.2366,
+            "ci_upper": 0.7634,
+        },
+        {
+            "bucket_idx": 4,
+            "source": "odds_api_totals",
+            "category": "basketball_nba",
+            "price_moved": None,
+            "n": 8,
+            "winners": 4,
+            "avg_prob": 0.524,
+            "sum_prob": 4.192,
+            "sum_sq_err": 2.0,
+            "ci_lower": 0.2152,
+            "ci_upper": 0.7848,
         },
     ]

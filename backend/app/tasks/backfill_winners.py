@@ -1074,12 +1074,12 @@ async def _backfill_closing_lines():
     finds the last snapshot and stores it as closing_home/away_probability.
     Runs in batches to stay within Celery time limits.
     """
-    stats = {"updated": 0, "errors": []}
+    stats = {"updated": 0, "closing_spreads": 0, "closing_totals": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
             # Only process events that don't already have closing_home_probability
-            # and have both commence_time and scores. Process in batches of 500.
+            # and have both commence_time and scores. Process in batches of 5000.
             result = await session.execute(
                 text("""
                     WITH events_needing_closing AS (
@@ -1114,12 +1114,85 @@ async def _backfill_closing_lines():
             stats["updated"] = result.rowcount
             await session.commit()
 
+            # Backfill closing spreads — last snapshot before commence_time
+            # with a non-null home_spread.
+            spread_result = await session.execute(
+                text("""
+                    WITH events_needing_spread AS (
+                        SELECT e.id, e.commence_time
+                        FROM events e
+                        WHERE e.status IN ('completed', 'closed')
+                          AND e.closing_home_spread IS NULL
+                          AND e.commence_time IS NOT NULL
+                          AND e.home_score IS NOT NULL
+                        LIMIT 5000
+                    ),
+                    closing_spread AS (
+                        SELECT DISTINCT ON (ens.id)
+                            ens.id AS event_id,
+                            os.home_spread,
+                            os.home_spread_odds,
+                            os.away_spread_odds
+                        FROM events_needing_spread ens
+                        JOIN odds_snapshots os ON os.event_id = ens.id
+                        WHERE os.captured_at < ens.commence_time
+                          AND os.home_spread IS NOT NULL
+                        ORDER BY ens.id, os.captured_at DESC
+                    )
+                    UPDATE events e
+                    SET closing_home_spread = cs.home_spread,
+                        closing_home_spread_odds = cs.home_spread_odds,
+                        closing_away_spread_odds = cs.away_spread_odds
+                    FROM closing_spread cs
+                    WHERE e.id = cs.event_id
+                """)
+            )
+            stats["closing_spreads"] = spread_result.rowcount
+            await session.commit()
+
+            # Backfill closing totals — last snapshot before commence_time
+            # with a non-null over_under.
+            totals_result = await session.execute(
+                text("""
+                    WITH events_needing_totals AS (
+                        SELECT e.id, e.commence_time
+                        FROM events e
+                        WHERE e.status IN ('completed', 'closed')
+                          AND e.closing_over_under IS NULL
+                          AND e.commence_time IS NOT NULL
+                          AND e.home_score IS NOT NULL
+                        LIMIT 5000
+                    ),
+                    closing_total AS (
+                        SELECT DISTINCT ON (ent.id)
+                            ent.id AS event_id,
+                            os.over_under,
+                            os.over_odds,
+                            os.under_odds
+                        FROM events_needing_totals ent
+                        JOIN odds_snapshots os ON os.event_id = ent.id
+                        WHERE os.captured_at < ent.commence_time
+                          AND os.over_under IS NOT NULL
+                        ORDER BY ent.id, os.captured_at DESC
+                    )
+                    UPDATE events e
+                    SET closing_over_under = ct.over_under,
+                        closing_over_odds = ct.over_odds,
+                        closing_under_odds = ct.under_odds
+                    FROM closing_total ct
+                    WHERE e.id = ct.event_id
+                """)
+            )
+            stats["closing_totals"] = totals_result.rowcount
+            await session.commit()
+
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Closing line backfill error: %s", e)
 
     logger.info(
-        "Closing line backfill: %d events updated, %d errors",
-        stats["updated"], len(stats["errors"]),
+        "Closing line backfill: %d probabilities, %d spreads, %d totals updated, %d errors",
+        stats["updated"], stats["closing_spreads"], stats["closing_totals"],
+        len(stats["errors"]),
     )
     return stats

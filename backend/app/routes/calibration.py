@@ -979,7 +979,87 @@ async def public_calibration(
     events_result = await db.execute(events_sql)
     events_rows = events_result.all()
 
-    all_rows = list(rows) + list(events_rows)
+    # Spread calibration: did the home team cover the closing spread?
+    # Implied probability from American odds on the home spread side.
+    # Pushes (exact margin = spread) excluded like ties for moneyline.
+    spreads_sql = text("""
+        SELECT
+            LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+            'odds_api_spreads' AS source,
+            s.key AS category,
+            COUNT(*) AS n,
+            SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+            AVG(prob) AS avg_prob,
+            SUM(prob::float) AS sum_prob,
+            SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+        FROM (
+            SELECT
+                CASE
+                    WHEN closing_home_spread_odds < 0
+                        THEN ABS(closing_home_spread_odds)::numeric
+                             / (ABS(closing_home_spread_odds) + 100.0)
+                    WHEN closing_home_spread_odds > 0
+                        THEN 100.0 / (closing_home_spread_odds + 100.0)
+                    ELSE 0.5
+                END AS prob,
+                ((home_score - away_score) > closing_home_spread) AS won,
+                sport_id
+            FROM events
+            WHERE status IN ('completed', 'closed')
+              AND closing_home_spread IS NOT NULL
+              AND closing_home_spread_odds IS NOT NULL
+              AND home_score IS NOT NULL AND away_score IS NOT NULL
+              AND (home_score - away_score) != closing_home_spread
+        ) outcomes
+        JOIN sports s ON s.id = outcomes.sport_id
+        WHERE prob > 0 AND prob < 1
+        GROUP BY bucket_idx, s.key
+        ORDER BY bucket_idx, s.key
+    """)
+    spreads_result = await db.execute(spreads_sql)
+    spreads_rows = spreads_result.all()
+
+    # Totals calibration: did the game go over the closing total?
+    # Implied probability from American odds on the over side.
+    # Pushes (exact total = line) excluded.
+    totals_sql = text("""
+        SELECT
+            LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+            'odds_api_totals' AS source,
+            s.key AS category,
+            COUNT(*) AS n,
+            SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+            AVG(prob) AS avg_prob,
+            SUM(prob::float) AS sum_prob,
+            SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+        FROM (
+            SELECT
+                CASE
+                    WHEN closing_over_odds < 0
+                        THEN ABS(closing_over_odds)::numeric
+                             / (ABS(closing_over_odds) + 100.0)
+                    WHEN closing_over_odds > 0
+                        THEN 100.0 / (closing_over_odds + 100.0)
+                    ELSE 0.5
+                END AS prob,
+                ((home_score + away_score) > closing_over_under) AS won,
+                sport_id
+            FROM events
+            WHERE status IN ('completed', 'closed')
+              AND closing_over_under IS NOT NULL
+              AND closing_over_odds IS NOT NULL
+              AND home_score IS NOT NULL AND away_score IS NOT NULL
+              AND (home_score + away_score) != closing_over_under
+        ) outcomes
+        JOIN sports s ON s.id = outcomes.sport_id
+        WHERE prob > 0 AND prob < 1
+        GROUP BY bucket_idx, s.key
+        ORDER BY bucket_idx, s.key
+    """)
+    totals_result = await db.execute(totals_sql)
+    totals_rows = totals_result.all()
+
+    all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows)
     total_outcomes = sum(r.n for r in all_rows)
     total_winners = sum(r.winners for r in all_rows)
 

@@ -127,6 +127,12 @@ class Event(Base):
     # Closing line (last odds before commence_time, pre-computed by backfill)
     closing_home_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     closing_away_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    closing_home_spread: Mapped[Optional[float]] = mapped_column(Numeric(4, 1))
+    closing_home_spread_odds: Mapped[Optional[int]] = mapped_column(Integer)
+    closing_away_spread_odds: Mapped[Optional[int]] = mapped_column(Integer)
+    closing_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
+    closing_over_odds: Mapped[Optional[int]] = mapped_column(Integer)
+    closing_under_odds: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Excitement Index (EI) — standard GEI: cumulative probability travel distance
     raw_ei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
