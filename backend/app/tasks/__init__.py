@@ -594,6 +594,41 @@ def import_external_curator_ground_truth(self):
     return _tracked_run("external_curator_gt_import", _persist())
 
 
+@celery_app.task(bind=True, name="app.tasks.check_ground_truth_health")
+def check_ground_truth_health(self):
+    """Record daily health for advisory Discover ground-truth sources."""
+    from app.utils.external_curator_ground_truth import (
+        load_external_curator_ground_truth_report_from_env,
+    )
+    from app.utils.ground_truth_health import (
+        assess_ground_truth_report_health,
+        summarize_ground_truth_health,
+    )
+    from app.utils.polymarket_email_ground_truth import (
+        load_polymarket_email_ground_truth_report_from_env,
+    )
+
+    email_report = load_polymarket_email_ground_truth_report_from_env()
+    curator_report = load_external_curator_ground_truth_report_from_env()
+    result = summarize_ground_truth_health(
+        [
+            assess_ground_truth_report_health(
+                email_report,
+                label="polymarket_email",
+            ),
+            assess_ground_truth_report_health(
+                curator_report,
+                label="external_curator",
+            ),
+        ]
+    )
+
+    async def _result():
+        return result
+
+    return _tracked_run("ground_truth_health", _result())
+
+
 @celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
 def check_aggregation_quality(self):
     """Daily: sample events, measure source diversity, alert on single-source spikes."""
@@ -1068,6 +1103,11 @@ celery_app.conf.beat_schedule = {
     "import-external-curator-ground-truth-daily": {
         "task": "app.tasks.import_external_curator_ground_truth",
         "schedule": crontab(minute=45, hour=9),
+        "options": {"queue": "background"},
+    },
+    "check-ground-truth-health-daily": {
+        "task": "app.tasks.check_ground_truth_health",
+        "schedule": crontab(minute=40, hour=9),
         "options": {"queue": "background"},
     },
     "enrich-market-images": {

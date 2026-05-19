@@ -203,6 +203,7 @@ class TestBeatScheduleCompleteness:
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",
         "import-external-curator-ground-truth-daily",
+        "check-ground-truth-health-daily",
         "enrich-market-images",
         "merge-duplicate-events",
         "check-aggregation-quality",
