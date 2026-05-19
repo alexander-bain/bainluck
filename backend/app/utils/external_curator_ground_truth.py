@@ -144,6 +144,11 @@ def normalize_external_curator_ground_truth_rows(
         )
         if not name:
             continue
+        review_status = _clean_text(
+            _field(row, "review_status", "review", "decision")
+        ).lower()
+        if review_status in {"pending", "rejected", "dismissed", "needs_review"}:
+            continue
 
         source = (
             _clean_text(
@@ -215,6 +220,7 @@ def normalize_external_curator_ground_truth_rows(
             "extraction_notes": _clean_text(
                 _field(row, "extraction_notes", "notes", "review_notes")
             ),
+            "review_status": review_status,
         }
         items.append(item)
 

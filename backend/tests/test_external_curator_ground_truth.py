@@ -44,6 +44,7 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "evidence": "",
             "confidence": "",
             "extraction_notes": "",
+            "review_status": "",
         },
         {
             "source": "Public List",
@@ -59,6 +60,7 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "evidence": "",
             "confidence": "",
             "extraction_notes": "",
+            "review_status": "",
         },
     ]
 
@@ -97,6 +99,7 @@ def test_json_parser_accepts_items_wrapper_and_aliases():
             "evidence": "",
             "confidence": "",
             "extraction_notes": "",
+            "review_status": "",
         }
     ]
 
@@ -121,6 +124,7 @@ def test_jsonl_parser_skips_blank_lines_and_defaults_missing_source():
             "evidence": "",
             "confidence": "",
             "extraction_notes": "",
+            "review_status": "",
         }
     ]
 
@@ -141,6 +145,32 @@ def test_parser_preserves_social_extraction_review_fields():
     assert items[0]["evidence"] == "Graphic text says Fed cut rates"
     assert items[0]["confidence"] == "high"
     assert items[0]["extraction_notes"] == "Caption and image agree"
+    assert items[0]["review_status"] == ""
+
+
+def test_pending_or_rejected_review_rows_are_skipped():
+    items = normalize_external_curator_ground_truth_rows(
+        [
+            {
+                "source": "Instagram @kalshi",
+                "name": "Pending market",
+                "review_status": "pending",
+            },
+            {
+                "source": "Instagram @kalshi",
+                "name": "Rejected market",
+                "decision": "rejected",
+            },
+            {
+                "source": "Instagram @kalshi",
+                "name": "Accepted market",
+                "review_status": "accepted",
+            },
+        ]
+    )
+
+    assert [item["name"] for item in items] == ["Accepted market"]
+    assert items[0]["review_status"] == "accepted"
 
 
 def test_dedupes_by_normalized_name_and_source_or_url():

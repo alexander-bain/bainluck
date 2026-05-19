@@ -57,6 +57,7 @@ REVIEW_FIELDS = [
     "evidence",
     "confidence",
     "extraction_notes",
+    "review_status",
 ]
 
 
@@ -233,6 +234,7 @@ def normalize_review_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, str]
                 "evidence": extras.get("evidence", ""),
                 "confidence": extras.get("confidence", ""),
                 "extraction_notes": extras.get("extraction_notes", ""),
+                "review_status": "pending",
             }
         )
     return output

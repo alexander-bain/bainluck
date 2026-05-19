@@ -77,6 +77,7 @@ def test_parse_extraction_report_keeps_review_evidence_fields():
             "evidence": "image says Fed cut",
             "confidence": "high",
             "extraction_notes": "clear",
+            "review_status": "pending",
         }
     ]
 
@@ -99,3 +100,4 @@ def test_normalize_review_rows_defaults_platform_and_sanitizes_url():
     assert rows[0]["url"] == "https://instagram.com/p/series?a=1&b=2"
     assert rows[0]["evidence"] == "graphic names Knicks"
     assert rows[0]["confidence"] == "medium"
+    assert rows[0]["review_status"] == "pending"
