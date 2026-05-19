@@ -250,6 +250,32 @@ interface ExternalCuratorGroundTruthStatus {
   items: Array<Partial<MissingGroundTruthItem> & { name: string }>;
 }
 
+interface GroundTruthHealthIssue {
+  severity: "critical" | "warning" | "info" | "ok";
+  code: string;
+  message: string;
+}
+
+interface GroundTruthHealthReport {
+  label: string;
+  severity: "critical" | "warning" | "info" | "ok";
+  ok: boolean;
+  configured: boolean;
+  raw_row_count: number;
+  loaded_count: number;
+  load_rate: number | null;
+  latest_date: string | null;
+  stale: boolean | null;
+  issues: GroundTruthHealthIssue[];
+}
+
+interface GroundTruthHealthResponse {
+  severity: "critical" | "warning" | "info" | "ok";
+  ok: boolean;
+  reports: GroundTruthHealthReport[];
+  issue_count: number;
+}
+
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
@@ -693,6 +719,14 @@ async function fetchExternalCuratorGroundTruthStatus(secret: string): Promise<Ex
     `${API_URL}/api/admin/discover-external-curator-ground-truth/status?secret=${encodeURIComponent(secret)}&item_limit=8`
   );
   if (!res.ok) throw new Error(`Curator ground truth status API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchGroundTruthHealth(secret: string): Promise<GroundTruthHealthResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-ground-truth-health?secret=${encodeURIComponent(secret)}`
+  );
+  if (!res.ok) throw new Error(`Ground truth health API error: ${res.status}`);
   return res.json();
 }
 
@@ -2239,6 +2273,7 @@ export default function DiscoverQualityPage() {
   const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
   const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
   const externalCuratorStatusKey = submittedSecret ? ["external-curator-ground-truth-status", submittedSecret] : null;
+  const groundTruthHealthKey = submittedSecret ? ["ground-truth-health", submittedSecret] : null;
   const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
     ? [
         "discover-diagnostic-rows",
@@ -2305,6 +2340,12 @@ export default function DiscoverQualityPage() {
   const { data: externalCuratorStatus } = useSWR(
     externalCuratorStatusKey,
     () => fetchExternalCuratorGroundTruthStatus(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: groundTruthHealth } = useSWR(
+    groundTruthHealthKey,
+    () => fetchGroundTruthHealth(submittedSecret!),
     { refreshInterval: 60000 }
   );
 
@@ -2508,6 +2549,7 @@ export default function DiscoverQualityPage() {
       await triggerExternalCuratorGroundTruthImport(submittedSecret);
       setTimeout(() => {
         mutate(externalCuratorStatusKey);
+        mutate(groundTruthHealthKey);
         mutate(debugKey);
       }, 5000);
     } finally {
@@ -2524,6 +2566,7 @@ export default function DiscoverQualityPage() {
       diagnosticRunsKey ? mutate(diagnosticRunsKey) : Promise.resolve(),
       diagnosticTrendsKey ? mutate(diagnosticTrendsKey) : Promise.resolve(),
       externalCuratorStatusKey ? mutate(externalCuratorStatusKey) : Promise.resolve(),
+      groundTruthHealthKey ? mutate(groundTruthHealthKey) : Promise.resolve(),
       diagnosticRowsKey ? mutate(diagnosticRowsKey) : Promise.resolve(),
     ]);
     setLastRefreshedAt(new Date());
@@ -2826,6 +2869,52 @@ export default function DiscoverQualityPage() {
                 </div>
               ) : (
                 <div className="text-sm text-text-muted">Loading curator status...</div>
+              )}
+            </div>
+            <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Ground Truth Health</h2>
+                  <div className="text-xs text-text-muted mt-1">
+                    {groundTruthHealth
+                      ? `${groundTruthHealth.issue_count} issue${groundTruthHealth.issue_count === 1 ? "" : "s"}`
+                      : "Loading source health..."}
+                  </div>
+                </div>
+                {groundTruthHealth && (
+                  <StatusPill tone={
+                    groundTruthHealth.severity === "critical"
+                      ? "warn"
+                      : groundTruthHealth.severity === "warning"
+                        ? "warn"
+                        : groundTruthHealth.severity === "ok"
+                          ? "ok"
+                          : "muted"
+                  }>
+                    {formatTargetName(groundTruthHealth.severity)}
+                  </StatusPill>
+                )}
+              </div>
+              {groundTruthHealth ? (
+                <div className="space-y-2">
+                  {groundTruthHealth.reports.map((report) => (
+                    <div key={report.label} className="rounded-lg border border-surface-border bg-surface-elevated/40 p-2">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-medium text-text-primary">{formatTargetName(report.label)}</span>
+                        <StatusPill tone={report.severity === "ok" ? "ok" : report.severity === "info" ? "muted" : "warn"}>
+                          {report.loaded_count}/{report.raw_row_count}
+                        </StatusPill>
+                      </div>
+                      {report.issues[0] && (
+                        <div className="mt-1 text-xs text-text-muted line-clamp-2">
+                          {report.issues[0].message}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-text-muted">Loading ground truth health...</div>
               )}
             </div>
           </div>
