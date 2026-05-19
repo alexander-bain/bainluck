@@ -52,7 +52,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Component | Technology | Hosting |
 |-----------|------------|---------|
-| Backend API | FastAPI (Python 3.11+), 4,550+ tests | Heroku |
+| Backend API | FastAPI (Python 3.11+), 4,800+ tests | Heroku |
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis (dual workers: realtime + background) | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
@@ -77,7 +77,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 - **Deployments from GitHub**: `git push origin master` triggers CI; Vercel deploys frontend from GitHub, and Heroku deploy runs through the serialized CI `deploy` job after tests pass.
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (4,550+ tests)
+- **Backend tests**: `cd backend && python3 -m pytest tests/ -v` (4,800+ tests)
 - **Single test**: `cd backend && python3 -m pytest tests/test_feed_scoring.py::TestFeedBaseScoring::test_live_nba -v`
 - **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v` (590+ contract tests)
 - **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
@@ -109,7 +109,7 @@ bainluck/
 │   │   ├── tasks/               # Celery tasks (27 modules)
 │   │   └── utils/               # Pure logic (sport_keys.py, prediction_market_matching.py, etc.)
 │   ├── alembic/                 # Database migrations
-│   └── tests/                   # 4,550+ pytest items
+│   └── tests/                   # 4,800+ pytest items
 ├── frontend/
 │   ├── app/                     # Next.js app router (30+ pages, incl. /discover, /weather)
 │   ├── components/              # React components (DiscoverCard, OddsChart, MarketMap, etc.)
@@ -345,6 +345,13 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 | `tests/test_futures_highlights.py` | Election allowlist, soccer allowlist, non-major election penalty | May 18 |
 | `tests/test_cross_source_matching.py` | Cross-source matching: normalization, pairing, delta computation, dedup | May 18 |
 | `tests/test_personalization.py` + `tests/test_feed_discover_affinities.py` | Semantic dismiss soft penalty, generic-token guardrails, and semantic token extraction | May 18 |
+| `tests/integration/test_route_auth.py` | Auth endpoint contract: Google/Apple sign-in, /me profile, validation | May 18 |
+| `tests/integration/test_route_challenges.py` | Daily/friend challenge creation, acceptance, validation | May 18 |
+| `tests/integration/test_route_league_futures.py` | League futures sections, sport key routing, market classification | May 18 |
+| `tests/integration/test_route_notifications.py` | Device token registration, admin token management, push test | May 18 |
+| `tests/integration/test_route_source_intelligence.py` | Source intelligence main + 5 audit endpoints, admin auth | May 18 |
+| `tests/integration/test_route_teams.py` | Team detail page shape, 404 handling, championship path | May 18 |
+| `tests/integration/test_route_user.py` | Pins, preferences, favorites, sport affinities, onboarding | May 18 |
 
 ---
 
