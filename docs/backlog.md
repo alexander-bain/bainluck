@@ -1418,7 +1418,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route + Guardrail Test Coverage — ONGOING
 
-~~110~~ ~~158~~ ~~210~~ ~~218~~ 590+ integration/route contract tests and 4,450+ backend tests collected. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, seeded feed coverage, and broad root-level guardrail suites. Seeded-data tests added (May 8):
+~~110~~ ~~158~~ ~~210~~ ~~218~~ ~~590+~~ 850+ integration/route contract tests and 5,000+ backend tests collected. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, seeded feed coverage, and broad root-level guardrail suites. Seeded-data tests added (May 8):
 - ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
 - ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
 - ✅ Playoffs: column data, probability sums, monotonicity, and overround normalization guardrails
@@ -1441,6 +1441,7 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 - ✅ May 18 docs sync: verified the guardrail commits were already pushed, carried gotchas 71-75 into `CLAUDE.md`, and fixed the stale gotchas-reference range header.
 - ✅ May 18 guardrails: playoff championship overround normalization, StatPal raw-period preservation, DataGolf tour metadata classification, bug-report categorization, and line-movement prompt focus.
 - ✅ May 18 notification route contracts: device-token registration/upsert shape, admin list redaction, Firebase send-test payloads, invalid-token hints, and unconfigured Firebase errors.
+- ✅ May 18-19 integration test sprint: +456 tests across 15 new files — auth, challenges, league-futures, notifications, source-intelligence, teams, user, sports, search expansion, weather, economics, politics, entertainment, feedback, admin-celery, admin-taxonomy. Total: 4,643 → 5,099.
 
 **Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`, plus focused backend guardrail tests under `backend/tests/` and `backend/app/utils/league_classification.py`
 **Parallel Safety:** Green
