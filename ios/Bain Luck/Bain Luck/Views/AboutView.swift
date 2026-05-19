@@ -114,6 +114,28 @@ struct AboutView: View {
                 .background(Color.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
+                // Need Help?
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Need Help?").font(.subheadline.weight(.semibold))
+                    Text("Questions, feedback, or bug reports? Reach out and we'll get back to you within 24 hours.")
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                    if let mailURL = URL(string: "mailto:bugs@bainluck.com") {
+                        Link(destination: mailURL) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "envelope.fill").font(.caption2)
+                                Text("bugs@bainluck.com").font(.caption2).fontWeight(.semibold)
+                            }
+                            .foregroundStyle(.blue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("You can also shake your device to send a bug report with a screenshot directly to our team.")
+                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                }
+                .padding(8)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
                 // Privacy Policy
                 if let url = URL(string: "https://bainluck.com/privacy") {
                     Link(destination: url) {
