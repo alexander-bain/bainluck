@@ -1567,8 +1567,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 | # | Item | Files | What to do |
 |---|------|-------|------------|
 | ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
-| CQ-16 | `private` on view helpers | All View files | PARTIAL May 18 — obvious view-local environment objects, native guess-card/profile stored properties, and Futures Detail/Leagues/My Stuff view-local fields tightened; deeper helper-method sweep remains. |
-| CQ-17 | Stop abbreviating | All files (search-replace) | PARTIAL May 18 — `vm` → `viewModel` completed in Economics, Weather, Friend Challenge, Futures List, Calibration, Politics, Entertainment, Preferences, Search, Futures Detail, League Grid, and Sport Category views. Additional low-risk local abbreviation cleanup landed in Menu Bar, Search, Market Map, Discover Event Card, and Related-by-Tag components. Remaining: broader `ct`, `ap`/`hp`, `gm`, and similar cleanup in small low-conflict slices. |
+| ~~CQ-16~~ | ~~`private` on view helpers~~ | All View files | ✅ DONE May 19 — Verified: all @ViewBuilder helpers and func/var declarations across 14 View files already have `private` access. No non-private view-local helpers found. |
+| ~~CQ-17~~ | ~~Stop abbreviating~~ | All files (search-replace) | ✅ DONE May 19 — `vm` → `viewModel` completed across 12 views, `ct` → `commence`, `gm` → `markets`, `rf` → `related`, `tp` → `progression`, `lm` → `movement`/`leagueData` in StatusBadge, TeamDetailView, EventDetailViewModel, LeagueGridView, SportCategoryView. No remaining abbreviated locals found. |
 | ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
 
 ### Wave 6: Doc Comments (1 hour, ongoing)
