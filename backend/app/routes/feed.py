@@ -1923,6 +1923,11 @@ async def _discover_rank_phase_trace(
         feed_items = diversify_discover_first_page(
             feed_items, first_page_size=min(20, limit)
         )
+        feed_items = backfill_discover_editorial_tail(
+            feed_items,
+            window_size=min(50, len(feed_items)),
+            preserve_top=min(20, len(feed_items)),
+        )
         post_diversity_rank = _rank_futures_market(feed_items, market_id)
 
     returned = feed_items[:limit]
