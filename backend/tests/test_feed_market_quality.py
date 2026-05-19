@@ -1958,6 +1958,7 @@ class TestDiscoverFirstPageMixer:
                     name="2028 U.S. Presidential Election winner?",
                 ),
                 self._item(1004, "soccer", 99, name="World Cup Group A Winner"),
+                self._item(1005, "politics", 99, name="Los Angeles Mayor winner?"),
             ]
         )
 
@@ -1969,6 +1970,7 @@ class TestDiscoverFirstPageMixer:
         assert "Xi Jinping out before 2027?" in top50_names
         assert "2028 U.S. Presidential Election winner?" in top50_names
         assert "World Cup Group A Winner" in top50_names
+        assert "Los Angeles Mayor winner?" in top50_names
 
     def test_editorial_tail_backfill_adds_major_us_civic_power_story(self):
         items = [

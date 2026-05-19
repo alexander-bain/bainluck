@@ -1014,7 +1014,7 @@ def backfill_discover_editorial_tail(
     *,
     window_size: int = 50,
     preserve_top: int = 20,
-    max_insertions: int = 5,
+    max_insertions: int = 6,
 ) -> list[dict]:
     """Pull a few high-texture eligible stories into the top-50 tail.
 
