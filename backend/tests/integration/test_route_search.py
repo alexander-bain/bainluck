@@ -480,3 +480,172 @@ class TestSearchMultiWord:
         assert "futures" in body
         assert "teams" in body
         assert "pagination" in body
+
+
+# ============================================================================
+# Faceted Search — GET /api/events/faceted
+# ============================================================================
+
+
+class TestFacetedSearchEndpoint:
+    """GET /api/events/faceted — tag-based faceted event search."""
+
+    async def test_returns_200(self, client):
+        resp = await client.get("/api/events/faceted")
+        assert resp.status_code == 200
+
+    async def test_response_top_level_shape(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert set(body.keys()) == {"total", "page", "per_page", "filters", "events", "facets"}
+
+    async def test_events_is_list(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert isinstance(body["events"], list)
+
+    async def test_facets_is_dict(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert isinstance(body["facets"], dict)
+
+    async def test_filters_is_list(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert isinstance(body["filters"], list)
+
+    async def test_pagination_defaults(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert body["page"] == 1
+        assert body["per_page"] == 25
+        assert body["total"] == 0
+
+    async def test_custom_pagination(self, client):
+        resp = await client.get("/api/events/faceted?page=2&per_page=10")
+        body = resp.json()
+        assert body["page"] == 2
+        assert body["per_page"] == 10
+
+    async def test_invalid_page_returns_422(self, client):
+        resp = await client.get("/api/events/faceted?page=0")
+        assert resp.status_code == 422
+
+    async def test_invalid_per_page_returns_422(self, client):
+        resp = await client.get("/api/events/faceted?per_page=101")
+        assert resp.status_code == 422
+
+    async def test_invalid_days_too_low_returns_422(self, client):
+        resp = await client.get("/api/events/faceted?days=0")
+        assert resp.status_code == 422
+
+    async def test_invalid_days_too_high_returns_422(self, client):
+        resp = await client.get("/api/events/faceted?days=31")
+        assert resp.status_code == 422
+
+    async def test_sport_convenience_filter_accepted(self, client):
+        resp = await client.get("/api/events/faceted?sport=basketball")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "sport:basketball" in body["filters"]
+
+    async def test_status_convenience_filter_accepted(self, client):
+        resp = await client.get("/api/events/faceted?status=live")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "status:live" in body["filters"]
+
+    async def test_tags_json_array_accepted(self, client):
+        resp = await client.get(
+            "/api/events/faceted",
+            params={"tags": '["sport:basketball", "stakes:high"]'},
+        )
+        assert resp.status_code == 200
+
+    async def test_invalid_tags_json_is_ignored(self, client):
+        """Malformed JSON tags should not crash the endpoint."""
+        resp = await client.get(
+            "/api/events/faceted",
+            params={"tags": "not-valid-json"},
+        )
+        assert resp.status_code == 200
+
+    async def test_empty_results_on_empty_db(self, client):
+        resp = await client.get("/api/events/faceted")
+        body = resp.json()
+        assert body["events"] == []
+        assert body["total"] == 0
+
+    async def test_post_rejected(self, client):
+        resp = await client.post("/api/events/faceted")
+        assert resp.status_code == 405
+
+
+# ============================================================================
+# Search — Special Characters and Edge Cases
+# ============================================================================
+
+
+class TestSearchEdgeCases:
+    """Edge cases for search query handling."""
+
+    async def test_special_characters_in_query(self, client):
+        """Queries with special characters should not crash."""
+        resp = await client.get("/api/events/search?q=O'Brien")
+        assert resp.status_code == 200
+
+    async def test_unicode_query(self, client):
+        resp = await client.get("/api/events/search?q=Müller")
+        assert resp.status_code == 200
+
+    async def test_numeric_query(self, client):
+        resp = await client.get("/api/events/search?q=2026")
+        assert resp.status_code == 200
+
+    async def test_whitespace_padded_query(self, client):
+        resp = await client.get("/api/events/search?q=  test  ")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "query" in body
+
+    async def test_max_length_query(self, client):
+        """Very long queries should still work (no explicit max on search)."""
+        long_q = "a" * 100
+        resp = await client.get(f"/api/events/search?q={long_q}")
+        assert resp.status_code == 200
+
+    async def test_exactly_2_chars_accepted(self, client):
+        """Minimum query length is 2."""
+        resp = await client.get("/api/events/search?q=NY")
+        assert resp.status_code == 200
+
+    async def test_typeahead_exactly_2_chars_accepted(self, client):
+        resp = await client.get("/api/events/typeahead?q=NY")
+        assert resp.status_code == 200
+
+    async def test_typeahead_exactly_50_chars_accepted(self, client):
+        """Max typeahead length is 50."""
+        q = "a" * 50
+        resp = await client.get(f"/api/events/typeahead?q={q}")
+        assert resp.status_code == 200
+
+
+# ============================================================================
+# Search — Sport Alias Matching
+# ============================================================================
+
+
+class TestSearchSportAliases:
+    """Queries like 'NBA' or 'NFL' should be accepted and produce valid responses."""
+
+    @pytest.mark.parametrize("alias", ["NBA", "NFL", "MLB", "NHL", "nba", "nfl"])
+    async def test_sport_alias_search_returns_200(self, client, alias):
+        resp = await client.get(f"/api/events/search?q={alias}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["query"] == alias
+
+    @pytest.mark.parametrize("alias", ["NBA", "NFL", "MLB", "NHL"])
+    async def test_sport_alias_typeahead_returns_200(self, client, alias):
+        resp = await client.get(f"/api/events/typeahead?q={alias}")
+        assert resp.status_code == 200
