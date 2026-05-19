@@ -5,6 +5,7 @@ from io import StringIO
 from scripts.normalize_external_curator_ground_truth import (
     build_summary,
     load_inputs,
+    load_text_line_inputs,
     write_csv,
     write_jsonl,
 )
@@ -53,3 +54,45 @@ def test_normalizer_writes_jsonl(tmp_path):
 
     assert '"source": "Curator"' in output.getvalue()
     assert '"name": "Will a hurricane make landfall?"' in output.getvalue()
+
+
+def test_text_line_inputs_support_copied_social_lists(tmp_path):
+    text_path = tmp_path / "copied-posts.txt"
+    text_path.write_text(
+        "\n\nWill SpaceX Starship launch this month?\n  Will the Fed cut rates in June?  \n"
+    )
+
+    rows = load_text_line_inputs(
+        [str(text_path)],
+        source="Prediction Feed",
+        category="?",
+        platform="x",
+        handle="@predictionfeed",
+    )
+
+    assert rows == [
+        {
+            "source": "Prediction Feed",
+            "category": "?",
+            "name": "Will SpaceX Starship launch this month?",
+            "probability": "",
+            "hook": "",
+            "url": "",
+            "published_at": "",
+            "platform": "x",
+            "handle": "@predictionfeed",
+            "engagement": "",
+        },
+        {
+            "source": "Prediction Feed",
+            "category": "?",
+            "name": "Will the Fed cut rates in June?",
+            "probability": "",
+            "hook": "",
+            "url": "",
+            "published_at": "",
+            "platform": "x",
+            "handle": "@predictionfeed",
+            "engagement": "",
+        },
+    ]

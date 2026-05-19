@@ -8,6 +8,7 @@ requests; URL fields are treated as metadata and sanitized by the shared parser.
 Usage:
     python3 scripts/normalize_external_curator_ground_truth.py curators.csv --output /tmp/curators.normalized.csv
     python3 scripts/normalize_external_curator_ground_truth.py x.jsonl newsletter.json --formats jsonl json --format jsonl
+    python3 scripts/normalize_external_curator_ground_truth.py copied-posts.txt --text-lines --source "PM Curator" --platform x
 """
 
 from __future__ import annotations
@@ -56,6 +57,37 @@ def load_inputs(
                 input_format=input_format,
             )
         )
+    return rows
+
+
+def load_text_line_inputs(
+    paths: Iterable[str],
+    *,
+    source: str,
+    category: str,
+    platform: str,
+    handle: str = "",
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for path in paths:
+        for line in Path(path).read_text().splitlines():
+            name = " ".join(line.strip().split())
+            if not name:
+                continue
+            rows.append(
+                {
+                    "source": source,
+                    "category": category,
+                    "name": name,
+                    "probability": "",
+                    "hook": "",
+                    "url": "",
+                    "published_at": "",
+                    "platform": platform,
+                    "handle": handle,
+                    "engagement": "",
+                }
+            )
     return rows
 
 
@@ -109,9 +141,43 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print a compact source/platform summary to stderr",
     )
+    parser.add_argument(
+        "--text-lines",
+        action="store_true",
+        help="Treat inputs as plain text with one market/question per non-empty line",
+    )
+    parser.add_argument(
+        "--source",
+        default="external_curator",
+        help="Default source for --text-lines rows",
+    )
+    parser.add_argument(
+        "--platform",
+        default="manual",
+        help="Default platform for --text-lines rows",
+    )
+    parser.add_argument(
+        "--category",
+        default="?",
+        help="Default category for --text-lines rows",
+    )
+    parser.add_argument(
+        "--handle",
+        default="",
+        help="Default handle/account for --text-lines rows",
+    )
     args = parser.parse_args(argv)
 
-    rows = load_inputs(args.paths, formats=args.formats)
+    if args.text_lines:
+        rows = load_text_line_inputs(
+            args.paths,
+            source=args.source,
+            category=args.category,
+            platform=args.platform,
+            handle=args.handle,
+        )
+    else:
+        rows = load_inputs(args.paths, formats=args.formats)
     output_stream: TextIO
     close_output = False
     if args.output == "-":
