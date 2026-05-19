@@ -588,6 +588,23 @@ async def get_discover_external_curator_ground_truth_status(
     }
 
 
+@router.post("/discover-external-curator-ground-truth/import")
+async def trigger_discover_external_curator_ground_truth_import(
+    secret: str = Query(...),
+):
+    """Queue import of configured reviewed external-curator/social ground truth."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    task = celery_app.send_task("app.tasks.import_external_curator_ground_truth")
+    return {
+        "queued": True,
+        "task_id": task.id,
+    }
+
+
 @router.get("/discover-ground-truth-diagnostics/runs/{run_id}/rows")
 async def list_discover_ground_truth_diagnostic_rows(
     run_id: str,

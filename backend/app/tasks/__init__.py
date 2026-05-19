@@ -566,6 +566,34 @@ def snapshot_discover_ground_truth_diagnostics(self, limit: int = 50):
     }
 
 
+@celery_app.task(bind=True, name="app.tasks.import_external_curator_ground_truth")
+def import_external_curator_ground_truth(self):
+    """Persist configured reviewed external-curator/social ground truth."""
+    from app.tasks.base import get_task_session
+    from app.utils.external_curator_ground_truth import (
+        load_external_curator_ground_truth_report_from_env,
+    )
+    from app.utils.persisted_external_curator_ground_truth import (
+        import_external_curator_ground_truth_rows,
+    )
+
+    report = load_external_curator_ground_truth_report_from_env()
+
+    async def _persist():
+        async with get_task_session() as session:
+            result = await import_external_curator_ground_truth_rows(
+                session,
+                report["items"],
+            )
+        return {
+            "status": "ok" if report["metadata"].get("configured") else "skipped",
+            "metadata": report["metadata"],
+            **result,
+        }
+
+    return _tracked_run("external_curator_gt_import", _persist())
+
+
 @celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
 def check_aggregation_quality(self):
     """Daily: sample events, measure source diversity, alert on single-source spikes."""
@@ -1035,6 +1063,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.snapshot_discover_ground_truth_diagnostics",
         "schedule": crontab(minute=50, hour=9),
         "kwargs": {"limit": 50},
+        "options": {"queue": "background"},
+    },
+    "import-external-curator-ground-truth-daily": {
+        "task": "app.tasks.import_external_curator_ground_truth",
+        "schedule": crontab(minute=45, hour=9),
         "options": {"queue": "background"},
     },
     "enrich-market-images": {
