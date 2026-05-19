@@ -606,11 +606,12 @@ async function fetchDiscoverDiagnosticTrends(secret: string): Promise<DiscoverDi
 async function fetchDiscoverDiagnosticRows(
   secret: string,
   runId: string,
-  filters: { sourceGroup: string; status: string; triageBucket: string }
+  filters: { sourceGroup: string; status: string; triageBucket: string; offset: number }
 ): Promise<DiscoverDiagnosticRowsResponse> {
   const params = new URLSearchParams({
     secret,
     limit: "100",
+    offset: String(filters.offset),
   });
   if (filters.sourceGroup !== "all") params.set("source_group", filters.sourceGroup);
   if (filters.status !== "all") params.set("status", filters.status);
@@ -1077,6 +1078,8 @@ function DiagnosticRunsPanel({
   setStatus,
   triageBucket,
   setTriageBucket,
+  offset,
+  setOffset,
   onTrigger,
   triggering,
   onToggleTrace,
@@ -1096,6 +1099,8 @@ function DiagnosticRunsPanel({
   setStatus: (value: string) => void;
   triageBucket: string;
   setTriageBucket: (value: string) => void;
+  offset: number;
+  setOffset: (value: number) => void;
   onTrigger: () => void;
   triggering: boolean;
   onToggleTrace: (marketId: number) => void;
@@ -1307,7 +1312,29 @@ function DiagnosticRunsPanel({
             </tbody>
           </table>
           <div className="p-3 text-xs text-text-muted border-t border-surface-border">
-            Showing {rows.rows.length} of {rows.total}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span>
+                Showing {offset + 1}-{Math.min(offset + rows.rows.length, rows.total)} of {rows.total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOffset(Math.max(0, offset - rows.limit))}
+                  disabled={offset === 0}
+                  className="rounded-lg border border-surface-border px-3 py-1 disabled:opacity-40 hover:bg-surface-elevated"
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOffset(offset + rows.limit)}
+                  disabled={offset + rows.rows.length >= rows.total}
+                  className="rounded-lg border border-surface-border px-3 py-1 disabled:opacity-40 hover:bg-surface-elevated"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
@@ -2060,6 +2087,7 @@ export default function DiscoverQualityPage() {
   const [diagnosticSourceGroup, setDiagnosticSourceGroup] = useState("all");
   const [diagnosticStatus, setDiagnosticStatus] = useState("miss");
   const [diagnosticBucket, setDiagnosticBucket] = useState("all");
+  const [diagnosticOffset, setDiagnosticOffset] = useState(0);
   const [expandedTraceId, setExpandedTraceId] = useState<number | null>(null);
   const [traceByMarketId, setTraceByMarketId] = useState<Record<number, DiscoverMarketTrace>>({});
   const [traceLoadingId, setTraceLoadingId] = useState<number | null>(null);
@@ -2087,6 +2115,7 @@ export default function DiscoverQualityPage() {
         diagnosticSourceGroup,
         diagnosticStatus,
         diagnosticBucket,
+        diagnosticOffset,
       ]
     : null;
 
@@ -2129,6 +2158,7 @@ export default function DiscoverQualityPage() {
         sourceGroup: diagnosticSourceGroup,
         status: diagnosticStatus,
         triageBucket: diagnosticBucket,
+        offset: diagnosticOffset,
       }
     ),
     { refreshInterval: 60000 }
@@ -2140,6 +2170,10 @@ export default function DiscoverQualityPage() {
       setSelectedDiagnosticRunId(firstRunId);
     }
   }, [diagnosticRunsData, selectedDiagnosticRunId]);
+
+  useEffect(() => {
+    setDiagnosticOffset(0);
+  }, [selectedDiagnosticRunId, diagnosticSourceGroup, diagnosticStatus, diagnosticBucket]);
 
   const categories = useMemo(
     () => Array.from(new Set((data?.debug_items || []).map((item) => item.category))).sort(),
@@ -2610,6 +2644,8 @@ export default function DiscoverQualityPage() {
               setStatus={setDiagnosticStatus}
               triageBucket={diagnosticBucket}
               setTriageBucket={setDiagnosticBucket}
+              offset={diagnosticOffset}
+              setOffset={setDiagnosticOffset}
               onTrigger={triggerDiagnosticSnapshot}
               triggering={triggeringDiagnostics}
               onToggleTrace={toggleTrace}
