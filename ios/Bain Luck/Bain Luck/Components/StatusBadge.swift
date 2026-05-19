@@ -46,7 +46,7 @@ struct StatusBadge: View {
                 .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
         case "scheduled":
-            if let ct = commenceTime, let date = ct.asDate, let countdown = formatCountdown(from: date) {
+            if let commence = commenceTime, let date = commence.asDate, let countdown = formatCountdown(from: date) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
                         .font(.system(size: 8))

@@ -65,29 +65,27 @@ final class EventDetailViewModel: ObservableObject {
         if let h = await historyTask.value {
             history = h
         }
-        if let rf = await relatedFuturesTask.value {
-            // Only overwrite if new data has content, or we had nothing before
-            if relatedFutures == nil || rf.homeTeamFutures != nil || rf.awayTeamFutures != nil || rf.sharedFutures != nil || rf.boxScore != nil {
-                relatedFutures = rf
+        if let related = await relatedFuturesTask.value {
+            if relatedFutures == nil || related.homeTeamFutures != nil || related.awayTeamFutures != nil || related.sharedFutures != nil || related.boxScore != nil {
+                relatedFutures = related
             }
         }
-        if let tp = await progressionTask.value {
-            if teamProgression == nil || tp.homeTeam != nil || tp.awayTeam != nil {
-                teamProgression = tp
+        if let progression = await progressionTask.value {
+            if teamProgression == nil || progression.homeTeam != nil || progression.awayTeam != nil {
+                teamProgression = progression
             }
         }
-        if let gm = await gameMarketsTask.value {
-            // Only overwrite if new data has meaningful content, or we had nothing before
-            let hasContent = (gm.playerProps != nil && !(gm.playerProps?.isEmpty ?? true))
-                || (gm.spreads != nil && !(gm.spreads?.isEmpty ?? true))
-                || (gm.totals != nil && !(gm.totals?.isEmpty ?? true))
-                || (gm.other != nil && !(gm.other?.isEmpty ?? true))
+        if let markets = await gameMarketsTask.value {
+            let hasContent = (markets.playerProps != nil && !(markets.playerProps?.isEmpty ?? true))
+                || (markets.spreads != nil && !(markets.spreads?.isEmpty ?? true))
+                || (markets.totals != nil && !(markets.totals?.isEmpty ?? true))
+                || (markets.other != nil && !(markets.other?.isEmpty ?? true))
             if gameMarkets == nil || hasContent {
-                gameMarkets = gm
+                gameMarkets = markets
             }
         }
-        if let lm = await lineMovementTask.value {
-            lineMovement = lm
+        if let movement = await lineMovementTask.value {
+            lineMovement = movement
         }
     }
 

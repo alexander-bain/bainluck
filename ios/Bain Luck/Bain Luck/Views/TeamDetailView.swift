@@ -146,8 +146,8 @@ struct TeamDetailView: View {
                 Text("\(prefix) \(opponent)").font(.subheadline).fontWeight(.medium)
                 HStack(spacing: 4) {
                     StatusBadge(status: event.status)
-                    if let ct = event.commenceTime {
-                        RelativeTimeText(dateString: ct)
+                    if let commence = event.commenceTime {
+                        RelativeTimeText(dateString: commence)
                     }
                 }
             }

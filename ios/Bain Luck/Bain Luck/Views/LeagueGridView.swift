@@ -195,9 +195,9 @@ struct LeagueGridView: View {
 
     @ViewBuilder
     private var leagueMarketSections: some View {
-        if let lm = viewModel.leagueMarkets {
+        if let leagueData = viewModel.leagueMarkets {
             ForEach(Self.sectionOrder, id: \.self) { key in
-                if let markets = lm.sections[key], !markets.isEmpty {
+                if let markets = leagueData.sections[key], !markets.isEmpty {
                     Section {
                         ForEach(markets.prefix(8)) { market in
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {

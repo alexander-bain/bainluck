@@ -117,7 +117,7 @@ struct SportCategoryView: View {
             }
 
             // League market sections (awards, series, playoff props)
-            if let lm = viewModel.leagueMarkets {
+            if let leagueData = viewModel.leagueMarkets {
                 let sectionOrder = ["series", "awards", "playoff_props", "season_stats", "novelty"]
                 let sectionLabels: [String: String] = [
                     "series": "Playoff Series",
@@ -127,7 +127,7 @@ struct SportCategoryView: View {
                     "novelty": "More Markets",
                 ]
                 ForEach(sectionOrder, id: \.self) { key in
-                    if let markets = lm.sections[key], !markets.isEmpty {
+                    if let markets = leagueData.sections[key], !markets.isEmpty {
                         Section {
                             ForEach(markets.prefix(6)) { market in
                                 NavigationLink(value: Route.futuresDetail(id: market.id)) {
