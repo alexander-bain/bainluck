@@ -620,8 +620,6 @@ export default function CalibrationPage() {
           {priceCohort !== "all" && ` (${priceCohort === "closing" ? "closing line" : "opening price"} cohort)`}
         </p>
         <p className="mt-1">
-          <Link href="/source-intelligence" className="text-accent-brand hover:underline">When Sources Disagree</Link>
-          {" "}&middot;{" "}
           <Link href="/about" className="text-accent-brand hover:underline">About Bain Luck</Link>
         </p>
       </footer>
