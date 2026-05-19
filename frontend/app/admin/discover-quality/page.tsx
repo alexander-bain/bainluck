@@ -161,6 +161,27 @@ interface DiscoverDiagnosticRunsResponse {
   runs: DiscoverDiagnosticRun[];
 }
 
+interface DiscoverDiagnosticTrendRun extends DiscoverDiagnosticRun {
+  top_triage_bucket: { bucket: string; count: number } | null;
+  combined_misses: number;
+  email_hits: number;
+  email_misses: number;
+  external_curator_hits: number;
+  external_curator_misses: number;
+  deltas: Partial<Record<
+    | "combined_misses"
+    | "email_hits"
+    | "email_misses"
+    | "external_curator_hits"
+    | "external_curator_misses",
+    number
+  >>;
+}
+
+interface DiscoverDiagnosticTrendsResponse {
+  runs: DiscoverDiagnosticTrendRun[];
+}
+
 interface DiscoverDiagnosticRow {
   id: number;
   captured_at: string | null;
@@ -573,6 +594,14 @@ async function fetchDiscoverDiagnosticRuns(secret: string): Promise<DiscoverDiag
   return res.json();
 }
 
+async function fetchDiscoverDiagnosticTrends(secret: string): Promise<DiscoverDiagnosticTrendsResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-ground-truth-diagnostics/trends?secret=${encodeURIComponent(secret)}&limit=8`
+  );
+  if (!res.ok) throw new Error(`Diagnostic trends API error: ${res.status}`);
+  return res.json();
+}
+
 async function fetchDiscoverDiagnosticRows(
   secret: string,
   runId: string,
@@ -748,6 +777,23 @@ function itemHref(itemType: string, itemId: string | number | null | undefined) 
   return null;
 }
 
+function DeltaPill({
+  value,
+  lowerIsBetter,
+}: {
+  value: number | undefined;
+  lowerIsBetter: boolean;
+}) {
+  if (value === undefined) return null;
+  const tone =
+    value === 0
+      ? "muted"
+      : lowerIsBetter
+        ? value < 0 ? "ok" : "warn"
+        : value > 0 ? "ok" : "warn";
+  return <StatusPill tone={tone}>{signedNumber(value, 0)}</StatusPill>;
+}
+
 function PersonalizationPanel({ rollup }: { rollup: PersonalizationRollup }) {
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
@@ -887,6 +933,133 @@ function ReviewPathNav({
           </a>
         ))}
       </div>
+    </div>
+  );
+}
+
+function DiagnosticTrendsPanel({ runs }: { runs: DiscoverDiagnosticTrendRun[] }) {
+  const latest = runs[0];
+
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-lg p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Diagnostic Trend</h2>
+          <p className="text-xs text-text-muted mt-1">
+            Recent persisted snapshots, grouped by source and triage bucket.
+          </p>
+        </div>
+        {latest && (
+          <StatusPill tone={latest.combined_misses === 0 ? "ok" : "warn"}>
+            {`${latest.combined_misses} latest misses`}
+          </StatusPill>
+        )}
+      </div>
+
+      {latest ? (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <div className="text-xs text-text-muted">Latest run</div>
+              <div className="text-sm font-semibold text-text-primary">
+                {latest.captured_at ? new Date(latest.captured_at).toLocaleString() : latest.run_id}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-text-muted">Email hits</div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm font-semibold text-text-primary">
+                  {latest.email_hits}/{latest.email_hits + latest.email_misses}
+                </span>
+                <DeltaPill value={latest.deltas.email_hits} lowerIsBetter={false} />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-text-muted">Curator hits</div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm font-semibold text-text-primary">
+                  {latest.external_curator_hits}/{latest.external_curator_hits + latest.external_curator_misses}
+                </span>
+                <DeltaPill value={latest.deltas.external_curator_hits} lowerIsBetter={false} />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-text-muted">Top miss bucket</div>
+              <div className="text-sm font-semibold text-text-primary">
+                {latest.top_triage_bucket
+                  ? `${formatTargetName(latest.top_triage_bucket.bucket)} (${latest.top_triage_bucket.count})`
+                  : "none"}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-surface-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-elevated text-text-muted text-xs">
+                <tr>
+                  <th className="text-left font-medium p-3">Run</th>
+                  <th className="text-left font-medium p-3">Misses</th>
+                  <th className="text-left font-medium p-3">Email</th>
+                  <th className="text-left font-medium p-3">Curator</th>
+                  <th className="text-left font-medium p-3">Top Bucket</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border/60">
+                {runs.map((run) => (
+                  <tr key={run.run_id} className="hover:bg-surface-elevated/40">
+                    <td className="p-3 min-w-[180px]">
+                      <div className="font-medium text-text-primary">
+                        {run.captured_at ? new Date(run.captured_at).toLocaleString() : run.run_id}
+                      </div>
+                      <div className="text-xs text-text-muted">{run.total} rows</div>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-text-primary">{run.combined_misses}</span>
+                        <DeltaPill value={run.deltas.combined_misses} lowerIsBetter />
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="text-text-primary">
+                        {run.email_hits} hit / {run.email_misses} miss
+                      </div>
+                      <div className="mt-1 flex gap-1">
+                        <DeltaPill value={run.deltas.email_hits} lowerIsBetter={false} />
+                        <DeltaPill value={run.deltas.email_misses} lowerIsBetter />
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="text-text-primary">
+                        {run.external_curator_hits} hit / {run.external_curator_misses} miss
+                      </div>
+                      <div className="mt-1 flex gap-1">
+                        <DeltaPill value={run.deltas.external_curator_hits} lowerIsBetter={false} />
+                        <DeltaPill value={run.deltas.external_curator_misses} lowerIsBetter />
+                      </div>
+                    </td>
+                    <td className="p-3 min-w-[190px]">
+                      {run.top_triage_bucket ? (
+                        <div>
+                          <div className="text-text-primary">
+                            {formatTargetName(run.top_triage_bucket.bucket)}
+                          </div>
+                          <div className="text-xs text-text-muted">
+                            {run.top_triage_bucket.count} row{run.top_triage_bucket.count === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-text-muted">none</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-text-muted">No trend data yet.</div>
+      )}
     </div>
   );
 }
@@ -1813,6 +1986,7 @@ export default function DiscoverQualityPage() {
   const [traceByMarketId, setTraceByMarketId] = useState<Record<number, DiscoverMarketTrace>>({});
   const [traceLoadingId, setTraceLoadingId] = useState<number | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get("secret");
@@ -1826,6 +2000,7 @@ export default function DiscoverQualityPage() {
   const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
   const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
   const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
+  const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
   const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
     ? [
         "discover-diagnostic-rows",
@@ -1858,6 +2033,12 @@ export default function DiscoverQualityPage() {
   const { data: diagnosticRunsData } = useSWR(
     diagnosticRunsKey,
     () => fetchDiscoverDiagnosticRuns(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: diagnosticTrendsData } = useSWR(
+    diagnosticTrendsKey,
+    () => fetchDiscoverDiagnosticTrends(submittedSecret!),
     { refreshInterval: 60000 }
   );
 
@@ -2036,10 +2217,23 @@ export default function DiscoverQualityPage() {
       await triggerDiscoverDiagnosticSnapshot(submittedSecret);
       setTimeout(() => {
         mutate(diagnosticRunsKey);
+        mutate(diagnosticTrendsKey);
       }, 5000);
     } finally {
       setTriggeringDiagnostics(false);
     }
+  };
+
+  const refreshAdminView = async () => {
+    await Promise.all([
+      debugKey ? mutate(debugKey) : Promise.resolve(),
+      hookKey ? mutate(hookKey) : Promise.resolve(),
+      engagementKey ? mutate(engagementKey) : Promise.resolve(),
+      diagnosticRunsKey ? mutate(diagnosticRunsKey) : Promise.resolve(),
+      diagnosticTrendsKey ? mutate(diagnosticTrendsKey) : Promise.resolve(),
+      diagnosticRowsKey ? mutate(diagnosticRowsKey) : Promise.resolve(),
+    ]);
+    setLastRefreshedAt(new Date());
   };
 
   const toggleTrace = async (marketId: number) => {
@@ -2126,11 +2320,11 @@ export default function DiscoverQualityPage() {
         </div>
         <button
           type="button"
-          onClick={() => mutate(debugKey)}
+          onClick={refreshAdminView}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-surface-border text-sm text-text-secondary hover:text-text-primary hover:bg-surface-elevated"
         >
           <RefreshCw className="w-4 h-4" />
-          Refresh
+          {lastRefreshedAt ? `Refresh ${lastRefreshedAt.toLocaleTimeString()}` : "Refresh"}
         </button>
       </div>
 
@@ -2303,7 +2497,8 @@ export default function DiscoverQualityPage() {
             <PersonalizationPanel rollup={personalizationRollup} />
           </div>
 
-          <div id="diagnostics" className="scroll-mt-20">
+          <div id="diagnostics" className="scroll-mt-20 space-y-3">
+            <DiagnosticTrendsPanel runs={diagnosticTrendsData?.runs || []} />
             <DiagnosticRunsPanel
               runs={diagnosticRunsData?.runs || []}
               rows={diagnosticRowsData}

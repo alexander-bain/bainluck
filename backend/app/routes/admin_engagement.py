@@ -419,6 +419,120 @@ async def list_discover_ground_truth_diagnostic_runs(
     return {"runs": list(runs.values())}
 
 
+@router.get("/discover-ground-truth-diagnostics/trends")
+async def list_discover_ground_truth_diagnostic_trends(
+    secret: str = Query(...),
+    limit: int = Query(8, ge=2, le=30),
+    db: AsyncSession = Depends(get_db),
+):
+    """Summarize recent Discover ground-truth diagnostic runs with run-over-run deltas."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        text(
+            """
+            WITH recent_runs AS (
+                SELECT run_id, MAX(captured_at) AS captured_at
+                FROM discover_ground_truth_diagnostics
+                GROUP BY run_id
+                ORDER BY MAX(captured_at) DESC
+                LIMIT :limit
+            )
+            SELECT
+                d.run_id,
+                r.captured_at,
+                d.source_group,
+                d.status,
+                d.triage_bucket,
+                COUNT(*) AS count
+            FROM discover_ground_truth_diagnostics d
+            JOIN recent_runs r ON r.run_id = d.run_id
+            GROUP BY
+                d.run_id,
+                r.captured_at,
+                d.source_group,
+                d.status,
+                d.triage_bucket
+            ORDER BY r.captured_at DESC, d.source_group, d.status, d.triage_bucket
+            """
+        ),
+        {"limit": limit},
+    )
+
+    runs: dict[str, dict] = {}
+    for row in result.mappings().all():
+        run = runs.setdefault(
+            row["run_id"],
+            {
+                "run_id": row["run_id"],
+                "captured_at": row["captured_at"].isoformat()
+                if row["captured_at"]
+                else None,
+                "total": 0,
+                "by_source_group": {},
+                "by_triage_bucket": {},
+                "top_triage_bucket": None,
+                "combined_misses": 0,
+                "email_hits": 0,
+                "email_misses": 0,
+                "external_curator_hits": 0,
+                "external_curator_misses": 0,
+                "deltas": {},
+            },
+        )
+        count = int(row["count"] or 0)
+        run["total"] += count
+
+        source_group = row["source_group"] or "unknown"
+        status = row["status"] or "unknown"
+        source_counts = run["by_source_group"].setdefault(
+            source_group,
+            {"total": 0, "hit": 0, "miss": 0},
+        )
+        source_counts["total"] += count
+        source_counts[status] = source_counts.get(status, 0) + count
+
+        if source_group == "email" and status == "hit":
+            run["email_hits"] += count
+        elif source_group == "email" and status == "miss":
+            run["email_misses"] += count
+        elif source_group == "external_curator" and status == "hit":
+            run["external_curator_hits"] += count
+        elif source_group == "external_curator" and status == "miss":
+            run["external_curator_misses"] += count
+        if status == "miss":
+            run["combined_misses"] += count
+
+        triage_bucket = row["triage_bucket"]
+        if triage_bucket:
+            run["by_triage_bucket"][triage_bucket] = (
+                run["by_triage_bucket"].get(triage_bucket, 0) + count
+            )
+
+    ordered_runs = list(runs.values())
+    for index, run in enumerate(ordered_runs):
+        bucket_counts = run["by_triage_bucket"]
+        if bucket_counts:
+            bucket, count = max(bucket_counts.items(), key=lambda item: item[1])
+            run["top_triage_bucket"] = {"bucket": bucket, "count": count}
+
+        previous = ordered_runs[index + 1] if index + 1 < len(ordered_runs) else None
+        if previous:
+            run["deltas"] = {
+                "combined_misses": run["combined_misses"]
+                - previous["combined_misses"],
+                "email_hits": run["email_hits"] - previous["email_hits"],
+                "email_misses": run["email_misses"] - previous["email_misses"],
+                "external_curator_hits": run["external_curator_hits"]
+                - previous["external_curator_hits"],
+                "external_curator_misses": run["external_curator_misses"]
+                - previous["external_curator_misses"],
+            }
+
+    return {"runs": ordered_runs}
+
+
 @router.post("/discover-ground-truth-diagnostics/snapshot")
 async def trigger_discover_ground_truth_diagnostic_snapshot(
     secret: str = Query(...),
