@@ -448,7 +448,7 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 ---
 
 **Next phases:**
-1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -list -project "ios/Bain Luck/Bain Luck.xcodeproj"` currently fails resolving `app-check` with "Missing or empty JSON output from manifest compilation". This blocks reliable native compile verification.
+1. Fix the iOS Xcode package-resolution blocker before TestFlight: `xcodebuild -resolvePackageDependencies` times out downloading Firebase binary targets from `dl.google.com` (abseil, grpc, FirebaseAnalytics, etc.). This is a network/environment issue, not a package version conflict — `app-check` 11.2.0 is a transitive dependency with zero direct usage in code. **Workaround:** Open in Xcode GUI (which uses a different download pipeline), or try on a different network. Deleting `Package.resolved` and re-resolving may also help if versions have drifted.
 2. Hill-climb Discover launch health to zero before distributing TestFlight broadly:
    - Target `stale_impression_rate=0%`. Any currently stale card shown in Discover is a launch blocker.
    - Target `repeat_rate≈0%` for normal browsing sessions. Repeats after long windows are acceptable; repeated cards in short sessions are not.
