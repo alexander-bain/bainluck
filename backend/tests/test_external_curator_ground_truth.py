@@ -1,5 +1,6 @@
 """Tests for external-curator ground truth parsing."""
 
+from datetime import datetime, timezone
 import os
 
 import pytest
@@ -195,6 +196,30 @@ def test_env_report_loads_multiple_local_exports(monkeypatch, tmp_path):
     assert [item["source"] for item in report["items"]] == ["Curator A", "Curator B"]
 
 
+def test_env_report_includes_source_counts_and_freshness(monkeypatch, tmp_path):
+    csv_path = tmp_path / "curators.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "source,name,category,published_at",
+                "Curator A,Will OpenAI release GPT-6?,tech,2026-05-17",
+                "Curator A,Will Fed cut rates?,economics,2026-05-16",
+                "Curator B,Will a hurricane make landfall?,weather,2026-05-10",
+            ]
+        )
+    )
+    monkeypatch.setenv("EXTERNAL_CURATOR_GROUND_TRUTH_PATHS", str(csv_path))
+
+    report = load_external_curator_ground_truth_report_from_env(
+        now=datetime(2026, 5, 18, tzinfo=timezone.utc)
+    )
+
+    assert report["metadata"]["latest_date"] == "2026-05-17"
+    assert report["metadata"]["stale"] is False
+    assert report["metadata"]["stale_after_days"] == 7
+    assert report["metadata"]["source_counts"] == {"Curator A": 2, "Curator B": 1}
+
+
 def test_env_report_is_inert_without_paths(monkeypatch):
     monkeypatch.delenv("EXTERNAL_CURATOR_GROUND_TRUTH_PATHS", raising=False)
 
@@ -202,3 +227,4 @@ def test_env_report_is_inert_without_paths(monkeypatch):
 
     assert report["items"] == []
     assert report["metadata"]["configured"] is False
+    assert report["metadata"]["latest_date"] is None

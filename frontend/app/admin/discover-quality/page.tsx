@@ -135,6 +135,7 @@ interface EmailGroundTruthDiagnostics {
   stale_after_days?: number;
   min_interestingness?: number;
   lookback_days?: number | null;
+  source_counts?: Record<string, number>;
   total: number;
   top20_hits: number;
   top50_hits: number;
@@ -2102,7 +2103,11 @@ export default function DiscoverQualityPage() {
                 label="Curator @50"
                 value={`${data.external_curator_ground_truth.top50_hits}/${data.external_curator_ground_truth.total}`}
                 ok={data.external_curator_ground_truth.total > 0 ? data.external_curator_ground_truth.top50_hits > 0 : undefined}
-                sub={`${data.external_curator_ground_truth.loaded_count}/${data.external_curator_ground_truth.raw_row_count} rows loaded`}
+                sub={
+                  data.external_curator_ground_truth.latest_date
+                    ? `${data.external_curator_ground_truth.loaded_count}/${data.external_curator_ground_truth.raw_row_count} rows, latest ${data.external_curator_ground_truth.latest_date}`
+                    : `${data.external_curator_ground_truth.loaded_count}/${data.external_curator_ground_truth.raw_row_count} rows loaded`
+                }
               />
             )}
             <StatCard
@@ -2352,6 +2357,11 @@ export default function DiscoverQualityPage() {
                   <div className="flex flex-wrap justify-end gap-1">
                     <StatusPill tone="muted">{`${data.external_curator_ground_truth.top20_hits}/${data.external_curator_ground_truth.total} @20`}</StatusPill>
                     <StatusPill tone="muted">{`${data.external_curator_ground_truth.top50_hits}/${data.external_curator_ground_truth.total} @50`}</StatusPill>
+                    {data.external_curator_ground_truth.latest_date && (
+                      <StatusPill tone={data.external_curator_ground_truth.stale ? "warn" : "ok"}>
+                        {data.external_curator_ground_truth.latest_date}
+                      </StatusPill>
+                    )}
                   </div>
                 </div>
                 {externalCuratorMisses.length > 0 && (
@@ -2359,6 +2369,11 @@ export default function DiscoverQualityPage() {
                     {Object.entries(externalCuratorBucketCounts).map(([bucket, count]) => (
                       <StatusPill key={bucket} tone={bucket === "candidate_recall_gap" ? "warn" : "muted"}>
                         {`${formatTargetName(bucket)}: ${count}`}
+                      </StatusPill>
+                    ))}
+                    {Object.entries(data.external_curator_ground_truth.source_counts || {}).slice(0, 4).map(([source, count]) => (
+                      <StatusPill key={source} tone="muted">
+                        {`${source}: ${count}`}
                       </StatusPill>
                     ))}
                   </div>

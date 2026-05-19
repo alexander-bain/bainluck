@@ -976,7 +976,8 @@ async def get_feed(
             now=now,
         )
         external_curator_report = await asyncio.to_thread(
-            load_external_curator_ground_truth_report_from_env
+            load_external_curator_ground_truth_report_from_env,
+            now=now,
         )
         email_ground_truth_items = email_ground_truth_report["items"]
         external_curator_items = external_curator_report["items"]

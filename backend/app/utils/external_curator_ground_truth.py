@@ -7,6 +7,8 @@ import ipaddress
 import json
 import os
 import re
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterable
@@ -15,9 +17,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 SUPPORTED_FORMATS = {"csv", "json", "jsonl"}
 ENV_PATHS = "EXTERNAL_CURATOR_GROUND_TRUTH_PATHS"
 ENV_FORMATS = "EXTERNAL_CURATOR_GROUND_TRUTH_FORMATS"
+DEFAULT_STALE_AFTER_DAYS = 7
 
 
-def load_external_curator_ground_truth_report_from_env() -> dict[str, Any]:
+def load_external_curator_ground_truth_report_from_env(
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Load advisory external-curator ground truth from configured local files.
 
     `EXTERNAL_CURATOR_GROUND_TRUTH_PATHS` is split with `os.pathsep` so several
@@ -39,6 +45,7 @@ def load_external_curator_ground_truth_report_from_env() -> dict[str, Any]:
             source_paths=[],
             raw_row_count=0,
             error=None,
+            now=now,
         )
 
     items: list[dict[str, str]] = []
@@ -62,6 +69,7 @@ def load_external_curator_ground_truth_report_from_env() -> dict[str, Any]:
         source_paths=paths,
         raw_row_count=len(items),
         error="; ".join(errors) if errors else None,
+        now=now,
     )
 
 
@@ -195,7 +203,13 @@ def _report(
     source_paths: list[str],
     raw_row_count: int,
     error: str | None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    latest_date = _latest_item_date(items)
+    base = now or datetime.now(timezone.utc)
+    stale_after = base.date() - timedelta(days=DEFAULT_STALE_AFTER_DAYS)
+    stale = latest_date < stale_after if latest_date else None
+    source_counts = Counter(item.get("source") or "external_curator" for item in items)
     return {
         "items": items,
         "metadata": {
@@ -204,9 +218,39 @@ def _report(
             "source_paths": source_paths,
             "raw_row_count": raw_row_count,
             "loaded_count": len(items),
+            "latest_date": latest_date.isoformat() if latest_date else None,
+            "stale": stale,
+            "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
+            "source_counts": dict(sorted(source_counts.items())),
             "error": error,
         },
     }
+
+
+def _latest_item_date(items: list[dict[str, str]]) -> date | None:
+    parsed = [
+        parsed_date
+        for item in items
+        if (parsed_date := _parse_date(item.get("published_at")))
+    ]
+    return max(parsed) if parsed else None
+
+
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _read_csv_rows(text: str) -> list[dict[str, Any]]:
