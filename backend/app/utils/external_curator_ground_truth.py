@@ -39,7 +39,7 @@ def load_external_curator_ground_truth_report_from_env(
         if part.strip()
     ]
     if not paths:
-        return _report(
+        return build_external_curator_ground_truth_report(
             [],
             configured=False,
             source_paths=[],
@@ -63,12 +63,32 @@ def load_external_curator_ground_truth_report_from_env(
             errors.append(f"{path}: {exc}")
 
     items = normalize_external_curator_ground_truth_rows(items)
-    return _report(
+    return build_external_curator_ground_truth_report(
         items,
         configured=True,
         source_paths=paths,
         raw_row_count=len(items),
         error="; ".join(errors) if errors else None,
+        now=now,
+    )
+
+
+def build_external_curator_ground_truth_report(
+    items: list[dict[str, str]],
+    *,
+    configured: bool,
+    source_paths: list[str],
+    raw_row_count: int,
+    error: str | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the shared external-curator report shape for file or DB inputs."""
+    return _report(
+        normalize_external_curator_ground_truth_rows(items),
+        configured=configured,
+        source_paths=source_paths,
+        raw_row_count=raw_row_count,
+        error=error,
         now=now,
     )
 

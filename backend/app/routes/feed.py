@@ -78,6 +78,10 @@ from app.utils.feed_reasons import (
 from app.utils.external_curator_ground_truth import (
     load_external_curator_ground_truth_report_from_env,
 )
+from app.utils.persisted_external_curator_ground_truth import (
+    load_persisted_external_curator_ground_truth_report,
+    merge_external_curator_ground_truth_reports,
+)
 from app.utils.feed_quality_debug import (
     apply_db_trace_missing_ground_truth_triage,
     build_feed_quality_debug,
@@ -977,6 +981,13 @@ async def get_feed(
         )
         external_curator_report = await asyncio.to_thread(
             load_external_curator_ground_truth_report_from_env,
+            now=now,
+        )
+        persisted_external_curator_report = (
+            await load_persisted_external_curator_ground_truth_report(db, now=now)
+        )
+        external_curator_report = merge_external_curator_ground_truth_reports(
+            [external_curator_report, persisted_external_curator_report],
             now=now,
         )
         email_ground_truth_items = email_ground_truth_report["items"]

@@ -1177,6 +1177,49 @@ class DiscoverGroundTruthDiagnostic(Base):
     )
 
 
+class ExternalCuratorGroundTruthItem(Base):
+    """Reviewed external-curator/social ground-truth rows for Discover audits."""
+
+    __tablename__ = "external_curator_ground_truth_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    probability: Mapped[Optional[str]] = mapped_column(String(250))
+    hook: Mapped[Optional[str]] = mapped_column(Text)
+    url: Mapped[Optional[str]] = mapped_column(Text)
+    published_at: Mapped[Optional[str]] = mapped_column(String(50))
+    platform: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    handle: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    engagement: Mapped[Optional[str]] = mapped_column(String(100))
+    evidence: Mapped[Optional[str]] = mapped_column(Text)
+    confidence: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    extraction_notes: Mapped[Optional[str]] = mapped_column(Text)
+    review_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="accepted", index=True
+    )
+    raw: Mapped[Optional[dict]] = mapped_column(JSONB)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        index=True,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_external_curator_gt_source_date",
+            "source",
+            "published_at",
+        ),
+    )
+
+
 class BugReport(Base):
     """User-submitted bug reports via rage shake."""
 
