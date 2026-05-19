@@ -1,5 +1,17 @@
 # Completed Features (Shipped)
 
+## May 18, 2026 — Calibration Deep Dive + Test Coverage Sprint
+
+- ✅ **Calibration outcome expansion** — Spreads and totals from Odds API added to calibration pipeline. Migration, backfill, and two new calibration query CTEs. Expected 10-20x more resolved outcomes.
+- ✅ **Calibration closing line fix** — Part A uses `events.commence_time` for event-linked markets. Part C restricted to event-linked only. Non-event markets (elections, economics) use honest opening prices. Golf MCE 27.8pp and hockey MCE 12.1pp expected to drop.
+- ✅ **Snapshot distribution + chart quality** — Live polling writes `FuturesOddsSnapshot` every 2 min. Open-sparse backfill for Discover markets. Snapshot distribution endpoint fixed.
+- ✅ **is_winner coverage** — Pass 5 for single-outcome binaries, reporting fix (95.8% not 92.7%), Polymarket API limit 500→2000, Kalshi API filters out all-losers.
+- ✅ **Integration test sprint** — +396 tests across 13 new test files (auth, challenges, league-futures, notifications, source-intelligence, teams, user, sports, search, weather, economics, politics, entertainment, feedback). 4,643 → 5,039 tests.
+- ✅ **StatPal tennis period markers** — Tennis set strings (S1-S5) and baseball inning strings (1st-9th) recognized as live status.
+- ✅ **iOS CQ-17** — Remaining abbreviations renamed (ct, gm, rf, tp, lm → descriptive names).
+- ✅ **App Store AS-11/AS-15** — Launch screen and navigation smoke check verified.
+- ✅ **iOS app-check diagnosis** — Download timeouts from dl.google.com, not version conflict. Workaround documented.
+
 ## May 18, 2026 — Backlog Parallel Sweep
 
 - ✅ **Golf tour metadata classification** — DataGolf event-level `tour` is preserved in market metadata and used before generic PGA fallback, with a Hainan Open Asian Tour regression test.
