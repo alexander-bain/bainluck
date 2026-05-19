@@ -3,7 +3,7 @@
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
@@ -35,6 +35,7 @@ from app.utils.ground_truth_health import (
     summarize_ground_truth_health,
 )
 from app.utils.persisted_external_curator_ground_truth import (
+    import_external_curator_ground_truth_rows,
     load_persisted_external_curator_ground_truth_report,
     merge_external_curator_ground_truth_reports,
 )
@@ -52,6 +53,10 @@ router = APIRouter()
 _BUG_FIXED_EMAIL_STATUSES = {"fixed", "actioned"}
 _BUG_FIXED_EMAIL_TASK_NAME = "app.tasks.send_bug_fixed_email"
 _VALID_BUG_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
+
+
+class ExternalCuratorGroundTruthImportRequest(BaseModel):
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 
 
 def _has_resolution_summary(resolution_summary: Optional[str]) -> bool:
@@ -646,6 +651,31 @@ async def trigger_discover_external_curator_ground_truth_import(
     return {
         "queued": True,
         "task_id": task.id,
+    }
+
+
+@router.post("/discover-external-curator-ground-truth/import-rows")
+async def import_discover_external_curator_ground_truth_rows(
+    payload: ExternalCuratorGroundTruthImportRequest,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import reviewed external-curator/social rows from an admin-uploaded payload."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if not payload.rows:
+        return {
+            "status": "ok",
+            "input_rows": 0,
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+        }
+
+    result = await import_external_curator_ground_truth_rows(db, payload.rows)
+    return {
+        "status": "ok",
+        **result,
     }
 
 
