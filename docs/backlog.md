@@ -1163,7 +1163,7 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 
 **Monitor:** `GET /api/calibration` → overall MCE. Frontend `/calibration` for per-category.
 
-**Current state (May 15, 2026 late):** MCE CI [1.9pp, 5.0pp]. 43,061 outcomes, 19,584 winners. Closing-line MCE 8.6pp, opening-price MCE 28.0pp (closing line is dramatically better, validating that approach). Golf MCE 27.6pp from bucket analysis (calibration_probability NULL — awaiting backfill recompute). Wilson CIs per bucket shipped.
+**Current state (May 18, 2026):** MCE CI [2.86pp, 5.01pp]. 62,569 outcomes, 26,275 winners. Active trading ECE 4.5pp, opening-price ECE 7.6pp. Golf MCE 27.8pp (broken closing lines from bad commence_time). Hockey MCE 12.1pp (broken closing lines from Polymarket listing dates). Wilson CIs per bucket shipped.
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
@@ -1178,21 +1178,27 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 **Subproject A: Snapshot health** — ✅ EFFECTIVELY DONE
 Zero-snap: 23K → 702 (0.2%). Remaining 702 are Polymarket esports/tennis with no CLOB history. No further action unless zero-snap regresses above 1K.
 
-**Subproject B: Golf calibration (MCE 27.6pp)** — AWAITING BACKFILL
-Verified May 15 late: `calibration_probability` is NULL on golf outcomes — the commence_time fix correctly nulled them, but the backfill hasn't recomputed yet. Golf MCE is 27.6pp from bucket analysis (worse than the 17.8pp reported earlier because more golf data entered the calibration set).
-1. Need: `backfill_winners` to complete Phase 0e (`_compute_calibration_prices`). Trigger via `POST /api/admin/backfill-winners` or wait for next scheduled run.
-2. After recompute: check golf MCE at `/calibration`. Should drop dramatically.
-3. Verification: `curl "https://api.bainluck.com/api/calibration/outcome-timeline?market_ext_id=KXPGATOP10-MAST26&secret=$ADMIN_TOKEN"` — DeChambeau should show `calibration_probability` ~44% (not NULL or 13%).
+**Subproject B: Golf calibration (MCE 27.8pp)** — FIX SHIPPED May 18
+**Root cause:** Kalshi `commence_time` = market listing date, not tournament start. Part A grabbed mid-tournament prices as "closing lines." Fix: Part A now JOINs `events` table and uses `events.commence_time` (the real tournament start from DataGolf) for event-linked markets. Reset step NULLs old bad calibration prices so next backfill recomputes with correct logic.
+1. **ACTION (May 19):** Verify golf MCE drops after backfill_winners runs. Check `/calibration` page.
+2. Verification: `curl "https://api.bainluck.com/api/calibration/bucket-debug?secret=$ADMIN_TOKEN&source=kalshi&category=golf&bucket=5"` — calibration_probability should be pre-tournament prices, not mid-round.
 
-**Subproject C: Hockey commence_time (MCE 11.3pp)** — ✅ SHIPPED May 15
-`_fix_hockey_commence_times()` deployed. Two passes:
-1. Markets WITH `event_id`: copies commence_time from linked Event (one SQL update)
-2. Markets WITHOUT `event_id`: derives from ticker via `extract_game_date_from_ticker()`
-3. Resets calibration_probability on affected outcomes for recomputation
-4. Wired into `poll_kalshi_markets` post-commit (runs every 2h alongside golf fix)
-5. VERIFY after next backfill_winners run: hockey MCE should drop from 11.3pp.
+**Subproject C: Hockey calibration (MCE 12.1pp)** — FIX SHIPPED May 18
+**Root cause:** Polymarket `commence_time` = market listing date. Part C rescued with settlement prices (0.05% / 99.95%), not predictions. Fix: Part A now uses `events.commence_time` for event-linked NHL game markets. Part C restricted to event-linked markets only, preventing settlement price contamination. Non-NHL hockey (AHL, SHL, DEL, KHL) without `event_id` uses opening price.
+1. **ACTION (May 19):** Verify hockey MCE drops after backfill_winners runs.
+2. **BACKLOG: Expand calibration to non-NHL hockey.** Currently excluded because these markets lack `event_id` (no linked events in our system). To include: either create events for these leagues via a new data source, or build a mechanism to derive commence_time from the market name/ticker (e.g., parse "Jets vs. Avalanche" + date). Low priority — focus on NHL accuracy first.
 
-**Files:** `backend/app/tasks/kalshi.py` (`_fix_hockey_commence_times`)
+**Subproject E: Non-event market closing lines** — FIX SHIPPED May 18
+**Root cause:** Part C rescue grabbed settlement prices for ALL markets, including elections, economics, entertainment. A "Will Taylor Swift get pregnant?" market at 10% opening got `calibration_probability = 0.05%` (settlement) instead of 10% (the actual prediction). Fix: Part C now restricted to event-linked markets only. Non-event markets use opening price after initial trading settles (Part B). Methodology note updated on `/calibration` page.
+
+**Subproject F: Outcome count expansion** — NEXT PRIORITY
+Currently 62K resolved outcomes from prediction markets only. The Odds API sportsbook data contributes just 2 points per game (home/away win). All spreads, totals, player props, 1H/2H lines in `odds_snapshots` are untapped. Steps:
+1. Count resolved spreads/totals in `odds_snapshots` to size the opportunity
+2. Add spread resolution logic: `away_score - home_score > spread_line` → covered
+3. Add total resolution logic: `home_score + away_score > total_line` → over
+4. Add as a new CTE in the calibration query alongside the existing events CTE
+5. Player props (harder): need box score data from StatPal for individual stat lines
+6. **Expected impact:** 10-20x increase in calibration sample size with the highest-quality data (sportsbook closing lines with unambiguous resolution)
 
 **Subproject D: Weather/Economics calibration (MCE 10.1pp each)** — INVESTIGATED May 15
 **Conclusion: price-stuck problem, NOT commence_time.** Key findings:

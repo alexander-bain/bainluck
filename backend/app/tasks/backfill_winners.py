@@ -858,31 +858,88 @@ async def _compute_calibration_prices():
     """Pre-compute calibration_probability on resolved outcomes.
 
     Uses the RIGHT price for calibration based on market type:
-    - Part A: Markets WITH commence_time → last snapshot before event starts (closing line)
-    - Part B: Markets WITHOUT commence_time → first snapshot ≥1h after opening (settled price)
-    - Part C: Outcomes still at opening_probability → last non-extreme snapshot overall
-      (catches markets where commence_time predates all snapshots, e.g. Polymarket)
+    - Part A: Event-linked markets → last snapshot before the EVENT's commence_time
+      (real pre-game/tournament closing line from the events table, not the
+      market's commence_time which is often the listing or resolution date)
+    - Part B: Non-event markets → first snapshot ≥1h after opening (settled price)
+    - Part C: Event-linked outcomes still at opening_probability → last non-extreme
+      snapshot before event start (rescue for sparse-snapshot event-linked markets)
     - Fallback: opening_probability
+
+    Part C is intentionally restricted to event-linked markets. For non-event
+    markets (elections, economics, entertainment), opening_probability is the
+    honest calibration price — Part C would grab settlement prices and pretend
+    they were predictions.
 
     Uses compound index (outcome_id, captured_at) for fast DISTINCT ON.
     """
-    stats = {"with_commence": 0, "without_commence": 0, "rescued": 0, "errors": []}
+    stats = {"reset": 0, "with_commence": 0, "without_commence": 0, "rescued": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            # Part A: Markets WITH commence_time
-            # Uses closing line (last snapshot before event start) when available,
-            # falls back to opening_probability to avoid poison rows blocking batches
+            # Reset: NULL out calibration_probability on non-event markets
+            # where old Part C set it to a near-settlement value. This lets
+            # Part B reprocess them with the honest opening/settled price.
+            reset_result = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fm.id = fo.market_id
+                      AND fm.status = 'resolved'
+                      AND fm.event_id IS NULL
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.opening_probability IS NOT NULL
+                      AND fo.calibration_probability != fo.opening_probability
+                      AND (fo.calibration_probability < 0.02
+                           OR fo.calibration_probability > 0.98)
+                """)
+            )
+            stats["reset"] = reset_result.rowcount
+            if stats["reset"] > 0:
+                logger.info("Reset %d bad calibration prices on non-event markets",
+                            stats["reset"])
+                await session.commit()
+
+            # Also reset event-linked markets so Part A reprocesses with
+            # events.commence_time instead of the old fm.commence_time logic.
+            reset_event_result = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    FROM futures_markets fm
+                    WHERE fm.id = fo.market_id
+                      AND fm.status = 'resolved'
+                      AND fm.event_id IS NOT NULL
+                      AND fo.calibration_probability IS NOT NULL
+                      AND fo.opening_probability IS NOT NULL
+                      AND (fo.calibration_probability < 0.02
+                           OR fo.calibration_probability > 0.98)
+                """)
+            )
+            stats["reset"] += reset_event_result.rowcount
+            if reset_event_result.rowcount > 0:
+                logger.info("Reset %d bad calibration prices on event-linked markets",
+                            reset_event_result.rowcount)
+                await session.commit()
+
+            # Part A: Event-linked markets — real pre-event closing line
+            # Uses events.commence_time (the actual game/tournament start) instead
+            # of futures_markets.commence_time (which is the listing or resolution
+            # date on Kalshi/Polymarket). Falls back to opening_probability when
+            # no pre-event snapshot exists.
             result_a = await session.execute(
                 text("""
                     WITH needs_cal AS (
-                        SELECT fo.id AS outcome_id, fm.commence_time,
+                        SELECT fo.id AS outcome_id, e.commence_time,
                                fo.opening_probability
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fm.id = fo.market_id
+                        JOIN events e ON e.id = fm.event_id
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
-                          AND fm.commence_time IS NOT NULL
+                          AND fm.event_id IS NOT NULL
+                          AND e.commence_time IS NOT NULL
                         LIMIT 200000
                     ),
                     closing AS (
@@ -910,9 +967,11 @@ async def _compute_calibration_prices():
             )
             stats["with_commence"] = result_a.rowcount
 
-            # Part B: Markets WITHOUT commence_time
+            # Part B: Non-event markets (no event_id or no event commence_time)
             # Uses settled price (first snapshot >=1h after opening),
-            # falls back to opening_probability
+            # falls back to opening_probability. This is the honest
+            # calibration price for elections, economics, entertainment,
+            # weather — markets without a verifiable event start time.
             result_b = await session.execute(
                 text("""
                     WITH needs_cal AS (
@@ -920,9 +979,10 @@ async def _compute_calibration_prices():
                                fo.opening_probability
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fm.id = fo.market_id
+                        LEFT JOIN events e ON e.id = fm.event_id
                         WHERE fm.status = 'resolved'
                           AND fo.calibration_probability IS NULL
-                          AND fm.commence_time IS NULL
+                          AND (fm.event_id IS NULL OR e.commence_time IS NULL)
                         LIMIT 200000
                     ),
                     settled AS (
@@ -951,12 +1011,11 @@ async def _compute_calibration_prices():
             )
             stats["without_commence"] = result_b.rowcount
 
-            # Part C: Rescue outcomes where Parts A/B fell back to opening_probability.
-            # This happens when commence_time predates all snapshots (common for
-            # Polymarket where commence_time = market creation, not event start).
-            # Uses the last non-extreme snapshot captured for the outcome.
-            # Runs in batches of 2000 to avoid DISTINCT ON timeouts on large
-            # snapshot tables (200K batch caused Celery worker timeouts).
+            # Part C: Rescue EVENT-LINKED outcomes where Part A fell back to
+            # opening_probability (no pre-event snapshots existed).
+            # Uses the last non-extreme snapshot before event start.
+            # Restricted to event-linked markets only — for non-event markets,
+            # opening_probability is the correct calibration price.
             rescued_total = 0
             for _ in range(100):
                 result_c = await session.execute(
@@ -966,6 +1025,7 @@ async def _compute_calibration_prices():
                             FROM futures_outcomes fo
                             JOIN futures_markets fm ON fm.id = fo.market_id
                             WHERE fm.status = 'resolved'
+                              AND fm.event_id IS NOT NULL
                               AND fo.calibration_probability IS NOT NULL
                               AND fo.opening_probability IS NOT NULL
                               AND fo.calibration_probability = fo.opening_probability
@@ -1000,9 +1060,9 @@ async def _compute_calibration_prices():
         logger.error("Compute calibration prices error: %s", e)
 
     logger.info(
-        "Calibration prices: %d with commence_time, %d without, %d rescued, %d errors",
-        stats["with_commence"], stats["without_commence"], stats["rescued"],
-        len(stats["errors"]),
+        "Calibration prices: reset=%d, event_linked=%d, non_event=%d, rescued=%d, errors=%d",
+        stats["reset"], stats["with_commence"], stats["without_commence"],
+        stats["rescued"], len(stats["errors"]),
     )
     return stats
 
