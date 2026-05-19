@@ -78,6 +78,33 @@ async def auth_status():
     }
 
 
+@router.get("/health")
+async def auth_health():
+    """Deep health check: verify Firebase SDK can actually create tokens."""
+    from app.services.firebase_auth import _init_firebase, create_custom_token
+
+    checks = {
+        "firebase_init": False,
+        "custom_token": False,
+        "apple_configured": bool(os.getenv("APPLE_SERVICES_ID")),
+        "apple_bundle_id": os.getenv("APPLE_BUNDLE_ID", "com.bainluck.Bain-Luck"),
+    }
+
+    try:
+        checks["firebase_init"] = _init_firebase()
+    except Exception as e:
+        checks["firebase_init_error"] = str(e)
+
+    if checks["firebase_init"]:
+        token = create_custom_token("healthcheck-test-uid")
+        checks["custom_token"] = token is not None
+        if not token:
+            checks["custom_token_error"] = "create_custom_token returned None"
+
+    checks["healthy"] = checks["firebase_init"] and checks["custom_token"]
+    return checks
+
+
 @router.post("/google", response_model=UserProfileResponse)
 async def google_sign_in(
     body: GoogleAuthRequest,
@@ -257,20 +284,19 @@ async def google_access_token_sign_in(
 
     return {
         "custom_token": custom_token,
-        # Fields for Safari ITP backend-only auth fallback:
-        "id_token": fallback_id_token,  # Backend-signed JWT, usable as Bearer token
+        "id_token": fallback_id_token,
         "uid": firebase_uid,
         "email": email,
         "name": name,
         "picture": picture,
-        "expires_in": 2592000,  # 30 days
+        "expires_in": 2592000,
         "user": {
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
             "photo_url": user.photo_url,
             "onboarding_completed": onboarding_completed,
-            "created_at": user.created_at.isoformat(),
+            "created_at": user.created_at.isoformat() if user.created_at else None,
         },
     }
 
@@ -388,14 +414,14 @@ async def apple_sign_in(
         "email": email,
         "name": display_name,
         "picture": None,
-        "expires_in": 2592000,  # 30 days
+        "expires_in": 2592000,
         "user": {
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
             "photo_url": user.photo_url,
             "onboarding_completed": onboarding_completed,
-            "created_at": user.created_at.isoformat(),
+            "created_at": user.created_at.isoformat() if user.created_at else None,
         },
     }
 
