@@ -143,6 +143,52 @@ interface EmailGroundTruthDiagnostics {
   error?: string | null;
 }
 
+interface DiscoverDiagnosticRun {
+  run_id: string;
+  captured_at: string | null;
+  total: number;
+  by_source_group: Record<string, { total: number; hit: number; miss: number }>;
+  by_triage_bucket: Record<string, number>;
+}
+
+interface DiscoverDiagnosticRunsResponse {
+  runs: DiscoverDiagnosticRun[];
+}
+
+interface DiscoverDiagnosticRow {
+  id: number;
+  captured_at: string | null;
+  source_group: string;
+  source: string | null;
+  status: string;
+  item_name: string;
+  feed_name: string | null;
+  category: string | null;
+  probability: string | null;
+  source_url: string | null;
+  published_at: string | null;
+  rank: number | null;
+  score: number | null;
+  quality_class: string | null;
+  archetype: string | null;
+  family_key: string | null;
+  story_key: string | null;
+  triage_bucket: string | null;
+  recommended_action: string | null;
+  matched_market_id: number | null;
+  trace_status: string | null;
+  trace_summary: string | null;
+  db_match_count: number | null;
+}
+
+interface DiscoverDiagnosticRowsResponse {
+  run_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  rows: DiscoverDiagnosticRow[];
+}
+
 interface FeedDebugResponse {
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
@@ -513,6 +559,41 @@ async function fetchDiscoverEngagement(secret: string, days: number): Promise<Di
   return res.json();
 }
 
+async function fetchDiscoverDiagnosticRuns(secret: string): Promise<DiscoverDiagnosticRunsResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-ground-truth-diagnostics/runs?secret=${encodeURIComponent(secret)}&limit=8`
+  );
+  if (!res.ok) throw new Error(`Diagnostic runs API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchDiscoverDiagnosticRows(
+  secret: string,
+  runId: string,
+  filters: { sourceGroup: string; status: string; triageBucket: string }
+): Promise<DiscoverDiagnosticRowsResponse> {
+  const params = new URLSearchParams({
+    secret,
+    limit: "100",
+  });
+  if (filters.sourceGroup !== "all") params.set("source_group", filters.sourceGroup);
+  if (filters.status !== "all") params.set("status", filters.status);
+  if (filters.triageBucket !== "all") params.set("triage_bucket", filters.triageBucket);
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-ground-truth-diagnostics/runs/${encodeURIComponent(runId)}/rows?${params}`
+  );
+  if (!res.ok) throw new Error(`Diagnostic rows API error: ${res.status}`);
+  return res.json();
+}
+
+async function triggerDiscoverDiagnosticSnapshot(secret: string): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-ground-truth-diagnostics/snapshot?secret=${encodeURIComponent(secret)}&limit=50`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error(`Diagnostic snapshot trigger failed: ${res.status}`);
+}
+
 async function updateDiscoverRuntimeConfig(
   secret: string,
   config: Partial<DiscoverRuntimeConfig>
@@ -739,6 +820,219 @@ function PersonalizationPanel({ rollup }: { rollup: PersonalizationRollup }) {
             </StatusPill>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function DiagnosticRunsPanel({
+  runs,
+  rows,
+  rowsLoading,
+  selectedRunId,
+  setSelectedRunId,
+  sourceGroup,
+  setSourceGroup,
+  status,
+  setStatus,
+  triageBucket,
+  setTriageBucket,
+  onTrigger,
+  triggering,
+}: {
+  runs: DiscoverDiagnosticRun[];
+  rows?: DiscoverDiagnosticRowsResponse;
+  rowsLoading: boolean;
+  selectedRunId: string;
+  setSelectedRunId: (value: string) => void;
+  sourceGroup: string;
+  setSourceGroup: (value: string) => void;
+  status: string;
+  setStatus: (value: string) => void;
+  triageBucket: string;
+  setTriageBucket: (value: string) => void;
+  onTrigger: () => void;
+  triggering: boolean;
+}) {
+  const selectedRun = runs.find((run) => run.run_id === selectedRunId);
+  const sourceGroups = selectedRun
+    ? Object.keys(selectedRun.by_source_group).sort()
+    : [];
+  const buckets = selectedRun
+    ? Object.keys(selectedRun.by_triage_bucket).sort()
+    : [];
+
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
+      <div className="p-4 border-b border-surface-border space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary">
+              Persisted Ground Truth Diagnostics
+            </h2>
+            <p className="text-xs text-text-muted mt-1">
+              Snapshot history for email, curator, and combined ground-truth misses.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onTrigger}
+            disabled={triggering}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-text-primary text-surface-deep text-xs font-medium disabled:opacity-50"
+          >
+            <Play className="w-3.5 h-3.5" />
+            {triggering ? "Queueing..." : "Queue snapshot"}
+          </button>
+        </div>
+
+        {runs.length > 0 ? (
+          <>
+            <div className="grid md:grid-cols-4 gap-2">
+              <select
+                value={selectedRunId}
+                onChange={(event) => setSelectedRunId(event.target.value)}
+                className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary md:col-span-2"
+              >
+                {runs.map((run) => (
+                  <option key={run.run_id} value={run.run_id}>
+                    {run.captured_at ? new Date(run.captured_at).toLocaleString() : run.run_id}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={sourceGroup}
+                onChange={(event) => setSourceGroup(event.target.value)}
+                className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
+              >
+                <option value="all">All sources</option>
+                {sourceGroups.map((group) => (
+                  <option key={group} value={group}>{formatTargetName(group)}</option>
+                ))}
+              </select>
+              <select
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+                className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
+              >
+                <option value="all">All status</option>
+                <option value="miss">Misses</option>
+                <option value="hit">Hits</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <select
+                value={triageBucket}
+                onChange={(event) => setTriageBucket(event.target.value)}
+                className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
+              >
+                <option value="all">All buckets</option>
+                {buckets.map((bucket) => (
+                  <option key={bucket} value={bucket}>
+                    {formatTargetName(bucket)} ({selectedRun?.by_triage_bucket[bucket]})
+                  </option>
+                ))}
+              </select>
+              {selectedRun && (
+                <div className="flex flex-wrap gap-1">
+                  <StatusPill tone="muted">{`${selectedRun.total} rows`}</StatusPill>
+                  {Object.entries(selectedRun.by_source_group).map(([group, counts]) => (
+                    <StatusPill key={group} tone="muted">
+                      {`${formatTargetName(group)} ${counts.hit}/${counts.total}`}
+                    </StatusPill>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-text-muted">No persisted runs yet.</div>
+        )}
+      </div>
+
+      {rowsLoading ? (
+        <div className="p-4 text-sm text-text-muted animate-pulse">Loading diagnostic rows...</div>
+      ) : rows && rows.rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-surface-elevated text-text-muted text-xs">
+              <tr>
+                <th className="text-left font-medium p-3">Item</th>
+                <th className="text-left font-medium p-3">Status</th>
+                <th className="text-left font-medium p-3">Trace</th>
+                <th className="text-left font-medium p-3">Match</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-border/60">
+              {rows.rows.map((row) => (
+                <tr key={row.id} className="hover:bg-surface-elevated/40 align-top">
+                  <td className="p-3 min-w-[320px]">
+                    <div className="font-medium text-text-primary">{row.item_name}</div>
+                    {row.feed_name && (
+                      <div className="text-xs text-text-secondary mt-1">{row.feed_name}</div>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      <StatusPill tone="muted">{formatTargetName(row.source_group)}</StatusPill>
+                      {row.source && <StatusPill tone="muted">{row.source}</StatusPill>}
+                      {row.category && <StatusPill tone="muted">{row.category}</StatusPill>}
+                      {row.probability && <StatusPill tone="muted">{row.probability}</StatusPill>}
+                    </div>
+                  </td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap gap-1">
+                      <StatusPill tone={row.status === "hit" ? "ok" : "warn"}>
+                        {row.status}
+                      </StatusPill>
+                      {row.triage_bucket && (
+                        <StatusPill tone={row.triage_bucket === "candidate_recall_gap" ? "warn" : "muted"}>
+                          {formatTargetName(row.triage_bucket)}
+                        </StatusPill>
+                      )}
+                      {row.rank !== null && <StatusPill tone="ok">{`rank ${row.rank}`}</StatusPill>}
+                    </div>
+                  </td>
+                  <td className="p-3 min-w-[260px]">
+                    <div className="text-xs text-text-primary">
+                      {row.trace_status ? formatTargetName(row.trace_status) : "No trace"}
+                    </div>
+                    {row.trace_summary && (
+                      <div className="text-xs text-text-secondary mt-1 line-clamp-3">
+                        {row.trace_summary}
+                      </div>
+                    )}
+                    {row.recommended_action && (
+                      <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                        {row.recommended_action}
+                      </div>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {row.matched_market_id ? (
+                      <a
+                        href={`/futures/${row.matched_market_id}`}
+                        className="inline-flex items-center gap-1 text-xs text-accent-futures hover:underline"
+                      >
+                        #{row.matched_market_id}
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : (
+                      <span className="text-xs text-text-muted">none</span>
+                    )}
+                    {row.db_match_count !== null && (
+                      <div className="text-xs text-text-muted mt-1">
+                        {row.db_match_count} DB match{row.db_match_count === 1 ? "" : "es"}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="p-3 text-xs text-text-muted border-t border-surface-border">
+            Showing {rows.rows.length} of {rows.total}
+          </div>
+        </div>
+      ) : (
+        <div className="p-4 text-sm text-text-muted">No rows match these filters.</div>
       )}
     </div>
   );
@@ -1443,7 +1737,12 @@ export default function DiscoverQualityPage() {
   const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
+  const [triggeringDiagnostics, setTriggeringDiagnostics] = useState(false);
   const [engagementDays, setEngagementDays] = useState(7);
+  const [selectedDiagnosticRunId, setSelectedDiagnosticRunId] = useState("");
+  const [diagnosticSourceGroup, setDiagnosticSourceGroup] = useState("all");
+  const [diagnosticStatus, setDiagnosticStatus] = useState("miss");
+  const [diagnosticBucket, setDiagnosticBucket] = useState("all");
   const [expandedTraceId, setExpandedTraceId] = useState<number | null>(null);
   const [traceByMarketId, setTraceByMarketId] = useState<Record<number, DiscoverMarketTrace>>({});
   const [traceLoadingId, setTraceLoadingId] = useState<number | null>(null);
@@ -1460,6 +1759,17 @@ export default function DiscoverQualityPage() {
   const debugKey = submittedSecret ? ["discover-quality", submittedSecret] : null;
   const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
   const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
+  const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
+  const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
+    ? [
+        "discover-diagnostic-rows",
+        submittedSecret,
+        selectedDiagnosticRunId,
+        diagnosticSourceGroup,
+        diagnosticStatus,
+        diagnosticBucket,
+      ]
+    : null;
 
   const { data, error, isLoading } = useSWR(
     debugKey,
@@ -1478,6 +1788,33 @@ export default function DiscoverQualityPage() {
     () => fetchDiscoverEngagement(submittedSecret!, engagementDays),
     { refreshInterval: 60000 }
   );
+
+  const { data: diagnosticRunsData } = useSWR(
+    diagnosticRunsKey,
+    () => fetchDiscoverDiagnosticRuns(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: diagnosticRowsData, isLoading: diagnosticRowsLoading } = useSWR(
+    diagnosticRowsKey,
+    () => fetchDiscoverDiagnosticRows(
+      submittedSecret!,
+      selectedDiagnosticRunId,
+      {
+        sourceGroup: diagnosticSourceGroup,
+        status: diagnosticStatus,
+        triageBucket: diagnosticBucket,
+      }
+    ),
+    { refreshInterval: 60000 }
+  );
+
+  useEffect(() => {
+    const firstRunId = diagnosticRunsData?.runs?.[0]?.run_id;
+    if (firstRunId && !selectedDiagnosticRunId) {
+      setSelectedDiagnosticRunId(firstRunId);
+    }
+  }, [diagnosticRunsData, selectedDiagnosticRunId]);
 
   const categories = useMemo(
     () => Array.from(new Set((data?.debug_items || []).map((item) => item.category))).sort(),
@@ -1623,6 +1960,19 @@ export default function DiscoverQualityPage() {
       await mutate(hookKey);
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const triggerDiagnosticSnapshot = async () => {
+    if (!submittedSecret) return;
+    setTriggeringDiagnostics(true);
+    try {
+      await triggerDiscoverDiagnosticSnapshot(submittedSecret);
+      setTimeout(() => {
+        mutate(diagnosticRunsKey);
+      }, 5000);
+    } finally {
+      setTriggeringDiagnostics(false);
     }
   };
 
@@ -1857,6 +2207,22 @@ export default function DiscoverQualityPage() {
           </div>
 
           <PersonalizationPanel rollup={personalizationRollup} />
+
+          <DiagnosticRunsPanel
+            runs={diagnosticRunsData?.runs || []}
+            rows={diagnosticRowsData}
+            rowsLoading={diagnosticRowsLoading}
+            selectedRunId={selectedDiagnosticRunId}
+            setSelectedRunId={setSelectedDiagnosticRunId}
+            sourceGroup={diagnosticSourceGroup}
+            setSourceGroup={setDiagnosticSourceGroup}
+            status={diagnosticStatus}
+            setStatus={setDiagnosticStatus}
+            triageBucket={diagnosticBucket}
+            setTriageBucket={setDiagnosticBucket}
+            onTrigger={triggerDiagnosticSnapshot}
+            triggering={triggeringDiagnostics}
+          />
 
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
