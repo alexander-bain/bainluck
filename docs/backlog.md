@@ -2,6 +2,24 @@
 
 All outstanding work items for Bain Luck. Shipped items live in `docs/completed-features.md`.
 
+## Current Priority: Calibration & Data Quality
+
+**"Do prediction markets predict anything?"** — the calibration page is the proof. This workstream makes the data trustworthy, expands the sample size, and fixes per-category accuracy.
+
+**Monitor:** `/calibration` page, `GET /api/calibration`, `GET /api/admin/backfill-winners/status`
+
+**Open items (ordered by priority):**
+1. **Verify golf/hockey MCE drop (May 19)** — closing line fixes shipped May 18, awaiting backfill recompute
+2. **Outcome count expansion (Subproject F)** — add spreads/totals from odds_snapshots to calibration (10-20x more data points)
+3. **is_winner coverage → 95%+** — currently 92.7% Kalshi, 92.7% Polymarket (see Workstream: is_winner Backfill below)
+4. **Non-NHL hockey calibration** — AHL/SHL/DEL markets excluded; need event linkage or commence_time derivation
+5. **Time-horizon calibration** — evaluate non-event markets (elections, economics) at T-30/T-7/T-1 days before resolution
+6. **Source "fair fight" comparison** — methodology for comparing accuracy controlling for market difficulty
+
+**Full details:** See `Workstream: is_winner Backfill` and `Workstream: Calibration Accuracy` (Subprojects A-F) below.
+
+---
+
 ## Current Priority: Semantic Matching Excellence
 
 The product's magic depends on **perfectly understanding every event, market, and source** — then grouping and matching them so the user sees one unified view. This is the #1 technical priority and the area with the most measurable room for improvement.
