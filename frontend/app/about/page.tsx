@@ -595,6 +595,31 @@ export default function AboutPage() {
         </section>
       </RevealSection>
 
+      {/* ── Support ── */}
+      <RevealSection>
+        <section>
+          <div className="bg-surface-card rounded-2xl p-6 sm:p-8 border border-surface-border">
+            <h2 className="text-title-3 text-text-primary mb-3">Need Help?</h2>
+            <p className="text-body text-text-secondary leading-relaxed mb-4">
+              Questions, feedback, or bug reports? Reach out and we&rsquo;ll get back to you within 24 hours.
+            </p>
+            <a
+              href="mailto:bugs@bainluck.com"
+              className="inline-flex items-center gap-2 text-accent-brand hover:underline text-body-strong"
+            >
+              bugs@bainluck.com
+            </a>
+            <p className="text-caption text-text-muted mt-4">
+              You can also shake your phone in the app to send a bug report with a screenshot directly to our team.
+              See our{" "}
+              <Link href="/privacy" className="text-accent-brand hover:underline">
+                Privacy Policy
+              </Link>.
+            </p>
+          </div>
+        </section>
+      </RevealSection>
+
       {/* ── CTA ── */}
       <RevealSection>
         <div className="text-center pt-2 pb-10">

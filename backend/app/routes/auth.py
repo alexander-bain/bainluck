@@ -196,6 +196,7 @@ async def google_access_token_sign_in(
     # Get or create Firebase user (uses email lookup to match existing accounts)
     firebase_uid = get_or_create_firebase_user(email, name, picture)
     if not firebase_uid:
+        logger.error("Google auth: get_or_create_firebase_user returned None for email=%s", email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Firebase not configured or user creation failed",
@@ -204,6 +205,7 @@ async def google_access_token_sign_in(
     # Create custom token for frontend signInWithCustomToken
     custom_token = create_custom_token(firebase_uid)
     if not custom_token:
+        logger.error("Google auth: create_custom_token returned None for uid=%s", firebase_uid)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create custom token (service account may not be configured)",
@@ -300,8 +302,10 @@ async def apple_sign_in(
     valid_audiences = [apple_services_id, apple_bundle_id]
 
     # Verify the Apple id_token JWT
+    logger.info("Apple auth: verifying id_token with audiences=%s", valid_audiences)
     claims = verify_apple_id_token(body.id_token, valid_audiences)
     if not claims:
+        logger.warning("Apple auth: id_token verification failed for audiences=%s", valid_audiences)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired Apple id_token",
