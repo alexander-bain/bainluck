@@ -17,6 +17,9 @@ def test_missing_ground_truth_preserves_public_curator_provenance():
                 "platform": "x",
                 "handle": "@markets",
                 "engagement": "1200",
+                "evidence": "image text",
+                "confidence": "high",
+                "extraction_notes": "clear post",
             }
         ],
     )
@@ -26,3 +29,6 @@ def test_missing_ground_truth_preserves_public_curator_provenance():
     assert missing[0]["platform"] == "x"
     assert missing[0]["handle"] == "@markets"
     assert missing[0]["engagement"] == "1200"
+    assert missing[0]["evidence"] == "image text"
+    assert missing[0]["confidence"] == "high"
+    assert missing[0]["extraction_notes"] == "clear post"

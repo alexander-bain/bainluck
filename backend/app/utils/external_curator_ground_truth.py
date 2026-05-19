@@ -206,6 +206,15 @@ def normalize_external_curator_ground_truth_rows(
                     "score",
                 )
             ),
+            "evidence": _clean_text(
+                _field(row, "evidence", "evidence_text", "quote", "visual_evidence")
+            ),
+            "confidence": _clean_text(
+                _field(row, "confidence", "extraction_confidence")
+            ),
+            "extraction_notes": _clean_text(
+                _field(row, "extraction_notes", "notes", "review_notes")
+            ),
         }
         items.append(item)
 

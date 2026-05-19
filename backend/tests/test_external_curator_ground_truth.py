@@ -41,6 +41,9 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "platform": "",
             "handle": "",
             "engagement": "",
+            "evidence": "",
+            "confidence": "",
+            "extraction_notes": "",
         },
         {
             "source": "Public List",
@@ -53,6 +56,9 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "platform": "",
             "handle": "",
             "engagement": "",
+            "evidence": "",
+            "confidence": "",
+            "extraction_notes": "",
         },
     ]
 
@@ -88,6 +94,9 @@ def test_json_parser_accepts_items_wrapper_and_aliases():
             "platform": "x",
             "handle": "@markets",
             "engagement": "1200",
+            "evidence": "",
+            "confidence": "",
+            "extraction_notes": "",
         }
     ]
 
@@ -109,8 +118,29 @@ def test_jsonl_parser_skips_blank_lines_and_defaults_missing_source():
             "platform": "",
             "handle": "",
             "engagement": "",
+            "evidence": "",
+            "confidence": "",
+            "extraction_notes": "",
         }
     ]
+
+
+def test_parser_preserves_social_extraction_review_fields():
+    items = normalize_external_curator_ground_truth_rows(
+        [
+            {
+                "source": "Instagram @kalshi",
+                "name": "Will Fed cut rates in June?",
+                "evidence": "Graphic text says Fed cut rates",
+                "confidence": "high",
+                "extraction_notes": "Caption and image agree",
+            }
+        ]
+    )
+
+    assert items[0]["evidence"] == "Graphic text says Fed cut rates"
+    assert items[0]["confidence"] == "high"
+    assert items[0]["extraction_notes"] == "Caption and image agree"
 
 
 def test_dedupes_by_normalized_name_and_source_or_url():

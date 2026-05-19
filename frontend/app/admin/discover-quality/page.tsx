@@ -88,6 +88,9 @@ interface MissingGroundTruthItem {
   platform?: string | null;
   handle?: string | null;
   engagement?: string | null;
+  evidence?: string | null;
+  confidence?: string | null;
+  extraction_notes?: string | null;
   email_subject?: string | null;
   hook?: string | null;
   interestingness?: string | null;
@@ -2944,6 +2947,7 @@ export default function DiscoverQualityPage() {
                             {item.platform && <StatusPill tone="muted">{item.platform}</StatusPill>}
                             {item.handle && <StatusPill tone="muted">{item.handle}</StatusPill>}
                             {item.engagement && <StatusPill tone="muted">{`eng ${item.engagement}`}</StatusPill>}
+                            {item.confidence && <StatusPill tone="muted">{`confidence ${item.confidence}`}</StatusPill>}
                             {item.db_trace && (
                               <StatusPill tone={item.db_trace.matches.length > 0 ? "ok" : "warn"}>
                                 {item.db_trace.trace_status ? formatTargetName(item.db_trace.trace_status) : "db trace"}
@@ -2952,6 +2956,16 @@ export default function DiscoverQualityPage() {
                           </div>
                           {item.hook && (
                             <div className="text-xs text-text-secondary mt-2 line-clamp-2">{item.hook}</div>
+                          )}
+                          {item.evidence && (
+                            <div className="text-xs text-text-secondary mt-2 line-clamp-2">
+                              Evidence: {item.evidence}
+                            </div>
+                          )}
+                          {item.extraction_notes && (
+                            <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                              Notes: {item.extraction_notes}
+                            </div>
                           )}
                           {item.url && (
                             <a
