@@ -236,6 +236,7 @@ interface FeedDebugResponse {
 }
 
 type PersonalizationFilter = "all" | "personalized" | "boosted" | "suppressed" | "neutral" | "missing";
+type Top50QuickFilter = "all" | "weak_explanation" | "low_quality" | "ladder" | "ground_truth" | "missing_trace";
 
 interface PersonalizationRollup {
   total: number;
@@ -1973,6 +1974,7 @@ export default function DiscoverQualityPage() {
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
   const [personalizationFilter, setPersonalizationFilter] = useState<PersonalizationFilter>("all");
+  const [top50QuickFilter, setTop50QuickFilter] = useState<Top50QuickFilter>("all");
   const [missingBucket, setMissingBucket] = useState("all");
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
@@ -2148,12 +2150,33 @@ export default function DiscoverQualityPage() {
     };
   }, [data]);
 
+  const top50QuickFilterCounts = useMemo<Record<Top50QuickFilter, number>>(() => {
+    const items = data?.debug_items || [];
+    return {
+      all: items.length,
+      weak_explanation: items.filter((item) => !item.explanation_ok).length,
+      low_quality: items.filter((item) => item.quality_class === "low_quality" || item.quality_class === "suppress").length,
+      ladder: items.filter((item) => item.ladder).length,
+      ground_truth: items.filter((item) => item.ground_truth).length,
+      missing_trace: items.filter((item) => !item.personalization_trace).length,
+    };
+  }, [data]);
+
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (data?.debug_items || []).filter((item) => {
       if (category !== "all" && item.category !== category) return false;
       if (archetype !== "all" && item.archetype !== archetype) return false;
       if (quality !== "all" && item.quality_class !== quality) return false;
+      if (top50QuickFilter === "weak_explanation" && item.explanation_ok) return false;
+      if (
+        top50QuickFilter === "low_quality"
+        && item.quality_class !== "low_quality"
+        && item.quality_class !== "suppress"
+      ) return false;
+      if (top50QuickFilter === "ladder" && !item.ladder) return false;
+      if (top50QuickFilter === "ground_truth" && !item.ground_truth) return false;
+      if (top50QuickFilter === "missing_trace" && item.personalization_trace) return false;
       const trace = item.personalization_trace;
       if (personalizationFilter === "personalized" && !trace?.is_personalized) return false;
       if (personalizationFilter === "boosted" && (!trace || trace.score_delta <= 0)) return false;
@@ -2165,7 +2188,7 @@ export default function DiscoverQualityPage() {
       }
       return true;
     });
-  }, [archetype, category, data, personalizationFilter, quality, search]);
+  }, [archetype, category, data, personalizationFilter, quality, search, top50QuickFilter]);
 
   const filteredMissingGroundTruth = useMemo(() => {
     return (data?.missing_ground_truth || []).filter((item) => {
@@ -2908,6 +2931,32 @@ export default function DiscoverQualityPage() {
                   <option value="neutral">{`Neutral (${personalizationRollup.neutral})`}</option>
                   <option value="missing">{`Missing trace (${personalizationRollup.missing})`}</option>
                 </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ["all", "All"],
+                  ["weak_explanation", "Weak explanation"],
+                  ["low_quality", "Low quality"],
+                  ["ladder", "Ladders"],
+                  ["ground_truth", "Ground truth"],
+                  ["missing_trace", "Missing trace"],
+                ] as const).map(([value, label]) => {
+                  const selected = top50QuickFilter === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setTop50QuickFilter(value)}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                        selected
+                          ? "border-text-primary bg-text-primary text-surface-deep"
+                          : "border-surface-border bg-surface-elevated text-text-secondary hover:text-text-primary"
+                      }`}
+                    >
+                      {`${label} ${top50QuickFilterCounts[value]}`}
+                    </button>
+                  );
+                })}
               </div>
               <div className="text-xs text-text-muted">{filteredItems.length} shown</div>
             </div>
