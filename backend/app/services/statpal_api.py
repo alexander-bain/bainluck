@@ -883,7 +883,10 @@ def _normalize_status(status: str) -> str:
     # Map to our status vocabulary
     if s in ("scheduled", "not started", "ns", "tbd", "time tbd"):
         return "scheduled"
-    if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt", "q1", "q2", "q3", "q4", "ot"):
+    if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt",
+             "q1", "q2", "q3", "q4", "ot",
+             "s1", "s2", "s3", "s4", "s5", "set 1", "set 2", "set 3", "set 4", "set 5",
+             "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"):
         return "live"
     if s in ("finished", "final", "ft", "aet", "pen", "completed", "game over",
              "after over time", "after overtime", "after extra time"):

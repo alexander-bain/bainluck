@@ -119,6 +119,22 @@ class TestNormalizeStatus:
         assert _normalize_status("Q4") == "live"
         assert _normalize_status("OT") == "live"
 
+    def test_tennis_set_variants(self):
+        from app.services.statpal_api import _normalize_status
+        assert _normalize_status("S1") == "live"
+        assert _normalize_status("S2") == "live"
+        assert _normalize_status("S3") == "live"
+        assert _normalize_status("S4") == "live"
+        assert _normalize_status("S5") == "live"
+        assert _normalize_status("Set 1") == "live"
+        assert _normalize_status("Set 3") == "live"
+
+    def test_inning_variants(self):
+        from app.services.statpal_api import _normalize_status
+        assert _normalize_status("1st") == "live"
+        assert _normalize_status("5th") == "live"
+        assert _normalize_status("9th") == "live"
+
     def test_finished_variants(self):
         from app.services.statpal_api import _normalize_status
         assert _normalize_status("Finished") == "finished"
