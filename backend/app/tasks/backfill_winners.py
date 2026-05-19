@@ -50,6 +50,11 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                       SELECT 1 FROM futures_outcomes fo
                       WHERE fo.market_id = fm.id AND fo.is_winner = true
                   )
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND fo.current_probability > 0.10
+                  )
                 LIMIT :limit
             """),
             {"limit": limit},
@@ -208,6 +213,7 @@ async def _backfill_from_current_probability():
         "mutex_winners": 0, "mutex_losers": 0,
         "threshold_winners": 0, "threshold_losers": 0,
         "all_losers_set": 0,
+        "single_winners": 0, "single_losers": 0,
         "errors": [],
     }
 
@@ -342,18 +348,50 @@ async def _backfill_from_current_probability():
             stats["all_losers_set"] = result4.rowcount
             await session.commit()
 
+            # Pass 5: Single-outcome binary markets (e.g., "Over 2.5 maps")
+            # These have exactly 1 outcome, so passes 2-3 skip them (need >= 2).
+            # If the probability clearly moved away from 0.50, resolve based on direction.
+            result5 = await session.execute(
+                text("""
+                    WITH single_outcome AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND COUNT(*) = 1
+                           AND MAX(fo.current_probability) != 0.50
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability > 0.50)
+                    FROM single_outcome so
+                    WHERE fo.market_id = so.market_id
+                      AND fo.current_probability IS NOT NULL
+                    RETURNING fo.is_winner
+                """)
+            )
+            rows5 = result5.all()
+            stats["single_winners"] = sum(1 for r in rows5 if r[0])
+            stats["single_losers"] = sum(1 for r in rows5 if not r[0])
+            await session.commit()
+
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Current-probability winner backfill error: %s", e)
 
-    total_w = stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"]
-    total_l = stats["clean_losers"] + stats["mutex_losers"] + stats["threshold_losers"] + stats["all_losers_set"]
+    total_w = stats["clean_winners"] + stats["mutex_winners"] + stats["threshold_winners"] + stats["single_winners"]
+    total_l = (stats["clean_losers"] + stats["mutex_losers"] + stats["threshold_losers"]
+               + stats["all_losers_set"] + stats["single_losers"])
     logger.info(
-        "Current-probability winner backfill: %d winners (clean=%d, mutex=%d, threshold=%d), "
-        "%d losers (clean=%d, mutex=%d, threshold=%d, all_losers=%d), %d errors",
+        "Current-probability winner backfill: %d winners (clean=%d, mutex=%d, threshold=%d, single=%d), "
+        "%d losers (clean=%d, mutex=%d, threshold=%d, all_losers=%d, single=%d), %d errors",
         total_w, stats["clean_winners"], stats["mutex_winners"], stats["threshold_winners"],
+        stats["single_winners"],
         total_l, stats["clean_losers"], stats["mutex_losers"], stats["threshold_losers"],
-        stats["all_losers_set"], len(stats["errors"]),
+        stats["all_losers_set"], stats["single_losers"], len(stats["errors"]),
     )
     return stats
 
@@ -838,7 +876,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
 
     # Phase 3: Polymarket API settlement data (fills in markets where
     # current_probability is stale and didn't reach 0/1)
-    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=500)
+    poly_api_stats = await _backfill_polymarket_winners_from_api(limit=2000)
 
     return {
         "commence_time_fixes": commence_stats,

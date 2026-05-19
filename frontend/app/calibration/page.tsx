@@ -37,6 +37,26 @@ const COLORS = [
   "#0891b2", "#be185d", "#059669", "#9333ea", "#c2410c",
 ];
 
+const SOURCE_DISPLAY_NAMES: Record<string, string> = {
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+  odds_api: "Odds API",
+  odds_api_spreads: "Spreads (Odds API)",
+  odds_api_totals: "Totals (Odds API)",
+};
+
+const SOURCE_COLORS: Record<string, string> = {
+  kalshi: "#2563eb",
+  polymarket: "#7c3aed",
+  odds_api: "#16a34a",
+  odds_api_spreads: "#0d9488",
+  odds_api_totals: "#059669",
+};
+
+function sourceLabel(src: string): string {
+  return SOURCE_DISPLAY_NAMES[src] || src;
+}
+
 function normalizeCat(cat: string): string {
   if (SPORT_KEY_MAP[cat]) return SPORT_KEY_MAP[cat];
   const base = cat.split("_")[0];
@@ -239,8 +259,8 @@ export default function CalibrationPage() {
 
   const sourceChartData = (activeSource ? [activeSource] : sources).map((src, i) => ({
     data: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),
-    color: COLORS[i % COLORS.length],
-    label: `${src} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
+    color: SOURCE_COLORS[src] || COLORS[i % COLORS.length],
+    label: `${sourceLabel(src)} (${normalized.filter(b => b.source === src && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
   }));
 
   const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
@@ -256,7 +276,7 @@ export default function CalibrationPage() {
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
         <p className="text-text-secondary max-w-2xl mx-auto">
           We analyzed {data.total_outcomes.toLocaleString()} resolved predictions across
-          Kalshi, Polymarket, and sportsbook odds. The answer: when markets say
+          Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
         <p className="text-xs text-text-muted">
@@ -280,7 +300,7 @@ export default function CalibrationPage() {
         <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
           detail="0 = oracle, lower = better" />
         <StatCard label="Sources" value={String(sources.length)}
-          detail={sources.join(", ")} />
+          detail={sources.map(sourceLabel).join(", ")} />
         <StatCard label="Categories" value={String(categories.length)}
           detail={topCats} />
       </div>
@@ -306,7 +326,7 @@ export default function CalibrationPage() {
             <tbody>
               {sourceMetrics.map(sm => (
                 <tr key={sm.source} className="border-t border-surface-border">
-                  <td className="py-2.5 pr-4 font-medium text-text-primary">{sm.source}</td>
+                  <td className="py-2.5 pr-4 font-medium text-text-primary">{sourceLabel(sm.source)}</td>
                   <td className="py-2.5 pr-4 text-right tabular-nums">{sm.n.toLocaleString()}</td>
                   <td className={`py-2.5 pr-4 text-right tabular-nums font-semibold ${
                     sm.mce < 4 ? "text-green-600" : sm.mce < 6 ? "text-blue-600" : "text-orange-600"
@@ -491,7 +511,7 @@ export default function CalibrationPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="All" active={!activeSource} onClick={() => setActiveSource(null)} />
           {sources.map(s => (
-            <TabButton key={s} label={s} active={activeSource === s} onClick={() => setActiveSource(s)} />
+            <TabButton key={s} label={sourceLabel(s)} active={activeSource === s} onClick={() => setActiveSource(s)} />
           ))}
         </div>
         <CalibrationChart series={sourceChartData} width={700} height={340} />

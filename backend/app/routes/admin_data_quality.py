@@ -1927,6 +1927,7 @@ async def backfill_winners_status(
         WITH market_status AS (
             SELECT fm.id, fm.source,
                 BOOL_OR(fo.is_winner) AS has_winner,
+                MAX(fo.current_probability) AS max_prob,
                 BOOL_AND(fo.calibration_probability IS NULL
                          AND fo.opening_probability IS NULL) AS all_cal_null
             FROM futures_markets fm
@@ -1936,8 +1937,14 @@ async def backfill_winners_status(
         )
         SELECT source,
             COUNT(*) AS resolved_markets,
-            COUNT(*) FILTER (WHERE has_winner) AS has_winner,
-            COUNT(*) FILTER (WHERE NOT has_winner AND NOT all_cal_null) AS needs_backfill,
+            COUNT(*) FILTER (
+                WHERE has_winner OR (max_prob IS NOT NULL AND max_prob <= 0.10)
+            ) AS has_winner,
+            COUNT(*) FILTER (
+                WHERE NOT has_winner
+                  AND NOT all_cal_null
+                  AND (max_prob IS NULL OR max_prob > 0.10)
+            ) AS needs_backfill,
             COUNT(*) FILTER (WHERE all_cal_null) AS untradeable_excluded
         FROM market_status
         GROUP BY source
