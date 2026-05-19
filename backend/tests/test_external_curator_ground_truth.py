@@ -38,6 +38,9 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "hook": "Fed story",
             "url": "https://example.com/story?a=1&b=2",
             "published_at": "2026-05-18",
+            "platform": "",
+            "handle": "",
+            "engagement": "",
         },
         {
             "source": "Public List",
@@ -47,6 +50,9 @@ def test_csv_parser_normalizes_shape_and_tolerates_missing_optional_fields():
             "hook": "",
             "url": "",
             "published_at": "",
+            "platform": "",
+            "handle": "",
+            "engagement": "",
         },
     ]
 
@@ -61,7 +67,10 @@ def test_json_parser_accepts_items_wrapper_and_aliases():
               "topic": "tech",
               "chance": 0.42,
               "summary": "Policy story",
-              "link": "HTTPS://Example.ORG/policy#ignored"
+              "link": "HTTPS://Example.ORG/policy#ignored",
+              "platform": "x",
+              "handle": "@markets",
+              "engagement_count": "1200"
             }
           ]
         }
@@ -76,6 +85,9 @@ def test_json_parser_accepts_items_wrapper_and_aliases():
             "hook": "Policy story",
             "url": "https://example.org/policy",
             "published_at": "",
+            "platform": "x",
+            "handle": "@markets",
+            "engagement": "1200",
         }
     ]
 
@@ -94,6 +106,9 @@ def test_jsonl_parser_skips_blank_lines_and_defaults_missing_source():
             "hook": "",
             "url": "",
             "published_at": "",
+            "platform": "",
+            "handle": "",
+            "engagement": "",
         }
     ]
 

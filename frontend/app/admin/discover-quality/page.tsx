@@ -83,6 +83,11 @@ interface MissingGroundTruthItem {
   source: string;
   category: string;
   probability: string | null;
+  url?: string | null;
+  published_at?: string | null;
+  platform?: string | null;
+  handle?: string | null;
+  engagement?: string | null;
   email_subject?: string | null;
   hook?: string | null;
   interestingness?: string | null;
@@ -2393,6 +2398,9 @@ export default function DiscoverQualityPage() {
                             <StatusPill tone="muted">{item.category}</StatusPill>
                             <StatusPill tone="muted">{formatTargetName(item.archetype)}</StatusPill>
                             {item.source && <StatusPill tone="muted">{item.source}</StatusPill>}
+                            {item.platform && <StatusPill tone="muted">{item.platform}</StatusPill>}
+                            {item.handle && <StatusPill tone="muted">{item.handle}</StatusPill>}
+                            {item.engagement && <StatusPill tone="muted">{`eng ${item.engagement}`}</StatusPill>}
                             {item.db_trace && (
                               <StatusPill tone={item.db_trace.matches.length > 0 ? "ok" : "warn"}>
                                 {item.db_trace.trace_status ? formatTargetName(item.db_trace.trace_status) : "db trace"}
@@ -2401,6 +2409,17 @@ export default function DiscoverQualityPage() {
                           </div>
                           {item.hook && (
                             <div className="text-xs text-text-secondary mt-2 line-clamp-2">{item.hook}</div>
+                          )}
+                          {item.url && (
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-accent-futures hover:underline mt-2"
+                            >
+                              Source
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
                           )}
                           <div className="text-xs text-text-muted mt-2">{item.recommended_action}</div>
                         </div>

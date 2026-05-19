@@ -190,6 +190,22 @@ def normalize_external_curator_ground_truth_rows(
             "published_at": _clean_text(
                 _field(row, "published_at", "published", "date", "created_at")
             ),
+            "platform": _clean_text(
+                _field(row, "platform", "social_platform", "network")
+            ),
+            "handle": _clean_text(
+                _field(row, "handle", "account", "author", "username")
+            ),
+            "engagement": _clean_text(
+                _field(
+                    row,
+                    "engagement",
+                    "engagement_count",
+                    "likes",
+                    "views",
+                    "score",
+                )
+            ),
         }
         items.append(item)
 
