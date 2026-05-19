@@ -1280,6 +1280,33 @@ function DiagnosticRunsPanel({
 
 function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
   const phases = trace.rank_phases;
+  const scores = trace.score_trace.scores;
+  const scoreSteps = [
+    { label: "Highlight", value: scores.highlight, delta: null, sub: null },
+    {
+      label: "Quality",
+      value: scores.after_quality,
+      delta: scores.after_quality - scores.highlight,
+      sub: null,
+    },
+    {
+      label: "Explanation",
+      value: scores.after_explanation,
+      delta: scores.after_explanation - scores.after_quality,
+      sub: null,
+    },
+    {
+      label: "Final",
+      value: scores.final,
+      delta: scores.final - scores.after_explanation,
+      sub: `${scores.personalization_multiplier.toFixed(2)}x`,
+    },
+  ];
+  const blockers = [
+    ...trace.base_eligibility.blockers,
+    ...trace.score_trace.blockers,
+  ];
+
   return (
     <div className="rounded-lg border border-surface-border bg-surface-elevated/40 p-3 space-y-3">
       <div className="flex items-start justify-between gap-4">
@@ -1300,11 +1327,20 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
         </div>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-2 text-xs">
-        <div>
+      <div className="grid md:grid-cols-5 gap-2 text-xs">
+        <div className="md:col-span-2">
           <div className="text-text-muted">Score path</div>
-          <div className="text-text-primary font-medium">
-            {trace.score_trace.scores.highlight} → {trace.score_trace.scores.after_quality} → {trace.score_trace.scores.after_explanation} → {trace.score_trace.scores.final}
+          <div className="mt-1 grid grid-cols-2 md:grid-cols-4 gap-1">
+            {scoreSteps.map((step) => (
+              <div key={step.label} className="rounded-md border border-surface-border bg-surface-card px-2 py-1">
+                <div className="text-[10px] uppercase text-text-muted">{step.label}</div>
+                <div className="font-semibold text-text-primary">{Math.round(step.value)}</div>
+                <div className="text-[11px] text-text-muted">
+                  {step.delta === null ? "base" : signedNumber(step.delta, 1)}
+                  {step.sub ? ` / ${step.sub}` : ""}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
         <div>
@@ -1387,6 +1423,7 @@ function TracePanel({ trace }: { trace: DiscoverMarketTrace }) {
         <div>
           <div className="font-medium text-text-primary mb-1">Blockers & Signals</div>
           <div className="flex flex-wrap gap-1">
+            {blockers.length === 0 && <StatusPill tone="ok">No blockers</StatusPill>}
             {trace.base_eligibility.blockers.map((blocker) => (
               <StatusPill key={blocker} tone="warn">{formatTargetName(blocker)}</StatusPill>
             ))}
