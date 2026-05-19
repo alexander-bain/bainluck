@@ -689,15 +689,20 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
     """Phase 3: Fetch settlement prices from Polymarket Gamma API.
 
     For stuck Polymarket markets where current_probability didn't reach
-    settlement extremes (0/1), fetches the market from the Gamma API and
+    settlement extremes (0/1), fetches the event from the Gamma API and
     uses outcome_prices for resolution. Sets is_winner directly.
+
+    Uses GET /events/{event_id} (which returns settlement prices) and
+    matches conditions by condition_id. The /markets/{id} endpoint does
+    NOT accept condition_ids as path params.
     """
     import asyncio
+    import json as _json
     from app.services.polymarket_api import PolymarketAPIService
 
     stats = {
         "markets_checked": 0, "winners_set": 0, "losers_set": 0,
-        "api_miss": 0, "not_settled": 0, "errors": [],
+        "api_miss": 0, "not_settled": 0, "no_match": 0, "errors": [],
     }
 
     async with get_task_session() as session:
@@ -723,95 +728,113 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
         logger.info("Polymarket API winner backfill: nothing to do")
         return stats
 
-    logger.info("Polymarket API winner backfill: %d markets to check", len(markets))
+    # Group by event_id to avoid duplicate API calls for sibling sub-markets
+    by_event: dict[str, list] = {}
+    for row in markets:
+        eid = row.poly_event_id or row.external_id
+        by_event.setdefault(eid, []).append(row)
+
+    logger.info(
+        "Polymarket API winner backfill: %d markets across %d events",
+        len(markets), len(by_event),
+    )
 
     service = PolymarketAPIService()
     try:
+        event_ids = list(by_event.keys())
         batch_size = 50
-        for batch_start in range(0, len(markets), batch_size):
-            batch = markets[batch_start:batch_start + batch_size]
+        for batch_start in range(0, len(event_ids), batch_size):
+            batch = event_ids[batch_start:batch_start + batch_size]
 
             async with get_task_session() as session:
-                for row in batch:
-                    stats["markets_checked"] += 1
-                    condition_id = row.external_id
-                    event_id = row.poly_event_id or row.external_id
-
-                    market_data = await service.get_market_by_condition(condition_id)
-
-                    if not market_data:
-                        event_data = await service.get_event_by_id(event_id)
-                        if event_data:
-                            api_markets = event_data.get("markets") or []
-                            market_data = next(
-                                (m for m in api_markets
-                                 if m.get("condition_id") == condition_id
-                                 or str(m.get("conditionId", "")) == condition_id),
-                                None,
-                            )
-
-                    if not market_data:
-                        stats["api_miss"] += 1
+                for event_id in batch:
+                    event_data = await service.get_event_by_id(str(event_id))
+                    if not event_data:
+                        for row in by_event[event_id]:
+                            stats["markets_checked"] += 1
+                            stats["api_miss"] += 1
                         continue
 
-                    outcome_prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
-                    if isinstance(outcome_prices_raw, str):
-                        import json as _json
+                    api_markets = event_data.get("markets") or []
+                    # Index by condition_id for fast lookup
+                    by_cond = {}
+                    for m in api_markets:
+                        cid = m.get("conditionId") or m.get("condition_id") or ""
+                        if cid:
+                            by_cond[str(cid)] = m
+
+                    for row in by_event[event_id]:
+                        stats["markets_checked"] += 1
+                        condition_id = row.external_id
+
+                        # For decomposed sub-markets: external_id = condition_id
+                        market_data = by_cond.get(condition_id)
+
+                        # For parent markets: external_id = event_id, try first condition
+                        if not market_data and condition_id == event_id and len(api_markets) == 1:
+                            market_data = api_markets[0]
+
+                        if not market_data:
+                            stats["no_match"] += 1
+                            continue
+
+                        prices_raw = market_data.get("outcomePrices") or market_data.get("outcome_prices") or []
+                        if isinstance(prices_raw, str):
+                            try:
+                                prices_raw = _json.loads(prices_raw)
+                            except (ValueError, TypeError):
+                                prices_raw = []
+
                         try:
-                            outcome_prices_raw = _json.loads(outcome_prices_raw)
+                            prices = [float(p) for p in prices_raw]
                         except (ValueError, TypeError):
-                            outcome_prices_raw = []
+                            prices = []
 
-                    try:
-                        prices = [float(p) for p in outcome_prices_raw]
-                    except (ValueError, TypeError):
-                        prices = []
+                        if len(prices) < 2:
+                            stats["not_settled"] += 1
+                            continue
 
-                    if len(prices) < 2:
-                        stats["not_settled"] += 1
-                        continue
+                        if max(prices) < 0.90 or min(prices) > 0.10:
+                            stats["not_settled"] += 1
+                            continue
 
-                    max_price = max(prices)
-                    min_price = min(prices)
-                    if max_price < 0.90 or min_price > 0.10:
-                        stats["not_settled"] += 1
-                        continue
+                        # Determine winner from settlement prices
+                        yes_won = prices[0] >= 0.90
+                        cid = market_data.get("conditionId") or market_data.get("condition_id") or condition_id
+                        yes_ext = f"{cid}_yes"
+                        no_ext = f"{cid}_no"
 
-                    yes_won = prices[0] >= 0.90
-                    yes_ext = f"{condition_id}_yes"
-                    no_ext = f"{condition_id}_no"
-
-                    r1 = await session.execute(
-                        update(FuturesOutcome)
-                        .where(
-                            FuturesOutcome.market_id == row.id,
-                            FuturesOutcome.external_id == yes_ext,
+                        r1 = await session.execute(
+                            update(FuturesOutcome)
+                            .where(
+                                FuturesOutcome.market_id == row.id,
+                                FuturesOutcome.external_id == yes_ext,
+                            )
+                            .values(is_winner=yes_won)
                         )
-                        .values(is_winner=yes_won)
-                    )
-                    r2 = await session.execute(
-                        update(FuturesOutcome)
-                        .where(
-                            FuturesOutcome.market_id == row.id,
-                            FuturesOutcome.external_id == no_ext,
+                        r2 = await session.execute(
+                            update(FuturesOutcome)
+                            .where(
+                                FuturesOutcome.market_id == row.id,
+                                FuturesOutcome.external_id == no_ext,
+                            )
+                            .values(is_winner=(not yes_won))
                         )
-                        .values(is_winner=(not yes_won))
-                    )
 
-                    updated = r1.rowcount + r2.rowcount
-                    if updated > 0:
-                        if yes_won:
-                            stats["winners_set"] += r1.rowcount
-                            stats["losers_set"] += r2.rowcount
-                        else:
-                            stats["losers_set"] += r1.rowcount
-                            stats["winners_set"] += r2.rowcount
+                        updated = r1.rowcount + r2.rowcount
+                        if updated > 0:
+                            if yes_won:
+                                stats["winners_set"] += r1.rowcount
+                                stats["losers_set"] += r2.rowcount
+                            else:
+                                stats["losers_set"] += r1.rowcount
+                                stats["winners_set"] += r2.rowcount
 
                 await session.commit()
 
             logger.info(
-                "Polymarket API backfill: %d/%d checked, %d winners, %d losers, %d miss",
-                min(batch_start + batch_size, len(markets)), len(markets),
+                "Polymarket API backfill: %d/%d events, %d winners, %d losers, %d miss",
+                min(batch_start + batch_size, len(event_ids)), len(event_ids),
                 stats["winners_set"], stats["losers_set"], stats["api_miss"],
             )
             await asyncio.sleep(0.3)
@@ -824,9 +847,10 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
 
     logger.info(
         "Polymarket API winner backfill: %d checked, %d winners, %d losers, "
-        "%d api_miss, %d not_settled, %d errors",
+        "%d api_miss, %d no_match, %d not_settled, %d errors",
         stats["markets_checked"], stats["winners_set"], stats["losers_set"],
-        stats["api_miss"], stats["not_settled"], len(stats["errors"]),
+        stats["api_miss"], stats["no_match"], stats["not_settled"],
+        len(stats["errors"]),
     )
     return stats
 
