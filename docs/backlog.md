@@ -1032,12 +1032,12 @@ Shipped: ~~Game Segments~~, ~~Line Movement Explainer~~, ~~Weather page~~, ~~Eco
 
 **iOS/Mac gaps (web has, native doesn't):**
 
-| Priority | Feature | Web Component | Effort |
+| Priority | Feature | Web Component | Status |
 |----------|---------|--------------|--------|
-| Medium | Total Points Spectrum (spread+total viz) | `TotalPointsSpectrum.tsx` | Medium |
-| Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
-| Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |
-| Low | Explore / faceted browser | `/explore` | Medium |
+| ~~Medium~~ | ~~Total Points Spectrum~~ | ~~`TotalPointsSpectrum.tsx`~~ | ✅ SHIPPED May 20 |
+| ~~Medium~~ | ~~Series Probability~~ | ~~`SeriesProbability.tsx`~~ | ✅ Already shipped |
+| ~~Low~~ | ~~Evolution Chart~~ | ~~`EvolutionChart.tsx`~~ | ✅ SHIPPED May 20 |
+| ~~Low~~ | ~~Explore / faceted browser~~ | ~~`/explore`~~ | ✅ SHIPPED May 20 |
 
 ---
 
