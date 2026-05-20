@@ -56,6 +56,23 @@ struct LeaguesView: View {
         NavigationStack(path: $path) {
             List {
                 Section("Explore") {
+                    NavigationLink(value: Route.futuresList) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.body)
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Color.indigo, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Futures Markets")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Browse all prediction markets")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
                     NavigationLink(value: Route.calibration) {
                         HStack(spacing: 12) {
                             Image(systemName: "chart.dots.scatter")

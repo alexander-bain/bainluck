@@ -137,6 +137,29 @@ nonisolated struct FacetTag: Decodable, Sendable {
     let count: Int
 }
 
+// MARK: - Futures Movers Response
+
+/// Response from the /api/futures/movers endpoint.
+nonisolated struct FuturesMoversResponse: Decodable, Sendable {
+    let movers: [FuturesMover]
+    let timeframeHours: Int
+}
+
+/// Single outcome with significant probability movement.
+nonisolated struct FuturesMover: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let name: String
+    let marketId: Int
+    let marketName: String?
+    let currentProbability: Double?
+    let probabilityChange24h: Double?
+    let currentAmericanOdds: Int?
+    let rank: Int?
+    let rankChange24h: Int?
+
+    var id: Int { outcomeId }
+}
+
 // MARK: - Typeahead Response
 
 /// Typeahead suggestion response for the active query.

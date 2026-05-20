@@ -623,6 +623,7 @@ async def faceted_futures_search(
     stakes: Optional[str] = Query(None, description="Stakes tag value"),
     narrative: Optional[str] = Query(None, description="Narrative tag value"),
     audience: Optional[str] = Query(None, description="Audience tag value"),
+    q: Optional[str] = Query(None, description="Search within market names"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     db: AsyncSession = Depends(get_db),
@@ -660,6 +661,9 @@ async def faceted_futures_search(
 
     if category:
         conditions.append(FuturesMarket.llm_sport_category == category)
+
+    if q:
+        conditions.append(FuturesMarket.name.ilike(f"%{q}%"))
 
     # GIN containment filter
     valid_tags: list[str] = []

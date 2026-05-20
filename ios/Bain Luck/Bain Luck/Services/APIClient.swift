@@ -457,7 +457,7 @@ actor APIClient {
     }
 
     /// Fetches browseable futures results filtered by tags.
-    func fetchFacetedFutures(tags: [String] = [], page: Int = 1) async throws -> FacetedFuturesResponse {
+    func fetchFacetedFutures(tags: [String] = [], page: Int = 1, search: String? = nil) async throws -> FacetedFuturesResponse {
         var q: [String: String] = [
             "page": "\(page)",
             "per_page": "20",
@@ -466,7 +466,18 @@ actor APIClient {
            let str = String(data: json, encoding: .utf8) {
             q["tags"] = str
         }
+        if let search, !search.isEmpty {
+            q["q"] = search
+        }
         return try await fetch("/api/futures/faceted", query: q, cacheTTL: 30)
+    }
+
+    /// Fetches futures markets with the biggest probability changes in the last N hours.
+    func fetchFuturesMovers(hours: Int = 24, limit: Int = 10) async throws -> FuturesMoversResponse {
+        return try await fetch("/api/futures/movers", query: [
+            "hours": "\(hours)",
+            "limit": "\(limit)",
+        ], cacheTTL: 60)
     }
 
     // MARK: - Auth
