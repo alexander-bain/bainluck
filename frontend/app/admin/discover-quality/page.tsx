@@ -264,6 +264,8 @@ interface GroundTruthHealthReport {
   raw_row_count: number;
   loaded_count: number;
   load_rate: number | null;
+  eligible_row_count?: number | null;
+  eligible_load_rate?: number | null;
   latest_date: string | null;
   latest_source_date?: string | null;
   latest_loaded_date?: string | null;
@@ -2909,7 +2911,9 @@ export default function DiscoverQualityPage() {
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="font-medium text-text-primary">{formatTargetName(report.label)}</span>
                         <StatusPill tone={report.severity === "ok" ? "ok" : report.severity === "info" ? "muted" : "warn"}>
-                          {report.loaded_count}/{report.raw_row_count}
+                          {report.eligible_row_count && report.eligible_row_count !== report.raw_row_count
+                            ? `${report.loaded_count}/${report.eligible_row_count} eligible`
+                            : `${report.loaded_count}/${report.raw_row_count}`}
                         </StatusPill>
                       </div>
                       {report.issues[0] && (
@@ -2925,6 +2929,9 @@ export default function DiscoverQualityPage() {
                           <span>Low score: {report.filter_counts.low_interestingness ?? 0}</span>
                           <span>Duplicate: {report.filter_counts.duplicate ?? 0}</span>
                           <span>Loaded: {report.filter_counts.loaded ?? report.loaded_count}</span>
+                          {report.eligible_row_count !== undefined && report.eligible_row_count !== null && (
+                            <span>Eligible: {report.eligible_row_count}</span>
+                          )}
                         </div>
                       )}
                       {(report.latest_source_date || report.latest_loaded_date || report.cutoff_date) && (

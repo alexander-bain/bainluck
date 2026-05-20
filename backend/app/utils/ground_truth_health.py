@@ -59,16 +59,25 @@ def assess_ground_truth_report_health(
         )
     if raw_row_count > 0 and loaded_count > 0:
         load_rate = loaded_count / raw_row_count
-        if load_rate < min_load_rate:
+        effective_row_count = _effective_row_count(raw_row_count, filter_counts)
+        effective_load_rate = (
+            loaded_count / effective_row_count if effective_row_count > 0 else load_rate
+        )
+        if effective_load_rate < min_load_rate:
             issues.append(
                 {
                     "severity": "warning",
                     "code": "low_load_rate",
-                    "message": f"{label} loaded {loaded_count}/{raw_row_count} rows.",
+                    "message": (
+                        f"{label} loaded {loaded_count}/{effective_row_count} eligible rows "
+                        f"({loaded_count}/{raw_row_count} raw)."
+                    ),
                 }
             )
     else:
         load_rate = None
+        effective_row_count = None
+        effective_load_rate = None
 
     if metadata.get("stale") is True:
         latest_date = metadata.get("latest_date") or "unknown"
@@ -102,6 +111,10 @@ def assess_ground_truth_report_health(
         "raw_row_count": raw_row_count,
         "loaded_count": loaded_count,
         "load_rate": round(load_rate, 4) if load_rate is not None else None,
+        "eligible_row_count": effective_row_count,
+        "eligible_load_rate": round(effective_load_rate, 4)
+        if effective_load_rate is not None
+        else None,
         "latest_date": metadata.get("latest_date"),
         "latest_source_date": metadata.get("latest_source_date"),
         "latest_loaded_date": metadata.get("latest_loaded_date"),
@@ -150,3 +163,14 @@ def _int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _effective_row_count(raw_row_count: int, filter_counts: dict[str, Any]) -> int:
+    """Return rows expected to survive intentional recency/quality filters."""
+    if not filter_counts:
+        return raw_row_count
+    source_rows = _int(filter_counts.get("source_rows")) or raw_row_count
+    filtered = _int(filter_counts.get("outside_lookback")) + _int(
+        filter_counts.get("low_interestingness")
+    )
+    return max(0, source_rows - filtered)

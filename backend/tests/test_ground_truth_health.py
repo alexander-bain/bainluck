@@ -94,15 +94,47 @@ def test_assess_ground_truth_report_health_detects_low_load_rate_and_stale_sourc
 
     assert health["severity"] == "warning"
     assert health["load_rate"] == 0.1
+    assert health["eligible_row_count"] == 20
+    assert health["eligible_load_rate"] == 0.5
     assert health["latest_source_date"] == "2026-05-01"
     assert health["latest_loaded_date"] == "2026-04-30"
     assert health["cutoff_date"] == "2026-04-10"
     assert health["filter_counts"]["low_interestingness"] == 60
     assert {issue["code"] for issue in health["issues"]} == {
-        "low_load_rate",
         "stale",
         "stale_source",
     }
+
+
+def test_assess_ground_truth_report_health_uses_eligible_rows_for_load_rate():
+    health = assess_ground_truth_report_health(
+        {
+            "items": [],
+            "metadata": {
+                "configured": True,
+                "raw_row_count": 604,
+                "loaded_count": 66,
+                "latest_date": "2026-05-20",
+                "stale": False,
+                "filter_counts": {
+                    "csv_rows": 604,
+                    "source_rows": 604,
+                    "outside_lookback": 449,
+                    "low_interestingness": 76,
+                    "duplicate": 13,
+                    "loaded": 66,
+                },
+            },
+        },
+        label="polymarket_email",
+        min_load_rate=0.25,
+    )
+
+    assert health["severity"] == "ok"
+    assert health["load_rate"] == 0.1093
+    assert health["eligible_row_count"] == 79
+    assert health["eligible_load_rate"] == 0.8354
+    assert health["issues"] == []
 
 
 def test_summarize_ground_truth_health_rolls_up_worst_severity():
