@@ -1914,6 +1914,97 @@ async def fix_commence_times(secret: str = Query(...)):
     return {"golf_fixed": golf, "hockey_fixed": hockey}
 
 
+@router.get("/backfill-winners/kalshi-probe")
+async def kalshi_settlement_probe(
+    secret: str = Query(...),
+    sample: int = Query(50, description="Number of tickers to probe"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Probe the Kalshi API for a sample of stuck markets to diagnose Phase 2 failures."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.kalshi_api import KalshiAPIService
+
+    stuck = await db.execute(text("""
+        SELECT DISTINCT fm.external_id, fm.category,
+               fm.llm_sport_category
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'kalshi'
+          AND fm.status = 'resolved'
+          AND fo.current_probability IS NOT NULL
+          AND fo.current_probability > 0.10
+        GROUP BY fm.external_id, fm.category, fm.llm_sport_category
+        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+        ORDER BY RANDOM()
+        LIMIT :sample
+    """), {"sample": sample})
+    tickers = stuck.all()
+
+    service = KalshiAPIService()
+    results = {"api_miss": [], "no_result": [], "has_result": [], "errors": []}
+    try:
+        for row in tickers:
+            try:
+                event_data = await service.get_event(row.external_id)
+                if not event_data:
+                    results["api_miss"].append({
+                        "ticker": row.external_id,
+                        "category": row.llm_sport_category or row.category,
+                    })
+                    continue
+
+                nested = event_data.get("markets") or []
+                any_result = False
+                for m in nested:
+                    if m.get("result") is not None:
+                        any_result = True
+                        break
+
+                if any_result:
+                    results["has_result"].append({
+                        "ticker": row.external_id,
+                        "category": row.llm_sport_category or row.category,
+                        "n_markets": len(nested),
+                        "sample_result": nested[0].get("result") if nested else None,
+                    })
+                else:
+                    results["no_result"].append({
+                        "ticker": row.external_id,
+                        "category": row.llm_sport_category or row.category,
+                        "n_markets": len(nested),
+                    })
+            except Exception as e:
+                results["errors"].append({"ticker": row.external_id, "error": str(e)[:100]})
+    finally:
+        await service.close()
+
+    return {
+        "probed": len(tickers),
+        "api_miss": len(results["api_miss"]),
+        "no_result": len(results["no_result"]),
+        "has_result": len(results["has_result"]),
+        "errors": len(results["errors"]),
+        "api_miss_samples": results["api_miss"][:10],
+        "no_result_samples": results["no_result"][:10],
+        "has_result_samples": results["has_result"][:5],
+        "error_samples": results["errors"][:5],
+        "by_category": _count_by_cat(results),
+    }
+
+
+def _count_by_cat(results: dict) -> dict:
+    cats: dict = {}
+    for bucket in ["api_miss", "no_result", "has_result"]:
+        for item in results[bucket]:
+            cat = item.get("category", "unknown")
+            if cat not in cats:
+                cats[cat] = {"api_miss": 0, "no_result": 0, "has_result": 0}
+            cats[cat][bucket] += 1
+    return cats
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
