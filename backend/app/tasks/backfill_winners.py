@@ -200,6 +200,160 @@ async def _backfill_polymarket_winners():
     return stats
 
 
+async def _reset_kalshi_midrange_winners():
+    """Reset is_winner on Kalshi markets where Pass 2 arbitrarily picked a winner.
+
+    Identifies markets where:
+    - is_winner=true exists on some outcome
+    - But no outcome has current_probability >= 0.90 (not cleanly resolved)
+    - And max probability is between 0.10 and 0.80 (Pass 2 territory)
+
+    Resets all outcomes to is_winner=false so the API phases can re-resolve.
+    """
+    stats = {"reset_outcomes": 0, "reset_markets": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    WITH suspect_markets AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) >= 1
+                           AND MAX(fo.current_probability) < 0.90
+                           AND MAX(fo.current_probability) > 0.10
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = false
+                    FROM suspect_markets sm
+                    WHERE fo.market_id = sm.market_id
+                      AND fo.is_winner = true
+                    RETURNING fo.market_id
+                """)
+            )
+            rows = result.all()
+            stats["reset_outcomes"] = len(rows)
+            stats["reset_markets"] = len(set(r[0] for r in rows))
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Kalshi midrange reset error: %s", e)
+
+    logger.info(
+        "Kalshi midrange reset: %d outcomes across %d markets, %d errors",
+        stats["reset_outcomes"], stats["reset_markets"], len(stats["errors"]),
+    )
+    return stats
+
+
+async def _resolve_kalshi_from_scores():
+    """Resolve Kalshi game markets from actual Event scores.
+
+    For Kalshi markets linked to Events (via event_id) where the Kalshi
+    API has purged the settlement data, uses the game score to determine
+    winners for moneyline-style markets.
+
+    Only handles markets with 2 outcomes (binary Yes/No per team) linked
+    to completed events with scores.
+    """
+    stats = {"resolved": 0, "no_score": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            # Find Kalshi markets linked to events with scores, where
+            # no outcome has is_winner=true, and exactly 2 outcomes exist
+            result = await session.execute(
+                text("""
+                    WITH eligible AS (
+                        SELECT fm.id AS market_id, fm.name AS market_name,
+                               e.home_team, e.away_team,
+                               e.home_score, e.away_score
+                        FROM futures_markets fm
+                        JOIN events e ON e.id = fm.event_id
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.source = 'kalshi'
+                          AND fm.status = 'resolved'
+                          AND e.status IN ('completed', 'closed')
+                          AND e.home_score IS NOT NULL
+                          AND e.away_score IS NOT NULL
+                          AND e.home_score != e.away_score
+                          AND fo.current_probability IS NOT NULL
+                        GROUP BY fm.id, fm.name, e.home_team, e.away_team,
+                                 e.home_score, e.away_score
+                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                           AND COUNT(*) = 2
+                        LIMIT 10000
+                    )
+                    SELECT market_id, market_name, home_team, away_team,
+                           home_score, away_score
+                    FROM eligible
+                """)
+            )
+            markets = result.all()
+
+            for row in markets:
+                home_won = row.home_score > row.away_score
+
+                # Get the two outcomes and figure out which is home/away
+                outcomes = await session.execute(
+                    text("""
+                        SELECT id, name, external_id
+                        FROM futures_outcomes
+                        WHERE market_id = :mid
+                        ORDER BY id
+                    """),
+                    {"mid": row.market_id},
+                )
+                outs = outcomes.all()
+                if len(outs) != 2:
+                    continue
+
+                # Match outcomes to home/away by checking if outcome name
+                # contains a team name token
+                home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
+                away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+
+                for out in outs:
+                    name_lower = (out.name or "").lower()
+                    name_tokens = set(name_lower.split())
+
+                    is_home = bool(home_tokens & name_tokens)
+                    is_away = bool(away_tokens & name_tokens)
+
+                    if is_home and not is_away:
+                        won = home_won
+                    elif is_away and not is_home:
+                        won = not home_won
+                    else:
+                        continue
+
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": out.id},
+                    )
+
+                stats["resolved"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Kalshi score resolution error: %s", e)
+
+    logger.info(
+        "Kalshi score resolution: %d markets resolved, %d no_score, %d errors",
+        stats["resolved"], stats["no_score"], len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_datagolf_winners():
     """Resolve DataGolf placement markets from actual leaderboard results.
 
@@ -1029,11 +1183,19 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
 
-    # Phase 1: Authoritative API settlement data — run BEFORE probability
+    # Phase 0h: Reset bad is_winner on Kalshi midrange markets.
+    # Pass 2 previously ran BEFORE the API phases and arbitrarily picked
+    # winners from stuck-at-0.50 probabilities. Clear those so the API
+    # phases can set the correct values.
+    reset_stats = await _reset_kalshi_midrange_winners()
+
+    # Phase 1a: Kalshi score-based resolution for game markets linked to
+    # Events. Resolves spreads/totals from actual game scores even when
+    # the Kalshi API has purged the market data.
+    score_stats = await _resolve_kalshi_from_scores()
+
+    # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
-    # Pass 2 (mutually exclusive) arbitrarily picks the highest-prob outcome
-    # as "winner" for stuck-at-0.50 markets, then Phase 2/3 skip them because
-    # is_winner is already set. Running API phases first fixes this.
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=2000)
 
@@ -1050,6 +1212,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
         "datagolf": datagolf_stats,
+        "kalshi_reset": reset_stats,
+        "kalshi_score_resolution": score_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
