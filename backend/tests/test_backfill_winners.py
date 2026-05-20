@@ -180,6 +180,48 @@ class TestDataGolfPlacement:
         assert _datagolf_check_placement("???", "win") is None
 
 
+class TestSpreadTotalParsing:
+    """Tests for spread/total outcome name regex parsing."""
+
+    def test_spread_full_game(self):
+        from app.tasks.backfill_winners import _SPREAD_RE
+        m = _SPREAD_RE.search("New York wins by over 29.5 points")
+        assert m is not None
+        assert m.group(1) == "New York"
+        assert float(m.group(2)) == 29.5
+
+    def test_spread_1h(self):
+        from app.tasks.backfill_winners import _SPREAD_RE
+        m = _SPREAD_RE.search("New York wins the 1H by over 24.5 points")
+        assert m is not None
+        assert m.group(1) == "New York"
+        assert float(m.group(2)) == 24.5
+
+    def test_spread_runs(self):
+        from app.tasks.backfill_winners import _SPREAD_RE
+        m = _SPREAD_RE.search("Los Angeles A wins by over 3.5 runs")
+        assert m is not None
+        assert m.group(1) == "Los Angeles A"
+        assert float(m.group(2)) == 3.5
+
+    def test_total_full_game(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        m = _TOTAL_RE.search("Over 210.5 points scored")
+        assert m is not None
+        assert float(m.group(1)) == 210.5
+
+    def test_total_1h(self):
+        from app.tasks.backfill_winners import _TOTAL_RE
+        m = _TOTAL_RE.search("Over 93.5 1H points scored")
+        assert m is not None
+        assert float(m.group(1)) == 93.5
+
+    def test_no_match_random_text(self):
+        from app.tasks.backfill_winners import _SPREAD_RE, _TOTAL_RE
+        assert _SPREAD_RE.search("Yes") is None
+        assert _TOTAL_RE.search("Yes") is None
+
+
 class TestPhase2LimitIncrease:
     """Tests for the Kalshi Phase 2 limit increase."""
 

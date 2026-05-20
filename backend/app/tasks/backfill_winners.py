@@ -375,6 +375,183 @@ async def _resolve_kalshi_from_scores():
     return stats
 
 
+import re
+
+_SPREAD_RE = re.compile(
+    r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
+    re.IGNORECASE,
+)
+_TOTAL_RE = re.compile(
+    r"Over (\d+\.?\d*)\s+(?:1H\s+)?(?:points|runs|goals)\s+scored",
+    re.IGNORECASE,
+)
+
+_FIRST_HALF_PERIODS = {
+    "q1", "q2", "1q", "2q", "1st", "2nd", "1st half", "first half",
+    "1h", "top 1st", "bot 1st", "top 2nd", "bot 2nd", "top 3rd",
+    "bot 3rd", "top 4th", "bot 4th", "top 5th", "bot 5th",
+    "1st period", "2nd period",
+}
+
+
+async def _resolve_kalshi_spread_total_from_scores():
+    """Resolve Kalshi spread and total markets from actual game scores.
+
+    Handles both full-game and 1H markets:
+    - Full-game spreads: "{team} wins by over N points" → check final margin
+    - Full-game totals: "Over N points scored" → check final total
+    - 1H spreads: "{team} wins the 1H by over N points" → reconstruct
+      halftime score from scoring_plays
+    - 1H totals: "Over N 1H points scored" → same
+    """
+    stats = {"spread": 0, "total": 0, "h1_spread": 0, "h1_total": 0,
+             "no_plays": 0, "no_parse": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fm.id AS market_id, fm.external_id AS ticker,
+                           e.id AS event_id,
+                           e.home_team, e.away_team,
+                           e.home_score, e.away_score
+                    FROM futures_markets fm
+                    JOIN events e ON e.id = fm.event_id
+                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND e.status IN ('completed', 'closed')
+                      AND e.home_score IS NOT NULL
+                      AND e.away_score IS NOT NULL
+                      AND fo.current_probability IS NOT NULL
+                    GROUP BY fm.id, fm.external_id, e.id,
+                             e.home_team, e.away_team,
+                             e.home_score, e.away_score
+                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                       AND COUNT(*) = 1
+                    LIMIT 10000
+                """)
+            )
+            markets = result.all()
+
+            for row in markets:
+                ticker_lower = (row.ticker or "").lower()
+                is_1h = "1h" in ticker_lower or "1half" in ticker_lower
+
+                # Get the single outcome's name
+                out = await session.execute(
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
+                    {"mid": row.market_id},
+                )
+                outcome = out.first()
+                if not outcome or not outcome.name:
+                    stats["no_parse"] += 1
+                    continue
+
+                name = outcome.name
+
+                # Try spread pattern
+                sm = _SPREAD_RE.search(name)
+                if sm:
+                    team_name = sm.group(1).strip()
+                    line = float(sm.group(2))
+
+                    if is_1h:
+                        h1_scores = await _get_halftime_score(session, row.event_id)
+                        if h1_scores is None:
+                            stats["no_plays"] += 1
+                            continue
+                        h1_home, h1_away = h1_scores
+                    else:
+                        h1_home, h1_away = row.home_score, row.away_score
+
+                    # Determine which team the spread is for
+                    home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
+                    away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
+                    team_tokens = set(team_name.lower().split())
+
+                    if team_tokens & home_tokens:
+                        margin = h1_home - h1_away
+                    elif team_tokens & away_tokens:
+                        margin = h1_away - h1_home
+                    else:
+                        stats["no_parse"] += 1
+                        continue
+
+                    won = margin > line
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": outcome.id},
+                    )
+                    if is_1h:
+                        stats["h1_spread"] += 1
+                    else:
+                        stats["spread"] += 1
+                    continue
+
+                # Try total pattern
+                tm = _TOTAL_RE.search(name)
+                if tm:
+                    line = float(tm.group(1))
+
+                    if is_1h:
+                        h1_scores = await _get_halftime_score(session, row.event_id)
+                        if h1_scores is None:
+                            stats["no_plays"] += 1
+                            continue
+                        total = h1_scores[0] + h1_scores[1]
+                    else:
+                        total = row.home_score + row.away_score
+
+                    won = total > line
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": outcome.id},
+                    )
+                    if is_1h:
+                        stats["h1_total"] += 1
+                    else:
+                        stats["total"] += 1
+                    continue
+
+                stats["no_parse"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Kalshi spread/total resolution error: %s", e)
+
+    resolved = stats["spread"] + stats["total"] + stats["h1_spread"] + stats["h1_total"]
+    logger.info(
+        "Kalshi spread/total resolution: %d resolved (spread=%d, total=%d, "
+        "h1_spread=%d, h1_total=%d), %d no_plays, %d no_parse, %d errors",
+        resolved, stats["spread"], stats["total"],
+        stats["h1_spread"], stats["h1_total"],
+        stats["no_plays"], stats["no_parse"], len(stats["errors"]),
+    )
+    return stats
+
+
+async def _get_halftime_score(session, event_id: int):
+    """Reconstruct halftime score from scoring_plays."""
+    result = await session.execute(
+        text("""
+            SELECT home_score, away_score
+            FROM scoring_plays
+            WHERE event_id = :eid
+              AND LOWER(period) IN :periods
+            ORDER BY captured_at DESC
+            LIMIT 1
+        """),
+        {"eid": event_id, "periods": tuple(_FIRST_HALF_PERIODS)},
+    )
+    row = result.first()
+    if row:
+        return (row.home_score, row.away_score)
+    return None
+
+
 async def _backfill_datagolf_winners():
     """Resolve DataGolf placement markets from actual leaderboard results.
 
@@ -1205,9 +1382,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     datagolf_stats = await _backfill_datagolf_winners()
 
     # Phase 1a: Kalshi score-based resolution for game markets linked to
-    # Events. Resolves spreads/totals/1H props from actual game scores
-    # even when the Kalshi API has purged the market data.
+    # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
+    # game scores even when the Kalshi API has purged the market data.
     score_stats = await _resolve_kalshi_from_scores()
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
 
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
@@ -1228,6 +1406,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "polymarket_api_group_id": api_group_stats,
         "datagolf": datagolf_stats,
         "kalshi_score_resolution": score_stats,
+        "kalshi_spread_total_resolution": spread_total_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
