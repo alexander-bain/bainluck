@@ -1,0 +1,94 @@
+name: Social Ground Truth
+
+on:
+  workflow_dispatch:
+    inputs:
+      capture_url:
+        description: "Optional CSV/JSON/JSONL capture export URL"
+        required: false
+        type: string
+      upload_accepted:
+        description: "Upload accepted rows to production"
+        required: false
+        default: false
+        type: boolean
+      accept_high_confidence:
+        description: "Accept high-confidence Manus rows without a separate review pass"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "30 13 * * *"
+
+jobs:
+  run-social-ground-truth:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+      DEFAULT_CAPTURE_URL: ${{ secrets.SOCIAL_GROUND_TRUTH_CAPTURE_URL }}
+      INPUT_CAPTURE_URL: ${{ inputs.capture_url }}
+      INPUT_UPLOAD_ACCEPTED: ${{ inputs.upload_accepted }}
+      INPUT_ACCEPT_HIGH_CONFIDENCE: ${{ inputs.accept_high_confidence }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily social ground truth
+        run: |
+          set -euo pipefail
+
+          CAPTURE_URL="${INPUT_CAPTURE_URL:-$DEFAULT_CAPTURE_URL}"
+          if [ -z "${MANUS_API_KEY:-}" ]; then
+            echo "MANUS_API_KEY secret is not set; skipping social ground-truth run."
+            exit 0
+          fi
+          if [ -z "$CAPTURE_URL" ]; then
+            echo "No capture URL provided. Set SOCIAL_GROUND_TRUTH_CAPTURE_URL or pass workflow_dispatch capture_url."
+            exit 0
+          fi
+
+          DATE="$(TZ=America/Los_Angeles date +%Y%m%d)"
+          OUTPUT_DIR="/tmp/bainluck_social_ground_truth/$DATE"
+          ARGS=(
+            scripts/run_daily_social_ground_truth.py
+            --date "$DATE"
+            --output-dir "$OUTPUT_DIR"
+            --capture-url "$CAPTURE_URL"
+            --extract
+            --summary-json
+          )
+
+          if [ "${INPUT_ACCEPT_HIGH_CONFIDENCE:-false}" = "true" ]; then
+            ARGS+=(--accept-high-confidence)
+          fi
+
+          if [ "${INPUT_UPLOAD_ACCEPTED:-false}" = "true" ]; then
+            if [ -z "${ADMIN_TOKEN:-}" ]; then
+              echo "ADMIN_TOKEN secret is required when upload_accepted=true."
+              exit 1
+            fi
+            ARGS+=(--upload-accepted)
+          fi
+
+          python "${ARGS[@]}" | tee "$OUTPUT_DIR/run.log"
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: social-ground-truth-${{ github.run_id }}
+          path: /tmp/bainluck_social_ground_truth/
+          if-no-files-found: ignore
