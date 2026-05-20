@@ -4305,54 +4305,7 @@ async def get_related_futures(
                     cached = None
 
             if not cached or not cached.explanation:
-                # Generate via LLM
-                from app.services.llm import generate_related_futures_summary
-                summary = generate_related_futures_summary(
-                    home_team=event.home_team_name,
-                    away_team=event.away_team_name,
-                    sport_key=event.sport.key if event.sport else "",
-                    event_status=event.status or "scheduled",
-                    home_futures=[
-                        {
-                            "market_name": f["market_name"],
-                            "outcome_name": f["outcome_name"],
-                            "probability": f["probability"],
-                            "probability_change_24h": f.get("probability_change_24h"),
-                            "opening_probability": f.get("opening_probability"),
-                        }
-                        for f in home_futures[:8]
-                    ],
-                    away_futures=[
-                        {
-                            "market_name": f["market_name"],
-                            "outcome_name": f["outcome_name"],
-                            "probability": f["probability"],
-                            "probability_change_24h": f.get("probability_change_24h"),
-                            "opening_probability": f.get("opening_probability"),
-                        }
-                        for f in away_futures[:8]
-                    ],
-                )
-                if summary:
-                    # Determine TTL
-                    is_finished = event.status in ("completed", "closed")
-                    if is_finished:
-                        expires = None  # Never expires for finished games
-                    else:
-                        expires = now_ts + timedelta(hours=2)
-
-                    if cached:
-                        cached.explanation = summary
-                        cached.expires_at = expires
-                    else:
-                        new_analysis = LineMovementAnalysis(
-                            event_id=event_id,
-                            analysis_type="related_futures",
-                            explanation=summary,
-                            expires_at=expires,
-                        )
-                        db.add(new_analysis)
-                    await db.commit()
+                pass  # LLM generation deferred to Celery — don't block request
         except Exception as e:
             import logging
             logging.getLogger(__name__).debug("Related futures summary error: %s", e)
