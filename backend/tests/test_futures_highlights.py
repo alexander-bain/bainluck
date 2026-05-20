@@ -76,6 +76,16 @@ class TestComputeFuturesHighlight:
         assert "sports_postseason_story" not in result.reasons
         assert result.score < 80
 
+    def test_shareable_culture_markets_get_compelling_boost(self):
+        result = compute_futures_highlight(
+            market_tier=5,
+            sport_category="entertainment",
+            market_name="Who will be Taylor Swift's bridesmaids?",
+        )
+
+        assert result.score >= 60
+        assert "compelling_x2" in result.reasons
+
     def test_major_movement_detected(self):
         """Large 24h probability changes are flagged."""
         outcomes = [

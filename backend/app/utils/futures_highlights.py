@@ -191,6 +191,7 @@ _COMPELLING_PATTERNS = [
         r"(oscars?|academy award|emmy|grammy|golden globe|tony award|bafta|cannes|sundance|eurovision)",
         r"(survivor|the boys|last of us|stranger things|squid game|house of the dragon|rings of power|bachelor|bachelorette|love island|joe rogan)",
         r"(box office|rotten tomatoes|netflix|disney\+|hbo|spotify|billboard|#1 song|#1 album)",
+        r"(bridesmaids?|wedding|engaged|engagement|married|divorce)",
     ]
 ]
 

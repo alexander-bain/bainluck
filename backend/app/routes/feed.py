@@ -357,6 +357,19 @@ _DISCOVER_EDITORIAL_RECALL_PATTERNS = (
     "%aliens%",
     "%ufo%",
     "%extraterrestrial%",
+    # Serendipity / "text this to someone" culture markets. These are
+    # intentionally recall-only; quality scoring and first-page caps still
+    # decide whether they earn a visible slot.
+    "%taylor swift%",
+    "%bridesmaid%",
+    "%bridesmaids%",
+    "%wedding%",
+    "%engaged%",
+    "%engagement%",
+    "%pregnant%",
+    "%pregnancy%",
+    "%beyonce%",
+    "%kardashian%",
     "%xi jinping%",
     "%openai%",
     "%anthropic%",

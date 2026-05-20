@@ -367,6 +367,19 @@ class TestMarketQualityClassification:
         assert quality.story_key == "story:aliens_disclosure"
         assert apply_quality_score(88, quality) == 100
 
+    def test_shareable_celebrity_life_markets_are_serendipity_candidates(self):
+        examples = [
+            "Who will be Taylor Swift's bridesmaids?",
+            "Will Taylor Swift and Travis Kelce get married in 2026?",
+        ]
+
+        for name in examples:
+            quality = classify_market_quality(name, sport_category="entertainment")
+            assert quality.quality_class == "compelling", name
+            assert "absurd_but_real" in quality.reasons, name
+            assert quality_score_adjustment(quality) >= 20, name
+            assert editorial_archetype(name, "entertainment") == "absurd_but_real"
+
     def test_sports_personnel_story_gets_extra_boost(self):
         quality = classify_market_quality(
             "Will Mike Vrabel be fired before the Patriots' next game?",
@@ -2191,6 +2204,7 @@ class TestEditorialArchetypes:
             "Will Elon win his case against OpenAI?": "company_drama",
             "Will the U.S. confirm that aliens exist before 2027?": "absurd_but_real",
             "Will Taylor Swift be pregnant in 2026?": "absurd_but_real",
+            "Who will be Taylor Swift's bridesmaids?": "absurd_but_real",
         }
 
         for name, expected in examples.items():

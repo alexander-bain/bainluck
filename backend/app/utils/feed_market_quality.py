@@ -235,7 +235,8 @@ _CULTURE_RE = re.compile(
     r"\b("
     r"super bowl|eurovision|survivor|academy|emmy|grammy|billboard|spotify|"
     r"album|song|movie|box office|oscars?|rott?en tomatoes|kimmel|taylor swift|"
-    r"beyonce|drake|kardashian|iceman|pregnan(?:t|cy)|baby|engaged|married|divorce"
+    r"beyonce|drake|kardashian|iceman|pregnan(?:t|cy)|baby|bridesmaids?|"
+    r"wedding|engaged|engagement|married|divorce"
     r")\b",
     re.IGNORECASE,
 )
@@ -252,7 +253,8 @@ _ABSURD_BUT_REAL_RE = re.compile(
     r"\b("
     r"aliens?|ufo|extraterrestrial|bigfoot|loch ness|simulation|"
     r"will .+ apologize|will .+ say \"|what will .+ wear|"
-    r"hot dog|nathan's|meme|memecoin|pregnan(?:t|cy)"
+    r"hot dog|nathan's|meme|memecoin|pregnan(?:t|cy)|"
+    r"bridesmaids?|wedding|engaged|engagement|married|divorce"
     r")\b",
     re.IGNORECASE,
 )
