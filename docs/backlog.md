@@ -372,13 +372,9 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 
 ## ~~Rage Shake Triage #7 (May 17) — Bugs #49-58~~ — ALL 7 FIXED (May 17)
 
-All 10 reports consolidated into 6 feed issues + 1 Watch issue. All fixed: feed normalization, Yes/No display, sparse charts, PGA chart/search, sport-scoped team matching, feed quality classifier, Watch reliability.
-
 ---
 
 ## ~~Manus Sweep Findings (May 15, 2026)~~ — ALL 8 FIXED/CLOSED
-
-All fixed: cross-game contamination, O/U monotonicity, weather staleness, grid normalization, chart timing, error states, deploy crash. MLS loading not reproducible (closed).
 
 ---
 
@@ -394,13 +390,9 @@ UFC/MMA, Tennis, F1, Esports have upstream markets but no dedicated pages. Featu
 
 ## ~~Rage Shake Triage (May 7-8)~~ — ALL 14 ITEMS RESOLVED
 
-Details in `docs/completed-features.md`. RS-5 (iPad sign-in) FIXED, needs TestFlight verification on physical device.
-
 ---
 
 ## ~~Rage Shake Triage #3 (May 11) — Bugs #25-30~~ — ALL 6 FIXED (May 12)
-
-~~BR25~~ (stale 45% Yes — staleness threshold lowered to 95%), ~~BR26~~ (lowercase "nba" — `.uppercased()`), ~~BR27~~ (probabilities >100% — feed normalization when sum >105%), ~~BR28~~ ("2 sources" badge — now shows "KALSHI + POLYMARKET" via `sources` array), ~~BR29~~ (guess cards on closed events — status + probability checks), ~~BR30~~ (stale Met Gala — 14-day NULL resolution_date filter). Details in `docs/completed-features.md`.
 
 ---
 
@@ -452,21 +444,13 @@ Not a normalization bug — probabilities are genuinely flat in the database. Th
 
 ## Rage Shake Triage #9 (May 19-20) — Bugs #76-83
 
-### BR83. Win Prob Chart Missing Period Markers (P2)
+### ~~BR83. Win Prob Chart Missing Period Markers~~ — FIXED May 20
 
-**Problem:** BOS vs KC baseball game: Score Differential chart shows inning markers (1-9) but Win Probability chart only shows "2H". Period markers from StatPal/ESPN aren't propagating to the win prob chart.
+Soccer halftime fallback in OddsChartView was overwriting numeric inning markers. Fixed by only applying fallback when no markers exist.
 
-**Screenshot:** `/tmp/bug_83.jpg`
-**Files:** `frontend/components/OddsChart.tsx` or `ios/.../Components/OddsChartView.swift`, `backend/app/routes/events.py` (period marker computation)
-**Parallel Safety:** Yellow (touches event detail)
+### ~~BR80. Futures Detail "Failed to Load Timeline"~~ — FIXED May 20
 
-### BR80. Futures Detail "Failed to Load Timeline" (P2)
-
-**Problem:** Hantavirus market detail page shows "Failed to load timeline" with no chart data. Market has only 1 sportsbook (Kalshi) and sparse snapshots. The open-sparse backfill should eventually populate history for feed-visible markets, but the "Failed to load" UX is poor — should show "Limited data" or hide the chart section.
-
-**Screenshot:** `/tmp/bug_80.jpg`
-**Files:** `ios/.../Views/FuturesDetailView.swift`, `frontend/app/futures/[id]/page.tsx`
-**Parallel Safety:** Green
+Shows "Limited price history available" instead of error on sparse markets.
 
 ### BR79. Discover Event Card Missing Sport Label + Lacrosse Display (P2)
 
@@ -494,13 +478,9 @@ Not a normalization bug — probabilities are genuinely flat in the database. Th
 **Files:** `backend/app/routes/feed.py` (staleness), `backend/app/utils/feed_market_quality.py`
 **Parallel Safety:** Red (touches Discover ranking — defer to Discover thread)
 
-### BR76. Game Shows "Live" After Completion — Status Transition Delay (P2)
+### ~~BR76. Game Shows "Live" After Completion~~ — FIXED May 20
 
-**Problem:** CLE 125 - DET 94 shows as "Live" with "Final 0.0" badge. Game is clearly over (31-point margin, all quarters played) but status hasn't transitioned to "completed." The description says "this game was over a while ago." Between StatPal and ESPN, game completion should be detected reliably.
-
-**Screenshot:** `/tmp/bug_76.jpg`
-**Files:** `backend/app/tasks/statpal_sync.py` (status transition), `backend/app/tasks/__init__.py` (`transition_event_statuses` task)
-**Parallel Safety:** Yellow (touches event status, not Discover ranking)
+ESPN sync now transitions live → completed on post/final. StatPal does the same for finished. Fallback task tightened to per-sport max + 30min.
 
 ---
 
@@ -539,143 +519,47 @@ Related markets need better aggregation so users see one coherent question inste
 
 ## Bug Report Lifecycle: Auto-Status + "Your Bug Was Fixed" Emails
 
-**Goal:** When a bug report is resolved, automatically notify the filer with a personal, LLM-written email explaining what was fixed and thanking them. Creates a retention loop that encourages more bug reports.
-
-**Phases:**
-
-### Phase 1: Backend data foundations — ✅ DONE (May 18)
-- ~~Add `resolution_summary` text field to `BugReport` model~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
-- ~~Add `backlog_ref` field~~ — ✅ SHIPPED May 16 (migration: `add_bugreport_cat`)
-- ~~Look up and store the filer's email at submission time~~ — ✅ SHIPPED May 18. Authenticated submissions store `user_email` directly on `BugReport`; anonymous reports remain email-free.
-- ~~Update the admin PATCH endpoint to accept `resolution_summary` alongside `status`~~ — ✅ SHIPPED May 16
+### ~~Phase 1: Backend data foundations~~ — DONE (May 18)
 
 ### Phase 2: "Your bug was fixed" email (NEXT)
 
-**May 18 slices shipped:** `send_bug_fixed_email` now has eligibility gates for missing/invalid email, already-sent reports, unresolved reports, and missing resolution summaries; stable prompt input/body builders; Gmail/OpenAI side-effect seams for tests; Celery task registration; multipart plain-text+HTML Gmail messages; sender/recipient validation; CR/LF header-injection rejection; and automated-email suppression headers (`Auto-Submitted`, `Precedence`, `X-Auto-Response-Suppress`). Admin bug-report PATCH now enqueues `app.tasks.send_bug_fixed_email` only on transition to `fixed`/`actioned` with a non-empty resolution summary and no prior notification. `List-Unsubscribe` was intentionally not added because there is no existing one-click unsubscribe URL/token path. Remaining integration: finalize preferences, unsubscribe, and production delivery/compliance settings before broad user-facing sends.
+Core Celery task shipped May 18: eligibility gates, Gmail multipart messages, admin PATCH auto-enqueue, header-injection rejection. **Remaining:** Google Cloud service account with domain-wide delegation for `bugs@bainluck.com`, finalize preferences/unsubscribe/compliance before broad sends.
 
-**Email provider decision:** Gmail API via Google Workspace. `bainluck.com` domain is on Google Workspace (set up May 12). Send as `bugs@bainluck.com` (or whichever address you create).
-
-**Implementation steps:**
-1. Create a Google Cloud service account with domain-wide delegation, grant it the `https://www.googleapis.com/auth/gmail.send` scope for `bugs@bainluck.com` (or your chosen sender). Add the service account JSON key as a Heroku config var (`GOOGLE_SERVICE_ACCOUNT_JSON`).
-2. ~~Create `backend/app/tasks/bug_notifications.py` — a Celery task `send_bug_fixed_email`~~ — ✅ first task slice shipped May 18
-3. ~~In the admin PATCH endpoint, when `status` changes to `"fixed"`/`"actioned"` and `resolution_summary` is provided, enqueue the Celery task~~ — ✅ shipped May 18
-   - Look up the bug report's `user_email` and `description`
-   - If `user_email` exists and `notification_sent_at` is NULL, enqueue the Celery task
-4. The Celery task:
-   - Calls OpenAI GPT-4o-mini with a prompt:
-     ```
-     Write a short, warm email (3-4 sentences) to {first_name} thanking them for reporting a bug in Bain Luck.
-     Bug they reported: "{description}"
-     What we fixed: "{resolution_summary}"
-     Tone: personal, grateful, specific. End with encouragement to keep reporting bugs.
-     Do not use subject line — just the body. No gambling references.
-     ```
-   - Sends via Gmail API: from `bugs@bainluck.com`, subject "Your bug report was fixed 🍀"
-   - Sets `notification_sent_at = now()` on the BugReport row
-5. Add `send_bug_fixed_email` to Celery beat or call it inline (inline is fine for <100/day volume)
-
-**Safeguards:**
-- Only send if `user_email` is not NULL and `notification_sent_at` is NULL (no double-sends)
-- Only send when transitioning TO `"fixed"` status (not on re-saves)
-- Log all sends for audit
-
-**Files:** `backend/app/tasks/bug_notifications.py` (new), `backend/app/routes/admin.py` (trigger), `backend/app/tasks/__init__.py` (register task)
-**Dependencies:** Google Workspace (done), service account with domain-wide delegation + Gmail send scope, OpenAI API key (already configured)
+**Dependencies:** Google Workspace (done), service account + Gmail send scope, OpenAI API key (configured)
 
 ### Phase 3: Automation (LATER)
-- When a commit message references "BR{N}" (e.g., "Fix BR27: normalize probabilities"), automatically mark the corresponding bug report as `fixed`
-- Surface unresolved bug reports in the admin dashboard with age badges
+- Auto-mark bug reports as `fixed` from commit messages referencing "BR{N}"
+- Surface unresolved bug reports in admin dashboard with age badges
 
-**Files:** `backend/app/models/models.py` (BugReport), `backend/app/routes/admin.py` (PATCH endpoint), `backend/app/routes/feedback.py` (submission), new `backend/app/tasks/bug_notifications.py`
+**Files:** `backend/app/tasks/bug_notifications.py`, `backend/app/routes/admin.py`, `backend/app/routes/feedback.py`
 **Parallel Safety:** Green
 
 ---
 
 ## Rage Shake Triage #2 (May 11) — Bugs #18-24
 
-3 fixed (#19, #20, #24), 1 waiting on matching cycle (#18), 3 new backlog items (#21, #22, #23).
+Fixed: ~~BR19, BR20, BR21, BR22, BR23, BR24, BR-NAV~~. ~~NATIVE-DESIGN~~ all 5 pages polished (May 13).
 
 ### BR18. Missing Kalshi for TB vs BOS — WAITING ON MATCHING CYCLE
 
-**Problem:** Kalshi has a Rays vs Red Sox game market but it's not linked on bainluck. Same `tb` abbreviation issue as NHL — `tb_mlb` → "Rays" entry exists in `sport_keys.py` but the matching task needs to re-process unlinked markets.
-
-**Action:** Wait for next `match_prediction_markets` cycle (runs every 15 min). If still unlinked after a cycle, investigate whether the ticker prefix mapping for `tb` is being used correctly for MLB vs NHL disambiguation.
-
-**Files:** `backend/app/utils/sport_keys.py`, `backend/app/tasks/prediction_market_matching.py`
-**Parallel Safety:** Yellow
-
-### ~~BR21. iPad Futures Browser Needs Photos/Emojis~~ — FIXED (May 13)
-
-Added image thumbnails and category emoji to FuturesListView rows. Navigation now uses shared `RouteDestination` instead of duplicated route code, matching the TestFlight route consistency fix.
-
-**Files:** `ios/.../Views/FuturesListView.swift`
-
-### ~~BR22. Weather Page Needs City Search~~ — FIXED (May 13)
-
-City search added to both web and iOS. Users can now filter city forecast cards by typing.
-
-### ~~BR23. Weather Cities Need Clickable Probability Graphs~~ — FIXED (May 13)
-
-City cards now link to `FuturesDetailView` (web: `/futures/{marketId}`, iOS: `Route.futuresDetail`). Backend exposes `marketId` per city. No new chart needed — reuses existing futures probability timeline.
+TB abbreviation in `sport_keys.py` exists but may not be disambiguating MLB vs NHL correctly. Wait for matching cycle; investigate if still unlinked.
 
 ### BR-PIN. Cross-Platform Pin Sync + My Stuff Display — PARTIALLY DONE (May 13)
 
-**Completed (May 13):**
-- ✅ Web pin sync fixed — was localStorage-only, now syncs events + futures pins to server for signed-in users
-- ✅ Cross-device persistence verified working (pin on web, appears on iOS after refresh)
+Web pin sync fixed and cross-device persistence verified. **Remaining:** My Stuff dedicated pinned section (web + iOS), optimistic update after pinning, iOS→server sync verification.
 
-**Remaining:**
-1. **My Stuff display:** Pinned events and markets should appear as a dedicated section on My Stuff (web + iOS), showing current probabilities and status
-2. **Real-time feel:** After pinning, the item should appear in My Stuff immediately (optimistic update), not after a refresh
-3. **iOS → server sync:** Verify `PinManager.syncLocalToServer()` runs on sign-in and that reverse (server → local) also works
-
-**Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py` (pin endpoints)
+**Files:** `ios/.../Services/PinManager.swift`, `ios/.../Views/MyStuffView.swift`, `frontend/app/my-stuff/page.tsx`, `backend/app/routes/user.py`
 **Parallel Safety:** Yellow
-
-### ~~BR-NAV. Native App Tab Redesign~~ — DONE (May 11), merged into 0n above
-
-### NATIVE-DESIGN. Native Category Pages Are Broken/Ugly (HIGH-PRI)
-
-**Problem:** The iOS/macOS category pages (Economics, Entertainment, Weather, Politics, Preferences) are visually broken and unpolished. Key issues from May 11 screenshots:
-
-1. **Economics** — Shows "Error: The data couldn't be read because it isn't in the correct format." Page is completely broken.
-2. **Entertainment** — Dense wall of text, no visual hierarchy, market cards are plain white boxes with no images or color. Looks like a database dump.
-3. **Weather** — City forecast grid is an overwhelming spreadsheet of temperature buckets and percentages. No visual design — just raw data tables. Needs temperature visualization (gauges, color gradients) instead of text lists.
-4. **Politics** — Best of the bunch (has senate map, color-coded candidates) but market cards below the hero are still plain text lists with no visual richness.
-5. **Preferences** — Functional but boring. The interest selector (Love/Big/Wild/Nah) looks like a data table. Needs card-based design with visual weight.
-
-**Claude Design Handoffs (web reference for native parity):**
-- Entertainment: `https://api.anthropic.com/v1/design/h/NVy7_G25Hw2F2WPBkuQqJg?open_file=Entertainment.html`
-- Politics v1: `https://api.anthropic.com/v1/design/h/nEWFwz9OLZG7YqV9JxY6lw?open_file=Politics+Page.html`
-- Politics v2: `https://api.anthropic.com/v1/design/h/RrDcEtPZy_66ZWaWEGhscw?open_file=Politics+Page.html`
-- Economics: `https://api.anthropic.com/v1/design/h/eIsTOAYPL_It9o3O4zleDw?open_file=handoff%2Feconomics%2Freference%2FEconomics.html`
-- Weather: `https://api.anthropic.com/v1/design/h/S18AFhL5cujQX0CfDqlkBA`
-
-**Completed (May 11-13):**
-- ✅ Economics data parsing error fixed (removed `rateCuts` field — backend sends nested arrays, iOS expected market objects, field unused in view)
-- ✅ Economics page polished to match Politics/Entertainment design (May 13)
-- ✅ Politics, Entertainment, and Weather pages polished (May 13)
-- ✅ Preferences page polished (May 13) — ALL 5 NATIVE-DESIGN PAGES COMPLETE
-
-**Files:** `ios/.../Views/EconomicsView.swift`, `ios/.../Views/EntertainmentView.swift`, `ios/.../Views/WeatherView.swift`, `ios/.../Views/PoliticsView.swift`, `ios/.../Views/PreferencesView.swift`
 
 ---
 
 ## Tier 1 — High Leverage, Do Next
 
-### Bug Report Admin Improvements — MOSTLY DONE (May 16)
+### ~~Bug Report Admin Improvements~~ — ALL DONE (May 13-18)
 
-1. ~~**Burndown chart**~~ — ✅ SHIPPED (May 13). SVG burndown chart + summary stats (open/closed/avg resolution time) on admin bug reports page.
-2. ~~**Category tagging**~~ — ✅ SHIPPED May 16. Added `category` field to `BugReport` model + admin dropdown. Also shipped lifecycle fields (`resolution_summary`, `backlog_ref`). Migration: `add_bugreport_cat`.
-3. ~~**Resolution time tracking**~~ — ✅ SHIPPED (May 13). Included in burndown summary stats.
-4. ~~**Auto-categorization**~~ — ✅ deterministic admin backfill shipped May 18. The bug-report list fills missing categories from the existing rule-based classifier only when metadata is decisive; ambiguous reports stay uncategorized. GPT-assisted categorization remains optional later if deterministic coverage proves too low.
-
-**Files:** `frontend/app/admin/bug-reports/page.tsx`, `backend/app/models/models.py` (BugReport), `backend/app/routes/admin_engagement.py`, `backend/app/routes/feedback.py`
-**Parallel Safety:** Green
+Burndown chart, category tagging, resolution time tracking, auto-categorization all shipped.
 
 ### ~~PRD Update~~ — DONE (May 15)
-
-Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map, Data Architecture, Metrics, Principles, Non-Goals. Present tense.
 
 ### ACTION ITEM: Check Snapshot Distribution Results (May 18)
 
@@ -876,36 +760,13 @@ Currently 62K resolved outcomes from prediction markets only. The Odds API sport
 
 ### Workstream: Celery Queue Health (FIXED May 15 — monitor at session start)
 
-**Goal:** Background queue depth stays < 50. Tasks drain faster than they accumulate.
+**Monitor:** `GET /api/admin/celery-debug?secret=$ADMIN_TOKEN` → `queue_lengths.background`. Target: < 50.
 
-**Monitor:** `GET /api/admin/celery-debug?secret=$ADMIN_TOKEN` → `queue_lengths.background`. Also in session startup health check.
+**If queue > 50:** Check `celery-debug` active tasks, restart zombie workers (`heroku ps:restart worker-background`), purge if needed (`POST /api/admin/celery-purge-background`). Consider Standard-2X if chronic.
 
-**What happened (May 15):** Background queue backed up to 400+ tasks. Root cause: 35 tasks/hour at concurrency=2, with long-running tasks (match_prediction_markets 14.5 min, poll_kalshi 11 min) consuming both slots. Backfill tasks sat in queue for hours and never ran.
-
-**What shipped:**
-- ✅ Reduced discover_events, compute_gei_batch, merge_duplicate_events from 10-15 min to 30 min intervals (~35 → ~23 tasks/hour)
-- ✅ `POST /api/admin/celery-purge-background` — emergency queue purge (365 tasks cleared)
-- ✅ `GET /api/admin/celery-debug` — worker ping, active tasks, queue depths, task name distribution
-- ✅ Added to session startup health check in CLAUDE.md
-
-**If queue > 50 again:**
-1. Check `celery-debug` → `active` to see what's blocking (which tasks, how long running)
-2. If a single task is stuck: check its `time_start` vs time_limit. If past time_limit, the worker may be zombie — restart: `heroku ps:restart worker-background -a bainluck`
-3. Purge: `POST /api/admin/celery-purge-background` (safe — all tasks are periodic and will re-fire)
-4. If chronic: consider upgrading background dyno to Standard-2X ($25/mo more) for concurrency=4
-
-**Files:** `backend/app/tasks/__init__.py` (beat schedule), `backend/app/routes/admin.py` (debug + purge endpoints)
-**Parallel Safety:** Green
-
-### ~~Production Observability — Latency, Crash Rate, Quality Indicators~~ — SHIPPED May 17
-
-Latency tracking middleware shipped: per-request timing, p50/p95/p99 percentiles, endpoint-level breakdown, admin stats endpoint for monitoring.
-
-**Files:** `backend/app/main.py`, `backend/app/routes/admin.py`
+### ~~Production Observability~~ — SHIPPED (May 17)
 
 ### ~~Manus Sweep May 6~~ — ALL 12/12 FIXED (May 7)
-
-All issues resolved. Details in `docs/completed-features.md`.
 
 ### 0e-3. GA4 Console Configuration
 
@@ -918,39 +779,21 @@ Not code — configuration in the GA4 property (analytics.google.com):
 
 **Parallel Safety:** Green (no code changes)
 
-### ~~0f-4e. Slow Headshot Loading (~60s)~~ — FIXED (May 8)
+### ~~0f-4e. Slow Headshot Loading~~ — FIXED (May 8)
 
-In-memory response cache for game-markets endpoint. Completed games cached indefinitely, live games 30s TTL. Eliminates roster queries on repeated loads.
+### ~~0f-13c-native. 2nd Half Maps Not Showing~~ — FIXED (May 15)
 
-### ~~0f-13c-native. 2nd Half Margin/Total Maps Not Showing~~ — FIXED (May 15)
+### ~~0f-13h. Player Award Headshots Missing on WEB~~ — ALREADY FIXED (May 13)
 
-Root cause: backend didn't include `period` field in game-markets response. Frontend/iOS had to guess from market names but Kalshi strips period indicators. Fix: `_extract_period_from_ticker()` derives period from Kalshi ticker prefix, added `period` field to response. Web/iOS both use `derivePeriod()` with backend-first fallback. Added missing 2H ticker entries for NHL/MLB/NCAAB/NCAAF. 27 new tests.
-
-### ~~0f-13h. Player Award Headshots Missing on WEB~~ — ALREADY FIXED
-
-Both `AwardCard` and `AwardCompactRow` in `RelatedFutures.tsx` already use the `PlayerHeadshot` component (lines 474, 2002). Verified May 13.
-
-### ~~BR1-2. Source Attribution Looks Duplicated~~ — RESOLVED
-
-The v2 rewrite (`sourcesToggle`) shows a single collapsible "Individual Sportsbooks" dropdown, collapsed by default. No duplication. Verified May 13.
+### ~~BR1-2. Source Attribution Looks Duplicated~~ — RESOLVED (May 13)
 
 ### ~~0f-3. Live Box Score Integration for Player Props~~ — PARTIALLY FIXED (May 8)
 
-Box score was already wired. Fixed the name matching: now strips Jr/Sr/III/IV suffixes before exact last-name comparison (was substring match causing false positives). Remaining: verify matching accuracy on live games with unusual names.
-
-**Files:** `frontend/components/PlayerPropsDashboard.tsx`
+Name matching fixed (Jr/Sr/III/IV suffix stripping). Remaining: verify matching accuracy on live games with unusual names.
 
 ### ~~0f-3d Issue 4: Series Markets~~ — SHIPPED (May 13)
 
-Series markets now loaded as a dedicated `series_markets` array via display-time team name query (Option 2 — no linking needed). New `display_category="series"` classification. Backend, web, and iOS rendering all shipped.
-
-**Files:** `backend/app/routes/events.py`, `frontend/components/RelatedFutures.tsx`, `ios/.../Views/EventDetailView.swift`
-
-### ~~0f. Event Detail Below-the-Fold Redesign — TradeWatch Rethink~~ — SHIPPED May 17
-
-TradeWatch redesigned with improved layout and data presentation.
-
-**Files:** `frontend/app/events/[id]/page.tsx`
+### ~~0f. Event Detail Below-the-Fold Redesign~~ — SHIPPED (May 17)
 
 ### 0t-2. Period Markers for Non-ESPN Events — PARTIALLY FIXED (May 11)
 
@@ -974,23 +817,12 @@ TradeWatch redesigned with improved layout and data presentation.
 
 ### ~~1b-monitor. Hockey Kalshi Link Rate~~ — FIXED (May 11)
 
-**May 8-11 fixes:**
-1. Fixed link-rate denominator — removed `event_id IS NOT NULL` clause that pulled in season futures, and reverted series tickers from game-level map. Guardrail tests added.
-2. Fixed NHL team abbreviations — `tb_nhl` → "Lightning" (was mapping to NFL Buccaneers), `uta_nhl` → "Mammoth" (was "Utah Hockey").
-3. Hockey Kalshi open rate was 80.5% → denominator cleaned → honest rate 74.6% → abbreviation fixes deployed → matching task re-processing.
+### macOS Polish (1 remaining of 7)
 
-**Files:** `backend/app/utils/sport_keys.py`, `backend/app/utils/prediction_market_matching.py`, `backend/app/routes/admin.py`
-
-### macOS Polish (2 remaining of 7)
+~~MAC-1, MAC-3, MAC-5, MAC-6, MAC-8, MAC-9~~ — all shipped.
 
 | # | Item | Effort | Files | Safety |
 |---|------|--------|-------|--------|
-| ~~MAC-1~~ | ~~Live-updating title bar~~ | ✅ SHIPPED May 8 | `Bain_LuckApp.swift` | |
-| ~~MAC-3~~ | ~~Keyboard navigation~~ | ✅ SHIPPED May 8 | `FeedView.swift` | |
-| ~~MAC-5~~ | ~~Menu bar extra (live scores)~~ | ✅ SHIPPED May 8 | `MenuBarView.swift` (new) | |
-| ~~MAC-6~~ | ~~Push notifications~~ | ✅ SHIPPED May 17 | `Bain_LuckApp.swift` (AppDelegate, UNUserNotificationCenterDelegate) | |
-| ~~MAC-8~~ | ~~Right-click context menus~~ | ✅ SHIPPED May 8 | Various SwiftUI views | |
-| ~~MAC-9~~ | ~~Share button + universal links~~ | ✅ DONE — ShareLink cross-platform, MyStuffView context menus improved. | Various | |
 | MAC-12 | macOS widgets (Today view) | 3-4h | New widget extension | Green |
 
 ---
@@ -1007,15 +839,9 @@ TradeWatch redesigned with improved layout and data presentation.
 
 **Parallel Safety:** Yellow
 
-### ~~3. Golf Data Quality~~ — FIXED May 18
+### ~~3. Golf Data Quality~~ — FIXED (May 18)
 
-All known golf data-quality bugs fixed. May 18 fix preserves DataGolf event-level `tour` metadata and uses it for generic tournament names such as Hainan Open before falling back to PGA Tour.
-
-### ~~4. Site Navigation Hierarchy (B1)~~ — SHIPPED May 17
-
-Canonical `/sport/[sport]/[league]` URL pattern shipped. Navigation uses consistent sport-aware hierarchy.
-
-**Files:** Frontend routing, `frontend/app/sport/`
+### ~~4. Site Navigation Hierarchy (B1)~~ — SHIPPED (May 17)
 
 ### 5. Playoff Series Matchup Markets
 
@@ -1060,25 +886,17 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### Operational Health
 
-| # | Item | What | Files | Safety |
-|---|------|------|-------|--------|
-| ~~9~~ | ~~**Structured Logging**~~ | ✅ DONE May 15. `python-json-logger`, production-only via `DYNO` env var. | `app/main.py`, `app/tasks/__init__.py` | |
-| ~~11~~ | ~~**Hardcoded Conference Maps → Data-Driven**~~ | ✅ DONE May 17 — playoff grouping now reads conference/division labels from `Team.standings_data` with tolerant string/object parsing; large hardcoded fallback maps removed. | `routes/playoffs.py`, `tests/test_playoff_grid.py` | |
+~~9. Structured Logging~~ — DONE (May 15). ~~11. Hardcoded Conference Maps~~ — DONE (May 17).
 
 ### Product Features
 
+~~12. Evolution Chart Combined Probability~~ — DONE (May 18). ~~13. Line Movement Explainer v2~~ — DONE (May 18). ~~17. Golf Evolution Chart~~ — DONE. ~~18. Non-Sports Category Pages~~ — ALL SHIPPED (May 7).
+
 | # | Item | What | Depends on | Safety |
 |---|------|------|-----------|--------|
-| ~~12~~ | ~~**Evolution Chart: Combined Probability**~~ | ✅ DONE May 18 — optional dashed Combined line sums currently selected/visible outcomes while preserving existing per-outcome chart behavior. | | |
-| ~~13~~ | ~~**Line Movement Explainer v2**~~ | ✅ DONE May 18 — largest-movement focus, before/after probabilities, nearby scoring-play ordering, and anti-filler prompt instructions. | | |
 | 14 | **Freshness-Weighted Blending** | Time-decay for stale prediction market prices | More eval data | Yellow |
 | 15 | **DS/Analytics Infrastructure** | Analytical columns, `v_completed_events` view, Brier scores | Migration slot | Red |
 | 16 | **Golf Tournament Related Futures** | "Bigger Picture" section on tournament detail | Nothing | Yellow |
-| ~~17~~ | ~~**Golf Evolution Chart Redesign**~~ | ✅ DONE — Round markers R1-R4, time range picker, tournament-aware. | | |
-
-### ~~18. Non-Sports Category Pages~~ — ALL SHIPPED (May 7)
-
-Economics, Politics, Entertainment all live on web + iOS. Details in `completed-features.md`.
 
 ---
 
@@ -1100,9 +918,7 @@ Team names weight A, market names weight B, outcome names weight C. Use PostgreS
 **Files:** `backend/app/routes/events.py`, future migration only if indexing becomes necessary
 **Parallel Safety:** Yellow
 
-### ~~P5b. Trending/Popular Searches~~ — ALREADY SHIPPED
-
-Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api/search/trending` endpoint (top 5), web trending chips in SearchBar, iOS trending chips in SearchView with fallback. Verified May 13.
+### ~~P5b. Trending/Popular Searches~~ — SHIPPED (May 13)
 
 ### Phase 6: Semantic Search (2-3 weeks, aspirational)
 
@@ -1120,89 +936,17 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 ### iOS App — Web Parity & Polish
 
-| # | Item | Description | Files | Safety |
-|---|------|-------------|-------|--------|
-| ~~iOS-4~~ | ~~Dead/stale views cleanup~~ | ✅ Audited May 16 — all 89 Swift files are live and referenced. No dead code found. | `ios/.../Views/` | Green |
-| ~~iOS-6~~ | ~~Feed `limit=200` override~~ | ✅ VERIFIED May 17 — native Sports feed build passed with supplemental event backfill. | `FeedView.swift` | Green |
-| iOS-7 | Rebuild native Futures browser before re-exposing — partial | Native Futures entry points remain hidden from production navigation. May 17 groundwork added grouped category structure, polished market rows, loading/error/empty states, and stable row sizing; still needs final product review before re-exposure. | `FuturesListView.swift`, `FuturesBrowseComponents.swift`, `MainTabView.swift`, `LeaguesView.swift` | Yellow |
-| ~~iOS-GD12~~ | ~~Trevor Story missing headshot~~ | ✅ SHIPPED May 8 — generic silhouette fallback when matched_player has no URL | `RelatedFuturesView.swift` | |
+Shipped: ~~iOS-4~~ (dead views audit), ~~iOS-6~~ (feed limit), ~~iOS-GD12~~ (headshot fallback).
+
+| # | Item | Description | Safety |
+|---|------|-------------|--------|
+| iOS-7 | Rebuild native Futures browser before re-exposing — partial. May 17 groundwork shipped; needs final product review before re-exposure. | Yellow |
 
 ---
 
-## iOS Code Quality (multi-wave cleanup)
+## ~~iOS Code Quality (multi-wave cleanup)~~ — ALL 6 WAVES COMPLETE (May 17-19)
 
-**Goal:** Bring the iOS codebase to a state you'd be comfortable showing a senior engineer. Audited May 17 — full report at `docs/ios-code-quality-plan.md`.
-
-**Approach:** 6 independent waves. Each wave is a single session, touches specific files, and can ship on its own. No wave depends on another. Pick any wave when you have time.
-
-### Wave 1: Crash Risks (30 min, do first)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-1~~ | ~~Force-unwrap URLs~~ | `EventDetailView.swift`, `FeedView.swift`, `DiscoverView.swift` | ✅ DONE May 17 — `ShareLink` URLs now fall back to `https://bainluck.com` instead of force-unwrapping. |
-| ~~CQ-2~~ | ~~Unstable FeedItem.id~~ | `FeedModels.swift` line 79 | ✅ DONE May 17 — UUID fallback replaced with deterministic identity from feed fields. |
-| ~~CQ-3~~ | ~~AuthManager thread safety~~ | `AuthManager.swift` | ✅ DONE May 17 — `AuthManager` is main-actor isolated. |
-
-### Wave 2: Kill Duplication (2 hours, biggest quality win)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-4~~ | ~~Extract clipboard utility~~ | `Utilities/Clipboard.swift`, native card menus | ✅ DONE May 17 — shared `copyToClipboard(_:)` replaces duplicated string-copy pasteboard blocks. Bug-report screenshot pasteboard read remains intentional. |
-| ~~CQ-5~~ | ~~Extract share URL builders~~ | `Utilities/ShareURLs.swift`, native share links | ✅ DONE May 17 — shared `eventShareURL(_:)` and `futuresShareURL(_:)` preserve Discover native-card UTM links and Feed/My Stuff plain links. |
-| ~~CQ-6~~ | ~~Unify guess cards~~ | `DiscoverView.swift`, `DailyChallengeCard.swift` | ✅ DONE May 17 — `NativeGuessCard` now handles both futures and event questions through typed content initializers; duplicate `NativeEventGuessCard` removed. |
-| ~~CQ-7~~ | ~~Shared context menu~~ | `Components/CardContextMenu.swift` | ✅ DONE May 17 — shared Feed/Discover context menu now owns copy probability, copy link, share, pin/unpin, macOS new-window, and Less Like This actions. |
-
-### Wave 3: Split DiscoverView (2 hours)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-8~~ | ~~Extract DiscoverViewModel~~ | `ViewModels/DiscoverViewModel.swift` | ✅ DONE May 17 — moved the Discover state/load/personalization class out of `DiscoverView.swift`. View-local profile/debug helpers remain with the view. |
-| ~~CQ-9~~ | ~~Extract discover cards~~ | `Components/DiscoverFuturesCard.swift`, `Components/DiscoverEventCard.swift` | ✅ DONE May 17 — moved `NativeFuturesDiscoverCard` and `NativeEventDiscoverCard` out of `DiscoverView.swift`. |
-| ~~CQ-10~~ | ~~Extract daily challenge card~~ | `Components/DailyChallengeCard.swift` | ✅ DONE May 17 — moved `NativeDailyChallengeCard` and `NativeChallengeSheet` out of `DiscoverView.swift`. |
-| ~~CQ-11~~ | ~~Extract resolution card~~ | `Components/ResolutionCard.swift` | ✅ DONE May 17 — moved `NativeResolutionCard` out of `DiscoverView.swift`. |
-
-**Result:** DiscoverView.swift drops from 2,259 → ~300 lines.
-
-### Wave 4: File Organization (1 hour)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-12~~ | ~~Create ViewModels/ directory~~ | All native view models | ✅ DONE May 17 — moved embedded `ObservableObject` view models out of view files into `ViewModels/`. |
-| ~~CQ-13~~ | ~~Extract EventDetailViewModel~~ | ✅ DONE May 17 — added `ViewModels/EventDetailViewModel.swift`; `EventDetailView.swift` now owns view rendering only. | Public API and behavior preserved. |
-| ~~CQ-14~~ | ~~Split Extensions.swift~~ | ✅ DONE May 17 — split into `Utilities/ColorExtensions.swift`, `Utilities/FormattingUtilities.swift`, `Utilities/SportDisplayNames.swift`, `Utilities/FlagUtilities.swift`, `Utilities/FlowLayout.swift` | APIs preserved; existing filesystem-synchronized Xcode project picked up new files without pbxproj edits. |
-
-### Wave 5: Access Control + Naming (1 hour, ongoing)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-15~~ | ~~`private(set)` on ViewModel properties~~ | All ViewModel files | ✅ DONE May 17 — read-only view-model-owned published state is now `private(set)`; binding/externally-assigned fields remain mutable. |
-| ~~CQ-16~~ | ~~`private` on view helpers~~ | All View files | ✅ DONE May 19 — Verified: all @ViewBuilder helpers and func/var declarations across 14 View files already have `private` access. No non-private view-local helpers found. |
-| ~~CQ-17~~ | ~~Stop abbreviating~~ | All files (search-replace) | ✅ DONE May 19 — `vm` → `viewModel` completed across 12 views, `ct` → `commence`, `gm` → `markets`, `rf` → `related`, `tp` → `progression`, `lm` → `movement`/`leagueData` in StatusBadge, TeamDetailView, EventDetailViewModel, LeagueGridView, SportCategoryView. No remaining abbreviated locals found. |
-| ~~CQ-18~~ | ~~PinManager.isAuthenticated~~ | `PinManager.swift` | ✅ DONE May 17 — changed to `private(set)` access. |
-
-### Wave 6: Doc Comments (1 hour, ongoing)
-
-| # | Item | Files | What to do |
-|---|------|-------|------------|
-| ~~CQ-19~~ | ~~Document model types~~ | All files in `Models/` | ✅ DONE May 17 — added concise `///` comments to native model structs/enums. |
-| ~~CQ-20~~ | ~~Document services~~ | `APIClient.swift`, `AuthManager.swift`, `NavigationCoordinator.swift` | ✅ DONE May 17 — added endpoint/session/navigation purpose comments to public service APIs. |
-| ~~CQ-21~~ | ~~Remove dead code~~ | `EventDetailView.swift` | ✅ DONE May 17 — removed disabled tag placeholder views and now-unused tag helpers. |
-
-- CQ-20 slice done May 17: tightened public method doc comments in `NavigationCoordinator.swift`.
-- CQ-20 slice done May 17: documented `AuthManager` session responsibilities and auth entry points.
-- CQ-20 slice done May 17: added endpoint-purpose doc comments to callable methods in `APIClient.swift`.
-- CQ-19 slice done May 17: added concise model type doc comments in `AuthModels.swift` and `CommonTypes.swift`.
-- CQ-19 slice done May 17: added concise model type doc comments in `EventModels.swift` and `FeedModels.swift`.
-- CQ-14 done May 17: split `Components/Extensions.swift` into focused utility files under the existing `Utilities/` directory.
-
-### What NOT to do
-
-- Don't adopt TCA, MVVM-C, or any architecture framework — the app ships
-- Don't add localization — single market (US)
-- Don't refactor navigation — it works across iPhone/iPad/Mac
-- Don't add SwiftLint yet — fix patterns manually first, lint later
-
-**Parallel Safety:** Green (all waves are iOS-only, no backend changes)
+All 21 items (CQ-1 through CQ-21) shipped across 6 waves: crash risks, dedup extraction, DiscoverView split (2259→~300 lines), file organization, access control + naming, doc comments. Full plan at `docs/ios-code-quality-plan.md`.
 
 ---
 
@@ -1244,23 +988,8 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 ### Already Done
 
-- [x] App icon (1024x1024 + Mac sizes)
-- [x] Bundle ID (`com.bainluck.Bain-Luck`)
-- [x] Privacy manifest (`PrivacyInfo.xcprivacy`)
-- [x] Privacy policy page (`bainluck.com/privacy`)
-- [x] Sign in with Apple + Google
-- [x] Push notification entitlement
-- [x] Associated domains / universal links
-- [x] TestFlight builds uploading
-- [x] Web/native parity (5 features shipped May 15-16)
-- [x] All Xcode warnings resolved
-- [x] Native code quality sweep completed
-- [x] Futures browser entry point hidden pending iOS-7
-- [x] Calibration visible in native navigation
-- [x] 🍀 Bain Luck sidebar branding preserved
-- [x] App Store release notes and review notes drafted in `docs/app-store-launch-plan.md`
+App icon, bundle ID, privacy manifest/policy, Sign-In (Apple + Google), push entitlement, universal links, TestFlight uploading, web/native parity, Xcode warnings, code quality sweep, Futures browser hidden, release notes drafted in `docs/app-store-launch-plan.md`.
 
-**Files:** `ios/Bain Luck/Bain Luck/Bain Luck.entitlements`, `ios/Bain Luck/Bain Luck/Views/AboutView.swift`
 **Parallel Safety:** Green
 
 ---
@@ -1269,18 +998,13 @@ Fully implemented: Redis `ZINCRBY` tracking on every search (24h TTL), `GET /api
 
 ### Discover Feed Enhancement
 
-| # | Item | Description | Files | Safety |
-|---|------|-------------|-------|--------|
-| ~~DN-9~~ | ~~Swipe to dismiss (iOS)~~ | ✅ SHIPPED May 8 — horizontal-only `SwipeToDismiss` no longer blocks vertical scroll; records local/server dismiss signals. | `ios/.../DiscoverView.swift` | |
-| ~~DN-10~~ | ~~Onboarding categories → server~~ | ✅ SHIPPED May 17 — category selections now wired to `useCategoryInterests` hook, persisted server-side on completion. Previously selections were lost on onboarding finish. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Green |
-| ~~DN-11~~ | ~~Grouped market cards~~ | ✅ SHIPPED — markets with name prefix collapse into expandable cards on web/native. | `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | |
-| ~~D-4a~~ | ~~Click/view tracking~~ | ✅ SHIPPED May 8 — first-party `discover_interactions` table + `/api/feed/interactions` records impressions, opens, dismisses, likes, shares, and expands across web/native. | `routes/feed.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
-| D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity. Local web/native dismiss persistence exists; server-side dismissal hides only via interaction scoring today, not hard exclusion. | `routes/feed.py`, `app/discover/page.tsx`, `ios/.../DiscoverView.swift` | Yellow |
-| ~~D-10b~~ | ~~Like/dismiss → ranking~~ | ✅ SHIPPED May 17 — right swipe/like gives bounded "more like this" boosts; left swipe/unlike gives bounded soft downranks; backend ranking now uses category plus feature/entity/archetype affinities for signed-in and session users. | `routes/feed.py`, `utils/personalization.py`, `app/discover/page.tsx`, `DiscoverView.swift` | |
-| D-6 | Push notifications for moves | Foundation shipped (May 13-17): DeviceToken model, iOS token capture, backend registration endpoint, test send endpoint. Actual production push sending not yet implemented. | New migration, `tasks/notifications.py`, FCM setup | Green |
-| D-7 | Live game companion mode | NEEDS DESIGN. On iPhone, companion mode is basically just the chart full-screen (what else fits?). On iPad/Mac, the current event detail page IS already a great second screen — so what's really different? Key features: aggressive auto-refresh (10s), screen stays awake (scoped idle timer), simplified layout hiding below-the-fold. Design brief needed before building. | `app/events/[id]/companion/page.tsx` (new), `ios/.../CompanionModeView.swift` (new) | Green |
-| ~~D-8~~ | ~~Daily digest email~~ | ✅ SHIPPED (May 13) — Celery beat scheduled at 8am ET. | `tasks/daily_digest.py`, email templates | |
-| ~~D-9~~ | ~~Friend challenges~~ | ✅ SHIPPED May 14 — backend scaffold plus `/challenge/[id]` frontend landing page for loading, accepting, viewing participants/results, and sharing challenge links. | `routes/challenges.py`, `app/challenge/[id]/page.tsx` | |
+Shipped: ~~DN-9~~ (swipe dismiss), ~~DN-10~~ (onboarding categories), ~~DN-11~~ (grouped cards), ~~D-4a~~ (click tracking), ~~D-10b~~ (like/dismiss ranking), ~~D-8~~ (daily digest), ~~D-9~~ (friend challenges).
+
+| # | Item | Description | Safety |
+|---|------|-------------|--------|
+| D-10a | Dismiss persistence | Persist dismissed IDs server-side for cross-device continuity | Yellow |
+| D-6 | Push notifications for moves | Foundation shipped (token capture, registration). Actual production push not yet implemented. | Green |
+| D-7 | Live game companion mode | NEEDS DESIGN. Aggressive auto-refresh, screen awake, simplified layout. | Green |
 
 ---
 
@@ -1313,11 +1037,7 @@ Items 4, 5, 6, 8 remain (item 2 web x-axis alignment is done via `sharedChartDom
 
 ### ~~21. Rage Shake~~ — SHIPPED
 
-Fully live on iOS/macOS. Admin page at `/admin/bug-reports`.
-
-### ~~22. Interestingness-Powered Discovery Feed~~ — MOSTLY SHIPPED
-
-Discover feed already has LLM blurbs (`hook_description`), Pexels images (`image_url`), probability bars, and quality scoring. Remaining: formal `interestingness_score` column + calibration against email ground truth (captured in item 20).
+### ~~22. Interestingness-Powered Discovery Feed~~ — MOSTLY SHIPPED (remaining: formal `interestingness_score` column, see item 20)
 
 ### 23. Prediction Market Game / Social Picks
 
@@ -1330,63 +1050,47 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `
 
 ## Platform Parity Checklist
 
+Shipped: ~~Game Segments~~, ~~Line Movement Explainer~~, ~~Weather page~~, ~~Economics page~~. No web gaps.
+
 **iOS/Mac gaps (web has, native doesn't):**
 
 | Priority | Feature | Web Component | Effort |
 |----------|---------|--------------|--------|
-| ~~Medium~~ | ~~Game Segments (quarter/half breakdown)~~ | ~~`GameSegments.tsx`~~ | ✅ SHIPPED May 18 — native event detail derives segment scoring from ESPN history snapshots for live/final games. |
 | Medium | Total Points Spectrum (spread+total viz) | `TotalPointsSpectrum.tsx` | Medium |
 | Medium | Series Probability (playoff series outcomes) | `SeriesProbability.tsx` | Small |
 | Low | Evolution Chart (championship race over time) | `EvolutionChart.tsx` | Medium |
-| ~~Low~~ | ~~Line Movement Explainer~~ | ~~`LineMovementExplainer.tsx`~~ | ✅ SHIPPED May 18 — native event detail fetches `/api/events/{id}/line-movement` and renders a compact explainer when analysis text exists. |
-| ~~Low~~ | ~~Weather page~~ | ~~16 components~~ | ✅ SHIPPED May 6 + polished May 13 |
-| ~~Low~~ | ~~Economics page~~ | ~~`/economics`~~ | ✅ SHIPPED May 6 + polished May 13 |
 | Low | Explore / faceted browser | `/explore` | Medium |
-
-**Web gap (iOS has, web doesn't):** ~~EI Rankings standalone page~~ — dead `eiRankings` route removed May 13. No gap.
 
 ---
 
 ## Strategic
 
-### Expert Review / Audit — ✅ COMPLETED May 14
-
-Four VP-level audits completed via Claude subagents. Full results in conversation history. Key findings integrated into backlog below.
+### ~~Expert Review / Audit~~ — COMPLETED (May 14)
 
 ### Post-Audit Priority Stack (May 14)
 
+Shipped: ~~admin endpoint gating~~, ~~`/daily` page~~, ~~scorecards~~, ~~rate limiting~~, ~~calibration CIs~~, ~~hardcoded colors~~, ~~DiscoverCard decomposition~~, ~~max-width~~, ~~button system~~, ~~dead page archive~~.
+
 **P0 — Security & Reliability:**
-- [x] ~~Gate 24 unprotected admin GET endpoints with `_check_admin_secret`~~ — DONE May 15. 20 GET endpoints gated.
 - [ ] Split `get_db()` into read-only (no commit) and `get_db_rw()` (commits) — every GET request currently issues unnecessary COMMIT
 
 **P0 — Product (Growth):**
-- [x] **Dedicated `/daily` page** — Shipped May 14: 5 curated questions/day, progress, streak/local completion tracking, countdown timer, replay, and shareable text summary. Scorecard images shipped May 17.
-- [x] ~~**Shareable prediction scorecards**~~ — SHIPPED May 17. OG image generation via Next.js `ImageResponse`, share button on `/discover/stats`, scorecard page at `/discover/scorecard`. "I got 4/5 — can you beat me?" with unique daily URL.
-- [ ] **Redesign first 30 seconds** — Hero headline for first visit ("What does the world think will happen?"), first card is always a guess card (force interaction in 5 seconds), progressive disclosure toward sign-up.
+- [ ] **Redesign first 30 seconds** — Hero headline for first visit, first card is always a guess card, progressive disclosure toward sign-up.
 
 **P1 — Engineering:**
-- [x] ~~**Add API rate limiting**~~ — DONE May 15. ASGI middleware: 60/min anonymous, 120/min authenticated, admin exempt. Redis storage in prod, in-memory fallback for dev. Graceful degradation if Redis down. 23 tests.
-- [ ] **Split `admin.py`** (11K lines, 174 handlers) — Needs robust plan before starting. Split into `admin_celery.py`, `admin_matching.py`, `admin_taxonomy.py`, `admin_engagement.py`, `admin_data_quality.py`.
+- [ ] **Split `admin.py`** (11K lines, 174 handlers) — Split into `admin_celery.py`, `admin_matching.py`, `admin_taxonomy.py`, `admin_engagement.py`, `admin_data_quality.py`.
 
 **P1 — DS (Calibration Integrity):**
-- [x] ~~**Confidence intervals on calibration metrics**~~ — DONE May 15. Wilson CIs, bootstrap MCE CI, error bars, CI table column.
-- [ ] **Separate closing-line from opening-price cohorts** — Report closing-line-only as primary metric, blended as secondary. The `price_moved` dimension already supports this.
-- [ ] **Confidence tiers on Discover cards** — Signal bars (high/medium/low) based on data-driven thresholds from trading activity analysis. Plan approved.
-
-**P1 — Design:**
-- [x] ~~**Eliminate hardcoded colors**~~ — DONE May 15. ~200 replacements across 35 files mapped to design tokens. Skipped intentional brand colors (Oscars gold, Masters green, chart/viz colors).
-- [x] ~~**Decompose DiscoverCard.tsx**~~ — DONE May 15. 1,041→12 files under `components/discover/`. Main file is 91-line thin dispatcher. Public API unchanged.
-- [x] ~~**Remove max-width constraint**~~ — DONE May 15. Global content 1200→1600px, sport pages 5xl→7xl, calibration 4xl→6xl, search xl→3xl. Text-heavy/admin pages left narrow.
-- [x] ~~**Define formal button system**~~ — DONE May 15. `components/ui/button.tsx`: primary/ghost/text variants, sm/md/lg sizes, focus-visible ring. Applied to 10 buttons across 4 pages.
+- [ ] **Separate closing-line from opening-price cohorts** — Report closing-line-only as primary metric.
+- [ ] **Confidence tiers on Discover cards** — Signal bars (high/medium/low) based on data-driven thresholds.
 
 **P2 — DS:**
-- [ ] **Empirically derive aggregation weights** — Retrospective Brier score analysis per source, make weights context-dependent (NFL vs K-League)
-- [ ] **Stat model evaluation framework** — Validate `base_std` constants against actual data, weekly Brier comparison
-- [ ] **Proactive data quality monitoring** — Calibration drift alerts, source freshness SLOs, upstream API contract tests
+- [ ] **Empirically derive aggregation weights** — Retrospective Brier score analysis per source
+- [ ] **Stat model evaluation framework** — Validate `base_std` constants, weekly Brier comparison
+- [ ] **Proactive data quality monitoring** — Calibration drift alerts, source freshness SLOs
 
 **P2 — Product:**
-- [x] ~~**Archive dead pages**~~ — DONE May 15. Deleted `/oscars`, `/pulse`, `/ei`, `/explore`, `/masters` + orphaned OscarsModal, oscarsData, 9 API functions, 10 type interfaces. Routes 39→34.
-- [ ] **Actually send push notifications** — Device token capture is built but sends nothing. One daily push: "Today's challenge is ready. Streak: 7 days."
+- [ ] **Actually send push notifications** — One daily push: "Today's challenge is ready. Streak: 7 days."
 - [ ] **Weekly prediction accuracy report email** — "You were 73% accurate across 22 predictions this week."
 
 ### Weather: Meteorologist Forecast Comparison (Dexter idea, May 14)
@@ -1413,20 +1117,11 @@ Four VP-level audits completed via Claude subagents. Full results in conversatio
 
 **Status:** Audit running. Checking what free features we're leaving on the table across GitHub, Sentry, GA4, Vercel, Heroku, and all external APIs (StatPal, ESPN, TMDB, Odds API, Kalshi, Polymarket, DataGolf).
 
-### ~~BUG: Alcaraz Shows as "ATP Indian Wells" Team in Search~~ — FIXED (May 15)
+### ~~BUG: Alcaraz Search~~ — FIXED (May 15)
 
-Added `_INDIVIDUAL_SPORT_PREFIXES` (tennis, MMA, boxing, golf) and filtered individual-sport "teams" from search/typeahead results. Athletes still appear via event and futures results. All search tests pass.
+### ~~BUG: Placeholder Outcomes~~ — FIXED (May 15)
 
-### ~~BUG: French Open / US Open Futures Show "Player B 100%" Placeholder Names~~ — FIXED (May 15)
-
-Polymarket creates placeholder sub-markets with "Player B/S/N" names and `outcomePrices=["1","0"]` before real candidates are announced. Three-layer fix: (1) ingestion prevention via `_is_placeholder_outcome()` in polymarket.py, (2) search display filtering in events.py, (3) `_GARBAGE_OUTCOME_RE` applied to 5 additional futures.py code paths. 9 new tests.
-
-### ~~About Page Polish~~ — v2 SHIPPED May 16
-
-**Status:** v2 shipped with scroll-triggered animations, dynamic API data (live market/event/source counts), refined typography, and hover effects. All 5 v2 items addressed.
-
-**Files:** `frontend/app/about/page.tsx`
-**Parallel Safety:** Green
+### ~~About Page Polish~~ — v2 SHIPPED (May 16)
 
 ### Run Another Manus Sweep (May 14)
 
