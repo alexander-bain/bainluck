@@ -104,36 +104,11 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 ### ~~Kalshi Sawtooth Oscillation~~ — FIXED (May 14)
 
-**Problem:** Kalshi game-winner probability oscillated between two stable values across every poll cycle. 55 events affected, ~16K+ bad snapshots.
-
-**Root cause:** Multiple Kalshi markets from different games (e.g., tournament Game 1 + Game 2 between same teams) cross-linked to the same event, causing alternating home_prob writes.
-
-**All fixed:**
-- ✅ Prevention guard: `_check_duplicate_kalshi_linkage` blocks linking when a different game's market is already linked
-- ✅ Phase 2 multi-game detection: scans and unlinks wrong markets spanning multiple dates
-- ✅ Historical cleanup: `POST /api/admin/sawtooth-fix` unlinked 32 markets and deleted 16,477 bad snapshots
-- ✅ Diagnosis endpoints: `GET /api/admin/sawtooth-diagnosis` + `GET /api/admin/sawtooth-audit`
-- ✅ Devig averaging for future snapshots
-
-**Remaining:** Verify on live games that new data is clean.
-
 ### ~~Double-Header Date Matching~~ — FIXED (May 14)
-
-HHMM-aware tickers now use tight ±3h window. Date-only tickers use asymmetric -6h/+30h window (accounts for UTC vs US timezone offset). Both prevent cross-linkage of doubleheader games.
-
-**Files:** `backend/app/utils/prediction_market_matching.py` (`extract_game_date_from_ticker` ~line 893), `backend/app/tasks/prediction_market_matching.py` (Phase 2 date validation)
 
 ### ~~Stat Model Lacks Pregame Prior~~ — FIXED (May 13)
 
-Model now starts at sportsbook consensus probability (via inverse-normal-CDF conversion to derive an equivalent spread) instead of 50%. The prior naturally fades as game evidence accumulates. 11 new tests, all pass.
-
-**Files:** `backend/app/utils/win_probability.py` (`compute_statistical_win_prob`), `backend/app/tasks/espn_sync.py`
-
 ### ~~Game-Markets Query Missing Kalshi Props~~ — FIXED (May 13)
-
-Root cause: status and `llm_sport_category` filters were excluding linked markets from the game-markets query. Removed both filters from the linked query path. Overtime, half winners, player props, points leaders now show on event detail pages for all linked events.
-
-**Files:** `backend/app/routes/events.py` (game-markets query)
 
 ---
 
@@ -313,69 +288,7 @@ Follow `docs/ga4-setup-guide.md` step by step in the GA4 console. ~15 minutes.
 
 The following 8 items address three interconnected problems discovered in the May 18 health check: (a) foreign soccer events dominate the feed because the "upset" headline bypasses Discover event demotion regardless of league tier, (b) geopolitics floods futures slots with near-identical Russia-war markets, pushing entertainment to position 69+, and (c) left-swipe personalization is too weak to suppress high-scoring items.
 
-**~~0u-R1. Gate "upset" event demotion bypass on league tier~~** — SHIPPED May 18
-
-The `is_exceptional` check in `feed.py:626` lets any event with "upset" in its headline keep its full score in Discover mode. The headline generator labels nearly every recently-completed game as "Recent upset" — including Ligue 2, Brazilian Série B, and Chilean Primera División. This causes 17 of 50 Discover items to be foreign soccer events, crowding out entertainment/politics/tech.
-
-**Fix shipped:** Discover event demotion now uses a shared helper in normal ranking and debug traces. Keyword exceptions (`upset`, `comeback`, `historic`, etc.) require major-league context via `get_league_tier(...) <= 2` or `tier:1`/`tier:2` tags. Raw `score >= 90` also requires EI/event-interest score >= 50. Regression tests cover low-tier soccer upset demotion, NBA upset preservation, and high raw score without EI demotion.
-
-**Files:** `backend/app/routes/feed.py` (~line 626)
-
-**~~0u-R2. Fix Russia-war story key to catch territory markets~~** — SHIPPED May 18
-
-10 near-identical "Will Russia capture [village]?" markets all score 100 and consume ~10 of ~20 futures slots. They don't share the existing `story:russia_ukraine` key because they only mention "Russia" (the key requires both "Russia" AND "Ukraine"). Add a broader `story:russia_war` key that matches Russia + capture/territory/advance/offensive keywords. Cap at 2.
-
-**Fix shipped:** Russia/Russian + capture/seize/occupy/annex/advance/offensive/territory/frontline/place keywords now map to the existing capped `story:russia_ukraine` family. Tests prove Ukraine-omitted territory markets group together and diversify to the top 2 variants.
-
-**Files:** `backend/app/utils/feed_market_quality.py` (`_story_key()`, `per_story_caps`)
-
-**~~0u-R3. Fix frontend localStorage dismiss persistence~~** — SHIPPED May 18
-
-`handleDismiss` in `discover/page.tsx:537` calls `setDismissed()` but never writes to localStorage. Dismissed items reappear on every page refresh. One-line fix: persist the updated set to localStorage inside the callback.
-
-**Fix shipped:** `handleDismiss` now writes the updated dismissed-id set to `discover_dismissed` in localStorage. `npm run build` passed after clearing generated `.next` cache from a full local disk.
-
-**Files:** `frontend/app/discover/page.tsx` (~line 537)
-
-**~~0u-R4. Election allowlist: penalize non-major elections~~** — SHIPPED May 18
-
-Instead of blocklisting obscure elections (whack-a-mole), define `_MAJOR_ELECTION_RE` — an allowlist of elections that deserve the full politics base score (US federal, UK/French/German/Canadian/Brazilian/Indian national, EU Parliament). Markets containing "election/winner/nominee" that don't match get `FOREIGN_LOCAL_ELECTION_PENALTY = -30`.
-
-**Fix shipped:** Politics/election futures now receive `FOREIGN_LOCAL_ELECTION_PENALTY = -30` when they look election-related but do not match the major-election allowlist. Tests cover Andalusia-style regional election penalty and US presidential election preservation.
-
-**Files:** `backend/app/utils/futures_highlights.py`
-
-**~~0u-R5. Soccer league allowlist: penalize non-top-tier soccer futures~~** — SHIPPED May 18
-
-Define `_TOP_TIER_SOCCER_RE` — EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL, Europa League, MLS, FIFA World Cup, Copa Libertadores, Copa America, Liga MX. Soccer futures not matching this AND not already caught by `_MINOR_LEAGUE_PATTERNS` get `OBSCURE_SOCCER_PENALTY = -20`. Add story keys and caps: `story:foreign_local_elections` (cap 1), `story:minor_soccer_leagues` (cap 1).
-
-**Fix shipped:** Futures highlight scoring now applies `OBSCURE_SOCCER_PENALTY = -20` to soccer futures that are neither minor-pattern matches nor top-tier allowlist matches. Feed market quality now groups non-top-tier soccer into `story:minor_soccer_leagues` with a cap of 1. Focused tests cover the top-tier allowlist, Chilean Primera Division penalty, story key, and cap.
-
-**Files:** `backend/app/utils/futures_highlights.py`, `backend/app/utils/feed_market_quality.py`
-
-**~~0u-R6. Steeper swipe penalty escalation~~** — SHIPPED May 18
-
-Current max category penalty is -0.40 (0.60x multiplier). A 100-score market becomes 60 — still prominent after 20+ swipes. Add escalation tiers: 5+ swipes → -0.60 (0.40x), 8+ swipes → -0.80 (0.20x). Lower `MIN_MULTIPLIER` from 0.30 to 0.15 (only reachable after 8+ negative swipes). Increase `FEATURE_DISLIKE_MAX_PENALTY` from -0.12 to -0.25.
-
-**Fix shipped:** `PersonalizationContext` now carries `discover_category_negative_counts`; category dislike penalties escalate at 5+ and 8+ negative swipes, `MIN_MULTIPLIER` is 0.15, and feature dislike caps at -0.25. Tests cover escalation tiers, feature dislike capping, and bounded multipliers.
-
-**Files:** `backend/app/utils/personalization.py`, `backend/app/routes/feed.py` (`_build_discover_category_affinities()`)
-
-**~~0u-R7. Story-key propagation of dismiss signal~~** — SHIPPED May 18
-
-Currently dismissing market #12345 only suppresses that exact ID. Add `recent_dismissed_story_keys` and `recent_dismissed_group_ids` to `PersonalizationContext`. Compute `_story_key()` from each dismissed market's `item_name` during context loading. Suppress all markets matching a dismissed story_key or group_id.
-
-**Fix shipped:** Discover personalization context now records recently dismissed story keys and grouped futures IDs. `_score_futures()` skips candidates sharing a dismissed group_id or story_key outside My Teams mode. Tests cover group propagation, story-key propagation, and My Teams bypass behavior.
-
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/personalization.py`
-
-**0u-R8. Tests for all ranking fixes** — PARTIAL May 18
-
-Unit tests for: league-gated event demotion (Ligue 2 upset demoted, NBA upset kept), Russia-war story key matching and cap, election/soccer allowlists, escalated penalty tiers, story-key dismiss propagation.
-
-**May 18 coverage shipped:** R1-R7 now have focused tests/build coverage.
-
-**Files:** `backend/tests/test_feed_market_quality.py`, `backend/tests/test_personalization.py`, new test files as needed
+**~~0u-R1~~ through ~~0u-R7~~** — ALL SHIPPED May 18. League-tier upset gating, Russia-war story key, localStorage dismiss persistence, election allowlist, soccer league allowlist, steeper swipe penalties, story-key dismiss propagation. All have focused test coverage (R8 partial).
 
 ---
 
@@ -394,41 +307,7 @@ The interestingness scoring scaffold (`utils/market_interestingness.py`, shipped
 
 **Depends on:** Ground-truth labels (item 5 in existing next phases), calibration script (shipped)
 
-**~~0u-N2. Strengthen LLM metadata consumption~~** — SHIPPED May 18
-
-The `discover_llm` enrichment already produces `audience_scope` (broad/mainstream/niche/local/specialist) and `junk_flags` (local_election, low_tier_sports, etc.) but the penalty in `_discover_llm_score_adjustment()` is too small (-4 for niche scope, -4 to -16 for junk flags). Steps:
-1. Increase `audience_scope` penalties: niche → -15, local → -25, specialist → -20
-2. Increase `junk_flags` penalties: `local_election` → -20, `low_tier_sports` → -15
-3. Add new junk flags to the LLM prompt: `minor_soccer`, `procedural_politics`, `commodity_ladder`
-4. Re-run enrichment for feed-shaped candidates and measure impact on `audit_feed_quality.py`
-
-**Fix shipped:** `_discover_llm_score_adjustment()` now applies stronger bounded penalties for niche/local/specialist scope and specific junk flags (`local_election`, `low_tier_sports`, `minor_soccer`, `procedural_politics`, `commodity_ladder`), with the lower bound widened to -30. The enrichment prompt now explicitly names the new junk flags. Tests cover local junk, new flag penalties, and niche scope.
-
-**Files:** `backend/app/routes/feed.py` (`_discover_llm_score_adjustment()`), LLM enrichment prompt
-
-**~~0u-N3. Category-aware event-vs-futures balancing~~** — SHIPPED May 18
-
-Currently events and futures compete on raw score, and events dominate because live games score 80-100 from basic signals. The first-page diversity caps `sports_culture` events at 3, but this only applies to the first 20 items. Steps:
-1. Add a per-category event budget beyond the first page (e.g., max 5 soccer events, max 5 baseball events in the full feed)
-2. Allow high-scoring futures to "promote" into event slots when available events are low-tier (score < 50 after demotion)
-3. Add a "category hunger" signal: categories with zero items in the top 20 get a +15 urgency bonus for their best candidate
-4. Enforce the entertainment cap of 3 is treated as a *floor* (guarantee at least 1 entertainment item in top 20 if any score >= 80)
-
-**Files:** `backend/app/routes/feed.py` (post-scoring ranking), `backend/app/utils/feed_market_quality.py` (first-page diversity)
-
-**Fix shipped:** Discover mode now runs a pure post-demotion balancing pass that defers low-score events and over-budget sport buckets behind futures without mutating visible scores. First-page mixing also gives strong missing categories a slot, including an entertainment floor when a candidate scores 80+. Tests cover over-budget soccer events, low-score event deferral, and entertainment floor behavior.
-
-**~~0u-N4. Semantic similarity for dismiss propagation~~** — SHIPPED May 18
-
-Story-key propagation (R7) handles cases where dismissed markets share an explicit key. For the long tail, add lightweight semantic similarity so dismissing "Chilean Primera Division champion" also suppresses "Who wins the Chilean league?" Steps:
-1. Extract entity/topic tokens from dismissed market names (reuse existing `_discover_feature_tokens()`)
-2. For each candidate market, compute Jaccard similarity of feature tokens against dismissed items
-3. If similarity > 0.6, apply a -0.30 soft penalty (not a hard filter)
-4. Cap computation cost: only compare against the 50 most recent dismisses
-
-**Fix shipped:** `_load_personalization_context()` now records semantic token sets for the 50 most recent Discover dismiss/unlike actions. `_discover_semantic_tokens()` keeps compact topic/region/team/term tokens, normalizes winner/champion language to `term:win`, and bridges league phrasing such as "Primera Division" ↔ "league". `compute_event_multiplier()` and `compute_futures_multiplier()` compare candidate tokens against those recent dismisses with Jaccard similarity, ignore generic category/type/archetype/format tokens, and apply a bounded `semantic_dismiss:-0.30` multiplier penalty when similarity is greater than 0.60. This is intentionally a soft downrank; group_id and story_key matches remain the only hard related-dismiss suppression path.
-
-**Files:** `backend/app/routes/feed.py` (scoring loop), `backend/app/utils/personalization.py`
+**~~0u-N2~~, ~~0u-N3~~, ~~0u-N4~~** — ALL SHIPPED May 18. Stronger LLM metadata penalties, category-aware event-vs-futures balancing with entertainment floor, semantic dismiss propagation via Jaccard similarity.
 
 **0u-N5. Engagement-calibrated ranking weights**
 
@@ -485,157 +364,37 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 
 ### ~~0n. Navigation Redesign~~ — DONE (May 11-12)
 
-Shipped across web and native. Discover is default landing page (`/`). Sports at `/sports`. Desktop: Discover | Sports | Browse (dropdown) | My Stuff. Mobile bottom nav: Discover | Sports | Search | My Stuff. Native: Discover | Sports | Browse | Search | My Stuff. Browse dropdown/tab has Politics, Entertainment, Economics, Weather. About behind user menu. Footer removed. Tab persistence deferred.
+### ~~0s. League Pages — ALL PHASES SHIPPED~~ (May 6-17)
 
-### ~~0s. League Pages — ALL PHASES SHIPPED~~
-
-**Phase 1 (backend):** ✅ SHIPPED (May 6)
-**Phase 2 (frontend):** ✅ SHIPPED (May 6)
-**Phase 3: Cross-sport generalization** — ✅ SHIPPED May 17. MoversRibbon, sport-aware layout applied to NHL, MLB, NFL.
-**Phase 4: iOS parity** — ✅ SHIPPED (May 13) — LeagueGridView with all market sections.
-
-**Files:** `backend/app/routes/leagues.py`, `ios/.../Views/LeagueGridView.swift`
-
-### ~~0r. Golf Data Quality Issues~~ — FIXED May 18
-
-**Problem:** Tour misclassification (Hainan = Asian Tour, not PGA Tour) — fixed by preserving DataGolf event-level `tour` metadata and using it before defaulting generic tournament names to PGA Tour.
-
-**Guardrail:** `Hainan Open` with `tour="asian"` now classifies as Asian Tour even if an external ID looks like PGA.
-
-**Files:** `backend/app/tasks/datagolf.py`, `backend/app/routes/golf.py`
-**Parallel Safety:** Green
+### ~~0r. Golf Data Quality Issues~~ — FIXED (May 18)
 
 ---
 
-## Rage Shake Triage #7 (May 17) — Bugs #49-58
+## ~~Rage Shake Triage #7 (May 17) — Bugs #49-58~~ — ALL 7 FIXED (May 17)
 
-10 bug reports. Consolidated into 6 distinct issues. All touch feed.py or the Discover feed — hand off to Discover thread.
-
-### ~~BR57/58. All Outcomes Show Equal Odds (33%/26%/26%/26%)~~ — FIXED May 17
-
-Feed normalization now renormalizes to displayed outcomes only, preventing Billboard/multi-outcome markets from showing artificially equal probabilities.
-
-**Files:** `backend/app/routes/feed.py` (top_outcomes_data normalization)
-
-### ~~BR49. Yes/No Display on Non-Binary Multi-Outcome Markets~~ — FIXED May 17
-
-Feed now detects "Yes"/"No" top outcomes on non-binary questions and falls back to the market name or leading named outcome.
-
-**Files:** `backend/app/routes/feed.py` (outcome display), `ios/.../Views/DiscoverView.swift`
-
-### ~~BR50. Sparse Snapshot Chart on Market Detail~~ — FIXED May 17
-
-Sparse chart handling improved — markets with limited snapshot data now display appropriately.
-
-**Files:** `backend/app/tasks/kalshi.py` (polling frequency), futures detail page
-
-### ~~BR51. PGA Championship: Playoff — Missing Trend Line + Search Issue~~ — FIXED May 17
-
-Binary chart rendering and multi-word search matching both fixed.
-
-**Files:** `ios/.../Views/FuturesDetailView.swift` (chart rendering), `backend/app/routes/events.py` (search)
-
-### ~~BR52/53. My Stuff "Your Teams' Odds" — Wrong Player/Team Associations~~ — FIXED May 17
-
-Team matching now uses sport-scoped matching — WNBA players no longer match to NHL teams based on city name. Year context added to playoff progression display.
-
-**Files:** `ios/.../Views/MyStuffView.swift`, backend user/feed endpoints
-
-### ~~BR54/56. Feed Quality — Low-Interest Cards, Repetitive, Missing Spotify/Netflix #1~~ — FIXED May 17
-
-Feed quality classifier updated: minor sports suppressed more aggressively, Netflix/Spotify #1 markets no longer filtered by dedup, dismiss signals now apply stronger personalization penalties.
-
-**Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, `backend/app/utils/personalization.py`
-
-### ~~WATCH-1. Apple Watch App Mostly Black, Occasionally Shows Malformed Content~~ — FIXED May 17
-
-Reliability fixes shipped: reduced feed request limit, aggressive timeout with retry, improved error handling, and decode stability improvements.
-
-**Files:** `ios/Bain Luck/BainLuckWatch Watch App/` (8 Swift files)
+All 10 reports consolidated into 6 feed issues + 1 Watch issue. All fixed: feed normalization, Yes/No display, sparse charts, PGA chart/search, sport-scoped team matching, feed quality classifier, Watch reliability.
 
 ---
 
-## Manus Sweep Findings (May 15, 2026)
+## ~~Manus Sweep Findings (May 15, 2026)~~ — ALL 8 FIXED/CLOSED
 
-10-module automated audit. Results in `Manus/audit_results/2026-05-15/`. Sweep ran during a deploy-triggered outage, so some findings are outage artifacts. Real findings below.
-
-### ~~MS15-1. Cross-Game Market Contamination~~ — FIXED May 15
-
-Polymarket group_id lookup in game-markets had no time window filter. In playoff series, Game 1's sub-markets leaked onto Game 2's page. Fixed: added ±12h commence_time filter to match the unlinked fallback query.
-
-### ~~MS15-2. O/U Monotonicity Violation~~ — FIXED May 15
-
-Frontend monotonicity enforcement referenced original values instead of corrected ones. Backend dropped violating items instead of capping. Fixed both + added 0% threshold filtering.
-
-### ~~MS15-3. Weather Data 26 Days Stale~~ — FIXED May 15
-
-Hardcoded fallback data replaced with loading skeletons. Dynamic date and market counts now pulled from live API response.
-
-### ~~MS15-4. NBA Grid OKC 105.2% Conference Win~~ — FIXED May 15
-
-Normalization pushed OKC above 100%. Fixed: post-normalization cap at 100% in playoff_grid.py + defense-in-depth caps in playoffs.py. Regression test added.
-
-### ~~MS15-5. Chart Timing Score 52/100~~ — FIXED May 16
-
-**Problem:** Charts terminate prematurely (e.g., 8th inning cutoff in baseball). Missing game state markers for AFL. Charts start too early for some events.
-
-**Status:** Fixed May 16; no active parallel work remains on this audit item.
-
-**Files:** `frontend/components/OddsChart.tsx`, `backend/app/routes/events.py` (chart data)
-**Parallel Safety:** Green
-
-### ~~MS15-6. MLS Page Infinite Loading~~ — NOT REPRODUCIBLE, CLOSED
-
-Investigated May 15. APIs return correctly (200, valid data). Frontend has proper timeout/retry/finally. Likely transient issue during the Manus sweep (deploy-triggered outage or cold dyno). Closing as not reproducible.
-
-### ~~MS15-7. Inconsistent Error States Across Pages~~ — FIXED May 16
-
-**Problem:** 3 different error handling patterns across league pages, category pages, and hub pages. No unified error component. MLS never errors, NBA shows "Failed to load", economics shows "Loading...".
-
-**Status:** Being fixed by another agent. Do not start parallel work on error state components.
-
-**Files:** Frontend components (various)
-**Parallel Safety:** Red (active work)
-
-### ~~MS15-8. Deploy Crash — Rapid Pushes Kill Heroku Dyno~~ — FIXED May 15
-
-CI workflow now has a `deploy` job with `concurrency: group: heroku-deploy, cancel-in-progress: true`. Only deploys after both test jobs pass. Step-level secrets check replaced with shell-level (May 16). CI-gated deploy is working.
+All fixed: cross-game contamination, O/U monotonicity, weather staleness, grid normalization, chart timing, error states, deploy crash. MLS loading not reproducible (closed).
 
 ---
 
-## Manus Sweep Findings (May 11, 2026) — MOSTLY RESOLVED
+## Manus Sweep Findings (May 11, 2026) — 13/14 RESOLVED
 
-10-module automated audit. Results in `Manus/audit_results/2026-05-11/`. 10 of 14 resolved, 4 open.
-
-**Resolved:** ~~MS-1~~ (false alarm), ~~MS-2~~ (false alarm), ~~MS-3~~ (prop monotonicity), ~~MS-4~~ (politics misclassification), ~~MS-5~~ (Spotify normalization), ~~MS-6~~ (economics monotonicity), ~~MS-7~~ (chart stale tails), ~~MS-9~~ (soccer halftime), ~~MS-10~~ (NCAAB settled markets), ~~MS-12~~ (golf grid monotonicity), ~~BUG-NBA~~ (not a bug), ~~BUG-DUP~~ (event merge task handles it).
-
-### ~~MS-8. MLB Chart Rendering Failure~~ — FIXED May 17
-
-Chart gap handling improved — MLB charts no longer show massive data gaps.
-
-**Files:** `backend/app/routes/events.py`
-
-### ~~MS-11. Completed Market Shows Stale Live Probability~~ — FIXED May 17
-
-Stale probability display on completed markets resolved.
-
-**Files:** `backend/app/routes/events.py`
+All resolved except MS-13 (info only). MS-8 (MLB charts), MS-11 (stale probability), MS-14 (EPL/UFC/Tennis) fixed May 13-17.
 
 ### MS-13. Missing Sport Coverage (INFO)
 
 UFC/MMA, Tennis, F1, Esports have upstream markets but no dedicated pages. Feature gap, not bug.
 
-### ~~MS-14. EPL/UFC/Tennis Pages Non-Functional~~ — RESOLVED (May 13)
-
-EPL grid loads correctly now (`/api/playoffs/epl` returns data). UFC and Tennis don't have league configs and aren't in the Browse tab navigation (removed when pills were changed to specific leagues). No dead-end paths remain.
-
 ---
 
 ## ~~Rage Shake Triage (May 7-8)~~ — ALL 14 ITEMS RESOLVED
 
-All 16 bug reports triaged, 14 new items identified, all resolved May 8 across two parallel sessions. Details in `docs/completed-features.md`.
-
-**Only remaining from original triage:** RS-5 (iPad sign-in) is FIXED but needs TestFlight build to verify on physical device.
+Details in `docs/completed-features.md`. RS-5 (iPad sign-in) FIXED, needs TestFlight verification on physical device.
 
 ---
 
@@ -647,32 +406,11 @@ All 16 bug reports triaged, 14 new items identified, all resolved May 8 across t
 
 ## Rage Shake Triage #6 (May 16) — Bugs #41-48
 
-8 bug reports. BR41 dismissed (transient outage from May 15 deploy crash). 7 real issues consolidated into 5 distinct problems.
-
-### ~~BR42/43. My Stuff Shows Low-Tier Junk~~ — FIXED May 16
-
-Added tier filter to `my_teams_only` feed: only Tier 1/2 sports (11 sport keys: NBA, NHL, MLB, NFL, NCAAB, WNBA, NCAAF, EPL, MLS, UCL, MMA) shown in My Stuff. Tier 3 (NCAA hockey, esports, minor soccer) excluded at SQL level. "Boston" substring matching still works but only for major leagues.
-
-### ~~BR44/46. Stale Celtics NBA Finals Card~~ — FIXED May 16
-
-Added "soft-settled binary" filter: sports binary markets with leader ≥60% and <2pp 24h movement are suppressed. Protects underdog rises (leader opened <50%) and non-sports markets (politics/economics excluded). 5 unit tests. Catches the entire BR31/BR44/BR46 class of stale elimination markets.
-
-### ~~BR45. Sign-In Server Error 500~~ — FIXED May 16
-
-**Problem:** Anonymous user on iPhone 15,4 (iOS 26.0.0) sees "Server error (500). Please try again." on My Stuff sign-in page. Different from BR40 (which was 401 audience mismatch, now fixed). This is a 500 — backend crash during auth endpoint.
-
-**Root cause:** `User.created_at` was None after flush — the column lacked a server default. Fixed in commit `4cc1239`.
-
-**Files:** `backend/app/routes/auth.py`, `backend/app/services/firebase_auth.py`
-**Parallel Safety:** Green
+8 reports, BR41 dismissed (transient). 4 of 5 distinct issues fixed: ~~BR42/43~~ (tier filter), ~~BR44/46~~ (soft-settled binary filter), ~~BR45~~ (sign-in 500, `created_at` server default), ~~BR48~~ (normalization threshold).
 
 ### BR47. Netflix Show Outcomes All 33% — INVESTIGATED May 16, NOT A CODE BUG
 
-Not a normalization bug — probabilities are genuinely flat in the database (`current_probability` ≈ 0.33 for all 3 outcomes). The "100%" in the hook description is stale — generated by LLM enrichment when one show was dominant, but prices have since equalized. Fix: re-run hook enrichment for this market, or add staleness detection that regenerates hooks when data contradicts them.
-
-### ~~BR48. US House Probabilities Don't Sum to 100% (102%)~~ — FIXED May 16
-
-Lowered normalization threshold from 1.05 to 1.01 for 2-outcome binary markets. Multi-outcome markets stay at 1.05 (small overages from independent sources are expected).
+Not a normalization bug — probabilities are genuinely flat in the database. The "100%" in the hook description is stale. Fix: re-run hook enrichment or add staleness detection that regenerates hooks when data contradicts them.
 
 ---
 
@@ -701,54 +439,14 @@ Lowered normalization threshold from 1.05 to 1.01 for 2-outcome binary markets. 
 
 ## Rage Shake Triage #5 (May 15) — Bugs #32-40
 
-9 bug reports from May 14-15 TestFlight users. Consolidated into 6 distinct issues + 1 recurring tool bug.
+9 reports, 6 of 7 distinct issues fixed: ~~BR40~~ (Apple Sign-In audience), ~~BR39~~ (pill wrapping), ~~BR37~~ (economics parse), ~~BR36~~ (politics normalization), ~~BR32~~ (My Stuff top markets), ~~BR-MARKUP~~ (annotation coordinates).
 
 ### BR38/33/35/34. Feed API Failures — Discover, Sports, and Challenges All Down (P1)
 
-**Problem:** Four separate reports from two devices (iPhone18,1 anonymous, iPhone18,2 Alex) all showing the same symptom: feed endpoints returning errors.
-- BR38 (Alex, Discover): "Couldn't load Discover. Pull to retry."
-- BR33 (anonymous, Discover): Same — "Couldn't load Discover. Pull to retry." with onboarding tooltip still showing
-- BR35 (anonymous, Sports): "Couldn't Load Feed — Server error (500). Try again in a moment."
-- BR34 (anonymous, Discover challenge): "No challenge cards right now" — Today's Challenge shows "Question 1 of 1" but has no cards. Challenge card selection depends on the feed working, so this is downstream of the feed failure.
-
-**Root cause (investigate):** The Discover feed (`GET /api/feed`) and Sports feed are both failing. Could be:
-1. A database query timeout or connection pool exhaustion (check Heroku pg:info connections)
-2. A crash in `routes/feed.py` from a bad market/outcome causing an unhandled exception (check Sentry)
-3. A Celery task holding DB connections and starving the web dyno
-4. Transient — all 4 reports are from a ~20 minute window (May 14 6:47-7:00 PM ET). Could have been a brief outage that self-resolved.
-
-**Investigation steps:**
-1. Check Sentry for 500 errors on `/api/feed` and `/api/sports-feed` around May 14 6:45-7:05 PM ET
-2. Check Heroku logs for that time window: `heroku logs --since 2026-05-15T01:45:00Z --until 2026-05-15T02:00:00Z -a bainluck`
-3. Check current feed health: `curl -s https://api.bainluck.com/api/feed | head -c 200`
-4. If transient, add better error context to the iOS error states (show the actual error message from the API, not just "Couldn't load")
+**Problem:** Four reports from a ~20 minute window (May 14 6:47-7:00 PM ET) — feed endpoints returning errors. Likely transient (deploy-triggered outage or connection pool exhaustion). Needs Sentry/Heroku log investigation for that window.
 
 **Files:** `backend/app/routes/feed.py`, `ios/.../Views/DiscoverView.swift`, `ios/.../Views/FeedView.swift`
-**Parallel Safety:** **RED — collides with Discover thread.** Do not fix in parallel with feed.py work.
-
-### ~~BR40. iOS Sign-In Rejected (401)~~ — FIXED (May 15)
-
-Root cause: Apple Sign-In audience mismatch. Backend validated JWT against `APPLE_SERVICES_ID` (`com.bainluck.web`) but iOS sends `aud = "com.bainluck.Bain-Luck"` (bundle ID). Apple Sign-In from iOS had never worked. Fix: accept both web Services ID and iOS bundle ID as valid audiences via `valid_audiences` list in `auth.py`. Google Sign-In unaffected (uses access token verification, not JWT audience).
-
-### ~~BR39. Preferences Pill Buttons Text Wrapping~~ — FIXED (May 15)
-
-Added `.lineLimit(1)` + `.fixedSize()` to pill button Text in `PreferencesView.swift`. Category name truncates instead of pills wrapping.
-
-### ~~BR37. Economics Page Parse Error — iOS~~ — FIXED (May 15)
-
-Three Decodable mismatches: `EconomicsMarket.prob` Int→Double, `CPIRelease.peakIs` String?→Int?, added missing `sideMarkets` field for recession/markets/energy themes.
-
-### ~~BR36. Politics Probabilities Don't Sum to 100%~~ — FIXED (May 15)
-
-Added `_normalize_outcome_probs()` to `politics.py` (same >105% threshold as feed). Applied to `_market_row()` (all theme sections) and `_build_presidential()` (nominee merging with per-source normalization). 14 new tests.
-
-### ~~BR32. My Stuff Shows Irrelevant "Top Markets"~~ — FIXED (May 15)
-
-Root cause: My Stuff fetched generic futures from feed endpoint. Even with team filtering, card displayed global top-3 outcomes instead of user's team. Fix: set `includeFutures: false` (matching web behavior), team futures shown only via dedicated "Your Teams' Odds" section. Added `MyTeamFuturesCard` for personalized display.
-
-### ~~BR-MARKUP. Rage Shake Annotation Coordinate Offset~~ — FIXED (May 15)
-
-Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width constraint, so canvas was wider than rendered image. Three fixes: explicit frame sizing matching screenshot aspect ratio, PKCanvasView scroll/inset lockdown, independent scaleX/scaleY with retina-aware rendering.
+**Parallel Safety:** **RED — collides with Discover thread.**
 
 ---
 
@@ -808,175 +506,14 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 ## Rage Shake Triage #8 (May 17) — Bugs #60-75
 
-Claude CLI failed to process these because screenshot image handling returned `API Error: 400 Could not process image`. Items were added from text-only report context; screenshots should be reviewed later with the links below.
-
-### ~~BR60. Yes/No Markets Should Not Show Top-5/Top-10 Framing~~ — FIXED (May 17)
-
-**Problem:** Binary yes/no market cards show "top 5" or "top 10" framing, which makes no sense for two-outcome markets.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/60/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_60.jpg`
-
-**Files:** `backend/app/routes/feed.py`, `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Binary `No` labels now preserve side semantics instead of falling back to the bare positive market topic.
-
-### ~~BR61. Native Discover Card Question Truncated~~ — FIXED (May 17)
-
-**Problem:** Question text truncates on a native Discover card.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/61/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_61.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Native Discover card, guess-card, compact-row, and grouped-card text now allows more lines with fixed vertical sizing on narrow screens.
+14 reports, 13 fixed. Fixed: ~~BR60~~ (Yes/No framing), ~~BR61/75~~ (text truncation), ~~BR63~~ (prediction stats auth), ~~BR64~~ (tuning section removed), ~~BR65/72~~ (baseball inning labels), ~~BR66~~ (sports feed supplemental page), ~~BR68~~ (final 0.0), ~~BR69~~ (calibration buckets), ~~BR70~~ (My Stuff categories), ~~BR73~~ (filter pills removed), ~~BR74~~ (pull-to-refresh state reset).
 
 ### BR62. Better Aggregation for Related/Clustered Markets (P2)
 
-**Problem:** Related markets need a better aggregation/surfacing model so users see one coherent question or cluster instead of fragmented market rows.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/62/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_62.jpg`
+Related markets need better aggregation so users see one coherent question instead of fragmented rows. May 17 progress: Discover feed now emits `group_id`/`group_type`, native grouping prefers backend IDs. Full cross-surface aggregation remains open.
 
 **Files:** `backend/app/routes/feed.py`, `backend/app/utils/feed_market_quality.py`, category routes
 **Parallel Safety:** Red (touches feed ranking/grouping)
-
-**Progress May 17:** Discover feed now emits `group_id`/`group_type`, and native Discover grouping prefers backend grouping IDs/canonical keys instead of the fragile first-three-words title fallback. Full cross-surface aggregation remains open.
-
-### ~~BR63. Prediction Stats Empty Despite Weeks of Predictions~~ — FIXED (May 17)
-
-**Problem:** User has made predictions for weeks but native stats screen shows no stats.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/63/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_63.jpg`
-
-**Files:** `backend/app/routes/user.py`, `ios/.../Views/PredictionStatsView.swift`, `ios/.../Services/APIClient.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Prediction stats/resolutions routes now resolve optional auth and include authenticated user predictions instead of falling back to anonymous session-only lookup.
-
-### ~~BR64. Discover Ranking Fine-Tuning Section Is Confusing~~ — FIXED (May 17)
-
-**Problem:** Native Discover exposes a fine-tuning/ranking section that feels confusing; users should not have to manage ranking manually.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/64/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_64.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Removed the native Discover tuning/debug toolbar menu and simplified the feed-shaping banner language.
-
-### ~~BR65. Baseball Game State Shows Half Indicators~~ — FIXED (May 17)
-
-**Problem:** Baseball markets/events show `HT` and `2H` game state indicators; baseball should show innings.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/65/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_65.jpg`
-
-**Files:** `backend/app/routes/events.py`, `ios/.../Views/EventDetailView.swift`, `ios/.../Views/LeagueGridView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Normalized baseball live state in backend event/feed payloads so baseball uses inning labels and suppresses basketball-style half indicators.
-
-### ~~BR66. Native Sports Feed Runs Out After Live Cards~~ — FIXED (May 17)
-
-**Problem:** On iOS Sports tab, after scrolling past a few "Live Now" cards, there is nothing else to see. The feed should continue with upcoming, recent, and relevant non-live sports content instead of feeling empty once live cards are exhausted.
-
-**Context:** iPhone18,2, iOS 26.5.0, current page `Feed`, `live_game_count=3`, submitted May 17 2026 2:04 PM.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/66/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_66.jpg`
-
-**Investigation notes:**
-1. Check whether `FeedView` only renders live sections for the current response shape or fails to request/fill additional sections after live games.
-2. Compare native Sports feed structure against web `/sports`: live, upcoming, recent/completed, leagues/market sections.
-3. Confirm backend `/api/feed` or sports endpoint returns enough non-live items for native, and whether native filters them out.
-
-**Files:** `ios/.../Views/FeedView.swift`, `ios/.../Services/APIClient.swift`, `backend/app/routes/feed.py`
-**Parallel Safety:** Yellow
-
-**Fix:** Native Sports feed now fetches an event-only supplemental page and appends non-live event rows behind the ranked feed so scrolling past live cards does not empty the tab.
-
-### ~~BR68. Final Score Displays As `final 0.0`~~ — FIXED (May 17)
-
-**Problem:** Native UI displays `final 0.0` at the top of a market/event card, which is confusing and likely a score/status formatting bug.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/68/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_68.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`, `ios/.../Views/EventDetailView.swift`, backend event response shape if value is wrong
-**Parallel Safety:** Yellow
-
-**Fix:** Native Discover no longer shows/submits futures guess cards when the leader probability is missing, preventing stored `0.0` actual probabilities.
-
-### ~~BR69. Calibration Data Looks Wrong/Unimpressive~~ — FIXED (May 17)
-
-**Problem:** Calibration page/data appears wrong enough to undermine trust. Need verify calibration buckets, labels, sample sizes, and whether native/web are presenting the right cohort by default.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/69/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_69.jpg`
-
-**Files:** `backend/app/routes/calibration.py`, `backend/app/tasks/backfill_winners.py`, `ios/.../Views/CalibrationView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Public calibration now only includes settled-looking futures outcomes, preventing default unresolved loser rows from polluting buckets.
-
-### ~~BR70. My Stuff Category Section Formatting Is Noisy~~ — FIXED (May 17)
-
-**Problem:** My Stuff category section looks poorly formatted and highlights too many weird/low-value categories. Native should match the cleaner web treatment instead of surfacing every odd category token.
-
-**Context:** iPhone18,2, iOS 26.5.0, current page `My Stuff`, submitted May 17 2026 2:30 PM.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/70/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_70.jpg`
-
-**Investigation notes:**
-1. Compare native My Stuff category rendering against the web My Stuff/category summary design.
-2. Restrict highlighted categories to a small curated set, merge synonyms, and hide noisy/internal categories.
-3. Tighten spacing, typography, and wrapping for the category section on iPhone-width screens.
-
-**Files:** `ios/.../Views/MyStuffView.swift`, `ios/.../Views/PreferencesView.swift` if shared category chips are reused
-**Parallel Safety:** Green
-
-**Fix:** Native My Stuff now filters noisy/internal team-future rows, renames the generic section to `Team Markets`, and tightens row wrapping/probability layout.
-
-### ~~BR72. Missing Early-Inning Game State Indicators~~ — FIXED (May 17)
-
-**Problem:** Native sports/game UI is missing game state indicators for the first few innings.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/72/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_72.jpg`
-
-**Files:** `backend/app/routes/events.py`, `ios/.../Views/EventDetailView.swift`, `ios/.../Views/FeedView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Same backend normalization as BR65 now emits `Top 1st`, `Bottom 2nd`, etc. from baseball source data.
-
-### ~~BR73. Remove Native Discover Category Filter Pills~~ — FIXED (May 17)
-
-**Problem:** Native Discover category pills are unnecessary and visually noisy; ranking should be good enough that users do not need manual category filters.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/73/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_73.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Removed native Discover category filter state and pill row; ranking owns category mix.
-
-### ~~BR74. Pull-To-Refresh Does Not Produce New Discover Cards~~ — FIXED (May 17)
-
-**Problem:** Repeated pull-to-refresh on native Discover does not produce new cards.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/74/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_74.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`, `backend/app/routes/feed.py`
-**Parallel Safety:** Red (feed pagination/seen-state)
-
-**Fix:** Pull-to-refresh resets native Discover presentation state (`visibleCount`, dismissed cards, impression dedupe) before reloading.
-
-### ~~BR75. Native Discover Names Truncated~~ — FIXED (May 17)
-
-**Problem:** Names are truncated in native Discover card UI.
-
-**Screenshot:** `curl -s "https://api.bainluck.com/api/admin/bug-reports/75/screenshot?secret=$ADMIN_TOKEN" -o /tmp/bug_75.jpg`
-
-**Files:** `ios/.../Views/DiscoverView.swift`
-**Parallel Safety:** Yellow
-
-**Fix:** Same native Discover text expansion as BR61 gives outcome names, subject names, and compact-card names more vertical room.
 
 ---
 
