@@ -13,11 +13,29 @@
 
 const GMAIL_LABEL = "Polymarket"; // Change this to match your Gmail label
 const SHEET_NAME = "Email Blurbs (archive)";
+const AUDIT_EXPORT_SHEET_NAME = "Audit Export";
 const PROCESSED_LABEL = "Polymarket/Processed"; // Auto-created to track what's been read
+const AUDIT_EXPORT_HEADERS = [
+  "date",
+  "source",
+  "market_name",
+  "category",
+  "leader",
+  "leader_probability",
+  "resolution_date",
+  "email_subject",
+  "llm_category",
+  "hook",
+  "interestingness",
+  "timeliness",
+  "shareability",
+];
 
 function processPolymarketEmails() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAME);
+  const archiveSheet = getOrCreateSheet(ss, SHEET_NAME);
+  const auditSheet = getOrCreateAuditExportSheet(ss);
+  const auditKeys = loadAuditExportKeys(auditSheet);
 
   // Get or create the "processed" label
   let processedLabel = GmailApp.getUserLabelByName(PROCESSED_LABEL);
@@ -59,17 +77,18 @@ function processPolymarketEmails() {
             if (blurbs[bi].blurb === blurb) matchedBlurbs.add(bi);
           }
         }
-        sheet.appendRow([
-          Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd"),
-          "polymarket",
-          market.name,
-          market.category || "",
-          market.leader || "",
-          market.probability || "",
-          market.resolutionDate || "",
-          subject,
-          blurb || "",
-        ]);
+        appendGroundTruthRow(archiveSheet, auditSheet, auditKeys, {
+          date: date,
+          source: "polymarket",
+          name: market.name,
+          category: market.category || "",
+          leader: market.leader || "",
+          probability: market.probability || "",
+          resolutionDate: market.resolutionDate || "",
+          subject: subject,
+          hook: blurb || "",
+          isMarket: true,
+        });
         totalMarkets++;
       }
 
@@ -78,17 +97,18 @@ function processPolymarketEmails() {
       for (var bi = 0; bi < blurbs.length; bi++) {
         if (matchedBlurbs.has(bi)) continue;
         var b = blurbs[bi];
-        sheet.appendRow([
-          Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd"),
-          "polymarket",
-          b.headline || "(editorial)",
-          guessCategory(b.blurb),
-          "",
-          "",
-          "",
-          subject,
-          b.blurb,
-        ]);
+        appendGroundTruthRow(archiveSheet, auditSheet, auditKeys, {
+          date: date,
+          source: "polymarket",
+          name: b.headline || "(editorial)",
+          category: guessCategory(b.blurb),
+          leader: "",
+          probability: "",
+          resolutionDate: "",
+          subject: subject,
+          hook: b.blurb,
+          isMarket: false,
+        });
         totalMarkets++;
       }
     }
@@ -98,6 +118,87 @@ function processPolymarketEmails() {
   }
 
   Logger.log("Processed " + totalMarkets + " markets from " + threads.length + " threads");
+}
+
+function getOrCreateSheet(ss, sheetName) {
+  return ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+}
+
+function getOrCreateAuditExportSheet(ss) {
+  const sheet = getOrCreateSheet(ss, AUDIT_EXPORT_SHEET_NAME);
+  const firstRow = sheet.getRange(1, 1, 1, AUDIT_EXPORT_HEADERS.length).getValues()[0];
+  const hasHeaders = firstRow.join("").trim() !== "";
+  if (!hasHeaders) {
+    sheet.getRange(1, 1, 1, AUDIT_EXPORT_HEADERS.length).setValues([AUDIT_EXPORT_HEADERS]);
+  }
+  return sheet;
+}
+
+function loadAuditExportKeys(sheet) {
+  const values = sheet.getDataRange().getValues();
+  const keys = new Set();
+  for (var i = 1; i < values.length; i++) {
+    const row = values[i];
+    const date = row[0] || "";
+    const source = row[1] || "";
+    const name = row[2] || "";
+    const subject = row[7] || "";
+    const key = makeAuditExportKey(date, source, name, subject);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function appendGroundTruthRow(archiveSheet, auditSheet, auditKeys, row) {
+  const formattedDate = Utilities.formatDate(
+    row.date,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+  const category = row.category || guessCategory(row.name + " " + row.hook);
+
+  archiveSheet.appendRow([
+    formattedDate,
+    row.source,
+    row.name,
+    category,
+    row.leader,
+    row.probability,
+    row.resolutionDate,
+    row.subject,
+    row.hook,
+  ]);
+
+  const key = makeAuditExportKey(formattedDate, row.source, row.name, row.subject);
+  if (!key || auditKeys.has(key)) return;
+
+  auditSheet.appendRow([
+    formattedDate,
+    row.source,
+    row.name,
+    category,
+    row.leader,
+    row.probability,
+    row.resolutionDate,
+    row.subject,
+    category,
+    row.hook,
+    scoreInterestingness(row.name, row.hook, category, row.isMarket),
+    inferTimeliness(row.name + " " + row.resolutionDate),
+    scoreShareability(row.name, row.hook, row.isMarket),
+  ]);
+  auditKeys.add(key);
+}
+
+function makeAuditExportKey(date, source, name, subject) {
+  const normalizedName = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!normalizedName) return "";
+  return [
+    String(date || "").trim(),
+    String(source || "").toLowerCase().trim(),
+    normalizedName,
+    String(subject || "").toLowerCase().trim(),
+  ].join("|");
 }
 
 // ============================================================================
@@ -402,6 +503,55 @@ function guessCategory(name) {
   if (/\b(hurricane|tornado|earthquake|wildfire|flood|drought|temperature|heat wave|cold snap|blizzard|storm|climate)\b/.test(lower)) return "weather";
 
   return "other";
+}
+
+function scoreInterestingness(name, hook, category, isMarket) {
+  const text = (name + " " + hook).toLowerCase();
+  var score = isMarket ? 8 : 7;
+
+  if (/\b(trump|biden|fed|openai|apple|google|tesla|nvidia|spacex|china|russia|iran|israel|ukraine|world cup|super bowl|nba finals|stanley cup|oscars|grammys)\b/.test(text)) {
+    score += 1;
+  }
+  if (/\b(war|ceasefire|peace|election|president|recession|rate cut|ipo|launch|winner|champion|record|ban|approve)\b/.test(text)) {
+    score += 1;
+  }
+  if (category === "geopolitics" || category === "politics" || category === "economics" || category === "tech") {
+    score += 1;
+  }
+  if (hook && hook.length >= 80) {
+    score += 1;
+  }
+  if (!isMarket && !looksLikeMarket(name)) {
+    score -= 1;
+  }
+
+  return Math.max(1, Math.min(10, score));
+}
+
+function inferTimeliness(text) {
+  const lower = String(text || "").toLowerCase();
+  if (/\b(today|tomorrow|this week|may|june|july|august|september|october|november|december)\b/.test(lower)) {
+    return "this_week";
+  }
+  if (/\bq[1-4]|2026|2027|2028\b/.test(lower)) {
+    return "ongoing";
+  }
+  return "this_month";
+}
+
+function scoreShareability(name, hook, isMarket) {
+  var score = isMarket ? 8 : 7;
+  const text = (name + " " + hook).toLowerCase();
+  if (/\b(taylor swift|drake|trump|elon|world cup|super bowl|oscars|ai|openai|spacex|alien|ufo)\b/.test(text)) {
+    score += 1;
+  }
+  if (hook && hook.length >= 120) {
+    score += 1;
+  }
+  if (!isMarket && !looksLikeMarket(name)) {
+    score -= 1;
+  }
+  return Math.max(1, Math.min(10, score));
 }
 
 // ============================================================================
