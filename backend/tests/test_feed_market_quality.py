@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.routes.feed import (
+    _dedupe_futures_by_canonical,
     _market_base_trace,
     _market_runtime_filter_trace,
     _outcomes_overlap,
@@ -1322,6 +1323,48 @@ class TestFeedQualityDebug:
         }
 
         assert _outcomes_overlap(kalshi, polymarket) is True
+
+    def test_canonical_dedupe_does_not_collapse_binary_against_date_market(self):
+        musk_altman = {
+            "data": {
+                "name": "Will Elon Musk win his case against Sam Altman?",
+                "top_outcomes": [{"name": "Yes"}],
+            }
+        }
+        ice_nice = {
+            "data": {
+                "name": "Trump renames ICE to NICE by...?",
+                "top_outcomes": [{"name": "December 31"}, {"name": "June 30"}],
+            }
+        }
+
+        assert _outcomes_overlap(musk_altman, ice_nice) is False
+
+    def test_canonical_dedupe_ignores_broad_non_sports_keys(self):
+        musk_altman = {
+            "type": "futures",
+            "score": 100,
+            "data": {
+                "id": 114434,
+                "name": "Will Elon Musk win his case against Sam Altman?",
+                "canonical_market_key": "politics::championship:2026",
+                "top_outcomes": [{"name": "Yes"}],
+            },
+        }
+        ice_nice = {
+            "type": "futures",
+            "score": 93,
+            "data": {
+                "id": 13543672,
+                "name": "Trump renames ICE to NICE by...?",
+                "canonical_market_key": "politics::championship:2026",
+                "top_outcomes": [{"name": "December 31"}, {"name": "June 30"}],
+            },
+        }
+
+        deduped = _dedupe_futures_by_canonical([musk_altman, ice_nice])
+
+        assert {item["data"]["id"] for item in deduped} == {114434, 13543672}
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(

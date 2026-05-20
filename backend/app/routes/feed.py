@@ -652,7 +652,7 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     deduped: list[dict] = []
     for fitem in futures_items:
         key = fitem["data"].get("canonical_market_key")
-        if key is None:
+        if key is None or not _canonical_key_safe_for_dedupe(key):
             deduped.append(fitem)
             continue
         if key not in seen_canonical:
@@ -667,6 +667,33 @@ def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
                 deduped.append(fitem)
     deduped.extend(seen_canonical.values())
     return deduped
+
+
+def _canonical_key_safe_for_dedupe(key: str | None) -> bool:
+    """Reject broad generated keys that are too weak for feed dedupe."""
+    if not key:
+        return False
+    parts = key.split(":")
+    if len(parts) < 4:
+        return True
+    sport, league, category, _season = parts[:4]
+    sports_like_categories = {
+        "baseball",
+        "basketball",
+        "football",
+        "golf",
+        "hockey",
+        "mma",
+        "olympics",
+        "soccer",
+        "tennis",
+    }
+    generic_market_categories = {"championship", "prediction", "other", "general"}
+    return bool(
+        league
+        or sport in sports_like_categories
+        or category not in generic_market_categories
+    )
 
 
 def _name_tokens_for_dedupe(name: str | None) -> set[str]:

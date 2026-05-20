@@ -1334,5 +1334,24 @@ def compute_canonical_market_key(
     if not sport or not cat:
         return None
 
+    # Generic non-sports keys without a league/domain axis collapse unrelated
+    # public-interest markets (e.g. politics::championship:2026). Sports can
+    # still use league-less championship keys because the sport axis is much
+    # narrower and existing grouping depends on that fallback.
+    sports_like_categories = {
+        "baseball",
+        "basketball",
+        "football",
+        "golf",
+        "hockey",
+        "mma",
+        "olympics",
+        "soccer",
+        "tennis",
+    }
+    generic_market_categories = {"championship", "prediction", "other", "general"}
+    if not league and sport not in sports_like_categories and cat in generic_market_categories:
+        return None
+
     # Build key: use empty string for missing optional parts
     return f"{sport}:{league}:{cat}:{szn}"

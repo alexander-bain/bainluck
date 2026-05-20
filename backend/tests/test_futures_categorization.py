@@ -686,6 +686,10 @@ class TestCanonicalMarketKey:
         key = compute_canonical_market_key("politics", "US", "prediction", "2026")
         assert key == "politics:US:prediction:2026"
 
+    def test_broad_non_sports_key_without_league_returns_none(self):
+        key = compute_canonical_market_key("politics", None, "championship", "2026")
+        assert key is None
+
     def test_case_normalization(self):
         key = compute_canonical_market_key("Basketball", "nba", "Championship", "2025-26")
         assert key == "basketball:NBA:championship:2025-26"
