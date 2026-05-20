@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.routes.feed import (
+    _apply_external_curator_recall_score,
     _dedupe_futures_by_canonical,
     _market_base_trace,
     _market_runtime_filter_trace,
@@ -1365,6 +1366,30 @@ class TestFeedQualityDebug:
         deduped = _dedupe_futures_by_canonical([musk_altman, ice_nice])
 
         assert {item["data"]["id"] for item in deduped} == {114434, 13543672}
+
+    def test_external_curator_recall_boost_is_bounded(self):
+        reasons = []
+
+        score = _apply_external_curator_recall_score(
+            93,
+            reasons,
+            is_external_curator_recall=True,
+        )
+
+        assert score == 100
+        assert reasons == ["external_curator_recall:+7"]
+
+    def test_external_curator_recall_boost_skips_non_recalled_market(self):
+        reasons = []
+
+        score = _apply_external_curator_recall_score(
+            93,
+            reasons,
+            is_external_curator_recall=False,
+        )
+
+        assert score == 93
+        assert reasons == []
 
     def test_strong_hook_boosts_score(self):
         quality = classify_market_quality(

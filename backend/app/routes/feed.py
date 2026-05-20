@@ -696,6 +696,24 @@ def _canonical_key_safe_for_dedupe(key: str | None) -> bool:
     )
 
 
+_EXTERNAL_CURATOR_RECALL_SCORE_BONUS = 12
+
+
+def _apply_external_curator_recall_score(
+    score: int,
+    reasons: list[str],
+    *,
+    is_external_curator_recall: bool,
+) -> int:
+    """Give reviewed external-curator matches a bounded recall lift."""
+    if not is_external_curator_recall:
+        return score
+    boosted = min(100, score + _EXTERNAL_CURATOR_RECALL_SCORE_BONUS)
+    if boosted != score:
+        reasons.append(f"external_curator_recall:+{boosted - score}")
+    return boosted
+
+
 def _name_tokens_for_dedupe(name: str | None) -> set[str]:
     if not name:
         return set()
@@ -1771,6 +1789,8 @@ def _score_market_trace(
     market: FuturesMarket,
     now: datetime,
     source_count: int,
+    *,
+    is_external_curator_recall: bool = False,
 ) -> dict:
     outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(market)
     runtime_filters = _market_runtime_filter_trace(
@@ -1850,6 +1870,11 @@ def _score_market_trace(
         hook_description=market.hook_description,
         headline=headline,
         quality=quality,
+    )
+    explanation_score = _apply_external_curator_recall_score(
+        explanation_score,
+        highlight_result.reasons,
+        is_external_curator_recall=is_external_curator_recall,
     )
     p_result = compute_futures_multiplier(
         ctx=PersonalizationContext(),
@@ -2095,7 +2120,15 @@ async def build_discover_market_trace(
     )
     base_eligibility = _market_base_trace(market, now)
     candidate_pools = await _discover_candidate_pool_trace(db, now, market_id)
-    score_trace = _score_market_trace(market, now, source_count)
+    score_trace = _score_market_trace(
+        market,
+        now,
+        source_count,
+        is_external_curator_recall=any(
+            pool.get("name") == "external_curator_recall" and pool.get("included")
+            for pool in candidate_pools.get("pools", [])
+        ),
+    )
 
     rank_phases = await _discover_rank_phase_trace(
         db,
@@ -3821,6 +3854,11 @@ async def _score_futures(
             hook_description=market.hook_description,
             headline=headline,
             quality=quality,
+        )
+        base_score = _apply_external_curator_recall_score(
+            base_score,
+            highlight_result.reasons,
+            is_external_curator_recall=market.id in external_curator_recall_ids,
         )
         discover_llm_metadata = _get_discover_llm_metadata(market.market_metadata)
         llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
