@@ -11,7 +11,7 @@ All outstanding work items for Bain Luck. Shipped items live in `docs/completed-
 **Open items (ordered by priority):**
 1. **Verify golf/hockey MCE drop (May 19)** — closing line fixes shipped May 18, awaiting backfill recompute
 2. **Outcome count expansion (Subproject F)** — add spreads/totals from odds_snapshots to calibration (10-20x more data points)
-3. **is_winner coverage → 95%+** — currently 92.7% Kalshi, 92.7% Polymarket (see Workstream: is_winner Backfill below)
+3. ~~**is_winner coverage → 95%+**~~ — ✅ DONE May 19. Kalshi 95.6%, Polymarket 95.8%, DataGolf 95.0% (see Workstream: is_winner Backfill below)
 4. **Non-NHL hockey calibration** — AHL/SHL/DEL markets excluded; need event linkage or commence_time derivation
 5. **Time-horizon calibration** — evaluate non-event markets (elections, economics) at T-30/T-7/T-1 days before resolution
 6. **Source "fair fight" comparison** — methodology for comparing accuracy controlling for market difficulty
@@ -1109,22 +1109,32 @@ Rewritten from 310→249 lines. Vision, Target Users, User Journeys, Feature Map
 
 **Monitor:** `GET /api/admin/backfill-winners/status?secret=$ADMIN_TOKEN` → check `sources` array + `stuck_diagnosis`.
 
-**Current state (May 17, 2026):**
-| Source | Resolved | has_winner | Coverage | Target |
-|--------|----------|------------|----------|--------|
-| Kalshi | ~70K | ~61K | **88%** | 95%+ |
-| Polymarket | ~81K | ~74K | **92%** | 95%+ |
-| DataGolf | 80 | 76 | **95%** | ✅ |
+**Current state (May 19, 2026):**
+| Source | Resolved | has_winner | Tradeable | Coverage | Target |
+|--------|----------|------------|-----------|----------|--------|
+| Kalshi | ~68K | ~63K | ~66K | **95.6%** | ✅ |
+| Polymarket | ~86K | ~80K | ~84K | **95.8%** | ✅ |
+| DataGolf | 80 | 76 | 54 | **95.0%** | ✅ |
 
-**What shipped (May 15):**
-- ✅ 3-pass probability detection: mutually-exclusive (prob sum ~1.0, max wins), independent thresholds (prob sum >1.5, each >0.50 wins), all-losers (max ≤0.10). Resolved ~75K outcomes in one call.
-- ✅ Kalshi API targeted lookup via `GET /events/{ticker}` (coded, not yet run to completion — deploys keep killing it)
-- ✅ Synchronous endpoint: `POST /api/admin/backfill-winners/probability-only` bypasses Celery
+Coverage now excludes untradeable ghost markets (42K total) from the denominator — markets where ALL outcomes have null calibration + opening probability. These can never have a winner identified.
+
+**What shipped (May 18-19):**
+- ✅ Phase 3: Polymarket API settlement — fetches `/events/{event_id}` from Gamma API, matches by condition_id, sets is_winner from `outcomePrices`. Groups by event to avoid duplicate API calls. 500/run.
+- ✅ Coverage metric fix — `needs_backfill` excludes untradeable ghost markets (all outcomes have null cal+open)
+- ✅ Phase 2 limit: 2000 → 5000 per run
+- ✅ DataGolf resolution from leaderboard — new `_backfill_datagolf_winners()` uses actual tournament positions, not model predictions. Pass 3 now excludes DataGolf (`source != 'datagolf'`).
+- ✅ Snapshot distribution diagnostic on status endpoint
+
+**Key investigation findings (May 18-19):**
+- 58% of stuck Kalshi outcomes have ZERO snapshots (never polled). 43% of Polymarket similar. These are ghost markets.
+- 27% of Polymarket stuck outcomes have 21+ snapshots — real trading data, but settlement price never captured. Phase 3 addresses these.
+- Ghost markets do NOT contaminate calibration (verified: `opening_probability IS NOT NULL` filter, mode-price detection, and `_null_untradeable_openings()` all prevent leakage).
+- Phase 3 initially failed because Gamma API `/markets/{condition_id}` doesn't work as a path param. Fixed to use `/events/{event_id}` + condition matching.
 
 **Remaining (ordered):**
-1. **[P1] Run Kalshi API targeted lookup to completion** — The full `backfill_winners` task includes this as Phase 2. Needs a clean 10-minute window without deploys. Will resolve the 5,860 Kalshi markets at exactly 0.500. Trigger: `POST /api/admin/backfill-winners` (Celery) or wait for scheduled run (every 6h at :45).
-2. **[P2] Investigate 4,450 Polymarket all-losers** — Winning outcome not in our DB. Sample some to understand: are these decomposed sub-markets where we only have part of the event? Or markets where Polymarket added the winner after we stopped polling? Low MCE impact since they're already marked `is_winner=false`.
-3. **[P2] DataGolf last 4** — 4 markets with midrange probs. Likely need settlement from DataGolf tournament results. Low priority (N=4).
+1. **[P1] Kalshi baseball/hockey calibration** — Kalshi shows +17pp error in baseball, +23pp in hockey. Suspected cause: Pass 2 arbitrarily picks highest-prob outcome as winner for markets stuck near 0.50. Phase 2 limit bump should help — check api_miss rate after next run.
+2. **[P2] Polymarket all-losers (4,575)** — Winning outcome not in DB. Mostly NegRisk sub-markets. Phase 3 addresses some but many are truly missing-winner markets. Low MCE impact.
+3. **[P2] Verify golf/DataGolf MCE improvement** — `_backfill_datagolf_winners()` shipped. Check after next backfill run.
 
 **Guard rails against 3 failure states:**
 - **Dropped/forgotten:** Check the status endpoint at session start. Coverage < 95% = P0.
@@ -1184,7 +1194,7 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 
 **Monitor:** `GET /api/calibration` → overall MCE. Frontend `/calibration` for per-category.
 
-**Current state (May 18, 2026):** MCE CI [2.86pp, 5.01pp]. 62,569 outcomes, 26,275 winners. Active trading ECE 4.5pp, opening-price ECE 7.6pp. Golf MCE 27.8pp (broken closing lines from bad commence_time). Hockey MCE 12.1pp (broken closing lines from Polymarket listing dates). Wilson CIs per bucket shipped.
+**Current state (May 19, 2026):** MCE 3.1pp (CI [1.9, 4.7]). 232,625 outcomes, 161,972 markets, 5 sources. Golf MCE 25.9pp (fixed: DataGolf model predictions were treated as settlement prices — leaderboard-based resolution shipped). Hockey MCE 12.5pp (Kalshi under-prediction, investigating). Spreads MCE 28.6pp → should drop after devig fix shipped.
 
 **Data pipeline shipped:**
 - ✅ Public calibration endpoint (`GET /api/calibration`, 1h cache) with `price_moved` dimension
@@ -1199,10 +1209,11 @@ WHERE source = 'kalshi' AND event_id IS NULL AND market_metadata ? 'backfill_lin
 **Subproject A: Snapshot health** — ✅ EFFECTIVELY DONE
 Zero-snap: 23K → 702 (0.2%). Remaining 702 are Polymarket esports/tennis with no CLOB history. No further action unless zero-snap regresses above 1K.
 
-**Subproject B: Golf calibration (MCE 27.8pp)** — FIX SHIPPED May 18
-**Root cause:** Kalshi `commence_time` = market listing date, not tournament start. Part A grabbed mid-tournament prices as "closing lines." Fix: Part A now JOINs `events` table and uses `events.commence_time` (the real tournament start from DataGolf) for event-linked markets. Reset step NULLs old bad calibration prices so next backfill recomputes with correct logic.
-1. **ACTION (May 19):** Verify golf MCE drops after backfill_winners runs. Check `/calibration` page.
-2. Verification: `curl "https://api.bainluck.com/api/calibration/bucket-debug?secret=$ADMIN_TOKEN&source=kalshi&category=golf&bucket=5"` — calibration_probability should be pre-tournament prices, not mid-round.
+**Subproject B: Golf calibration (MCE 25.9pp)** — TWO FIXES SHIPPED
+**Root cause 1 (May 18):** Kalshi `commence_time` = market listing date, not tournament start. Part A grabbed mid-tournament prices as "closing lines." Fix: Part A now JOINs `events` table and uses `events.commence_time`.
+**Root cause 2 (May 19):** DataGolf placement markets (make_cut, top_5, top_10, top_20) use model predictions in `current_probability`, NOT settlement prices. Pass 3 (independent thresholds) treated every player with >50% make_cut probability as a "winner" — even players who missed the cut. This is why bucket 9 showed 94.8% predicted but only 28.3% actual.
+**Fix (May 19):** New `_backfill_datagolf_winners()` resolves from actual leaderboard positions stored in `market_metadata`. Handles ties (T5, T12), cut statuses (CUT, MC, WD, DQ). Pass 3 now excludes DataGolf (`source != 'datagolf'`). 18 tests for position parsing.
+1. **ACTION:** Verify golf MCE drops after next backfill run.
 
 **Subproject C: Hockey calibration (MCE 12.1pp)** — FIX SHIPPED May 18
 **Root cause:** Polymarket `commence_time` = market listing date. Part C rescued with settlement prices (0.05% / 99.95%), not predictions. Fix: Part A now uses `events.commence_time` for event-linked NHL game markets. Part C restricted to event-linked markets only, preventing settlement price contamination. Non-NHL hockey (AHL, SHL, DEL, KHL) without `event_id` uses opening price.
@@ -1211,6 +1222,12 @@ Zero-snap: 23K → 702 (0.2%). Remaining 702 are Polymarket esports/tennis with 
 
 **Subproject E: Non-event market closing lines** — FIX SHIPPED May 18
 **Root cause:** Part C rescue grabbed settlement prices for ALL markets, including elections, economics, entertainment. A "Will Taylor Swift get pregnant?" market at 10% opening got `calibration_probability = 0.05%` (settlement) instead of 10% (the actual prediction). Fix: Part C now restricted to event-linked markets only. Non-event markets use opening price after initial trading settles (Part B). Methodology note updated on `/calibration` page.
+
+**Subproject G: Spreads/Totals devig (MCE 28.6pp / 7.3pp)** — FIX SHIPPED May 19
+**Root cause:** Calibration endpoint computed spread/totals implied probability from ONE side of the American odds without normalizing against the other side. Standard -110/-110 showed as 52.4% instead of true 50%. Moneylines were already devigged via `moneyline_to_probability(remove_juice=True)` — this gap only affected the calibration page.
+**Fix:** Normalize `home_implied / (home_implied + away_implied)` for spreads, `over_implied / (over_implied + under_implied)` for totals. Both counter-side odds already stored on `events` table.
+**Confirmed safe:** All user-facing probabilities across the site ARE devigged. Moneylines use `remove_vig()` in `odds_math.py`. Futures use per-bookmaker normalization. Kalshi/Polymarket are prediction markets (no vig). This was a calibration-display-only issue.
+1. **ACTION:** Verify Spreads MCE drops from 28.6pp after deploy.
 
 **Subproject F: Outcome count expansion** — NEXT PRIORITY
 Currently 62K resolved outcomes from prediction markets only. The Odds API sportsbook data contributes just 2 points per game (home/away win). All spreads, totals, player props, 1H/2H lines in `odds_snapshots` are untapped. Steps:
