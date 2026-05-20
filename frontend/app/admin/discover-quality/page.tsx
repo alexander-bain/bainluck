@@ -265,7 +265,14 @@ interface GroundTruthHealthReport {
   loaded_count: number;
   load_rate: number | null;
   latest_date: string | null;
+  latest_source_date?: string | null;
+  latest_loaded_date?: string | null;
   stale: boolean | null;
+  stale_after_days?: number | null;
+  min_interestingness?: number | null;
+  lookback_days?: number | null;
+  cutoff_date?: string | null;
+  filter_counts?: Record<string, number>;
   issues: GroundTruthHealthIssue[];
 }
 
@@ -2908,6 +2915,23 @@ export default function DiscoverQualityPage() {
                       {report.issues[0] && (
                         <div className="mt-1 text-xs text-text-muted line-clamp-2">
                           {report.issues[0].message}
+                        </div>
+                      )}
+                      {report.filter_counts && Object.keys(report.filter_counts).length > 0 && (
+                        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                          <span>CSV rows: {report.filter_counts.csv_rows ?? report.raw_row_count}</span>
+                          <span>Source rows: {report.filter_counts.source_rows ?? report.raw_row_count}</span>
+                          <span>Old: {report.filter_counts.outside_lookback ?? 0}</span>
+                          <span>Low score: {report.filter_counts.low_interestingness ?? 0}</span>
+                          <span>Duplicate: {report.filter_counts.duplicate ?? 0}</span>
+                          <span>Loaded: {report.filter_counts.loaded ?? report.loaded_count}</span>
+                        </div>
+                      )}
+                      {(report.latest_source_date || report.latest_loaded_date || report.cutoff_date) && (
+                        <div className="mt-1 text-[11px] text-text-muted">
+                          Source {report.latest_source_date || "unknown"}
+                          {report.latest_loaded_date ? `, loaded ${report.latest_loaded_date}` : ""}
+                          {report.cutoff_date ? `, cutoff ${report.cutoff_date}` : ""}
                         </div>
                       )}
                     </div>

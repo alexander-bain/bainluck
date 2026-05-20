@@ -64,8 +64,21 @@ def test_assess_ground_truth_report_health_detects_low_load_rate_and_stale_sourc
                 "raw_row_count": 100,
                 "loaded_count": 10,
                 "latest_date": "2026-05-01",
+                "latest_source_date": "2026-05-01",
+                "latest_loaded_date": "2026-04-30",
                 "stale": True,
                 "stale_after_days": 7,
+                "min_interestingness": 8,
+                "lookback_days": 21,
+                "cutoff_date": "2026-04-10",
+                "filter_counts": {
+                    "csv_rows": 150,
+                    "source_rows": 100,
+                    "outside_lookback": 20,
+                    "low_interestingness": 60,
+                    "duplicate": 10,
+                    "loaded": 10,
+                },
                 "source_health": [
                     {
                         "source": "Instagram @kalshi",
@@ -81,6 +94,10 @@ def test_assess_ground_truth_report_health_detects_low_load_rate_and_stale_sourc
 
     assert health["severity"] == "warning"
     assert health["load_rate"] == 0.1
+    assert health["latest_source_date"] == "2026-05-01"
+    assert health["latest_loaded_date"] == "2026-04-30"
+    assert health["cutoff_date"] == "2026-04-10"
+    assert health["filter_counts"]["low_interestingness"] == 60
     assert {issue["code"] for issue in health["issues"]} == {
         "low_load_rate",
         "stale",

@@ -22,6 +22,7 @@ def assess_ground_truth_report_health(
     raw_row_count = _int(metadata.get("raw_row_count"))
     loaded_count = _int(metadata.get("loaded_count"))
     configured = bool(metadata.get("configured"))
+    filter_counts = metadata.get("filter_counts") or {}
     issues: list[dict[str, str]] = []
 
     if not configured:
@@ -102,7 +103,14 @@ def assess_ground_truth_report_health(
         "loaded_count": loaded_count,
         "load_rate": round(load_rate, 4) if load_rate is not None else None,
         "latest_date": metadata.get("latest_date"),
+        "latest_source_date": metadata.get("latest_source_date"),
+        "latest_loaded_date": metadata.get("latest_loaded_date"),
         "stale": metadata.get("stale"),
+        "stale_after_days": metadata.get("stale_after_days"),
+        "min_interestingness": metadata.get("min_interestingness"),
+        "lookback_days": metadata.get("lookback_days"),
+        "cutoff_date": metadata.get("cutoff_date"),
+        "filter_counts": filter_counts,
         "issues": issues,
     }
 

@@ -160,30 +160,46 @@ def load_polymarket_email_ground_truth_report_from_csv_text(
     seen: set[str] = set()
     items: list[dict[str, str]] = []
     source_rows: list[dict[str, str]] = []
+    source_dates: list[date] = []
     loaded_dates: list[date] = []
+    filter_counts = _empty_filter_counts()
 
     for row in reader:
+        filter_counts["csv_rows"] += 1
         row = _normalize_row_keys(row)
         name = _field(row, "market_name", "Market Name").strip()
         source = _field(row, "source", "Source").strip().lower()
-        if not name or source != "polymarket":
+        if not name:
+            filter_counts["missing_name"] += 1
+            continue
+        if source != "polymarket":
+            filter_counts["non_polymarket_source"] += 1
             continue
 
+        filter_counts["source_rows"] += 1
         source_rows.append(row)
         row_date = _parse_date(_field(row, "date", "Date"))
         if row_date:
-            loaded_dates.append(row_date)
+            source_dates.append(row_date)
+        else:
+            filter_counts["missing_date"] += 1
         if cutoff and row_date and row_date < cutoff:
+            filter_counts["outside_lookback"] += 1
             continue
 
         interestingness = _parse_int(_field(row, "interestingness", "Interestingness"))
         if interestingness < min_interestingness:
+            filter_counts["low_interestingness"] += 1
             continue
 
         key = _dedupe_key(name)
         if not key or key in seen:
+            filter_counts["duplicate"] += 1
             continue
         seen.add(key)
+        filter_counts["loaded"] += 1
+        if row_date:
+            loaded_dates.append(row_date)
 
         category = (
             _field(row, "llm_category", "LLM Category").strip()
@@ -213,8 +229,11 @@ def load_polymarket_email_ground_truth_report_from_csv_text(
         "items": items,
         "metadata": _build_metadata(
             source_rows,
-            loaded_dates,
+            source_dates,
             loaded_count=len(items),
+            loaded_dates=loaded_dates,
+            filter_counts=filter_counts,
+            cutoff_date=cutoff,
             min_interestingness=min_interestingness,
             lookback_days=lookback_days,
             now=now,
@@ -422,6 +441,20 @@ def _dedupe_key(name: str) -> str:
     return " ".join(name.lower().split())
 
 
+def _empty_filter_counts() -> dict[str, int]:
+    return {
+        "csv_rows": 0,
+        "source_rows": 0,
+        "missing_name": 0,
+        "non_polymarket_source": 0,
+        "missing_date": 0,
+        "outside_lookback": 0,
+        "low_interestingness": 0,
+        "duplicate": 0,
+        "loaded": 0,
+    }
+
+
 def _read_google_sheet_values(spreadsheet_id: str, sheet_name: str) -> list[list[Any]]:
     from google.auth.transport.requests import Request
     from google.oauth2 import service_account
@@ -499,6 +532,9 @@ def _build_metadata(
     row_dates: list[date],
     *,
     loaded_count: int = 0,
+    loaded_dates: list[date] | None = None,
+    filter_counts: dict[str, int] | None = None,
+    cutoff_date: date | None = None,
     min_interestingness: int = DEFAULT_MIN_INTERESTINGNESS,
     lookback_days: int | None = DEFAULT_LOOKBACK_DAYS,
     now: datetime | None = None,
@@ -506,20 +542,29 @@ def _build_metadata(
 ) -> dict[str, Any]:
     base = now or datetime.now(timezone.utc)
     latest_date = max(row_dates) if row_dates else None
+    latest_loaded_date = max(loaded_dates) if loaded_dates else None
     stale_after = base.date() - timedelta(days=DEFAULT_STALE_AFTER_DAYS)
     stale = latest_date < stale_after if latest_date else None
+    filter_counts = filter_counts or _empty_filter_counts()
     return {
         "configured": True,
         "source": None,
         "source_url": None,
         "source_path": None,
+        "raw_csv_row_count": filter_counts.get("csv_rows", len(source_rows)),
         "raw_row_count": len(source_rows),
         "loaded_count": loaded_count,
         "latest_date": latest_date.isoformat() if latest_date else None,
+        "latest_source_date": latest_date.isoformat() if latest_date else None,
+        "latest_loaded_date": latest_loaded_date.isoformat()
+        if latest_loaded_date
+        else None,
         "stale": stale,
         "stale_after_days": DEFAULT_STALE_AFTER_DAYS,
         "min_interestingness": min_interestingness,
         "lookback_days": lookback_days,
+        "cutoff_date": cutoff_date.isoformat() if cutoff_date else None,
+        "filter_counts": filter_counts,
         "error": error,
     }
 

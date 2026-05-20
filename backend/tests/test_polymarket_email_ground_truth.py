@@ -31,18 +31,35 @@ DEDUPING_CSV_TEXT = """Date,Source,Market Name,Category,Leader,Leader Probabilit
 
 
 def test_load_polymarket_email_ground_truth_filters_and_dedupes():
-    items = load_polymarket_email_ground_truth_from_csv_text(
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
         CSV_TEXT,
         min_interestingness=8,
         lookback_days=21,
         now=datetime(2026, 5, 11, tzinfo=timezone.utc),
     )
+    items = report["items"]
 
     assert len(items) == 1
     assert items[0]["source"] == "polymarket_email"
     assert items[0]["name"] == "Will Donald Trump visit China on May 13?"
     assert items[0]["category"] == "politics"
     assert items[0]["interestingness"] == "9"
+    assert report["metadata"]["raw_csv_row_count"] == 5
+    assert report["metadata"]["raw_row_count"] == 4
+    assert report["metadata"]["latest_source_date"] == "2026-05-11"
+    assert report["metadata"]["latest_loaded_date"] == "2026-05-11"
+    assert report["metadata"]["cutoff_date"] == "2026-04-20"
+    assert report["metadata"]["filter_counts"] == {
+        "csv_rows": 5,
+        "source_rows": 4,
+        "missing_name": 0,
+        "non_polymarket_source": 1,
+        "missing_date": 0,
+        "outside_lookback": 1,
+        "low_interestingness": 1,
+        "duplicate": 1,
+        "loaded": 1,
+    }
 
 
 def test_load_polymarket_email_ground_truth_accepts_stable_export_headers():
@@ -72,6 +89,8 @@ def test_load_polymarket_email_ground_truth_dedupes_case_and_spacing():
 
     assert report["metadata"]["raw_row_count"] == 3
     assert report["metadata"]["loaded_count"] == 1
+    assert report["metadata"]["filter_counts"]["duplicate"] == 1
+    assert report["metadata"]["filter_counts"]["outside_lookback"] == 1
     assert report["items"][0]["name"] == "Will Fed cut rates in June?"
 
 
