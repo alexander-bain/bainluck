@@ -41,7 +41,7 @@ struct FuturesDetailView: View {
                         // Show for any market with outcomes (>= 1), including
                         // binary markets that have only a single "Yes" outcome
                         if market.outcomes.count >= 1 {
-                            TournamentChartView(
+                            EvolutionChartView(
                                 marketId: marketId,
                                 hours: 168,
                                 tournamentStart: golfTournamentStart(market),
