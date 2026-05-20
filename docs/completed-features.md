@@ -1,5 +1,18 @@
 # Completed Features (Shipped)
 
+## May 19-20, 2026 — App Store Fixes + Bug Triage + Route Refactors
+
+- ✅ **App Store review fixes** — Added support section to `/about` page (web + native) with `bugs@bainluck.com` contact. Auth health diagnostic endpoint (`/api/auth/health`) verifies Firebase SDK can create tokens. Fixed potential `created_at` null crash in auth response. Drafted "Who creates predictions?" reply for App Store Connect.
+- ✅ **BR76: Games stuck on "Live"** — ESPN sync now transitions `live → completed` when it sees `post/final` status. StatPal sync does the same for `finished`. Fallback task tightened from 5-hour hardcode to per-sport max duration + 30 min. Three-layer detection: ESPN (~30s), StatPal (~5min), fallback task (per-sport max).
+- ✅ **BR80: "Failed to load timeline"** — Sparse-snapshot futures markets now show "Limited price history available" instead of an error. Applied to iOS TournamentChartView and web futures detail page.
+- ✅ **BR83: Win prob chart missing period markers** — Soccer halftime fallback was overwriting legitimate baseball inning markers because all-numeric labels (1-9) triggered the fallback condition. Fixed by only applying fallback when no markers exist at all.
+- ✅ **Predictions/challenges Depends(get_db) refactor** — Both routes used `async with get_session()` instead of FastAPI's `Depends` injection. Refactored to standard pattern. Tests rewritten to use conftest mock_db. Net -285 lines.
+- ✅ **OG image route fix** — Used `get_db` as async context manager instead of `Depends`. Fixed to standard pattern + 7 integration tests added.
+- ✅ **Bug report UX** — Added "Remove Screenshot" button for when large payloads time out on Heroku's 30s router limit. Error message now suggests this workaround.
+- ✅ **Admin route integration tests** — 55 tests for admin_celery and admin_taxonomy routes.
+- ✅ **Backlog pruning** — 1,980 → 1,499 lines. Completed item details collapsed.
+- ✅ **iOS CQ-16 verified** — All @ViewBuilder helpers and view-local functions already have `private` access.
+
 ## May 18, 2026 — Calibration Deep Dive + Test Coverage Sprint
 
 - ✅ **Calibration outcome expansion** — Spreads and totals from Odds API added to calibration pipeline. Migration, backfill, and two new calibration query CTEs. Expected 10-20x more resolved outcomes.
