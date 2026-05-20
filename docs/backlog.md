@@ -752,6 +752,60 @@ Root cause: PKCanvasView overlay used `.frame(maxHeight: 300)` without width con
 
 ---
 
+## Rage Shake Triage #9 (May 19-20) — Bugs #76-83
+
+### BR83. Win Prob Chart Missing Period Markers (P2)
+
+**Problem:** BOS vs KC baseball game: Score Differential chart shows inning markers (1-9) but Win Probability chart only shows "2H". Period markers from StatPal/ESPN aren't propagating to the win prob chart.
+
+**Screenshot:** `/tmp/bug_83.jpg`
+**Files:** `frontend/components/OddsChart.tsx` or `ios/.../Components/OddsChartView.swift`, `backend/app/routes/events.py` (period marker computation)
+**Parallel Safety:** Yellow (touches event detail)
+
+### BR80. Futures Detail "Failed to Load Timeline" (P2)
+
+**Problem:** Hantavirus market detail page shows "Failed to load timeline" with no chart data. Market has only 1 sportsbook (Kalshi) and sparse snapshots. The open-sparse backfill should eventually populate history for feed-visible markets, but the "Failed to load" UX is poor — should show "Limited data" or hide the chart section.
+
+**Screenshot:** `/tmp/bug_80.jpg`
+**Files:** `ios/.../Views/FuturesDetailView.swift`, `frontend/app/futures/[id]/page.tsx`
+**Parallel Safety:** Green
+
+### BR79. Discover Event Card Missing Sport Label + Lacrosse Display (P2)
+
+**Problem:** Duke vs NC State lacrosse game (21-12) shows in Discover with no sport identifier. User can't tell what sport this is. Also says "Won as 29% underdog" which is confusing without sport context. Two sub-issues:
+1. No sport label on Discover event cards (need sport badge like "LACROSSE" or sport icon)
+2. Lacrosse scores (21-12) look unusual without context
+
+**Screenshot:** `/tmp/bug_79.jpg`
+**Files:** Native Discover event card component, `backend/app/routes/feed.py` (event card data)
+**Parallel Safety:** Red (touches Discover card rendering — defer to Discover thread)
+
+### BR78. Stale Golf Tournament in Discover (P2)
+
+**Problem:** "Truist Championship Winner" with Rory McIlroy at 13% showing in Discover. Tournament may be completed/resolved but market still appears as active. Staleness filter should catch this.
+
+**Screenshot:** `/tmp/bug_78.jpg`
+**Files:** `backend/app/routes/feed.py` (staleness), `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** Red (touches Discover ranking — defer to Discover thread)
+
+### BR77. Stale Weather Market in Discover — 6 Days Past Resolution (P2)
+
+**Problem:** "Will it rain in NYC on May 11, 2026?" showing in Discover on May 17 — 6 days after the resolution date. The staleness/resolution filter should catch markets past their resolution date.
+
+**Screenshot:** `/tmp/bug_77.jpg`
+**Files:** `backend/app/routes/feed.py` (staleness), `backend/app/utils/feed_market_quality.py`
+**Parallel Safety:** Red (touches Discover ranking — defer to Discover thread)
+
+### BR76. Game Shows "Live" After Completion — Status Transition Delay (P2)
+
+**Problem:** CLE 125 - DET 94 shows as "Live" with "Final 0.0" badge. Game is clearly over (31-point margin, all quarters played) but status hasn't transitioned to "completed." The description says "this game was over a while ago." Between StatPal and ESPN, game completion should be detected reliably.
+
+**Screenshot:** `/tmp/bug_76.jpg`
+**Files:** `backend/app/tasks/statpal_sync.py` (status transition), `backend/app/tasks/__init__.py` (`transition_event_statuses` task)
+**Parallel Safety:** Yellow (touches event status, not Discover ranking)
+
+---
+
 ## Rage Shake Triage #8 (May 17) — Bugs #60-75
 
 Claude CLI failed to process these because screenshot image handling returned `API Error: 400 Could not process image`. Items were added from text-only report context; screenshots should be reviewed later with the links below.
