@@ -994,20 +994,26 @@ async def public_calibration(
             SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM (
             SELECT
-                CASE
-                    WHEN closing_home_spread_odds < 0
-                        THEN ABS(closing_home_spread_odds)::numeric
-                             / (ABS(closing_home_spread_odds) + 100.0)
-                    WHEN closing_home_spread_odds > 0
-                        THEN 100.0 / (closing_home_spread_odds + 100.0)
-                    ELSE 0.5
-                END AS prob,
+                -- Devig: normalize home implied prob against away implied prob
+                (CASE WHEN closing_home_spread_odds < 0
+                      THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                      ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                /
+                ((CASE WHEN closing_home_spread_odds < 0
+                       THEN ABS(closing_home_spread_odds)::numeric / (ABS(closing_home_spread_odds) + 100.0)
+                       ELSE 100.0 / (closing_home_spread_odds + 100.0) END)
+                 +
+                 (CASE WHEN closing_away_spread_odds < 0
+                       THEN ABS(closing_away_spread_odds)::numeric / (ABS(closing_away_spread_odds) + 100.0)
+                       ELSE 100.0 / (closing_away_spread_odds + 100.0) END))
+                AS prob,
                 ((home_score - away_score) > closing_home_spread) AS won,
                 sport_id
             FROM events
             WHERE status IN ('completed', 'closed')
               AND closing_home_spread IS NOT NULL
               AND closing_home_spread_odds IS NOT NULL
+              AND closing_away_spread_odds IS NOT NULL
               AND home_score IS NOT NULL AND away_score IS NOT NULL
               AND (home_score - away_score) != closing_home_spread
         ) outcomes
@@ -1034,20 +1040,26 @@ async def public_calibration(
             SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
         FROM (
             SELECT
-                CASE
-                    WHEN closing_over_odds < 0
-                        THEN ABS(closing_over_odds)::numeric
-                             / (ABS(closing_over_odds) + 100.0)
-                    WHEN closing_over_odds > 0
-                        THEN 100.0 / (closing_over_odds + 100.0)
-                    ELSE 0.5
-                END AS prob,
+                -- Devig: normalize over implied prob against under implied prob
+                (CASE WHEN closing_over_odds < 0
+                      THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                      ELSE 100.0 / (closing_over_odds + 100.0) END)
+                /
+                ((CASE WHEN closing_over_odds < 0
+                       THEN ABS(closing_over_odds)::numeric / (ABS(closing_over_odds) + 100.0)
+                       ELSE 100.0 / (closing_over_odds + 100.0) END)
+                 +
+                 (CASE WHEN closing_under_odds < 0
+                       THEN ABS(closing_under_odds)::numeric / (ABS(closing_under_odds) + 100.0)
+                       ELSE 100.0 / (closing_under_odds + 100.0) END))
+                AS prob,
                 ((home_score + away_score) > closing_over_under) AS won,
                 sport_id
             FROM events
             WHERE status IN ('completed', 'closed')
               AND closing_over_under IS NOT NULL
               AND closing_over_odds IS NOT NULL
+              AND closing_under_odds IS NOT NULL
               AND home_score IS NOT NULL AND away_score IS NOT NULL
               AND (home_score + away_score) != closing_over_under
         ) outcomes
