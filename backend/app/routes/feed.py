@@ -31,6 +31,7 @@ from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import (
     DiscoverInteraction,
     DiscoverReviewDecision,
+    ExternalCuratorGroundTruthItem,
     User,
     UserFavorite,
     UserPreference,
@@ -418,6 +419,56 @@ def _discover_sports_editorial_recall_filter():
             for pattern in _DISCOVER_SPORTS_EDITORIAL_RECALL_PATTERNS
         )
     )
+
+
+async def _external_curator_recall_market_ids(
+    db: AsyncSession,
+    base_filters: list,
+    *,
+    row_limit: int = 80,
+    market_limit: int = 80,
+) -> list[int]:
+    """Find feed-eligible markets matching accepted external-curator rows.
+
+    This is intentionally only a candidate-pool recall lane. Matched markets
+    still pass through normal scoring, quality caps, personalization, and final
+    diversity; social rows do not directly boost rank.
+    """
+    curator_result = await db.execute(
+        select(ExternalCuratorGroundTruthItem.name)
+        .where(
+            ExternalCuratorGroundTruthItem.review_status.in_(
+                ("accepted", "approved", "reviewed")
+            )
+        )
+        .order_by(ExternalCuratorGroundTruthItem.imported_at.desc())
+        .limit(row_limit)
+    )
+    names = [str(name or "").strip() for name in curator_result.scalars().all()]
+    clauses = []
+    for name in names:
+        if not name:
+            continue
+        tokens = _trace_search_tokens(name)
+        clauses.append(FuturesMarket.name.ilike(f"%{name[:120]}%"))
+        if tokens:
+            clauses.append(
+                and_(*[FuturesMarket.name.ilike(f"%{token}%") for token in tokens[:3]])
+            )
+    if not clauses:
+        return []
+
+    market_result = await db.execute(
+        select(FuturesMarket.id)
+        .where(*base_filters, or_(*clauses))
+        .order_by(
+            FuturesMarket.market_tier.asc().nulls_last(),
+            FuturesMarket.volume_24h.desc().nulls_last(),
+            FuturesMarket.updated_at.desc().nulls_last(),
+        )
+        .limit(market_limit)
+    )
+    return list(market_result.scalars().all())
 
 
 # Sport keys allowed in My Stuff feed (Tier 1 + Tier 2 from SPORT_POLLING_TIERS).
@@ -1632,6 +1683,26 @@ async def _discover_candidate_pool_trace(
 
     pools = []
     candidate_ids: list[int] = []
+    external_curator_ids = await _external_curator_recall_market_ids(
+        db,
+        base_filters,
+        row_limit=80,
+        market_limit=80,
+    )
+    candidate_ids.extend(external_curator_ids)
+    pools.append(
+        {
+            "name": "external_curator_recall",
+            "limit": 80,
+            "candidate_count": len(external_curator_ids),
+            "included": market_id in external_curator_ids,
+            "position": (
+                external_curator_ids.index(market_id) + 1
+                if market_id in external_curator_ids
+                else None
+            ),
+        }
+    )
     for name, extra_filter, ordering, limit in pool_specs:
         result = await db.execute(
             select(FuturesMarket.id)
@@ -3390,6 +3461,13 @@ async def _score_futures(
     )
 
     candidate_queries_started_at = timing_previous_at
+    external_curator_recall_ids = await _external_curator_recall_market_ids(
+        db,
+        id_filters,
+        row_limit=80,
+        market_limit=80,
+    )
+    mark_timing("pool_external_curator_recall")
     sports_result = await db.execute(sports_query)
     mark_timing("pool_sports")
     sports_postseason_result = await db.execute(sports_postseason_query)
@@ -3415,7 +3493,8 @@ async def _score_futures(
     )
 
     candidate_market_ids = (
-        list(sports_result.scalars().all())
+        list(external_curator_recall_ids)
+        + list(sports_result.scalars().all())
         + list(sports_postseason_result.scalars().all())
         + list(sports_editorial_recall_result.scalars().all())
         + list(nonsports_result.scalars().all())
