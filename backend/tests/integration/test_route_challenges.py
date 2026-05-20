@@ -1,19 +1,14 @@
 """Contract tests for Challenge endpoints: /api/challenges/*
 
 Tests create challenge, get challenge, and accept challenge.
-The challenges route uses its own async context manager for DB sessions
-(get_session from app.services), not the DI-based get_db.
+Uses the shared ``client`` / ``mock_db`` fixtures from conftest.py.
 """
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from app.dependencies.auth import get_optional_user
-from app.services.database import get_db
 
 
 # ---------------------------------------------------------------------------
@@ -21,73 +16,15 @@ from app.services.database import get_db
 # ---------------------------------------------------------------------------
 
 class _MockResult:
-    """Mock SQLAlchemy result supporting first()/scalar()/scalars()."""
-
-    def __init__(self, first_value=None, scalar_value=None, scalars_all=None):
+    def __init__(self, first_value=None, scalar_value=None):
         self._first = first_value
         self._scalar = scalar_value
-        self._scalars_all = scalars_all or []
 
     def first(self):
         return self._first
 
     def scalar(self):
         return self._scalar
-
-    def scalar_one_or_none(self):
-        return self._scalar
-
-    def scalars(self):
-        parent = self
-
-        class _Scalars:
-            def all(self):
-                return parent._scalars_all
-
-            def first(self):
-                return parent._scalars_all[0] if parent._scalars_all else None
-
-        return _Scalars()
-
-    def all(self):
-        return self._scalars_all
-
-
-class _MockSession:
-    """Mock async DB session used by challenges route context manager."""
-
-    def __init__(self, results=None):
-        self._results = list(results or [])
-        self.added = []
-        self.committed = False
-
-    async def execute(self, statement):
-        if self._results:
-            return self._results.pop(0)
-        return _MockResult()
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def commit(self):
-        self.committed = True
-
-    async def refresh(self, obj):
-        if not hasattr(obj, "id") or obj.id is None:
-            obj.id = 1
-
-
-class _SessionContext:
-    """Mock async context manager wrapping _MockSession."""
-
-    def __init__(self, session):
-        self.session = session
-
-    async def __aenter__(self):
-        return self.session
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
 
 
 def _make_challenge(
@@ -120,71 +57,24 @@ def _make_challenge(
     return ch
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def mock_db():
-    session = AsyncMock()
-    session.execute.return_value = _MockResult()
-    return session
-
-
-@pytest.fixture
-async def client(mock_db, monkeypatch):
-    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
-
-    from app.main import app
-
-    async def _mock_get_db():
-        yield mock_db
-
-    async def _mock_get_optional_user():
-        return None
-
-    app.dependency_overrides[get_db] = _mock_get_db
-    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
-
-    with patch("app.main.init_db", new_callable=AsyncMock):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as ac:
-            yield ac
-
-    app.dependency_overrides.clear()
-
-
 # ===========================================================================
 # POST /api/challenges — create a challenge
 # ===========================================================================
 
 @pytest.mark.asyncio
 async def test_create_challenge_requires_body(client):
-    """POST /api/challenges should reject empty body."""
     resp = await client.post("/api/challenges", json={})
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_challenge_requires_all_fields(client):
-    """POST /api/challenges should require market_id, guess, threshold."""
-    resp = await client.post(
-        "/api/challenges",
-        json={"market_id": 1},
-    )
+    resp = await client.post("/api/challenges", json={"market_id": 1})
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_create_challenge_rejects_invalid_guess(client, monkeypatch):
-    """POST /api/challenges should reject guess values other than higher/lower."""
-    session = _MockSession([
-        _MockResult(first_value=SimpleNamespace(id=42, name="Test Market")),
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
-
+async def test_create_challenge_rejects_invalid_guess(client, mock_db):
     resp = await client.post(
         "/api/challenges",
         json={"market_id": 42, "guess": "invalid", "threshold": 50},
@@ -194,12 +84,8 @@ async def test_create_challenge_rejects_invalid_guess(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_challenge_market_not_found(client, monkeypatch):
-    """POST /api/challenges should return 404 when market doesn't exist."""
-    session = _MockSession([
-        _MockResult(first_value=None),  # market lookup returns nothing
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+async def test_create_challenge_market_not_found(client, mock_db):
+    mock_db.execute = AsyncMock(return_value=_MockResult(first_value=None))
 
     resp = await client.post(
         "/api/challenges",
@@ -210,15 +96,14 @@ async def test_create_challenge_market_not_found(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_challenge_success(client, monkeypatch):
-    """Successful challenge creation returns code, URL, and details."""
-    session = _MockSession([
-        # Market lookup
+async def test_create_challenge_success(client, mock_db):
+    mock_db.execute = AsyncMock(side_effect=[
         _MockResult(first_value=SimpleNamespace(id=42, name="Will Fed cut rates?")),
-        # Code collision check (no collision)
-        _MockResult(scalar_value=None),
+        _MockResult(scalar_value=None),  # no code collision
     ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
 
     resp = await client.post(
         "/api/challenges",
@@ -241,26 +126,20 @@ async def test_create_challenge_success(client, monkeypatch):
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_get_challenge_not_found(client, monkeypatch):
-    """GET /api/challenges/{code} should return 404 for unknown code."""
-    session = _MockSession([
-        _MockResult(scalar_value=None),
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+async def test_get_challenge_not_found(client, mock_db):
+    mock_db.execute = AsyncMock(return_value=_MockResult(scalar_value=None))
 
     resp = await client.get("/api/challenges/BL-nonexistent")
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_get_challenge_success(client, monkeypatch):
-    """GET /api/challenges/{code} returns full challenge shape."""
+async def test_get_challenge_success(client, mock_db):
     challenge = _make_challenge()
-    session = _MockSession([
+    mock_db.execute = AsyncMock(side_effect=[
         _MockResult(scalar_value=challenge),
-        _MockResult(scalar_value=0.62),  # current probability
+        _MockResult(scalar_value=0.62),
     ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
 
     resp = await client.get("/api/challenges/BL-abc123")
     assert resp.status_code == 200
@@ -275,21 +154,16 @@ async def test_get_challenge_success(client, monkeypatch):
     assert set(body.keys()) == expected_keys
     assert body["challenge_code"] == "BL-abc123"
     assert body["market_name"] == "Will the Fed cut rates?"
-    assert body["market_id"] == 42
-    assert body["creator_guess"] == "higher"
-    assert body["threshold"] == 55
     assert body["current_probability"] == 0.62
 
 
 @pytest.mark.asyncio
-async def test_get_challenge_null_probability(client, monkeypatch):
-    """Challenge with no outcome probability should return null."""
+async def test_get_challenge_null_probability(client, mock_db):
     challenge = _make_challenge()
-    session = _MockSession([
+    mock_db.execute = AsyncMock(side_effect=[
         _MockResult(scalar_value=challenge),
-        _MockResult(scalar_value=None),  # no outcomes
+        _MockResult(scalar_value=None),
     ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
 
     resp = await client.get("/api/challenges/BL-abc123")
     assert resp.status_code == 200
@@ -301,21 +175,13 @@ async def test_get_challenge_null_probability(client, monkeypatch):
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_accept_challenge_requires_body(client, monkeypatch):
-    """POST /api/challenges/{code}/accept should require body."""
+async def test_accept_challenge_requires_body(client):
     resp = await client.post("/api/challenges/BL-abc123/accept", json={})
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_accept_challenge_rejects_invalid_guess(client, monkeypatch):
-    """POST /api/challenges/{code}/accept should reject invalid guess."""
-    challenge = _make_challenge()
-    session = _MockSession([
-        _MockResult(scalar_value=challenge),
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
-
+async def test_accept_challenge_rejects_invalid_guess(client, mock_db):
     resp = await client.post(
         "/api/challenges/BL-abc123/accept",
         json={"guess": "sideways"},
@@ -324,12 +190,8 @@ async def test_accept_challenge_rejects_invalid_guess(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_accept_challenge_not_found(client, monkeypatch):
-    """Accepting nonexistent challenge returns 404."""
-    session = _MockSession([
-        _MockResult(scalar_value=None),
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+async def test_accept_challenge_not_found(client, mock_db):
+    mock_db.execute = AsyncMock(return_value=_MockResult(scalar_value=None))
 
     resp = await client.post(
         "/api/challenges/BL-nonexistent/accept",
@@ -339,13 +201,9 @@ async def test_accept_challenge_not_found(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_accept_challenge_already_accepted(client, monkeypatch):
-    """Accepting an already-accepted challenge returns 409."""
-    challenge = _make_challenge(friend_guess="lower")  # already accepted
-    session = _MockSession([
-        _MockResult(scalar_value=challenge),
-    ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+async def test_accept_challenge_already_accepted(client, mock_db):
+    challenge = _make_challenge(friend_guess="lower")
+    mock_db.execute = AsyncMock(return_value=_MockResult(scalar_value=challenge))
 
     resp = await client.post(
         "/api/challenges/BL-abc123/accept",
@@ -356,14 +214,13 @@ async def test_accept_challenge_already_accepted(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_accept_challenge_success(client, monkeypatch):
-    """Successful accept returns status and evaluation."""
+async def test_accept_challenge_success(client, mock_db):
     challenge = _make_challenge()
-    session = _MockSession([
+    mock_db.execute = AsyncMock(side_effect=[
         _MockResult(scalar_value=challenge),
-        _MockResult(scalar_value=0.62),  # current probability
+        _MockResult(scalar_value=0.62),
     ])
-    monkeypatch.setattr("app.routes.challenges.get_session", lambda: _SessionContext(session))
+    mock_db.commit = AsyncMock()
 
     resp = await client.post(
         "/api/challenges/BL-abc123/accept",

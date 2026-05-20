@@ -12,7 +12,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, cast, Integer, case, or_
-from app.services import get_db as get_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services import get_db
 from app.models.models import UserPrediction, FuturesMarket, FuturesOutcome, User
 from app.dependencies.auth import get_optional_user
 
@@ -109,6 +110,7 @@ async def submit_prediction(
     body: PredictionSubmission,
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
     user_id = user.id if user else None
     session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
@@ -116,33 +118,32 @@ async def submit_prediction(
     actual_probability = body.actual_probability
     correct = body.correct
 
-    async with get_session() as session:
-        outcome_result = await session.execute(
-            select(FuturesOutcome.current_probability)
-            .where(FuturesOutcome.market_id == body.market_id)
-            .order_by(FuturesOutcome.current_probability.desc())
-            .limit(1)
+    outcome_result = await db.execute(
+        select(FuturesOutcome.current_probability)
+        .where(FuturesOutcome.market_id == body.market_id)
+        .order_by(FuturesOutcome.current_probability.desc())
+        .limit(1)
+    )
+    server_prob = outcome_result.scalar()
+    if server_prob is not None:
+        actual_probability = float(server_prob)
+        actual_pct = int(actual_probability * 100)
+        correct = (
+            (body.guess == "higher" and actual_pct > body.threshold)
+            or (body.guess == "lower" and actual_pct < body.threshold)
         )
-        server_prob = outcome_result.scalar()
-        if server_prob is not None:
-            actual_probability = float(server_prob)
-            actual_pct = int(actual_probability * 100)
-            correct = (
-                (body.guess == "higher" and actual_pct > body.threshold)
-                or (body.guess == "lower" and actual_pct < body.threshold)
-            )
 
-        pred = UserPrediction(
-            user_id=user_id,
-            session_id=session_id,
-            market_id=body.market_id,
-            guess=body.guess,
-            threshold=body.threshold,
-            actual_probability=actual_probability,
-            correct=correct,
-        )
-        session.add(pred)
-        await session.commit()
+    pred = UserPrediction(
+        user_id=user_id,
+        session_id=session_id,
+        market_id=body.market_id,
+        guess=body.guess,
+        threshold=body.threshold,
+        actual_probability=actual_probability,
+        correct=correct,
+    )
+    db.add(pred)
+    await db.commit()
     return {"status": "ok"}
 
 
@@ -150,27 +151,27 @@ async def submit_prediction(
 async def get_stats(
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
     user_id, session_id = _get_identity(request, user)
     identity = _identity_filter(user_id, session_id)
 
-    async with get_session() as session:
-        result = await session.execute(
-            select(
-                func.count(UserPrediction.id).label("total"),
-                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
-            ).where(identity)
-        )
-        row = result.one()
-        total = row.total or 0
-        correct = row.correct or 0
-        accuracy = correct / total if total > 0 else 0
+    result = await db.execute(
+        select(
+            func.count(UserPrediction.id).label("total"),
+            func.count(case((UserPrediction.correct == True, 1))).label("correct"),
+        ).where(identity)
+    )
+    row = result.one()
+    total = row.total or 0
+    correct = row.correct or 0
+    accuracy = correct / total if total > 0 else 0
 
-        preds_result = await session.execute(
-            select(UserPrediction.correct).where(identity).order_by(desc(UserPrediction.created_at))
-        )
-        preds = [r.correct for r in preds_result.all()]
-        current_streak, best_streak = _compute_streaks(preds)
+    preds_result = await db.execute(
+        select(UserPrediction.correct).where(identity).order_by(desc(UserPrediction.created_at))
+    )
+    preds = [r.correct for r in preds_result.all()]
+    current_streak, best_streak = _compute_streaks(preds)
 
     return {
         "total": total, "correct": correct,
@@ -183,94 +184,88 @@ async def get_stats(
 async def get_detailed_stats(
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
     user_id, session_id = _get_identity(request, user)
     identity = _identity_filter(user_id, session_id)
 
-    async with get_session() as session:
-        # 1. Totals (SQL)
-        totals_result = await session.execute(
-            select(
-                func.count(UserPrediction.id).label("total"),
-                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
-            ).where(identity)
-        )
-        totals = totals_result.one()
-        total = totals.total or 0
-        correct = totals.correct or 0
-        accuracy = correct / total if total > 0 else 0
+    totals_result = await db.execute(
+        select(
+            func.count(UserPrediction.id).label("total"),
+            func.count(case((UserPrediction.correct == True, 1))).label("correct"),
+        ).where(identity)
+    )
+    totals = totals_result.one()
+    total = totals.total or 0
+    correct = totals.correct or 0
+    accuracy = correct / total if total > 0 else 0
 
-        # 2. Category breakdown (SQL)
-        cat_result = await session.execute(
-            select(
-                func.coalesce(FuturesMarket.llm_sport_category, "other").label("cat"),
-                func.count(UserPrediction.id).label("total"),
-                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
-            )
-            .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
-            .where(identity)
-            .group_by(func.coalesce(FuturesMarket.llm_sport_category, "other"))
+    cat_result = await db.execute(
+        select(
+            func.coalesce(FuturesMarket.llm_sport_category, "other").label("cat"),
+            func.count(UserPrediction.id).label("total"),
+            func.count(case((UserPrediction.correct == True, 1))).label("correct"),
         )
-        by_category = {}
-        for r in cat_result.all():
-            by_category[r.cat] = {
-                "total": r.total, "correct": r.correct,
-                "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0,
-            }
+        .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
+        .where(identity)
+        .group_by(func.coalesce(FuturesMarket.llm_sport_category, "other"))
+    )
+    by_category = {}
+    for r in cat_result.all():
+        by_category[r.cat] = {
+            "total": r.total, "correct": r.correct,
+            "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0,
+        }
 
-        # 3. 14-day trend (SQL)
-        from sqlalchemy import Date
-        trend_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
-        day_col = cast(UserPrediction.created_at, Date)
-        trend_result = await session.execute(
-            select(
-                day_col.label("day"),
-                func.count(UserPrediction.id).label("total"),
-                func.count(case((UserPrediction.correct == True, 1))).label("correct"),
-            )
-            .where(identity, UserPrediction.created_at >= trend_cutoff)
-            .group_by(day_col)
-            .order_by(day_col)
+    from sqlalchemy import Date
+    trend_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    day_col = cast(UserPrediction.created_at, Date)
+    trend_result = await db.execute(
+        select(
+            day_col.label("day"),
+            func.count(UserPrediction.id).label("total"),
+            func.count(case((UserPrediction.correct == True, 1))).label("correct"),
         )
-        trend = [
-            {"date": r.day.isoformat(), "total": r.total, "correct": r.correct,
-             "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0}
-            for r in trend_result.all()
-        ]
+        .where(identity, UserPrediction.created_at >= trend_cutoff)
+        .group_by(day_col)
+        .order_by(day_col)
+    )
+    trend = [
+        {"date": r.day.isoformat(), "total": r.total, "correct": r.correct,
+         "accuracy": round(r.correct / r.total, 3) if r.total > 0 else 0}
+        for r in trend_result.all()
+    ]
 
-        # 4. Streaks (load booleans only, capped)
-        streak_result = await session.execute(
-            select(UserPrediction.correct)
-            .where(identity)
-            .order_by(desc(UserPrediction.created_at))
-            .limit(1000)
-        )
-        preds_ordered = [r.correct for r in streak_result.all()]
-        current_streak, best_streak = _compute_streaks(preds_ordered)
+    streak_result = await db.execute(
+        select(UserPrediction.correct)
+        .where(identity)
+        .order_by(desc(UserPrediction.created_at))
+        .limit(1000)
+    )
+    preds_ordered = [r.correct for r in streak_result.all()]
+    current_streak, best_streak = _compute_streaks(preds_ordered)
 
-        # 5. Badges
-        badges = _compute_badges(total, correct, best_streak)
+    badges = _compute_badges(total, correct, best_streak)
 
-        # 6. Recent predictions (LIMIT 20)
-        recent_result = await session.execute(
-            select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
-            .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
-            .where(identity)
-            .order_by(desc(UserPrediction.created_at))
-            .limit(20)
-        )
-        recent = [
-            {
-                "market_name": name or f"Market #{pred.market_id}",
-                "category": cat,
-                "guess": pred.guess,
-                "threshold": pred.threshold,
-                "actual": round(float(pred.actual_probability) * 100),
-                "correct": pred.correct,
-                "created_at": pred.created_at.isoformat() if pred.created_at else None,
-            }
-            for pred, name, cat in recent_result.all()
-        ]
+    recent_result = await db.execute(
+        select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
+        .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
+        .where(identity)
+        .order_by(desc(UserPrediction.created_at))
+        .limit(20)
+    )
+    recent = [
+        {
+            "market_name": name or f"Market #{pred.market_id}",
+            "category": cat,
+            "guess": pred.guess,
+            "threshold": pred.threshold,
+            "actual": round(float(pred.actual_probability) * 100),
+            "correct": pred.correct,
+            "created_at": pred.created_at.isoformat() if pred.created_at else None,
+        }
+        for pred, name, cat in recent_result.all()
+    ]
 
     return {
         "total": total, "correct": correct, "accuracy": round(accuracy, 3),
@@ -286,6 +281,7 @@ async def get_detailed_stats(
 async def get_resolutions(
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return predictions on markets that have since resolved."""
     user_id, session_id = _get_identity(request, user)
@@ -293,18 +289,17 @@ async def get_resolutions(
     if identity is None:
         return {"resolutions": []}
 
-    async with get_session() as session:
-        result = await session.execute(
-            select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
-            .join(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
-            .where(
-                identity,
-                FuturesMarket.status.in_(("resolved", "closed")),
-            )
-            .order_by(desc(UserPrediction.created_at))
-            .limit(20)
+    result = await db.execute(
+        select(UserPrediction, FuturesMarket.name, FuturesMarket.llm_sport_category)
+        .join(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
+        .where(
+            identity,
+            FuturesMarket.status.in_(("resolved", "closed")),
         )
-        rows = result.all()
+        .order_by(desc(UserPrediction.created_at))
+        .limit(20)
+    )
+    rows = result.all()
 
     return {
         "resolutions": [
