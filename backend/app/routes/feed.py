@@ -839,7 +839,7 @@ async def get_feed(
 
     # --- Redis response cache (anon 15s, auth 5s, my_teams 30s) ---
     _cache_key = None
-    _cache_ttl = 30 if my_teams_only else (15 if user is None else 5)
+    _cache_ttl = 30 if my_teams_only else (60 if user is None else 10)
     _async_redis = None
     if not debug:
         try:
@@ -1642,8 +1642,8 @@ async def _discover_candidate_pool_trace(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.ilike("% vs %"),
-        ~FuturesMarket.name.ilike("% vs. %"),
+        ~FuturesMarket.name.like("% vs %"),
+        ~FuturesMarket.name.like("% vs. %"),
     ]
     non_sports_filter = or_(
         ~FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
@@ -3319,8 +3319,8 @@ async def _score_futures(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.ilike("% vs %"),
-        ~FuturesMarket.name.ilike("% vs. %"),
+        ~FuturesMarket.name.like("% vs %"),
+        ~FuturesMarket.name.like("% vs. %"),
         # NOTE: '% at %' filter deliberately removed — it killed non-sports
         # markets like "S&P at 4pm", "temperature at NYC". The event_id IS NULL
         # filter already excludes game matchups.
