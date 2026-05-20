@@ -521,10 +521,14 @@ struct OddsChartView: View {
             }
         }
 
-        // Soccer halftime detection: if we have no meaningful period markers
+        // Soccer halftime detection: if we have NO period markers at all
         // but ESPN history shows a time gap >8 minutes (halftime break),
         // insert a "HT" marker at the gap.
-        if firstSeen.isEmpty || firstSeen.allSatisfy({ $0.label.allSatisfy(\.isNumber) }),
+        // NOTE: Only trigger when firstSeen is truly empty. The previous
+        // condition also triggered when all labels were numeric (allSatisfy(\.isNumber)),
+        // but baseball inning markers ARE numeric ("1","2"..."9") — that caused
+        // soccer "2H" to overwrite correct inning markers on baseball win prob charts.
+        if firstSeen.isEmpty,
            let espnHistory = history.espnHistory, espnHistory.count >= 5 {
             let espnDates = espnHistory.compactMap { $0.timestamp.asDate }.sorted()
             for i in 1..<espnDates.count {

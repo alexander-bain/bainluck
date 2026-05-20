@@ -109,10 +109,33 @@ struct TournamentChartView: View {
                 ProgressView()
                     .frame(height: height)
             } else if let error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(height: height)
+                VStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.tertiary)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Prices update every 1–2 hours for this market")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(height: height * 0.5)
+                .frame(maxWidth: .infinity)
+            } else if let _ = data, chartEntries.count < 2 {
+                VStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.tertiary)
+                    Text("Limited price history available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Prices update every 1–2 hours for this market")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(height: height * 0.5)
+                .frame(maxWidth: .infinity)
             } else if let _ = data, chartEntries.count >= 2 {
                 VStack(spacing: 0) {
                     controlBar
@@ -159,7 +182,7 @@ struct TournamentChartView: View {
             error = nil
             loading = false
         } catch {
-            self.error = "Failed to load timeline"
+            self.error = "Limited price history available"
             loading = false
         }
     }
