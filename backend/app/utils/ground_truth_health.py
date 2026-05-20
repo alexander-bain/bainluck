@@ -170,7 +170,9 @@ def _effective_row_count(raw_row_count: int, filter_counts: dict[str, Any]) -> i
     if not filter_counts:
         return raw_row_count
     source_rows = _int(filter_counts.get("source_rows")) or raw_row_count
-    filtered = _int(filter_counts.get("outside_lookback")) + _int(
-        filter_counts.get("low_interestingness")
+    filtered = (
+        _int(filter_counts.get("outside_lookback"))
+        + _int(filter_counts.get("non_market_name"))
+        + _int(filter_counts.get("low_interestingness"))
     )
     return max(0, source_rows - filtered)

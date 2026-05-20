@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.utils.polymarket_email_ground_truth import (
     _extract_spreadsheet_id,
+    _looks_like_ground_truth_market_name,
     _sheet_values_to_csv,
     load_polymarket_email_ground_truth_from_csv_text,
     load_polymarket_email_ground_truth_report_from_csv_text,
@@ -26,7 +27,7 @@ STABLE_EXPORT_CSV_TEXT = """date,source,market_name,category,leader,leader_proba
 DEDUPING_CSV_TEXT = """Date,Source,Market Name,Category,Leader,Leader Probability,Resolution Date,Email Subject,LLM Category,Hook,Interestingness,Timeliness,Shareability
 2026-05-11,polymarket,  Will Fed cut rates in June?  ,economics,Yes,55%,2026-06-30,Email,economics,Hook,9,this_month,8
 2026-05-11,polymarket,WILL FED CUT RATES IN JUNE?,economics,Yes,55%,2026-06-30,Email,economics,Hook,9,this_month,8
-2026-04-01,polymarket,Old high-signal market,politics,Yes,64%,2026-12-31,Email,politics,Hook,9,ongoing,8
+2026-04-01,polymarket,Will old high-signal market happen?,politics,Yes,64%,2026-12-31,Email,politics,Hook,9,ongoing,8
 """
 
 
@@ -56,7 +57,8 @@ def test_load_polymarket_email_ground_truth_filters_and_dedupes():
         "non_polymarket_source": 1,
         "missing_date": 0,
         "outside_lookback": 1,
-        "low_interestingness": 1,
+        "non_market_name": 1,
+        "low_interestingness": 0,
         "duplicate": 1,
         "loaded": 1,
     }
@@ -94,6 +96,37 @@ def test_load_polymarket_email_ground_truth_dedupes_case_and_spacing():
     assert report["items"][0]["name"] == "Will Fed cut rates in June?"
 
 
+def test_load_polymarket_email_ground_truth_filters_editorial_headlines():
+    csv_text = """date,source,market_name,category,leader,leader_probability,resolution_date,email_subject,llm_category,hook,interestingness,timeliness,shareability
+2026-05-20,polymarket,Massie in trouble,politics,,,,Email,politics,Polymarket traders think the race moved.,9,this_week,8
+2026-05-20,polymarket,Kevin Warsh will be sworn in as Fed chair on Friday. But spiking inflation is making it harder for him to grant Trump's wish of lower interest rates.,economics,,,,Email,economics,Long editorial sentence,9,ongoing,8
+2026-05-20,polymarket,Will Trump speak to Mohammed bin Salman in May?,politics,,,,Email,politics,Real market question,9,this_week,8
+2026-05-20,polymarket,Presidential Election Winner 2028,politics,,,,Email,politics,Real winner market,8,ongoing,7
+"""
+    report = load_polymarket_email_ground_truth_report_from_csv_text(
+        csv_text,
+        min_interestingness=8,
+        lookback_days=21,
+        now=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+
+    assert [item["name"] for item in report["items"]] == [
+        "Will Trump speak to Mohammed bin Salman in May?",
+        "Presidential Election Winner 2028",
+    ]
+    assert report["metadata"]["filter_counts"]["non_market_name"] == 2
+
+
+def test_looks_like_ground_truth_market_name_keeps_markets_not_email_blurbs():
+    assert _looks_like_ground_truth_market_name("US x Iran permanent peace deal by...?")
+    assert _looks_like_ground_truth_market_name("#1 song on US Spotify this week? (May 15)")
+    assert _looks_like_ground_truth_market_name("Democratic Presidential Nominee 2028")
+    assert not _looks_like_ground_truth_market_name("Massie in trouble")
+    assert not _looks_like_ground_truth_market_name(
+        "Kevin Warsh will be sworn in as Fed chair on Friday. But spiking inflation is making it harder for him to grant Trump's wish of lower interest rates."
+    )
+
+
 def test_load_polymarket_email_ground_truth_can_disable_lookback_filter():
     items = load_polymarket_email_ground_truth_from_csv_text(
         DEDUPING_CSV_TEXT,
@@ -104,7 +137,7 @@ def test_load_polymarket_email_ground_truth_can_disable_lookback_filter():
 
     assert [item["name"] for item in items] == [
         "Will Fed cut rates in June?",
-        "Old high-signal market",
+        "Will old high-signal market happen?",
     ]
 
 

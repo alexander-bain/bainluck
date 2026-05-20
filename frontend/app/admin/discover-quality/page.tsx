@@ -2926,6 +2926,7 @@ export default function DiscoverQualityPage() {
                           <span>CSV rows: {report.filter_counts.csv_rows ?? report.raw_row_count}</span>
                           <span>Source rows: {report.filter_counts.source_rows ?? report.raw_row_count}</span>
                           <span>Old: {report.filter_counts.outside_lookback ?? 0}</span>
+                          <span>Not market: {report.filter_counts.non_market_name ?? 0}</span>
                           <span>Low score: {report.filter_counts.low_interestingness ?? 0}</span>
                           <span>Duplicate: {report.filter_counts.duplicate ?? 0}</span>
                           <span>Loaded: {report.filter_counts.loaded ?? report.loaded_count}</span>

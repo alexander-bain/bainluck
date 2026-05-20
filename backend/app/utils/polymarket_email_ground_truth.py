@@ -187,6 +187,10 @@ def load_polymarket_email_ground_truth_report_from_csv_text(
             filter_counts["outside_lookback"] += 1
             continue
 
+        if not _looks_like_ground_truth_market_name(name):
+            filter_counts["non_market_name"] += 1
+            continue
+
         interestingness = _parse_int(_field(row, "interestingness", "Interestingness"))
         if interestingness < min_interestingness:
             filter_counts["low_interestingness"] += 1
@@ -449,10 +453,50 @@ def _empty_filter_counts() -> dict[str, int]:
         "non_polymarket_source": 0,
         "missing_date": 0,
         "outside_lookback": 0,
+        "non_market_name": 0,
         "low_interestingness": 0,
         "duplicate": 0,
         "loaded": 0,
     }
+
+
+_MARKET_START_RE = re.compile(
+    r"^(will|who|what|when|which|how many|does|do|is|are|can|could|"
+    r"presidential|democratic|republican|eurovision|nba|nfl|mlb|nhl|"
+    r"fifa|world cup|us x|u\.s\. x)",
+    re.IGNORECASE,
+)
+_MARKET_KEYWORD_RE = re.compile(
+    r"\b("
+    r"winner|nominee|election|champion|championship|finals|mvp|"
+    r"released by|by may|by june|by july|by august|by september|by october|"
+    r"by november|by december|by end of|before \d{4}|in \d{4}|"
+    r"#1 song|top \d|spotify|billboard|approval rating|peace deal|ceasefire"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_ground_truth_market_name(name: str) -> bool:
+    """Keep rankable market names; drop editorial headlines copied from emails."""
+    text = " ".join((name or "").split())
+    if len(text) < 8:
+        return False
+    words = re.findall(r"[A-Za-z0-9#]+", text)
+    if len(words) <= 2 and not _MARKET_KEYWORD_RE.search(text):
+        return False
+
+    starts_like_market = bool(_MARKET_START_RE.search(text))
+    has_question = "?" in text
+    has_market_keyword = bool(_MARKET_KEYWORD_RE.search(text))
+
+    if has_question and (starts_like_market or len(text) <= 100):
+        return True
+    if starts_like_market and has_market_keyword:
+        return True
+    if has_market_keyword and len(text) <= 120:
+        return True
+    return False
 
 
 def _read_google_sheet_values(spreadsheet_id: str, sheet_name: str) -> list[list[Any]]:
