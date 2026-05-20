@@ -1029,16 +1029,17 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
 
-    # Phase 1: Set is_winner from current_probability (all sources, fast)
-    prob_stats = await _backfill_from_current_probability()
-
-    # Phase 2: Kalshi API settlement data (fills in markets that didn't
-    # fully resolve their probabilities)
+    # Phase 1: Authoritative API settlement data — run BEFORE probability
+    # passes so API results take priority over arbitrary Pass 2 picks.
+    # Pass 2 (mutually exclusive) arbitrarily picks the highest-prob outcome
+    # as "winner" for stuck-at-0.50 markets, then Phase 2/3 skip them because
+    # is_winner is already set. Running API phases first fixes this.
     kalshi_stats = await _backfill_kalshi_winners(limit=limit, dry_run=dry_run)
-
-    # Phase 3: Polymarket API settlement data (fills in markets where
-    # current_probability is stale and didn't reach 0/1)
     poly_api_stats = await _backfill_polymarket_winners_from_api(limit=2000)
+
+    # Phase 2: Set is_winner from current_probability (all sources, fast)
+    # Only handles markets not already resolved by API settlement above.
+    prob_stats = await _backfill_from_current_probability()
 
     return {
         "commence_time_fixes": commence_stats,
