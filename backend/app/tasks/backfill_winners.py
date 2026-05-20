@@ -258,68 +258,84 @@ async def _resolve_kalshi_from_scores():
 
     For Kalshi markets linked to Events (via event_id) where the Kalshi
     API has purged the settlement data, uses the game score to determine
-    winners for moneyline-style markets.
-
-    Only handles markets with 2 outcomes (binary Yes/No per team) linked
-    to completed events with scores.
+    winners. Handles:
+    - Moneyline (2 outcomes per team): match outcome name to home/away
+    - BTTS (ticker contains 'btts'): both scores > 0
+    - Single-outcome moneyline ("Yes"): use ticker team abbreviation
     """
-    stats = {"resolved": 0, "no_score": 0, "errors": []}
+    stats = {"moneyline": 0, "btts": 0, "skipped": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            # Find Kalshi markets linked to events with scores, where
-            # no outcome has is_winner=true, and exactly 2 outcomes exist
             result = await session.execute(
                 text("""
-                    WITH eligible AS (
-                        SELECT fm.id AS market_id, fm.name AS market_name,
-                               e.home_team, e.away_team,
-                               e.home_score, e.away_score
-                        FROM futures_markets fm
-                        JOIN events e ON e.id = fm.event_id
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.source = 'kalshi'
-                          AND fm.status = 'resolved'
-                          AND e.status IN ('completed', 'closed')
-                          AND e.home_score IS NOT NULL
-                          AND e.away_score IS NOT NULL
-                          AND e.home_score != e.away_score
-                          AND fo.current_probability IS NOT NULL
-                        GROUP BY fm.id, fm.name, e.home_team, e.away_team,
-                                 e.home_score, e.away_score
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                           AND COUNT(*) = 2
-                        LIMIT 10000
-                    )
-                    SELECT market_id, market_name, home_team, away_team,
-                           home_score, away_score
-                    FROM eligible
+                    SELECT fm.id AS market_id, fm.name AS market_name,
+                           fm.external_id AS ticker,
+                           e.home_team, e.away_team,
+                           e.home_score, e.away_score,
+                           COUNT(fo.id) AS n_outcomes
+                    FROM futures_markets fm
+                    JOIN events e ON e.id = fm.event_id
+                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND e.status IN ('completed', 'closed')
+                      AND e.home_score IS NOT NULL
+                      AND e.away_score IS NOT NULL
+                      AND fo.current_probability IS NOT NULL
+                    GROUP BY fm.id, fm.name, fm.external_id,
+                             e.home_team, e.away_team,
+                             e.home_score, e.away_score
+                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                    LIMIT 10000
                 """)
             )
             markets = result.all()
 
             for row in markets:
+                ticker_lower = (row.ticker or "").lower()
+
+                # BTTS: both teams to score
+                if "btts" in ticker_lower:
+                    btts_yes = row.home_score > 0 and row.away_score > 0
+                    await session.execute(
+                        text("""
+                            UPDATE futures_outcomes SET is_winner = :won
+                            WHERE market_id = :mid
+                        """),
+                        {"won": btts_yes, "mid": row.market_id},
+                    )
+                    stats["btts"] += 1
+                    continue
+
+                # Moneyline: need distinct scores (no ties)
+                if row.home_score == row.away_score:
+                    stats["skipped"] += 1
+                    continue
+
+                # Only handle 2-outcome markets (team vs team)
+                if row.n_outcomes != 2:
+                    stats["skipped"] += 1
+                    continue
+
                 home_won = row.home_score > row.away_score
 
-                # Get the two outcomes and figure out which is home/away
                 outcomes = await session.execute(
                     text("""
-                        SELECT id, name, external_id
-                        FROM futures_outcomes
-                        WHERE market_id = :mid
-                        ORDER BY id
+                        SELECT id, name FROM futures_outcomes
+                        WHERE market_id = :mid ORDER BY id
                     """),
                     {"mid": row.market_id},
                 )
                 outs = outcomes.all()
                 if len(outs) != 2:
+                    stats["skipped"] += 1
                     continue
 
-                # Match outcomes to home/away by checking if outcome name
-                # contains a team name token
                 home_tokens = set(row.home_team.lower().split()) if row.home_team else set()
                 away_tokens = set(row.away_team.lower().split()) if row.away_team else set()
 
+                resolved_any = False
                 for out in outs:
                     name_lower = (out.name or "").lower()
                     name_tokens = set(name_lower.split())
@@ -338,8 +354,12 @@ async def _resolve_kalshi_from_scores():
                         text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
                         {"won": won, "oid": out.id},
                     )
+                    resolved_any = True
 
-                stats["resolved"] += 1
+                if resolved_any:
+                    stats["moneyline"] += 1
+                else:
+                    stats["skipped"] += 1
 
             await session.commit()
 
@@ -347,9 +367,10 @@ async def _resolve_kalshi_from_scores():
         stats["errors"].append(str(e))
         logger.error("Kalshi score resolution error: %s", e)
 
+    total = stats["moneyline"] + stats["btts"]
     logger.info(
-        "Kalshi score resolution: %d markets resolved, %d no_score, %d errors",
-        stats["resolved"], stats["no_score"], len(stats["errors"]),
+        "Kalshi score resolution: %d moneyline, %d btts, %d skipped, %d errors",
+        stats["moneyline"], stats["btts"], stats["skipped"], len(stats["errors"]),
     )
     return stats
 
@@ -1183,15 +1204,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
 
-    # Phase 0h: Reset bad is_winner on Kalshi midrange markets.
-    # Pass 2 previously ran BEFORE the API phases and arbitrarily picked
-    # winners from stuck-at-0.50 probabilities. Clear those so the API
-    # phases can set the correct values.
-    reset_stats = await _reset_kalshi_midrange_winners()
-
     # Phase 1a: Kalshi score-based resolution for game markets linked to
-    # Events. Resolves spreads/totals from actual game scores even when
-    # the Kalshi API has purged the market data.
+    # Events. Resolves spreads/totals/1H props from actual game scores
+    # even when the Kalshi API has purged the market data.
     score_stats = await _resolve_kalshi_from_scores()
 
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
@@ -1212,7 +1227,6 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
         "datagolf": datagolf_stats,
-        "kalshi_reset": reset_stats,
         "kalshi_score_resolution": score_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
