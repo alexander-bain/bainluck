@@ -101,6 +101,17 @@ struct BugReportView: View {
                         #endif
                     }
 
+                    Button(role: .destructive) {
+                        screenshot = nil
+                        #if os(macOS)
+                        pastedScreenshot = nil
+                        #endif
+                    } label: {
+                        Label("Remove Screenshot", systemImage: "xmark.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+
                     #if os(macOS)
                     if let pasted = pastedScreenshot {
                         Image(nsImage: pasted)
@@ -262,7 +273,7 @@ struct BugReportView: View {
                 submitted = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             } catch {
-                submitError = "Check your connection and try again."
+                submitError = "Couldn't submit. Try removing the screenshot or check your connection."
                 showErrorAlert = true
             }
             submitting = false
