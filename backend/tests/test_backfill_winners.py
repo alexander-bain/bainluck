@@ -104,6 +104,82 @@ class TestCoverageMetricExclusion:
         assert needs == 2
 
 
+class TestDataGolfPlacement:
+    """Tests for _datagolf_check_placement logic."""
+
+    def test_win_position_1(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("1", "win") is True
+
+    def test_win_tied_first(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("T1", "win") is True
+
+    def test_win_position_2(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("2", "win") is False
+
+    def test_top_5_position_3(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("3", "top_5") is True
+
+    def test_top_5_tied_5(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("T5", "top_5") is True
+
+    def test_top_5_position_6(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("6", "top_5") is False
+
+    def test_top_10_position_10(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("10", "top_10") is True
+
+    def test_top_10_position_11(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("11", "top_10") is False
+
+    def test_top_20_position_20(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("T20", "top_20") is True
+
+    def test_top_20_position_21(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("21", "top_20") is False
+
+    def test_make_cut_numeric_position(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("45", "make_cut") is True
+
+    def test_make_cut_tied(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("T32", "make_cut") is True
+
+    def test_make_cut_status_CUT(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("CUT", "make_cut") is False
+
+    def test_make_cut_status_MC(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("MC", "make_cut") is False
+
+    def test_make_cut_status_WD(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("WD", "make_cut") is False
+
+    def test_make_cut_status_DQ(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("DQ", "make_cut") is False
+
+    def test_cut_player_loses_top_5(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("CUT", "top_5") is False
+
+    def test_unparseable_returns_none(self):
+        from app.tasks.backfill_winners import _datagolf_check_placement
+        assert _datagolf_check_placement("???", "win") is None
+
+
 class TestPhase2LimitIncrease:
     """Tests for the Kalshi Phase 2 limit increase."""
 

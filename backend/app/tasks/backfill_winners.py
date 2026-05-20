@@ -200,6 +200,133 @@ async def _backfill_polymarket_winners():
     return stats
 
 
+async def _backfill_datagolf_winners():
+    """Resolve DataGolf placement markets from actual leaderboard results.
+
+    DataGolf markets (make_cut, top_5, top_10, top_20, win) store model
+    predictions in current_probability, NOT settlement prices. The generic
+    Pass 3 (independent thresholds) incorrectly treats these as settlements.
+
+    This function uses the leaderboard stored in market_metadata to
+    determine actual placement results and set is_winner correctly.
+    """
+    stats = {"markets_processed": 0, "winners_set": 0, "losers_set": 0,
+             "no_leaderboard": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fm.id, fm.external_id, fm.market_metadata
+                    FROM futures_markets fm
+                    WHERE fm.source = 'datagolf'
+                      AND fm.status = 'resolved'
+                      AND fm.market_metadata IS NOT NULL
+                """)
+            )
+            markets = result.all()
+
+            for row in markets:
+                stats["markets_processed"] += 1
+                metadata = row.market_metadata or {}
+                leaderboard = metadata.get("leaderboard")
+                if not leaderboard:
+                    stats["no_leaderboard"] += 1
+                    continue
+
+                # Determine market type from external_id: "datagolf:pga:123:win"
+                market_type = row.external_id.rsplit(":", 1)[-1]
+
+                # Build dg_id → position lookup from leaderboard
+                pos_by_dg = {}
+                for entry in leaderboard:
+                    dg_id = entry.get("dg_id")
+                    pos_raw = entry.get("position")
+                    if dg_id is not None and pos_raw is not None:
+                        pos_by_dg[str(dg_id)] = str(pos_raw)
+
+                # Get all outcomes for this market
+                outcomes = await session.execute(
+                    text("""
+                        SELECT id, external_id FROM futures_outcomes
+                        WHERE market_id = :mid
+                    """),
+                    {"mid": row.id},
+                )
+
+                for out_row in outcomes.all():
+                    # Extract dg_id from outcome external_id "dg_12345"
+                    ext = out_row.external_id or ""
+                    if not ext.startswith("dg_"):
+                        continue
+                    dg_id = ext[3:]
+
+                    pos_str = pos_by_dg.get(dg_id)
+                    if pos_str is None:
+                        # Player not in top-50 leaderboard — can't determine
+                        continue
+
+                    won = _datagolf_check_placement(pos_str, market_type)
+                    if won is None:
+                        continue
+
+                    await session.execute(
+                        text("""
+                            UPDATE futures_outcomes SET is_winner = :won
+                            WHERE id = :oid
+                        """),
+                        {"won": won, "oid": out_row.id},
+                    )
+                    if won:
+                        stats["winners_set"] += 1
+                    else:
+                        stats["losers_set"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("DataGolf winner backfill error: %s", e)
+
+    logger.info(
+        "DataGolf winner backfill: %d markets, %d winners, %d losers, "
+        "%d no_leaderboard, %d errors",
+        stats["markets_processed"], stats["winners_set"], stats["losers_set"],
+        stats["no_leaderboard"], len(stats["errors"]),
+    )
+    return stats
+
+
+def _datagolf_check_placement(pos_str: str, market_type: str) -> bool | None:
+    """Determine if a player achieved the placement based on leaderboard position."""
+    pos_str = pos_str.strip()
+
+    # Non-numeric positions: CUT, MC, WD, DQ, DNS
+    cut_statuses = {"CUT", "MC", "MDF", "WD", "DQ", "DNS", "W/D"}
+    if pos_str.upper() in cut_statuses:
+        if market_type == "make_cut":
+            return False
+        # For win/top_N, a cut player definitely didn't place
+        return False
+
+    # Parse numeric position — handle ties like "T5", "T12"
+    numeric_str = pos_str.upper().lstrip("T")
+    try:
+        pos = int(numeric_str)
+    except ValueError:
+        return None  # Can't parse position
+
+    thresholds = {"win": 1, "top_5": 5, "top_10": 10, "top_20": 20}
+    threshold = thresholds.get(market_type)
+    if threshold is not None:
+        return pos <= threshold
+
+    if market_type == "make_cut":
+        return True  # Has a numeric position = made the cut
+
+    return None
+
+
 async def _backfill_from_current_probability():
     """Set is_winner from current_probability for ALL sources.
 
@@ -302,6 +429,7 @@ async def _backfill_from_current_probability():
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
                           AND fo.current_probability IS NOT NULL
+                          AND fm.source != 'datagolf'
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
                            AND SUM(fo.current_probability) > 1.5
@@ -891,6 +1019,10 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 0f: Backfill group_id from Polymarket Gamma API (resolved events)
     api_group_stats = await _backfill_polymarket_group_ids_from_api()
 
+    # Phase 0g: DataGolf resolution from leaderboard (must run BEFORE generic
+    # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
+    datagolf_stats = await _backfill_datagolf_winners()
+
     # Phase 1: Set is_winner from current_probability (all sources, fast)
     prob_stats = await _backfill_from_current_probability()
 
@@ -910,6 +1042,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "closing_lines": closing_stats,
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
+        "datagolf": datagolf_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
