@@ -1371,13 +1371,13 @@ class TestFeedQualityDebug:
         reasons = []
 
         score = _apply_external_curator_recall_score(
-            93,
+            78.0,
             reasons,
             is_external_curator_recall=True,
         )
 
         assert score == 100
-        assert reasons == ["external_curator_recall:+7"]
+        assert reasons == ["external_curator_recall:+22"]
 
     def test_external_curator_recall_boost_skips_non_recalled_market(self):
         reasons = []

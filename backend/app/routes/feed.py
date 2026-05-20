@@ -696,21 +696,23 @@ def _canonical_key_safe_for_dedupe(key: str | None) -> bool:
     )
 
 
-_EXTERNAL_CURATOR_RECALL_SCORE_BONUS = 12
+_EXTERNAL_CURATOR_RECALL_SCORE_BONUS = 25
 
 
 def _apply_external_curator_recall_score(
-    score: int,
+    score: float,
     reasons: list[str],
     *,
     is_external_curator_recall: bool,
-) -> int:
+) -> float:
     """Give reviewed external-curator matches a bounded recall lift."""
     if not is_external_curator_recall:
         return score
     boosted = min(100, score + _EXTERNAL_CURATOR_RECALL_SCORE_BONUS)
     if boosted != score:
-        reasons.append(f"external_curator_recall:+{boosted - score}")
+        delta = boosted - score
+        delta_label: int | float = int(delta) if float(delta).is_integer() else delta
+        reasons.append(f"external_curator_recall:+{delta_label}")
     return boosted
 
 
