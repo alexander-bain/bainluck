@@ -1924,7 +1924,10 @@ async def kalshi_settlement_probe(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.services.kalshi_api import KalshiAPIService
+    try:
+        from app.services.kalshi_api import KalshiAPIService
+    except Exception as e:
+        return {"error": f"import failed: {e}"}
 
     stuck = await db.execute(text("""
         SELECT DISTINCT fm.external_id, fm.category,
@@ -1942,41 +1945,37 @@ async def kalshi_settlement_probe(
     """), {"sample": sample})
     tickers = stuck.all()
 
+    if not tickers:
+        return {"probed": 0, "message": "No stuck Kalshi markets found"}
+
     service = KalshiAPIService()
     results = {"api_miss": [], "no_result": [], "has_result": [], "errors": []}
     try:
         for row in tickers:
+            ticker = row[0]  # external_id
+            cat = row[2] or row[1]  # llm_sport_category or category
             try:
-                event_data = await service.get_event(row.external_id)
+                event_data = await service.get_event(ticker)
                 if not event_data:
-                    results["api_miss"].append({
-                        "ticker": row.external_id,
-                        "category": row.llm_sport_category or row.category,
-                    })
+                    results["api_miss"].append({"ticker": ticker, "category": cat})
                     continue
 
                 nested = event_data.get("markets") or []
-                any_result = False
-                for m in nested:
-                    if m.get("result") is not None:
-                        any_result = True
-                        break
+                any_result = any(m.get("result") is not None for m in nested)
 
                 if any_result:
                     results["has_result"].append({
-                        "ticker": row.external_id,
-                        "category": row.llm_sport_category or row.category,
+                        "ticker": ticker, "category": cat,
                         "n_markets": len(nested),
                         "sample_result": nested[0].get("result") if nested else None,
                     })
                 else:
                     results["no_result"].append({
-                        "ticker": row.external_id,
-                        "category": row.llm_sport_category or row.category,
+                        "ticker": ticker, "category": cat,
                         "n_markets": len(nested),
                     })
             except Exception as e:
-                results["errors"].append({"ticker": row.external_id, "error": str(e)[:100]})
+                results["errors"].append({"ticker": ticker, "error": str(e)[:100]})
     finally:
         await service.close()
 
