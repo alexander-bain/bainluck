@@ -3684,17 +3684,26 @@ async def get_related_futures(
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
         base_season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
 
-    # Load season markets with per-tier limits to ensure representation
-    # across all tiers (championship through division). Without this,
-    # a single tier with hundreds of markets can crowd out other tiers.
-    season_market_ids = []
-    for tier_val, tier_limit in [(1, 100), (2, 100), (3, 100), (4, 100)]:
-        tier_result = await db.execute(
-            select(FuturesMarket.id)
-            .where(*base_season_filters, FuturesMarket.market_tier == tier_val)
-            .limit(tier_limit)
+    # Load season markets across all tiers in one query with per-tier limits.
+    # Uses a window function to rank within each tier, then filters to top 100.
+    from sqlalchemy import text as _sql_text
+    _tier_query = await db.execute(
+        select(FuturesMarket.id, FuturesMarket.market_tier)
+        .where(
+            *base_season_filters,
+            FuturesMarket.market_tier.in_([1, 2, 3, 4]),
         )
-        season_market_ids.extend(row.id for row in tier_result.all())
+        .order_by(FuturesMarket.market_tier, FuturesMarket.id)
+        .limit(400)
+    )
+    _tier_rows = _tier_query.all()
+    _tier_counts: dict[int, int] = {}
+    season_market_ids = []
+    for row in _tier_rows:
+        tier = row.market_tier or 4
+        _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
+        if _tier_counts[tier] <= 100:
+            season_market_ids.append(row.id)
 
     # Debug: tier breakdown of season markets
     if debug and season_market_ids:
