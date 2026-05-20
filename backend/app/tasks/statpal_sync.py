@@ -206,6 +206,12 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             sources["statpal_end_time"] = fixture.end_time.isoformat()
                             event.win_probability_sources = sources
                             updated = True
+                        # BR76: also transition status to completed
+                        if event.status == "live":
+                            event.status = "completed"
+                            if not event.completed_at:
+                                event.completed_at = fixture.end_time
+                            updated = True
 
                     # Update scores from live data if available
                     if live_data and live_data.status == "live":
