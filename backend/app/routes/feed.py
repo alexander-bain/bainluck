@@ -824,11 +824,11 @@ async def get_feed(
     session_id = _session_id_from_request(request)
     discover_config = await _load_discover_runtime_config()
 
-    # --- Redis response cache (anon 15s, auth 5s) ---
+    # --- Redis response cache (anon 15s, auth 5s, my_teams 30s) ---
     _cache_key = None
-    _cache_ttl = 15 if user is None else 5
+    _cache_ttl = 30 if my_teams_only else (15 if user is None else 5)
     _async_redis = None
-    if not my_teams_only and not debug:
+    if not debug:
         try:
             from app.tasks.redis_state import get_async_redis_client
 
@@ -836,7 +836,7 @@ async def get_feed(
             _user_part = (
                 f"u:{user.id}" if user else f"s:{session_id}" if session_id else "anon"
             )
-            _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}"
+            _parts = f"feed:{_user_part}:{sport or 'all'}:{limit}:{offset}:{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:{my_teams_only}"
             _cache_key = f"feed_cache:{hashlib.md5(_parts.encode()).hexdigest()}"
             cached = await _async_redis.get(_cache_key)
             if cached:

@@ -1338,18 +1338,25 @@ async def _query_team_futures(
     }
 
 
+_team_futures_cache: dict[int, tuple[float, dict]] = {}
+_TEAM_FUTURES_TTL = 120
+_TEAM_FUTURES_MAX_SIZE = 100
+
+
 @router.get("/team-futures")
 async def get_team_futures(
     limit: int = 20,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get futures outcomes for the current user's followed teams.
+    """Get futures outcomes for the current user's followed teams."""
+    import time as _time
+    _now = _time.time()
+    if user.id in _team_futures_cache:
+        _cached_at, _cached_resp = _team_futures_cache[user.id]
+        if _now - _cached_at < _TEAM_FUTURES_TTL:
+            return _cached_resp
 
-    Returns outcomes ranked by |probability_change_24h|, tagged with
-    which followed team matched.
-    """
-    # Load user's followed team IDs (all relation types except rival)
     result = await db.execute(
         select(UserFavorite.team_id)
         .where(
@@ -1366,6 +1373,12 @@ async def get_team_futures(
         return {"items": [], "team_ids": [], "total_count": 0}
 
     data = await _query_team_futures(team_ids, db, limit=min(limit, 100))
+
+    if len(_team_futures_cache) >= _TEAM_FUTURES_MAX_SIZE:
+        oldest = min(_team_futures_cache, key=lambda k: _team_futures_cache[k][0])
+        del _team_futures_cache[oldest]
+    _team_futures_cache[user.id] = (_now, data)
+
     return data
 
 

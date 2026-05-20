@@ -3525,6 +3525,11 @@ async def get_game_markets(
     return response
 
 
+_related_futures_cache: dict[int, tuple[float, str, dict]] = {}
+_RELATED_FUTURES_LIVE_TTL = 60
+_RELATED_FUTURES_MAX_SIZE = 200
+
+
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,
@@ -3538,6 +3543,14 @@ async def get_related_futures(
     eliminating dependency on pre-computed team_id links. Sport matching uses
     three strategies (OR): external_id prefix, llm_sport_category, and sport_id.
     """
+    import time as _time
+    _now = _time.time()
+    if not debug and event_id in _related_futures_cache:
+        _cached_at, _cached_status, _cached_resp = _related_futures_cache[event_id]
+        _ttl = _RELATED_FUTURES_LIVE_TTL
+        if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
+            return _cached_resp
+
     from app.utils.team_linking import compute_relevance_score
     from app.utils.market_label_normalization import (
         normalize_market_label,
@@ -4395,6 +4408,12 @@ async def get_related_futures(
             "home_patterns": home_team_patterns,
             "away_patterns": away_team_patterns,
         }
+
+    if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
+        oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
+        del _related_futures_cache[oldest]
+    _related_futures_cache[event_id] = (_now, event.status or "", resp)
+
     return resp
 
 
