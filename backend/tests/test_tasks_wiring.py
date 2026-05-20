@@ -214,6 +214,7 @@ class TestBeatScheduleCompleteness:
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
         "backfill-historical-links",
+        "update-max-movement",
     }
 
     def test_no_missing_entries(self):

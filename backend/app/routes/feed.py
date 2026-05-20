@@ -3440,29 +3440,19 @@ async def _score_futures(
         .limit(180)
     )
 
-    movement_scores = (
-        select(
-            FuturesOutcome.market_id.label("market_id"),
-            func.max(func.abs(FuturesOutcome.probability_change_24h)).label(
-                "max_movement"
-            ),
-        )
-        .where(FuturesOutcome.probability_change_24h.isnot(None))
-        .group_by(FuturesOutcome.market_id)
-        .subquery()
-    )
-
-    # Pool 2b: non-sports by actual movement. This surfaces stories that are
-    # changing quickly even if their absolute volume is lower.
+    # Pool 2b: non-sports by actual movement. Uses denormalized
+    # max_movement_24h column (updated by Celery task) instead of a
+    # GROUP BY subquery on futures_outcomes. Cuts this pool from ~9s to <100ms.
     nonsports_movement_query = (
         select(FuturesMarket.id)
-        .join(movement_scores, movement_scores.c.market_id == FuturesMarket.id)
         .where(
             *id_filters,
             non_sports_filter,
+            FuturesMarket.max_movement_24h.isnot(None),
+            FuturesMarket.max_movement_24h > 0,
         )
         .order_by(
-            movement_scores.c.max_movement.desc().nulls_last(),
+            FuturesMarket.max_movement_24h.desc().nulls_last(),
             FuturesMarket.volume_24h.desc().nulls_last(),
         )
         .limit(160)

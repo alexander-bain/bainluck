@@ -408,6 +408,11 @@ _game_markets_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (ti
 _GAME_MARKETS_LIVE_TTL = 30
 _GAME_MARKETS_MAX_SIZE = 200
 
+_event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
+_EVENT_DETAIL_LIVE_TTL = 30
+_EVENT_DETAIL_DEFAULT_TTL = 300
+_EVENT_DETAIL_MAX_SIZE = 500
+
 
 async def _load_ei_percentiles(db: AsyncSession) -> dict:
     """Load EI percentile thresholds from database.
@@ -2269,6 +2274,14 @@ async def get_live_odds(sport_key: str):
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
+    import time as _time
+    _now = _time.time()
+    if event_id in _event_detail_cache:
+        _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
+        _ttl = _EVENT_DETAIL_LIVE_TTL if _cached_status == "live" else _EVENT_DETAIL_DEFAULT_TTL
+        if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
+            return _cached_resp
+
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
@@ -2455,6 +2468,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["box_score_data"] = {
             "players": event.box_score_data.get("players"),
         }
+
+    if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
+        oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
+        del _event_detail_cache[oldest]
+    _event_detail_cache[event_id] = (_now, event.status, response)
 
     return response
 
@@ -4591,6 +4609,7 @@ async def get_event_odds_history(
                 )
             )
             .order_by(OddsSnapshot.captured_at)
+            .limit(3000)
         )
     snapshots = result.scalars().all()
 

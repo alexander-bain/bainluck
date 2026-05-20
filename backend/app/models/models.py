@@ -687,6 +687,7 @@ class FuturesMarket(Base):
         Integer
     )  # Lifetime volume in contracts/dollars
     volume_24h: Mapped[Optional[int]] = mapped_column(Integer)  # 24-hour trading volume
+    max_movement_24h: Mapped[Optional[float]] = mapped_column(Numeric(7, 4))  # MAX(ABS(outcome.probability_change_24h))
     open_interest: Mapped[Optional[int]] = mapped_column(
         Integer
     )  # Currently open contracts (Kalshi)

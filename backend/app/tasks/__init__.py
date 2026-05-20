@@ -759,6 +759,30 @@ def compute_snapshot_distribution(self):
     return run_async(compute_snapshot_distribution_impl())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
+def update_max_movement(self):
+    """Update max_movement_24h on futures_markets from outcome data."""
+    async def _impl():
+        from sqlalchemy import text
+        async with get_task_session() as session:
+            result = await session.execute(text("""
+                UPDATE futures_markets fm
+                SET max_movement_24h = sub.max_mv
+                FROM (
+                    SELECT fo.market_id, MAX(ABS(fo.probability_change_24h)) AS max_mv
+                    FROM futures_outcomes fo
+                    WHERE fo.probability_change_24h IS NOT NULL
+                    GROUP BY fo.market_id
+                ) sub
+                WHERE fm.id = sub.market_id
+                  AND fm.status IN ('open', 'active')
+                  AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
+            """))
+            await session.commit()
+            return {"updated": result.rowcount}
+    return run_async(_impl())
+
+
 # --- Data Quality Monitoring ---
 
 @celery_app.task(bind=True, name="app.tasks.check_data_quality")
@@ -1118,6 +1142,11 @@ celery_app.conf.beat_schedule = {
     "check-aggregation-quality": {
         "task": "app.tasks.check_aggregation_quality",
         "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
+    },
+    "update-max-movement": {
+        "task": "app.tasks.update_max_movement",
+        "schedule": crontab(minute="*/10"),  # Every 10 minutes
+        "options": {"queue": "background"},
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
