@@ -1930,8 +1930,7 @@ async def kalshi_settlement_probe(
         return {"error": f"import failed: {e}"}
 
     stuck = await db.execute(text("""
-        SELECT DISTINCT fm.external_id, fm.category,
-               fm.llm_sport_category
+        SELECT fm.external_id, fm.category, fm.llm_sport_category
         FROM futures_markets fm
         JOIN futures_outcomes fo ON fo.market_id = fm.id
         WHERE fm.source = 'kalshi'
