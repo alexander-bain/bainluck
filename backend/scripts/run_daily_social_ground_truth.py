@@ -80,7 +80,7 @@ def download_capture_urls(
     capture_dir.mkdir(parents=True, exist_ok=True)
     paths: list[str] = []
     for index, url in enumerate(urls, start=1):
-        response = httpx.get(url, timeout=timeout)
+        response = httpx.get(url, timeout=timeout, follow_redirects=True)
         response.raise_for_status()
         suffix = _suffix_for_capture_url(url, response.headers.get("content-type", ""))
         path = capture_dir / f"capture_{index}{suffix}"

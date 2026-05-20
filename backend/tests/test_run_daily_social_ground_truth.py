@@ -31,7 +31,8 @@ def test_build_next_commands_includes_review_and_upload(tmp_path):
 
 
 def test_download_capture_urls_writes_response_content(tmp_path, monkeypatch):
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, follow_redirects):
+        assert follow_redirects is True
         return httpx.Response(
             200,
             content=b"handle,caption\nkalshi,Will Fed cut rates?\n",
@@ -48,6 +49,23 @@ def test_download_capture_urls_writes_response_content(tmp_path, monkeypatch):
     assert (
         "Will Fed cut rates?" in (tmp_path / "captures" / "capture_1.csv").read_text()
     )
+
+
+def test_download_capture_urls_uses_json_suffix_from_content_type(tmp_path, monkeypatch):
+    def fake_get(url, timeout, follow_redirects):
+        assert follow_redirects is True
+        return httpx.Response(
+            200,
+            content=b"[]",
+            headers={"content-type": "application/json"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("scripts.run_daily_social_ground_truth.httpx.get", fake_get)
+
+    paths = download_capture_urls(["https://example.com/export"], output_dir=tmp_path)
+
+    assert paths == [str(tmp_path / "captures" / "capture_1.json")]
 
 
 def test_main_dry_operator_run_writes_manifest_prompt_and_summary(tmp_path, capsys):

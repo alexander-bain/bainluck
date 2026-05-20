@@ -62,6 +62,7 @@ jobs:
 
           DATE="$(TZ=America/Los_Angeles date +%Y%m%d)"
           OUTPUT_DIR="/tmp/bainluck_social_ground_truth/$DATE"
+          mkdir -p "$OUTPUT_DIR"
           ARGS=(
             scripts/run_daily_social_ground_truth.py
             --date "$DATE"
