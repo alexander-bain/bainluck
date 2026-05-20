@@ -223,6 +223,33 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
                 event.llm_importance = espn_importance
                 changed = True
 
+    # Transition status when ESPN reports the game is over.
+    # This is the PRIMARY mechanism for live → completed transitions;
+    # the transition_event_statuses Celery task is only a fallback.
+    # BR76: without this, events stayed "live" for hours because
+    # find_or_create_event ignores identity.status for existing events,
+    # and no other code path updated event.status from ESPN data.
+    if ee.status in ("post", "final") and event.status == "live":
+        await session.execute(
+            _sql_update(Event)
+            .where(Event.id == event.id)
+            .values(
+                status="completed",
+                completed_at=event.completed_at or datetime.now(timezone.utc),
+            )
+        )
+        event.status = "completed"
+        changed = True
+        stats["espn_completed"] = stats.get("espn_completed", 0) + 1
+    elif ee.status == "in" and event.status == "scheduled":
+        await session.execute(
+            _sql_update(Event)
+            .where(Event.id == event.id)
+            .values(status="live")
+        )
+        event.status = "live"
+        changed = True
+
     return changed
 
 
@@ -464,12 +491,18 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 )
                 session.add(snapshot)
 
-            if ee.status in ("post", "final") and not event.completed_at:
-                await session.execute(
-                    _sql_update(Event)
-                    .where(Event.id == event.id)
-                    .values(completed_at=datetime.now(timezone.utc))
-                )
+            if ee.status in ("post", "final"):
+                _completed_vals: dict = {}
+                if not event.completed_at:
+                    _completed_vals["completed_at"] = datetime.now(timezone.utc)
+                if event.status != "completed":
+                    _completed_vals["status"] = "completed"
+                if _completed_vals:
+                    await session.execute(
+                        _sql_update(Event)
+                        .where(Event.id == event.id)
+                        .values(**_completed_vals)
+                    )
 
             if created:
                 stats["espn_events_created"] = stats.get("espn_events_created", 0) + 1

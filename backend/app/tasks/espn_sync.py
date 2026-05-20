@@ -974,17 +974,24 @@ async def _transition_event_statuses_impl() -> dict:
 
         # --- live → closed (fallback staleness) ---
         # For events that have been "live" longer than their sport's max
-        # duration and have no recent score updates. This is a safety net;
-        # the primary staleness checker in odds_polling handles most cases.
-        stale_cutoff = now - timedelta(minutes=30)
+        # duration. This is a safety net; the primary mechanism is ESPN
+        # sync setting status="completed" when it sees post/final.
+        # BR76: previously used a 5-hour hardcoded minimum, causing NBA
+        # games (~2.5h) to stay "live" for 2.5+ hours after ending when
+        # ESPN sync missed the transition.
+
+        # Find the minimum max_duration across all sports so we only
+        # fetch events that could possibly qualify for transition.
+        min_max_hours = min(SPORT_MAX_DURATIONS.values())
 
         live_result = await session.execute(
             select(Event)
             .options(selectinload(Event.sport))
             .where(
                 Event.status == "live",
-                # Started more than 5 hours ago (conservative — covers most sports)
-                Event.commence_time <= now - timedelta(hours=5),
+                # Use the shortest sport duration as the query cutoff;
+                # per-sport filtering happens in the loop below.
+                Event.commence_time <= now - timedelta(hours=min_max_hours),
             )
         )
         live_events = live_result.scalars().all()
@@ -998,7 +1005,7 @@ async def _transition_event_statuses_impl() -> dict:
                     break
 
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
-            if hours_since_start > max_hours + 1.0:
+            if hours_since_start > max_hours + 0.5:
                 event.status = "closed"
                 if not event.completed_at:
                     event.completed_at = now
