@@ -1007,7 +1007,7 @@ async def public_calibration(
                        THEN ABS(closing_away_spread_odds)::numeric / (ABS(closing_away_spread_odds) + 100.0)
                        ELSE 100.0 / (closing_away_spread_odds + 100.0) END))
                 AS prob,
-                ((home_score - away_score) > closing_home_spread) AS won,
+                ((home_score - away_score) + closing_home_spread > 0) AS won,
                 sport_id
             FROM events
             WHERE status IN ('completed', 'closed')
@@ -1015,7 +1015,7 @@ async def public_calibration(
               AND closing_home_spread_odds IS NOT NULL
               AND closing_away_spread_odds IS NOT NULL
               AND home_score IS NOT NULL AND away_score IS NOT NULL
-              AND (home_score - away_score) != closing_home_spread
+              AND (home_score - away_score) + closing_home_spread != 0
         ) outcomes
         JOIN sports s ON s.id = outcomes.sport_id
         WHERE prob > 0 AND prob < 1

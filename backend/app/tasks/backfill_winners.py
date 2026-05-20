@@ -254,8 +254,12 @@ async def _backfill_datagolf_winners():
                     {"mid": row.id},
                 )
 
+                # For win/top_5/top_10/top_20: anyone NOT in the top-50
+                # leaderboard is definitively a loser (position > 50).
+                # For make_cut: can't determine (cut line is ~70, beyond top 50).
+                can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20")
+
                 for out_row in outcomes.all():
-                    # Extract dg_id from outcome external_id "dg_12345"
                     ext = out_row.external_id or ""
                     if not ext.startswith("dg_"):
                         continue
@@ -263,10 +267,12 @@ async def _backfill_datagolf_winners():
 
                     pos_str = pos_by_dg.get(dg_id)
                     if pos_str is None:
-                        # Player not in top-50 leaderboard — can't determine
-                        continue
-
-                    won = _datagolf_check_placement(pos_str, market_type)
+                        if can_infer_absent:
+                            won = False
+                        else:
+                            continue
+                    else:
+                        won = _datagolf_check_placement(pos_str, market_type)
                     if won is None:
                         continue
 
