@@ -852,32 +852,8 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 
 ### 6. API Route + Guardrail Test Coverage — ONGOING
 
-~~110~~ ~~158~~ ~~210~~ ~~218~~ ~~590+~~ 850+ integration/route contract tests and 5,000+ backend tests collected. May 17 expansion added health/sports, golf, search, calibration, market moves, futures detail/list, futures browse, category pages, related futures, feed, events, playoffs, predictions, seeded event detail, seeded feed coverage, and broad root-level guardrail suites. Seeded-data tests added (May 8):
-- ✅ Feed: scoring/ordering, event data shape, futures data shape, sport filter, pagination (16 tests)
-- ✅ Events: detail response shape, current_odds structure, game-markets sections, related-futures, history (17 tests)
-- ✅ Playoffs: column data, probability sums, monotonicity, and overround normalization guardrails
-- ✅ Related futures: market grouping, dedup, gender filtering, debug counters
-- ✅ Category/futures routes: mocked non-empty contracts, envelope shape, filtering/sorting/pagination behavior
-- ✅ Feed/events/playoffs routes: parameter validation, empty envelopes, mocked scored items, live-odds provider errors, playoff grid and league-futures contracts
-- ✅ Predictions and seeded routes: submit validation, anonymous persistence, detailed stats/resolutions, event detail nested contracts, seeded feed pagination and nested field stability
-- ✅ Game-market/related-futures grouping guardrails: period serialization, linked-market filter bypass, fallback period derivation, related-futures dedup/grouping, player metadata, and market `group_id` precedence/canonical fallback
-- ✅ Matching/categorization guardrails: market label cleanup, futures category/tier classification, name normalization, roster diacritics, and same-city team ambiguity handling
-- ✅ Discovery signal guardrails: anonymous/session personalization, bounded repeated unlikes, sport-key/category routing, Polymarket email ground-truth parsing, and series probability invariants
-- ✅ Source matching/quality guardrails: event-registry source claim and duplicate prevention, Kalshi ticker parsing/category fallbacks, aggregate probability fallbacks, completed-game prediction-market exclusion, and feed-quality suppression/preservation rules
-- ✅ Market ingestion/quota guardrails: prediction-market sport gates, unsupported-league handling, Polymarket placeholder/no-liquidity parsing, Odds API quota-sensitive parameters and partial-failure behavior, rate-limit fail-open/bucket separation, and bookmaker consensus math
-- ✅ Deterministic display guardrails: feed-reason stale-copy suppression, futures highlight Yes/No humanization, baseball/live game-state labels, playoff probability normalization, and binary spread/total interpolation
-- ✅ Quota/context scoring guardrails: polling tier/quota behavior, Odds API helper parsing/dedupe, league context response shape, excitement-index edge cases, and Power 4 team matching false-positive fixes for ambiguous school names
-- ✅ Probability/momentum guardrails: event taxonomy feed facets, win-probability clamping and final-state overrides, line-movement threshold/order handling, pulse noisy-source resistance, and NCAA seed-matchup helper behavior
-- ✅ Auth/preferences resilience guardrails: Apple Sign-In web/native audience handling, Redis quota-state fail-open/malformed cache behavior, onboarding category-interest round trips, and stale bookmaker outlier filtering
-- ✅ Calibration/identity guardrails: calibration SQL/output shape, Discover LLM metadata cache fallbacks, feed independent-binary normalization shape, and team identity alias/sport-scope matching
-- ✅ Provider parser guardrails: DataGolf malformed payload fallbacks, ESPN name punctuation/diacritic matching, MLB live/win-probability parsing, and ESPN boxscore stat-row resilience
-- ✅ Retention/taxonomy guardrails: snapshot over-collapse prevention, scoring-play wall-clock assignment, taxonomy cache/no-LLM fallbacks, and destructive-SQL safeguards in retention collapse queries
-- ✅ May 18 docs sync: verified the guardrail commits were already pushed, carried gotchas 71-75 into `CLAUDE.md`, and fixed the stale gotchas-reference range header.
-- ✅ May 18 guardrails: playoff championship overround normalization, StatPal raw-period preservation, DataGolf tour metadata classification, bug-report categorization, and line-movement prompt focus.
-- ✅ May 18 notification route contracts: device-token registration/upsert shape, admin list redaction, Firebase send-test payloads, invalid-token hints, and unconfigured Firebase errors.
-- ✅ May 18-19 integration test sprint: +456 tests across 15 new files — auth, challenges, league-futures, notifications, source-intelligence, teams, user, sports, search expansion, weather, economics, politics, entertainment, feedback, admin-celery, admin-taxonomy. Total: 4,643 → 5,099.
+850+ integration/route contract tests and 5,000+ backend tests. Comprehensive guardrail suites cover feed scoring, events, playoffs, futures, category pages, predictions, matching, ingestion, display, auth, calibration, provider parsers, retention, notifications, and more. May 18-19 sprint added +456 tests across 15 files (total: 5,099).
 
-**Files:** `tests/integration/test_route_feed_scoring.py`, `tests/integration/test_route_events_seeded.py`, `tests/integration/test_route_feed_seeded.py`, `tests/integration/test_route_predictions.py`, `tests/integration/test_route_category_pages.py`, `tests/integration/test_route_futures.py`, `tests/integration/test_route_futures_browse.py`, `tests/integration/test_route_related_futures.py`, `tests/integration/test_route_feed.py`, `tests/integration/test_route_events.py`, `tests/integration/test_route_playoffs.py`, plus focused backend guardrail tests under `backend/tests/` and `backend/app/utils/league_classification.py`
 **Parallel Safety:** Green
 
 ---
@@ -1137,24 +1113,4 @@ Last sweep: May 11 (10 modules, 10/14 resolved). Time for a fresh sweep to catch
 
 ### Mystery Shopper Findings (April 22, 2026 — Manus AI Audit)
 
-**Critical (user-facing, broken):**
-
-| # | Finding | Status | Notes |
-|---|---------|--------|-------|
-| M1 | Golf tournaments: 100%/0% probability | **Fixed** May 7 | DataGolf UniqueViolation fix |
-| M2 | Event detail doesn't load on mobile | **Needs verification** | May have been transient |
-| M3 | Future golf majors marked as "LIVE" | **Fixed** | DataGolf schedule fix |
-| M4 | Player props showing 97-98% uninteresting thresholds | Open | Filter needed for props where interesting side <5% |
-
-**Warning (data quality):**
-
-| # | Finding | Status | Notes |
-|---|---------|--------|-------|
-| M5 | Tiger Woods -57.5% daily change | **Fixed** | Stale trend data filtering |
-| M6 | Weather: LA showing 33°F | **Fixed** | Weather staleness + C/F fix |
-| M7 | Economics: recession showing "30" without % | **Likely fixed** | ProbNum component has `suffix="%"` default |
-| M8 | Economics: CPI distribution sums >100% | Open | Independent binary markets as distribution |
-| M9 | Weather: stale featured market | **Fixed** May 7 | 7-day staleness + 6h grace |
-| M10 | "Projected final: 3 – -1" notation | **Likely fixed** | Guard: `> 0` on both scores filters negatives |
-| M11 | Half/quarter/period markets not displayed | **Fixed** May 8 | RS-11: inning pattern classification |
-| M12 | Halftime/spread markets missing | **Fixed** May 8 | RS-11 + half patterns in _classify_game_market |
+10/12 fixed. **Open:** M2 (mobile event detail — needs verification, likely transient), M4 (uninteresting prop thresholds — filter needed), M8 (CPI distribution >100% — independent binary markets).

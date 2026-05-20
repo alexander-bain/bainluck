@@ -241,6 +241,20 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
+                    // Total Points Spectrum (projected scoring + threshold ladder)
+                    if let gameMarkets = vm.gameMarkets {
+                        TotalPointsSpectrumView(
+                            gameMarkets: gameMarkets,
+                            eventStatus: event.status,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            overUnder: event.currentOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
+                        )
+                    }
                     // Player Props (from game-markets endpoint)
                     if let gameMarkets = vm.gameMarkets,
                        let playerProps = gameMarkets.playerProps,
