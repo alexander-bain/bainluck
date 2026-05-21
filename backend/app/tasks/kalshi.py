@@ -546,6 +546,12 @@ async def _poll_kalshi_markets():
                         opening_american = american if has_real_trading else None
                         opening_at = now if has_real_trading else None
 
+                        # Forward capture: set is_winner when Kalshi has
+                        # settlement data, so we don't rely on backfill
+                        is_winner_value = None
+                        if market.result is not None:
+                            is_winner_value = market.result == "yes"
+
                         # Upsert outcome
                         update_set: dict = {
                             "name": outcome_name,
@@ -558,6 +564,8 @@ async def _poll_kalshi_markets():
                             "rank_change_24h": FuturesOutcome.rank - rank,
                             "last_updated": func.now(),
                         }
+                        if is_winner_value is not None:
+                            update_set["is_winner"] = is_winner_value
                         # Backfill opening_probability if it was NULL (market had
                         # no trading on first capture) and now has real trading
                         if has_real_trading:

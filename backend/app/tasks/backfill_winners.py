@@ -673,6 +673,285 @@ async def _get_halftime_score(session, event_id: int):
     return None
 
 
+_PROP_TICKER_TO_STAT = {
+    "kxnbapts": "points", "kxnbaast": "assists", "kxnbareb": "rebounds",
+    "kxnbablk": "blocks", "kxnbastl": "steals", "kxnba3pt": "three pointers",
+    "kxnhlgoal": "goals", "kxnhlanygoal": "goals", "kxnhlpts": "points",
+    "kxnhlast": "assists", "kxnhlsaves": "saves",
+    "kxmlbhit": "hits", "kxmlbhr": "home runs", "kxmlbks": "strikeouts",
+}
+
+_PROP_RE = re.compile(r"^(.+?):\s*(\d+)\+\s*$")
+
+_COMBO_STATS = {
+    "kxnbapa": ["points", "assists"],
+    "kxnbapr": ["points", "rebounds"],
+    "kxnbapra": ["points", "rebounds", "assists"],
+    "kxnbara": ["rebounds", "assists"],
+}
+
+
+async def _resolve_kalshi_player_props_from_boxscore():
+    """Resolve Kalshi player prop markets from ESPN box score data.
+
+    Parses "Player Name: N+" from outcome names, looks up the player's
+    actual stat in Event.box_score_data, compares to threshold.
+    """
+    stats = {"resolved": 0, "no_boxscore": 0, "no_player": 0,
+             "no_parse": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fm.id AS market_id, fm.external_id AS ticker,
+                           e.box_score_data
+                    FROM futures_markets fm
+                    JOIN events e ON e.id = fm.event_id
+                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND e.box_score_data IS NOT NULL
+                    GROUP BY fm.id, fm.external_id, e.box_score_data
+                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                       AND COUNT(*) = 1
+                    LIMIT 10000
+                """)
+            )
+            markets = result.all()
+
+            for row in markets:
+                ticker_lower = (row.ticker or "").lower()
+                box_score = row.box_score_data or {}
+
+                # Determine stat from ticker prefix
+                stat_name = None
+                combo_stats = None
+                for prefix, stat in _PROP_TICKER_TO_STAT.items():
+                    if ticker_lower.startswith(prefix):
+                        stat_name = stat
+                        break
+                if not stat_name:
+                    for prefix, stat_list in _COMBO_STATS.items():
+                        if ticker_lower.startswith(prefix):
+                            combo_stats = stat_list
+                            break
+                if not stat_name and not combo_stats:
+                    continue
+
+                # Get the single outcome
+                out = await session.execute(
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
+                    {"mid": row.market_id},
+                )
+                outcome = out.first()
+                if not outcome or not outcome.name:
+                    stats["no_parse"] += 1
+                    continue
+
+                # Parse "Player Name: N+"
+                m = _PROP_RE.match(outcome.name)
+                if not m:
+                    stats["no_parse"] += 1
+                    continue
+
+                player_name = m.group(1).strip()
+                threshold = int(m.group(2))
+
+                # Look up player in box score (case-insensitive)
+                player_stats = None
+                for bs_name, bs_stats in box_score.items():
+                    if bs_name.lower() == player_name.lower():
+                        player_stats = bs_stats
+                        break
+
+                if player_stats is None:
+                    stats["no_player"] += 1
+                    continue
+
+                # Get actual value
+                if combo_stats:
+                    actual = sum(player_stats.get(s, 0) for s in combo_stats)
+                else:
+                    actual = player_stats.get(stat_name, 0)
+
+                if actual is None:
+                    stats["no_player"] += 1
+                    continue
+
+                won = actual >= threshold
+
+                await session.execute(
+                    text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                    {"won": won, "oid": outcome.id},
+                )
+                stats["resolved"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Player prop resolution error: %s", e)
+
+    logger.info(
+        "Player prop resolution: %d resolved, %d no_boxscore, %d no_player, "
+        "%d no_parse, %d errors",
+        stats["resolved"], stats["no_boxscore"], stats["no_player"],
+        stats["no_parse"], len(stats["errors"]),
+    )
+    return stats
+
+
+async def _resolve_kalshi_period_props():
+    """Resolve Kalshi 1H/2H/quarter/F5 markets from scoring_plays data.
+
+    Reconstructs period scores from the scoring_plays table and applies
+    winner/spread/total logic for the specific period.
+    """
+    stats = {"resolved": 0, "no_plays": 0, "no_parse": 0, "errors": []}
+
+    _period_map = {
+        "1h": {"q1", "q2", "1q", "2q", "1st", "2nd", "1st half", "first half", "1h"},
+        "2h": {"q3", "q4", "3q", "4q", "3rd", "4th", "2nd half", "second half", "2h", "ot"},
+        "1q": {"q1", "1q", "1st"},
+        "2q": {"q2", "2q", "2nd"},
+        "3q": {"q3", "3q", "3rd"},
+        "4q": {"q4", "4q", "4th"},
+    }
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT fm.id AS market_id, fm.external_id AS ticker,
+                           fm.name AS market_name,
+                           e.id AS event_id,
+                           e.home_score AS final_home, e.away_score AS final_away
+                    FROM futures_markets fm
+                    JOIN events e ON e.id = fm.event_id
+                    JOIN futures_outcomes fo ON fo.market_id = fm.id
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND e.status IN ('completed', 'closed')
+                      AND e.home_score IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM scoring_plays sp WHERE sp.event_id = e.id)
+                    GROUP BY fm.id, fm.external_id, fm.name,
+                             e.id, e.home_score, e.away_score
+                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
+                       AND COUNT(*) = 1
+                    LIMIT 5000
+                """)
+            )
+            markets = result.all()
+
+            for row in markets:
+                ticker_lower = (row.ticker or "").lower()
+
+                # Detect period from ticker
+                period_key = None
+                for pk in ("1h", "2h", "1q", "2q", "3q", "4q"):
+                    if pk in ticker_lower:
+                        period_key = pk
+                        break
+                if ticker_lower.startswith("kxmlbf5"):
+                    period_key = "f5"
+
+                if not period_key:
+                    continue
+
+                # Get period score from scoring_plays
+                if period_key == "f5":
+                    plays = await session.execute(
+                        text("""
+                            SELECT home_score, away_score FROM scoring_plays
+                            WHERE event_id = :eid
+                              AND LOWER(period) SIMILAR TO '%(inning [1-5]|top [1-5]|bot [1-5]|[1-5]th)%'
+                            ORDER BY captured_at DESC LIMIT 1
+                        """),
+                        {"eid": row.event_id},
+                    )
+                else:
+                    periods = _period_map.get(period_key, set())
+                    if not periods:
+                        continue
+                    plays = await session.execute(
+                        text("""
+                            SELECT home_score, away_score FROM scoring_plays
+                            WHERE event_id = :eid
+                              AND LOWER(period) IN :periods
+                            ORDER BY captured_at DESC LIMIT 1
+                        """),
+                        {"eid": row.event_id, "periods": tuple(periods)},
+                    )
+
+                play_row = plays.first()
+                if not play_row:
+                    stats["no_plays"] += 1
+                    continue
+
+                period_home = play_row.home_score
+                period_away = play_row.away_score
+
+                # For 2H: subtract halftime from final
+                if period_key == "2h":
+                    h1_plays = await _get_halftime_score(session, row.event_id)
+                    if h1_plays:
+                        period_home = row.final_home - h1_plays[0]
+                        period_away = row.final_away - h1_plays[1]
+                    else:
+                        stats["no_plays"] += 1
+                        continue
+
+                # Get the outcome and parse its name
+                out = await session.execute(
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
+                    {"mid": row.market_id},
+                )
+                outcome = out.first()
+                if not outcome or not outcome.name:
+                    stats["no_parse"] += 1
+                    continue
+
+                # Try spread pattern
+                sm = _SPREAD_RE.search(outcome.name)
+                if sm:
+                    line = float(sm.group(2))
+                    won = (period_home - period_away) > line or (period_away - period_home) > line
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": outcome.id},
+                    )
+                    stats["resolved"] += 1
+                    continue
+
+                # Try total pattern
+                tm = _TOTAL_RE.search(outcome.name)
+                if tm:
+                    line = float(tm.group(1))
+                    won = (period_home + period_away) > line
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": outcome.id},
+                    )
+                    stats["resolved"] += 1
+                    continue
+
+                stats["no_parse"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Period prop resolution error: %s", e)
+
+    logger.info(
+        "Period prop resolution: %d resolved, %d no_plays, %d no_parse, %d errors",
+        stats["resolved"], stats["no_plays"], stats["no_parse"],
+        len(stats["errors"]),
+    )
+    return stats
+
+
 async def _backfill_datagolf_winners():
     """Resolve DataGolf placement markets from actual leaderboard results.
 
@@ -1609,6 +1888,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # game scores even when the Kalshi API has purged the market data.
     score_stats = await _resolve_kalshi_from_scores()
     spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
+    period_prop_stats = await _resolve_kalshi_period_props()
 
     # Phase 1b: Authoritative API settlement data — run BEFORE probability
     # passes so API results take priority over arbitrary Pass 2 picks.
@@ -1633,6 +1914,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "golf_settlement_sync": golf_sync_stats,
         "kalshi_score_resolution": score_stats,
         "kalshi_spread_total_resolution": spread_total_stats,
+        "kalshi_player_props": player_prop_stats,
+        "kalshi_period_props": period_prop_stats,
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
