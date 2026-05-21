@@ -1495,6 +1495,44 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # (placeholder prices with no trading activity — not real predictions)
     no_snap_stats = await _null_untradeable_openings()
 
+    # Phase 0c-repair: Restore opening_probability on outcomes that were
+    # incorrectly nulled but have real snapshots (>5 snapshots with movement).
+    repair_stats = {"restored": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    WITH restorable AS (
+                        SELECT fo.id AS outcome_id,
+                               (SELECT fos.probability
+                                FROM futures_odds_snapshots fos
+                                WHERE fos.outcome_id = fo.id
+                                ORDER BY fos.captured_at ASC LIMIT 1
+                               ) AS first_prob
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo.opening_probability IS NULL
+                          AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                               WHERE fos.outcome_id = fo.id) > 5
+                          AND (SELECT MAX(fos.probability) - MIN(fos.probability)
+                               FROM futures_odds_snapshots fos
+                               WHERE fos.outcome_id = fo.id) >= 0.02
+                        LIMIT 50000
+                    )
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = r.first_prob
+                    FROM restorable r
+                    WHERE fo.id = r.outcome_id
+                      AND r.first_prob IS NOT NULL
+                      AND r.first_prob > 0 AND r.first_prob < 1
+                """)
+            )
+            repair_stats["restored"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        repair_stats["errors"].append(str(e))
+
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
@@ -1558,6 +1596,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
         "null_untradeable": no_snap_stats,
+        "opening_repair": repair_stats,
         "closing_lines": closing_stats,
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
