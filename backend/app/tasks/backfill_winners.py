@@ -242,8 +242,9 @@ async def _resolve_kalshi_golf_from_datagolf():
                     WHERE source = 'datagolf'
                       AND status = 'resolved'
                       AND market_metadata IS NOT NULL
-                      AND external_id LIKE '%:win'
-                """)
+                      AND external_id LIKE :pattern
+                """),
+                {"pattern": "%:win"},
             )
             tournament_leaderboards: dict[str, list] = {}
             for row in dg_result.all():
