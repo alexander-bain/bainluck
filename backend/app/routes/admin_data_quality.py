@@ -2017,50 +2017,47 @@ async def golf_cross_ref_debug(
     except Exception as e:
         return {"error": f"import failed: {e}"}
 
-    # DataGolf win markets with leaderboards
+    # DataGolf win markets
     dg = await db.execute(text("""
-        SELECT name, external_id,
-               market_metadata->>'leaderboard' IS NOT NULL AS has_lb,
-               jsonb_array_length(COALESCE(market_metadata->'leaderboard', '[]'::jsonb)) AS lb_size
+        SELECT name, external_id, market_metadata IS NOT NULL AS has_meta
         FROM futures_markets
         WHERE source = 'datagolf' AND status = 'resolved'
-          AND external_id LIKE '%:win'
+          AND external_id LIKE :pattern
         ORDER BY name
-    """))
-    dg_rows = dg.all()
+    """), {"pattern": "%:win"})
 
     dg_tournaments = []
-    for r in dg_rows:
-        key = _normalize_tournament(r.name)
-        dg_tournaments.append({
-            "name": r.name, "ext": r.external_id,
-            "key": key, "has_lb": r.has_lb, "lb_size": r.lb_size,
-        })
+    for r in dg.all():
+        key = _normalize_tournament(r[0])
+        dg_tournaments.append({"name": r[0], "ext": r[1], "key": key, "has_meta": r[2]})
 
-    # Kalshi golf markets
+    # Kalshi golf markets (sample)
     kalshi = await db.execute(text("""
-        SELECT fm.name, fm.external_id,
-               COUNT(fo.id) AS n_outcomes,
-               SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS n_winners
+        SELECT fm.name, fm.external_id
         FROM futures_markets fm
-        JOIN futures_outcomes fo ON fo.market_id = fm.id
         WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
           AND fm.llm_sport_category = 'golf'
-        GROUP BY fm.id, fm.name, fm.external_id
-        ORDER BY RANDOM()
-        LIMIT 20
+        LIMIT 15
     """))
+
     kalshi_samples = []
     for r in kalshi.all():
-        key = _normalize_tournament(r.name)
-        kalshi_samples.append({
-            "name": r.name, "ticker": r.external_id,
-            "key": key, "n_outcomes": r.n_outcomes, "n_winners": r.n_winners,
-        })
+        key = _normalize_tournament(r[0])
+        kalshi_samples.append({"name": r[0], "ticker": r[1], "key": key})
+
+    # Show which keys overlap
+    dg_keys = set(t["key"] for t in dg_tournaments)
+    kalshi_keys = set(s["key"] for s in kalshi_samples)
+    overlap = dg_keys & kalshi_keys
 
     return {
+        "datagolf_count": len(dg_tournaments),
         "datagolf_tournaments": dg_tournaments,
+        "kalshi_sample_count": len(kalshi_samples),
         "kalshi_samples": kalshi_samples,
+        "matching_keys": sorted(overlap),
+        "dg_only_keys": sorted(dg_keys - kalshi_keys),
+        "kalshi_only_keys": sorted(kalshi_keys - dg_keys),
     }
 
 
