@@ -2031,19 +2031,29 @@ async def golf_cross_ref_debug(
         key = _normalize_tournament(r[0])
         dg_tournaments.append({"name": r[0], "ext": r[1], "key": key, "has_meta": r[2]})
 
-    # Kalshi golf markets (sample)
+    # Kalshi golf markets — full breakdown by ticker prefix
     kalshi = await db.execute(text("""
-        SELECT fm.name, fm.external_id
+        SELECT fm.external_id, fm.name,
+               COUNT(fo.id) AS n_outcomes
         FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
         WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
           AND fm.llm_sport_category = 'golf'
-        LIMIT 15
+        GROUP BY fm.id, fm.external_id, fm.name
     """))
 
+    import re as _re
     kalshi_samples = []
+    prefix_counts: dict[str, int] = {}
+    prefix_outcomes: dict[str, int] = {}
     for r in kalshi.all():
         key = _normalize_tournament(r[0])
-        kalshi_samples.append({"name": r[0], "ticker": r[1], "key": key})
+        ticker = r[1] or ""
+        m = _re.match(r"(kx[a-z0-9]+)", ticker.lower())
+        prefix = m.group(1) if m else "unknown"
+        prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+        prefix_outcomes[prefix] = prefix_outcomes.get(prefix, 0) + r[2]
+        kalshi_samples.append({"name": r[0], "ticker": ticker, "key": key})
 
     # Show which keys overlap
     dg_keys = set(t["key"] for t in dg_tournaments)
@@ -2053,11 +2063,15 @@ async def golf_cross_ref_debug(
     return {
         "datagolf_count": len(dg_tournaments),
         "datagolf_tournaments": dg_tournaments,
-        "kalshi_sample_count": len(kalshi_samples),
-        "kalshi_samples": kalshi_samples,
+        "kalshi_total_markets": len(kalshi_samples),
+        "kalshi_by_prefix": sorted(
+            [{"prefix": p, "markets": prefix_counts[p], "outcomes": prefix_outcomes[p]}
+             for p in prefix_counts],
+            key=lambda x: x["outcomes"], reverse=True,
+        ),
         "matching_keys": sorted(overlap),
         "dg_only_keys": sorted(dg_keys - kalshi_keys),
-        "kalshi_only_keys": sorted(kalshi_keys - dg_keys),
+        "kalshi_only_keys": sorted(kalshi_keys - dg_keys)[:10],
     }
 
 
