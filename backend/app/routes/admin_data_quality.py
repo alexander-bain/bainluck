@@ -2466,6 +2466,95 @@ async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
     }
 
 
+@router.get("/calibration/resolution-status")
+async def calibration_resolution_status(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quick status: how many markets can we resolve, by type?"""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Box score coverage
+    bs = await db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE espn_id IS NOT NULL) AS has_espn_id,
+            COUNT(*) FILTER (WHERE box_score_data IS NOT NULL
+                AND box_score_data->>'error' IS NULL) AS has_real_boxscore,
+            COUNT(*) FILTER (WHERE box_score_data IS NOT NULL
+                AND box_score_data->>'error' IS NOT NULL) AS marked_unavailable,
+            COUNT(*) FILTER (WHERE espn_id IS NOT NULL AND box_score_data IS NULL) AS needs_backfill,
+            COUNT(*) AS total
+        FROM events WHERE status IN ('completed', 'closed')
+    """))
+    bs_row = bs.one()
+
+    # Kalshi markets by resolution source
+    res = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN fm.external_id LIKE 'kxnbapts%' OR fm.external_id LIKE 'kxnbaast%'
+                    OR fm.external_id LIKE 'kxnbareb%' OR fm.external_id LIKE 'kxnbablk%'
+                    OR fm.external_id LIKE 'kxnbastl%' OR fm.external_id LIKE 'kxnba3pt%'
+                    OR fm.external_id LIKE 'kxnbapa%' OR fm.external_id LIKE 'kxnbapr%'
+                    OR fm.external_id LIKE 'kxnbapra%' OR fm.external_id LIKE 'kxnbara%'
+                    OR fm.external_id LIKE 'kxnba2d%' OR fm.external_id LIKE 'kxnba3d%'
+                    OR fm.external_id LIKE 'kxnhlgoal%' OR fm.external_id LIKE 'kxnhlanygoal%'
+                    OR fm.external_id LIKE 'kxnhlpts%' OR fm.external_id LIKE 'kxnhlast%'
+                    OR fm.external_id LIKE 'kxnhlsaves%'
+                    OR fm.external_id LIKE 'kxmlbhit%' OR fm.external_id LIKE 'kxmlbhr%'
+                    OR fm.external_id LIKE 'kxmlbks%'
+                THEN 'player_prop'
+                WHEN fm.external_id LIKE 'kx%1h%' OR fm.external_id LIKE 'kx%2h%'
+                    OR fm.external_id LIKE 'kx%1q%' OR fm.external_id LIKE 'kx%2q%'
+                    OR fm.external_id LIKE 'kx%3q%' OR fm.external_id LIKE 'kx%4q%'
+                    OR fm.external_id LIKE 'kxmlbf5%'
+                THEN 'period_prop'
+                WHEN fm.external_id LIKE 'kx%spread%' THEN 'spread'
+                WHEN fm.external_id LIKE 'kx%total%' THEN 'total'
+                WHEN fm.external_id LIKE 'kx%game%' THEN 'moneyline'
+                ELSE 'other'
+            END AS market_type,
+            COUNT(DISTINCT fm.id) AS markets,
+            SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM futures_outcomes fo
+                WHERE fo.market_id = fm.id AND fo.is_winner = true
+            ) THEN 1 ELSE 0 END) AS has_winner,
+            SUM(CASE WHEN fm.event_id IS NOT NULL THEN 1 ELSE 0 END) AS linked_to_event,
+            SUM(CASE WHEN fm.event_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM events e
+                WHERE e.id = fm.event_id
+                AND e.box_score_data IS NOT NULL
+                AND e.box_score_data->>'error' IS NULL
+            ) THEN 1 ELSE 0 END) AS has_boxscore
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+        GROUP BY market_type
+        ORDER BY markets DESC
+    """))
+
+    return {
+        "espn_box_score_coverage": {
+            "has_espn_id": bs_row.has_espn_id,
+            "has_real_boxscore": bs_row.has_real_boxscore,
+            "marked_unavailable": bs_row.marked_unavailable,
+            "needs_backfill": bs_row.needs_backfill,
+            "total_completed": bs_row.total,
+        },
+        "kalshi_by_market_type": [
+            {
+                "type": r.market_type,
+                "markets": r.markets,
+                "has_winner": r.has_winner,
+                "linked_to_event": r.linked_to_event,
+                "has_boxscore": r.has_boxscore,
+                "winner_pct": round(100 * r.has_winner / max(r.markets, 1), 1),
+            }
+            for r in res.all()
+        ],
+    }
+
+
 @router.get("/calibration/coverage-audit")
 async def calibration_coverage_audit(
     secret: str = Query(...),
