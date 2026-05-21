@@ -43,6 +43,7 @@ const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   odds_api: "Odds API",
   odds_api_spreads: "Spreads (Odds API)",
   odds_api_totals: "Totals (Odds API)",
+  odds_api_bookmaker: "Per-Bookmaker (Odds API)",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -51,6 +52,7 @@ const SOURCE_COLORS: Record<string, string> = {
   odds_api: "#16a34a",
   odds_api_spreads: "#0d9488",
   odds_api_totals: "#059669",
+  odds_api_bookmaker: "#15803d",
 };
 
 function sourceLabel(src: string): string {
