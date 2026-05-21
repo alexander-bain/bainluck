@@ -1,0 +1,102 @@
+# GitHub Workflow
+
+This repo uses two layers on purpose:
+
+- `docs/backlog.md` is the strategic source of truth: what matters, why it matters, and how workstreams relate.
+- GitHub Issues are the execution queue: scoped packets of work that a person, Codex thread, Claude thread, or subagent can pick up.
+
+Avoid duplicating full descriptions in both places. The backlog should link to active issues; issues should link back to the relevant backlog section.
+
+## Labels
+
+Use one or more area labels to describe where the user feels the work:
+
+- `area:discover-ranking`
+- `area:event-details`
+- `area:sports`
+- `area:categories`
+- `area:search`
+- `area:calibration`
+- `area:admin-ops`
+- `area:native`
+- `area:auth`
+- `area:infra`
+
+Use one or more type labels to describe the engineering shape:
+
+- `type:bug`
+- `type:feature`
+- `type:quality`
+- `type:perf`
+- `type:design`
+- `type:ops`
+- `type:docs`
+- `type:alert`
+
+Use priority labels sparingly:
+
+- `priority:p0` production broken or user-blocking
+- `priority:p1` high user impact
+- `priority:p2` important but not urgent
+- `priority:p3` polish or cleanup
+
+Use routing labels to manage handoffs:
+
+- `needs-agent` ready for an agent thread
+- `needs-user` blocked on Alex input or credentials
+- `blocked` blocked by another issue or external dependency
+- `good-first-agent-task` intentionally small and low-risk
+- `alert-intake` generated or updated by alert automation
+
+## Project Board
+
+Use one GitHub Project for the repo, with these statuses:
+
+- Inbox
+- Ready
+- In Progress
+- Needs User
+- Review / Verify
+- Done
+
+Do not create separate projects for Discover, native, latency, or admin. Use labels for those. Cross-cutting work, such as Discover latency, should have both an area label (`area:discover-ranking`) and a type label (`type:perf`).
+
+## Backlog Sync
+
+Every active product issue should have a backlog parent, but not every backlog idea needs an issue.
+
+Recommended backlog markers:
+
+- `[idea]` not ready for execution
+- `[ready]` scoped enough to become or already have an issue
+- `[active]` currently being worked
+- `[blocked]` waiting on dependency or user action
+- `[shipped]` done; move meaningful items to `docs/completed-features.md`
+
+Example:
+
+```md
+### Discover Ranking
+
+Goal: Make the first page consistently surprising, timely, and culturally alive.
+
+Active execution:
+- [active] Tune external curator recall. Issue: #123
+- [ready] Add daily Kalshi/Polymarket front-page capture. Issue: #124
+
+Ideas:
+- [idea] Learn from repeated dismissals by market archetype
+```
+
+When an issue opens from a backlog item, add the issue number to the backlog line. When an issue closes, update or remove the backlog line in the same PR/commit if the change is meaningful.
+
+## Agent Usage
+
+Good prompts:
+
+- "Work the oldest open `needs-agent` issue."
+- "Triage open `alert-intake` issues and fix the highest-priority one."
+- "Find `area:discover-ranking` + `type:quality` issues that are safe to parallelize."
+- "Promote the ready Discover backlog items into scoped GitHub issues."
+
+Before parallel agent work, make sure each issue has a narrow scope and distinct write set.

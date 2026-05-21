@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Bain Luck backlog
+    url: https://github.com/alexander-bain/bainluck/blob/master/docs/backlog.md
+    about: Use the backlog for strategy and issue links; use issues for scoped execution.

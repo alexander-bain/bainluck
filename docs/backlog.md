@@ -2,6 +2,15 @@
 
 All outstanding work items for Bain Luck. Shipped items live in `docs/completed-features.md`.
 
+GitHub Issues are the execution queue for scoped work packets. This document remains the strategic source of truth for priorities, rationale, and workstream context. When a backlog item becomes ready for a person or agent to pick up, create/link a GitHub issue and mark it with one of: `[idea]`, `[ready]`, `[active]`, `[blocked]`, `[shipped]`. See `docs/github-workflow.md`.
+
+## Active GitHub Execution Queue
+
+- [active] Discover feed first-page quality: suppress stale, completed, and repetitive cards. Issue: [#435](https://github.com/alexander-bain/bainluck/issues/435)
+- [ready] Daily Kalshi/Polymarket front-page ground-truth capture. Issue: [#436](https://github.com/alexander-bain/bainluck/issues/436)
+- [blocked] GitHub Project board setup requires project-scoped GitHub auth or UI setup. Issue: [#437](https://github.com/alexander-bain/bainluck/issues/437)
+- [active] Evolution chart/grid probability disagreement. Issue: [#415](https://github.com/alexander-bain/bainluck/issues/415)
+
 ## Current Priority: Calibration & Data Quality
 
 **"Do prediction markets predict anything?"** — the calibration page is the proof. This workstream makes the data trustworthy, expands the sample size, and fixes per-category accuracy.
