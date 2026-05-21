@@ -437,6 +437,9 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:regional_us_elections"
 
+    if re.search(r"\b(mayoral|mayor)\s+election\b", lower):
+        return "story:regional_us_elections"
+
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
         return "story:macro_rates"
 
@@ -527,7 +530,10 @@ def classify_market_quality(
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
     entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
-    regional_election = bool(_REGIONAL_US_ELECTION_RE.search(name)) and not re.search(
+    regional_election = (
+        bool(_REGIONAL_US_ELECTION_RE.search(name))
+        or bool(re.search(r"\b(mayoral|mayor)\s+election\b", name, re.IGNORECASE))
+    ) and not re.search(
         r"\b(president|presidential|trump|biden|obama|2028)\b",
         name,
         re.IGNORECASE,
@@ -576,7 +582,8 @@ def classify_market_quality(
     if social_filler or (obscure and not compelling):
         quality: QualityClass = "suppress"
     elif (
-        daily_equity_direction
+        obscure
+        or daily_equity_direction
         or entertainment_metric
         or regional_election
         or low_signal_sport
@@ -1513,6 +1520,7 @@ def diversify_quality_families(
         "story:major_entertainment_events": 2,
         "story:us_federal_power": 3,
         "story:drake_iceman": 1,
+        "story:music_charts": 1,
         "story:us_government_stakes": 2,
         "story:single_stock_earnings": 1,
         "story:golf_truist_championship": 3,

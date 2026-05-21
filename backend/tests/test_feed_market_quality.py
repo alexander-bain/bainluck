@@ -223,6 +223,7 @@ class TestMarketQualityClassification:
             "South Carolina Republican Governor nominee?",
             "NY-11 Democratic nominee?",
             "Texas Attorney General winner?",
+            "LA Mayoral Election: Who will advance to the 2nd round?",
         ]
 
         qualities = [
@@ -1771,6 +1772,31 @@ class TestQualityFamilyDiversity:
 
         assert len(capped) == 1
         assert capped[0]["_quality_story_key"] == "story:single_stock_earnings"
+
+    def test_diversify_caps_music_chart_story_to_one(self):
+        names = [
+            "Will Drake have the top 3 albums on the Billboard 200?",
+            "How many spots will Drake have in the Billboard top 10?",
+            "Who will have a #1 song on Spotify USA in May?",
+        ]
+        items = []
+        for idx, name in enumerate(names):
+            quality = classify_market_quality(name, sport_category="entertainment")
+            items.append(
+                {
+                    "score": 100 - idx,
+                    "_quality_class": quality.quality_class,
+                    "_quality_family_key": quality.family_key,
+                    "_quality_story_key": quality.story_key,
+                }
+            )
+
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
+
+        assert len(capped) == 1
+        assert capped[0]["_quality_story_key"] == "story:music_charts"
 
     def test_diversify_caps_russia_war_territory_story_to_two(self):
         names = [
