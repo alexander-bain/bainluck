@@ -85,14 +85,14 @@ async def test_public_calibration_requires_settled_current_probability():
 
 
 @pytest.mark.asyncio
-async def test_public_calibration_falls_back_to_settled_price_for_winner_status():
+async def test_public_calibration_uses_is_winner_for_winner_status():
     calibration._cache = {"data": None, "timestamp": 0}
     db = _FakeDB()
 
     await calibration.public_calibration(db=db, bust=1)
 
     futures_sql = str(db.statements[0])
-    assert "(fo.is_winner = true OR fo.current_probability >= 0.95) AS is_winner" in futures_sql
+    assert "fo.is_winner AS is_winner" in futures_sql
 
 
 @pytest.mark.asyncio
