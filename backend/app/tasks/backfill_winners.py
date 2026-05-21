@@ -1482,6 +1482,31 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Reuses _normalize_tournament() and _match_key() from routes/golf.py.
     golf_cross_stats = await _resolve_kalshi_golf_from_datagolf()
 
+    # Phase 0i: Sync is_winner from settled current_probability for golf.
+    # Golf outcomes with current_prob at extremes have correct settlement
+    # values, but is_winner was corrupted by the reset. Trust the settlement.
+    golf_sync_stats = {"synced": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET is_winner = (fo.current_probability >= 0.95)
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.source = 'kalshi'
+                      AND fm.llm_sport_category = 'golf'
+                      AND fm.status = 'resolved'
+                      AND fo.current_probability IS NOT NULL
+                      AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+                      AND fo.is_winner != (fo.current_probability >= 0.95)
+                """)
+            )
+            golf_sync_stats["synced"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        golf_sync_stats["errors"].append(str(e))
+
     # Phase 1a: Kalshi score-based resolution for game markets linked to
     # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
     # game scores even when the Kalshi API has purged the market data.
@@ -1507,6 +1532,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "polymarket_api_group_id": api_group_stats,
         "datagolf": datagolf_stats,
         "golf_cross_reference": golf_cross_stats,
+        "golf_settlement_sync": golf_sync_stats,
         "kalshi_score_resolution": score_stats,
         "kalshi_spread_total_resolution": spread_total_stats,
         "from_probability": prob_stats,
