@@ -775,7 +775,7 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
     # Handles DataGolf markets ("LECOM Suncoast Classic - Winner") and other
     # well-structured names that don't match hardcoded patterns.
     clean = re.sub(
-        r"\s*[-–]\s*(?:Winner|Top\s+\d+(?:\s+Finish)?|Make\s+(?:the\s+)?Cut|Round\s+\d+\s+Leader)\s*$",
+        r"\s*[-–]\s*(?:Tournament\s+Winner|Winner|Top\s+\d+(?:\s+Finish)?|Make\s+(?:the\s+)?Cut|Round\s+\d+\s+Leader)\s*$",
         "", market_name, flags=re.I,
     )
     # Also strip "Winner" / "Champion" without dash separator
