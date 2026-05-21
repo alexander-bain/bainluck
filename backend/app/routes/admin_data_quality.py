@@ -2149,6 +2149,19 @@ async def _golf_cross_ref_dry_run(db, _normalize_tournament):
     }
 
 
+@router.post("/backfill-winners/golf-cross-ref")
+async def trigger_golf_cross_ref(
+    secret: str = Query(...),
+):
+    """Run the golf cross-reference synchronously and return stats."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.backfill_winners import _resolve_kalshi_golf_from_datagolf
+    stats = await _resolve_kalshi_golf_from_datagolf()
+    return stats
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
