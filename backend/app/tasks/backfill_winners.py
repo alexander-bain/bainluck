@@ -694,37 +694,38 @@ _COMBO_STATS = {
 async def _resolve_kalshi_player_props_from_boxscore():
     """Resolve Kalshi player prop markets from ESPN box score data.
 
-    Parses "Player Name: N+" from outcome names, looks up the player's
-    actual stat in Event.box_score_data, compares to threshold.
+    Single-query fetch of all markets + outcomes + box scores, then
+    processes in Python. No per-market DB round-trips.
     """
-    stats = {"resolved": 0, "no_boxscore": 0, "no_player": 0,
-             "no_parse": 0, "errors": []}
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
             result = await session.execute(
                 text("""
-                    SELECT fm.id AS market_id, fm.external_id AS ticker,
-                           e.box_score_data
-                    FROM futures_markets fm
+                    SELECT fo.id AS outcome_id, fo.name AS outcome_name,
+                           fm.external_id AS ticker, e.box_score_data
+                    FROM futures_outcomes fo
+                    JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
-                    JOIN futures_outcomes fo ON fo.market_id = fm.id
                     WHERE fm.source = 'kalshi'
                       AND fm.status = 'resolved'
                       AND e.box_score_data IS NOT NULL
-                    GROUP BY fm.id, fm.external_id, e.box_score_data
-                    HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0
-                       AND COUNT(*) = 1
+                      AND fo.is_winner = false
+                      AND NOT EXISTS (
+                          SELECT 1 FROM futures_outcomes fo2
+                          WHERE fo2.market_id = fm.id AND fo2.is_winner = true
+                      )
                     LIMIT 10000
                 """)
             )
-            markets = result.all()
+            rows = result.all()
 
-            for row in markets:
+            updates = []
+            for row in rows:
                 ticker_lower = (row.ticker or "").lower()
                 box_score = row.box_score_data or {}
 
-                # Determine stat from ticker prefix
                 stat_name = None
                 combo_stats = None
                 for prefix, stat in _PROP_TICKER_TO_STAT.items():
@@ -739,18 +740,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 if not stat_name and not combo_stats:
                     continue
 
-                # Get the single outcome
-                out = await session.execute(
-                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid LIMIT 1"),
-                    {"mid": row.market_id},
-                )
-                outcome = out.first()
-                if not outcome or not outcome.name:
-                    stats["no_parse"] += 1
-                    continue
-
-                # Parse "Player Name: N+"
-                m = _PROP_RE.match(outcome.name)
+                m = _PROP_RE.match(row.outcome_name or "")
                 if not m:
                     stats["no_parse"] += 1
                     continue
@@ -758,7 +748,6 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 player_name = m.group(1).strip()
                 threshold = int(m.group(2))
 
-                # Look up player in box score (case-insensitive)
                 player_stats = None
                 for bs_name, bs_stats in box_score.items():
                     if bs_name.lower() == player_name.lower():
@@ -769,7 +758,6 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                # Get actual value
                 if combo_stats:
                     actual = sum(player_stats.get(s, 0) for s in combo_stats)
                 else:
@@ -779,14 +767,15 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                won = actual >= threshold
+                updates.append((row.outcome_id, actual >= threshold))
 
+            # Batch update
+            for oid, won in updates:
                 await session.execute(
                     text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
-                    {"won": won, "oid": outcome.id},
+                    {"won": won, "oid": oid},
                 )
-                stats["resolved"] += 1
-
+            stats["resolved"] = len(updates)
             await session.commit()
 
     except Exception as e:
@@ -794,10 +783,9 @@ async def _resolve_kalshi_player_props_from_boxscore():
         logger.error("Player prop resolution error: %s", e)
 
     logger.info(
-        "Player prop resolution: %d resolved, %d no_boxscore, %d no_player, "
-        "%d no_parse, %d errors",
-        stats["resolved"], stats["no_boxscore"], stats["no_player"],
-        stats["no_parse"], len(stats["errors"]),
+        "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d errors",
+        stats["resolved"], stats["no_player"], stats["no_parse"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -1810,7 +1798,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # for bulk performance instead of correlated subqueries.
     repair_stats = {"restored": 0, "errors": []}
     try:
-        for _ in range(10):
+        for _ in range(5):
             async with get_task_session() as session:
                 r = await session.execute(
                     text("""
@@ -1825,7 +1813,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                               AND fos.probability > 0.005
                               AND fos.probability < 0.995
                             ORDER BY fos.outcome_id, fos.captured_at ASC
-                            LIMIT 50000
+                            LIMIT 100000
                         )
                         UPDATE futures_outcomes fo
                         SET opening_probability = fs.probability
