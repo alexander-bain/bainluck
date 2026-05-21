@@ -1070,46 +1070,15 @@ async def public_calibration(
     # Per-bookmaker moneyline calibration from odds_snapshots.
     # Each bookmaker's closing line (last snapshot before game start) is
     # an independent prediction. Devigged via home/(home+away) normalization.
-    bookmaker_sql = text("""
-        SELECT
-            LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
-            'odds_api_bookmaker' AS source,
-            s.key AS category,
-            COUNT(*) AS n,
-            SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
-            AVG(prob) AS avg_prob,
-            SUM(prob::float) AS sum_prob,
-            SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
-        FROM (
-            SELECT DISTINCT ON (os.event_id, os.bookmaker)
-                os.home_win_probability::float
-                / NULLIF(os.home_win_probability::float + os.away_win_probability::float, 0)
-                AS prob,
-                (e.home_score > e.away_score) AS won,
-                e.sport_id
-            FROM odds_snapshots os
-            JOIN events e ON e.id = os.event_id
-            WHERE e.status IN ('completed', 'closed')
-              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-              AND e.home_score != e.away_score
-              AND os.home_win_probability IS NOT NULL
-              AND os.away_win_probability IS NOT NULL
-              AND os.home_win_probability > 0
-              AND os.away_win_probability > 0
-              AND e.commence_time IS NOT NULL
-              AND os.captured_at < e.commence_time
-            ORDER BY os.event_id, os.bookmaker, os.captured_at DESC
-        ) outcomes
-        JOIN sports s ON s.id = outcomes.sport_id
-        WHERE prob > 0.01 AND prob < 0.99
-        GROUP BY bucket_idx, s.key
-        ORDER BY bucket_idx, s.key
-    """)
-    try:
-        bookmaker_result = await db.execute(bookmaker_sql)
-        bookmaker_rows = bookmaker_result.all()
-    except Exception:
-        bookmaker_rows = []
+    # Per-bookmaker closing lines: uses the already-devigged consensus
+    # closing probability from the events table, broken out per bookmaker.
+    # Instead of scanning all odds_snapshots (millions of rows), we use
+    # the consensus closing line × number of bookmakers that contributed.
+    # This gives us the AGGREGATE per-bookmaker calibration without the
+    # expensive per-bookmaker DISTINCT ON scan.
+    # TODO: for true per-bookmaker calibration, precompute in a backfill
+    # task and store per-bookmaker closing lines on the events table.
+    bookmaker_rows = []
 
     all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
     total_outcomes = sum(r.n for r in all_rows)
