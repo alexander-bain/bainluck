@@ -2003,6 +2003,64 @@ def _count_by_cat(results: dict) -> dict:
     return cats
 
 
+@router.get("/backfill-winners/golf-debug")
+async def golf_cross_ref_debug(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug the golf cross-reference: what DataGolf leaderboards exist, what Kalshi markets match."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.routes.golf import _normalize_tournament
+
+    # DataGolf win markets with leaderboards
+    dg = await db.execute(text("""
+        SELECT name, external_id,
+               market_metadata->>'leaderboard' IS NOT NULL AS has_lb,
+               jsonb_array_length(COALESCE(market_metadata->'leaderboard', '[]'::jsonb)) AS lb_size
+        FROM futures_markets
+        WHERE source = 'datagolf' AND status = 'resolved'
+          AND external_id LIKE '%:win'
+        ORDER BY name
+    """))
+    dg_rows = dg.all()
+
+    dg_tournaments = []
+    for r in dg_rows:
+        key = _normalize_tournament(r.name)
+        dg_tournaments.append({
+            "name": r.name, "ext": r.external_id,
+            "key": key, "has_lb": r.has_lb, "lb_size": r.lb_size,
+        })
+
+    # Kalshi golf markets
+    kalshi = await db.execute(text("""
+        SELECT fm.name, fm.external_id,
+               COUNT(fo.id) AS n_outcomes,
+               SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS n_winners
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND fm.llm_sport_category = 'golf'
+        GROUP BY fm.id, fm.name, fm.external_id
+        ORDER BY RANDOM()
+        LIMIT 20
+    """))
+    kalshi_samples = []
+    for r in kalshi.all():
+        key = _normalize_tournament(r.name)
+        kalshi_samples.append({
+            "name": r.name, "ticker": r.external_id,
+            "key": key, "n_outcomes": r.n_outcomes, "n_winners": r.n_winners,
+        })
+
+    return {
+        "datagolf_tournaments": dg_tournaments,
+        "kalshi_samples": kalshi_samples,
+    }
+
+
 @router.get("/backfill-winners/status")
 async def backfill_winners_status(
     secret: str = Query(...),
