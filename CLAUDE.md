@@ -38,6 +38,7 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
 | `docs/backlog.md` | All outstanding work items (SINGLE SOURCE OF TRUTH) | When items ship, are added, or reprioritized |
+| `docs/github-workflow.md` | GitHub Issues/Project operating model and backlog sync rules | When issue labels, templates, project columns, or agent handoff rules change |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
 | `docs/gotchas-reference.md` | Extended gotchas (items 16-75) | When new gotchas discovered |
 | `docs/quality-audit.md` | Audit script usage, check catalog | When checks added/removed |
@@ -198,6 +199,22 @@ Device-token registration, token listing, and admin send-test are covered with F
 6. **Multi-platform** — Full parity between web, iOS, and macOS (shared SwiftUI codebase)
 
 **All outstanding work items live in `docs/backlog.md`** (SINGLE SOURCE OF TRUTH).
+
+## GitHub Issues + Project Workflow
+
+`docs/backlog.md` is the strategic source of truth: priorities, rationale, and workstream context. GitHub Issues are the execution queue for scoped work packets. The GitHub Project board is only status tracking.
+
+Use this split consistently:
+
+- Put rough ideas, long-term context, and strategic priority changes in `docs/backlog.md`.
+- Create/update GitHub Issues only for work that is scoped enough to execute or delegate.
+- Label issues with one or more `area:*` labels, one or more `type:*` labels, a `priority:*` label when useful, and routing labels such as `needs-agent`, `needs-user`, `blocked`, or `alert-intake`.
+- When promoting a backlog item to an issue, link the issue from the backlog and include a `Backlog source` section in the issue body.
+- When closing a product issue, update `docs/backlog.md` in the same change if the corresponding backlog item shipped, changed, or became obsolete.
+- Do not duplicate full backlog prose into issues. Issues should contain outcome, scope, acceptance criteria, verification, and a link back to the backlog.
+- Alert-intake issues can be closed without backlog edits if they are stale/superseded CI failures or purely operational alerts; leave a closing comment with the reason.
+
+Canonical labels and project columns are documented in `docs/github-workflow.md`. If a user asks for "the next thing to work on," prefer open issues labeled `needs-agent`, especially `priority:p0`/`priority:p1`, before mining the whole backlog.
 
 ---
 

@@ -90,6 +90,27 @@ Ideas:
 
 When an issue opens from a backlog item, add the issue number to the backlog line. When an issue closes, update or remove the backlog line in the same PR/commit if the change is meaningful.
 
+## Maintenance Rules
+
+When working in this repo, keep these invariants true:
+
+- New ideas start in `docs/backlog.md` unless they are already scoped enough for execution.
+- Create a GitHub issue when a backlog item has a clear outcome, likely scope, acceptance criteria, and owner/agent path.
+- Do not bulk-port vague backlog sections into GitHub. Split only the next actionable slice.
+- Every issue created from the backlog should include a `Backlog source` section and an `area:*`, `type:*`, and `priority:*` label when possible.
+- Every active product issue should be linked from `docs/backlog.md`, usually under `Active GitHub Execution Queue` or the relevant workstream.
+- When closing a product issue, update `docs/backlog.md` in the same change if the backlog line is now shipped, obsolete, or materially changed.
+- Alert-generated issues can be closed without backlog edits when they are stale, superseded, or purely operational. Leave a closing comment explaining why.
+- Prefer moving project cards to `Ready` only after the issue has enough scope for an agent. Keep rough captures in `Inbox`.
+
+Suggested weekly sweep:
+
+1. List open issues by `needs-agent`, `needs-user`, and `alert-intake`.
+2. Close stale alert issues whose head CI/deploy is now green or whose production error is resolved.
+3. Promote only the top few ready backlog items into issues.
+4. Remove shipped/obsolete items from `Active GitHub Execution Queue`.
+5. Keep `docs/completed-features.md` for meaningful shipped product work, not every ops cleanup.
+
 ## Agent Usage
 
 Good prompts:

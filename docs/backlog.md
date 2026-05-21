@@ -8,8 +8,15 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 
 - [active] Discover feed first-page quality: suppress stale, completed, and repetitive cards. Issue: [#435](https://github.com/alexander-bain/bainluck/issues/435)
 - [ready] Daily Kalshi/Polymarket front-page ground-truth capture. Issue: [#436](https://github.com/alexander-bain/bainluck/issues/436)
-- [blocked] GitHub Project board setup requires project-scoped GitHub auth or UI setup. Issue: [#437](https://github.com/alexander-bain/bainluck/issues/437)
 - [active] Evolution chart/grid probability disagreement. Issue: [#415](https://github.com/alexander-bain/bainluck/issues/415)
+- [ready] Wire calibrated market interestingness into Discover ranking. Issue: [#440](https://github.com/alexander-bain/bainluck/issues/440)
+- [ready] Schedule engagement-calibrated Discover ranking review. Issue: [#441](https://github.com/alexander-bain/bainluck/issues/441)
+- [ready] Expand calibration sample with sportsbook spreads and totals. Issue: [#442](https://github.com/alexander-bain/bainluck/issues/442)
+- [ready] Improve cross-source matching for paraphrased category markets. Issue: [#443](https://github.com/alexander-bain/bainluck/issues/443)
+- [ready] Finish native Futures browser before re-exposing navigation. Issue: [#444](https://github.com/alexander-bain/bainluck/issues/444)
+- [blocked] Finish App Store submission checklist. Issue: [#445](https://github.com/alexander-bain/bainluck/issues/445)
+- [ready] Finish event-detail parity gaps for half maps and player props. Issue: [#446](https://github.com/alexander-bain/bainluck/issues/446)
+- [idea] Add stored full-text search vectors only if production traces justify it. Issue: [#447](https://github.com/alexander-bain/bainluck/issues/447)
 
 ## Current Priority: Calibration & Data Quality
 
