@@ -1526,41 +1526,46 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # (placeholder prices with no trading activity — not real predictions)
     no_snap_stats = await _null_untradeable_openings()
 
-    # Phase 0c-repair: Restore opening_probability on outcomes that were
-    # incorrectly nulled but have real snapshots (>5 snapshots with movement).
+    # Phase 0c-repair: Restore opening_probability from first snapshot for
+    # outcomes with null opening but real snapshot data. Broadened to any
+    # outcome with at least 1 non-extreme snapshot — we want every outcome
+    # with a real prediction to enter calibration.
     repair_stats = {"restored": 0, "errors": []}
     try:
-        async with get_task_session() as session:
-            r = await session.execute(
-                text("""
-                    WITH restorable AS (
-                        SELECT fo.id AS outcome_id,
-                               (SELECT fos.probability
-                                FROM futures_odds_snapshots fos
-                                WHERE fos.outcome_id = fo.id
-                                ORDER BY fos.captured_at ASC LIMIT 1
-                               ) AS first_prob
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        WHERE fm.status = 'resolved'
-                          AND fo.opening_probability IS NULL
-                          AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                               WHERE fos.outcome_id = fo.id) > 5
-                          AND (SELECT MAX(fos.probability) - MIN(fos.probability)
-                               FROM futures_odds_snapshots fos
-                               WHERE fos.outcome_id = fo.id) >= 0.02
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET opening_probability = r.first_prob
-                    FROM restorable r
-                    WHERE fo.id = r.outcome_id
-                      AND r.first_prob IS NOT NULL
-                      AND r.first_prob > 0 AND r.first_prob < 1
-                """)
-            )
-            repair_stats["restored"] = r.rowcount
-            await session.commit()
+        for _ in range(20):
+            async with get_task_session() as session:
+                r = await session.execute(
+                    text("""
+                        WITH restorable AS (
+                            SELECT fo.id AS outcome_id,
+                                   (SELECT fos.probability
+                                    FROM futures_odds_snapshots fos
+                                    WHERE fos.outcome_id = fo.id
+                                      AND fos.probability > 0.005 AND fos.probability < 0.995
+                                    ORDER BY fos.captured_at ASC LIMIT 1
+                                   ) AS first_prob
+                            FROM futures_outcomes fo
+                            JOIN futures_markets fm ON fm.id = fo.market_id
+                            WHERE fm.status = 'resolved'
+                              AND fo.opening_probability IS NULL
+                              AND EXISTS (
+                                  SELECT 1 FROM futures_odds_snapshots fos
+                                  WHERE fos.outcome_id = fo.id
+                                    AND fos.probability > 0.005 AND fos.probability < 0.995
+                              )
+                            LIMIT 5000
+                        )
+                        UPDATE futures_outcomes fo
+                        SET opening_probability = r.first_prob
+                        FROM restorable r
+                        WHERE fo.id = r.outcome_id
+                          AND r.first_prob IS NOT NULL
+                    """)
+                )
+                await session.commit()
+                if r.rowcount == 0:
+                    break
+                repair_stats["restored"] += r.rowcount
     except Exception as e:
         repair_stats["errors"].append(str(e))
 
