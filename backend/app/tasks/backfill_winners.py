@@ -397,8 +397,7 @@ async def _resolve_kalshi_from_scores():
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
                     JOIN futures_outcomes fo ON fo.market_id = fm.id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
+                    WHERE fm.status = 'resolved'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
@@ -536,8 +535,7 @@ async def _resolve_kalshi_spread_total_from_scores():
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
                     JOIN futures_outcomes fo ON fo.market_id = fm.id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
+                    WHERE fm.status = 'resolved'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
@@ -705,8 +703,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     FROM futures_outcomes fo
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
+                    WHERE fm.status = 'resolved'
                       AND e.box_score_data IS NOT NULL
                       AND fo.is_winner = false
                       AND NOT EXISTS (
@@ -815,8 +812,7 @@ async def _resolve_kalshi_period_props():
                     FROM futures_markets fm
                     JOIN events e ON e.id = fm.event_id
                     JOIN futures_outcomes fo ON fo.market_id = fm.id
-                    WHERE fm.source = 'kalshi'
-                      AND fm.status = 'resolved'
+                    WHERE fm.status = 'resolved'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND EXISTS (SELECT 1 FROM scoring_plays sp WHERE sp.event_id = e.id)
