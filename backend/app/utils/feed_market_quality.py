@@ -141,7 +141,7 @@ _ENTERTAINMENT_METRIC_RE = re.compile(
 _OBSCURE_PROCEDURAL_RE = re.compile(
     r"\b("
     r"reauthorize|committee|subcommittee|cloture|filibuster|"
-    r"by-election|byelection|mayoral election|mayor election|"
+    r"by-election|byelection|mayoral election|mayor election|mayor winner|"
     r"hackney|newham|lewisham|watford|doncaster|croydon|tower hamlets|"
     r"terrebone|chungche|andalusia|saxony|thuringia|hesse"
     r")\b",
@@ -437,7 +437,7 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:regional_us_elections"
 
-    if re.search(r"\b(mayoral|mayor)\s+election\b", lower):
+    if re.search(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", lower):
         return "story:regional_us_elections"
 
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
@@ -532,7 +532,13 @@ def classify_market_quality(
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
     regional_election = (
         bool(_REGIONAL_US_ELECTION_RE.search(name))
-        or bool(re.search(r"\b(mayoral|mayor)\s+election\b", name, re.IGNORECASE))
+        or bool(
+            re.search(
+                r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b",
+                name,
+                re.IGNORECASE,
+            )
+        )
     ) and not re.search(
         r"\b(president|presidential|trump|biden|obama|2028)\b",
         name,

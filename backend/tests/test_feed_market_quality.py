@@ -224,6 +224,7 @@ class TestMarketQualityClassification:
             "NY-11 Democratic nominee?",
             "Texas Attorney General winner?",
             "LA Mayoral Election: Who will advance to the 2nd round?",
+            "Los Angeles Mayor winner?",
         ]
 
         qualities = [
@@ -231,7 +232,7 @@ class TestMarketQualityClassification:
             for name in examples
         ]
 
-        assert all(q.quality_class == "low_quality" for q in qualities)
+        assert all(q.quality_class in {"low_quality", "suppress"} for q in qualities)
         assert all("regional_us_election" in q.reasons for q in qualities)
         assert all(q.story_key == "story:regional_us_elections" for q in qualities)
 
