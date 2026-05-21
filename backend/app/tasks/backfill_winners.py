@@ -1143,27 +1143,32 @@ async def _null_untradeable_openings():
             )
             stats["nulled_no_movement"] = result3.rowcount
 
-            # Pass 4: outcomes where opening > 0.90 in markets with 10+
-            # outcomes. In a market with many outcomes (tournament fields,
-            # multi-candidate elections), no single outcome should have 90%+
-            # opening probability. These are ask-price-as-probability
+            # Pass 4: outcomes with implausibly high opening probability
+            # given the number of outcomes in the market. In a 100-player
+            # tournament, no player should open at 75%. In a 10-outcome
+            # market, no outcome should open at 90%. These are ask-price
             # corruptions from illiquid Kalshi markets.
             result4 = await session.execute(
                 text("""
-                    WITH big_markets AS (
-                        SELECT fm.id AS market_id
+                    WITH market_sizes AS (
+                        SELECT fm.id AS market_id, COUNT(*) AS n_outcomes
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
                         GROUP BY fm.id
-                        HAVING COUNT(*) >= 10
+                        HAVING COUNT(*) >= 5
                     )
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL,
                         calibration_probability = NULL
-                    FROM big_markets bm
-                    WHERE fo.market_id = bm.market_id
-                      AND fo.opening_probability > 0.90
+                    FROM market_sizes ms
+                    WHERE fo.market_id = ms.market_id
+                      AND fo.opening_probability > CASE
+                          WHEN ms.n_outcomes >= 50 THEN 0.50
+                          WHEN ms.n_outcomes >= 20 THEN 0.70
+                          WHEN ms.n_outcomes >= 10 THEN 0.80
+                          ELSE 0.90
+                      END
                 """)
             )
             stats["nulled_ask_price"] = result4.rowcount
