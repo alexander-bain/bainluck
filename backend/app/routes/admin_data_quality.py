@@ -2465,3 +2465,141 @@ async def _diagnose_stuck_winners(db: AsyncSession) -> dict:
         ],
     }
 
+
+@router.get("/calibration/coverage-audit")
+async def calibration_coverage_audit(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete audit of what's in the DB vs what enters calibration.
+
+    Shows every (source, category) combination with outcome counts at each
+    filter gate, so we can see exactly what's being dropped and why.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Gate-by-gate funnel for futures outcomes
+    futures_funnel = await db.execute(text("""
+        SELECT
+            fm.source,
+            COALESCE(fm.llm_sport_category, fm.category, 'uncategorized') AS cat,
+            COUNT(*) AS total_resolved_outcomes,
+            COUNT(*) FILTER (
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            ) AS has_opening_prob,
+            COUNT(*) FILTER (
+                WHERE fo.current_probability IS NOT NULL
+                  AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+            ) AS has_current_extreme,
+            COUNT(*) FILTER (
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND fo.current_probability IS NOT NULL
+                  AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+            ) AS passes_both_gates,
+            COUNT(*) FILTER (
+                WHERE fo.opening_probability IS NULL
+                  OR fo.opening_probability <= 0 OR fo.opening_probability >= 1
+            ) AS dropped_no_opening,
+            COUNT(*) FILTER (
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND (fo.current_probability IS NULL
+                       OR (fo.current_probability > 0.05 AND fo.current_probability < 0.95))
+            ) AS dropped_current_midrange,
+            COUNT(*) FILTER (
+                WHERE fo.is_winner = true
+            ) AS has_is_winner
+        FROM futures_markets fm
+        JOIN futures_outcomes fo ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+        GROUP BY fm.source, cat
+        ORDER BY total_resolved_outcomes DESC
+    """))
+
+    # Events table coverage (Odds API moneyline/spreads/totals)
+    events_coverage = await db.execute(text("""
+        SELECT
+            s.key AS sport,
+            COUNT(*) AS completed_events,
+            COUNT(*) FILTER (
+                WHERE COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL
+            ) AS has_moneyline,
+            COUNT(*) FILTER (
+                WHERE e.closing_home_spread IS NOT NULL
+                  AND e.closing_home_spread_odds IS NOT NULL
+                  AND e.closing_away_spread_odds IS NOT NULL
+            ) AS has_spread,
+            COUNT(*) FILTER (
+                WHERE e.closing_over_under IS NOT NULL
+                  AND e.closing_over_odds IS NOT NULL
+                  AND e.closing_under_odds IS NOT NULL
+            ) AS has_total,
+            COUNT(*) FILTER (
+                WHERE e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+            ) AS has_scores
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE e.status IN ('completed', 'closed')
+        GROUP BY s.key
+        ORDER BY completed_events DESC
+    """))
+
+    # Per-bookmaker odds_snapshot coverage (untapped potential)
+    bookmaker_coverage = await db.execute(text("""
+        SELECT
+            COUNT(DISTINCT e.id) AS events_with_snapshots,
+            COUNT(DISTINCT os.bookmaker) AS unique_bookmakers,
+            COUNT(*) AS total_snapshots,
+            COUNT(*) FILTER (WHERE os.home_spread IS NOT NULL) AS spread_snapshots,
+            COUNT(*) FILTER (WHERE os.over_under IS NOT NULL) AS total_snapshots_ou,
+            COUNT(*) FILTER (WHERE os.home_moneyline IS NOT NULL) AS moneyline_snapshots
+        FROM odds_snapshots os
+        JOIN events e ON e.id = os.event_id
+        WHERE e.status IN ('completed', 'closed')
+    """))
+    bm_row = bookmaker_coverage.one()
+
+    return {
+        "futures_funnel": [
+            {
+                "source": r.source,
+                "category": r.cat,
+                "total_resolved": r.total_resolved_outcomes,
+                "has_opening_prob": r.has_opening_prob,
+                "has_current_extreme": r.has_current_extreme,
+                "passes_both_gates": r.passes_both_gates,
+                "dropped_no_opening": r.dropped_no_opening,
+                "dropped_current_midrange": r.dropped_current_midrange,
+                "has_is_winner": r.has_is_winner,
+                "drop_pct": round(100 * (1 - r.passes_both_gates / max(r.total_resolved_outcomes, 1)), 1),
+            }
+            for r in futures_funnel.all()
+        ],
+        "events_coverage": [
+            {
+                "sport": r.sport,
+                "completed_events": r.completed_events,
+                "has_moneyline": r.has_moneyline,
+                "has_spread": r.has_spread,
+                "has_total": r.has_total,
+                "has_scores": r.has_scores,
+                "moneyline_cal_points": r.has_moneyline * 2,
+                "spread_cal_points": r.has_spread,
+                "total_cal_points": r.has_total,
+            }
+            for r in events_coverage.all()
+        ],
+        "odds_snapshot_potential": {
+            "events_with_snapshots": bm_row.events_with_snapshots,
+            "unique_bookmakers": bm_row.unique_bookmakers,
+            "total_snapshots": bm_row.total_snapshots,
+            "spread_snapshots": bm_row.spread_snapshots,
+            "totals_snapshots": bm_row.total_snapshots_ou,
+            "moneyline_snapshots": bm_row.moneyline_snapshots,
+            "note": "Per-bookmaker closing lines NOT yet in calibration. Potential 10-20x outcome expansion.",
+        },
+    }
+
