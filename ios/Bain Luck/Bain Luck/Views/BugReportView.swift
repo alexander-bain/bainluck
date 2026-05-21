@@ -12,7 +12,7 @@ struct BugReportView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var authManager: AuthManager
 
-    let screenshot: PlatformImage?
+    @State private var screenshot: PlatformImage?
     @State private var description = ""
     @State private var notifyOnFix = false
     @State private var submitting = false
@@ -27,6 +27,10 @@ struct BugReportView: View {
     #if os(macOS)
     @State private var pastedScreenshot: NSImage? = nil
     #endif
+
+    init(screenshot: PlatformImage?) {
+        _screenshot = State(initialValue: screenshot)
+    }
 
     var body: some View {
         NavigationStack {

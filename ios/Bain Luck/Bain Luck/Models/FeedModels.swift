@@ -88,8 +88,17 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             reason,
             String(score)
         ]
-        .compactMap { $0?.stableFeedIdentityComponent }
+        .compactMap { Self.stableFeedIdentityComponent($0) }
         .joined(separator: "-")
+    }
+
+    private static func stableFeedIdentityComponent(_ value: String?) -> String? {
+        value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
     }
 
     enum CodingKeys: String, CodingKey {
@@ -116,16 +125,6 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
         }
-    }
-}
-
-private extension String {
-    var stableFeedIdentityComponent: String {
-        trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
     }
 }
 
