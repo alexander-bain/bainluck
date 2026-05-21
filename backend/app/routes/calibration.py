@@ -1105,9 +1105,11 @@ async def public_calibration(
         GROUP BY bucket_idx, s.key
         ORDER BY bucket_idx, s.key
     """)
-    # TODO: bookmaker query needs index on odds_snapshots(event_id, bookmaker, captured_at)
-    # to be fast enough for a web request. Disabled until index is added.
-    bookmaker_rows = []
+    try:
+        bookmaker_result = await db.execute(bookmaker_sql)
+        bookmaker_rows = bookmaker_result.all()
+    except Exception:
+        bookmaker_rows = []
 
     all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
     total_outcomes = sum(r.n for r in all_rows)

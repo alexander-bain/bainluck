@@ -22,13 +22,14 @@ class _FakeResult:
 
 
 class _FakeDB:
-    def __init__(self, *, futures_rows=None, events_rows=None, spreads_rows=None, totals_rows=None, total_markets=0, closing_row=None):
+    def __init__(self, *, futures_rows=None, events_rows=None, spreads_rows=None, totals_rows=None, bookmaker_rows=None, total_markets=0, closing_row=None):
         self.statements = []
         self._results = [
             _FakeResult(rows=futures_rows or []),
             _FakeResult(rows=events_rows or []),
             _FakeResult(rows=spreads_rows or []),
             _FakeResult(rows=totals_rows or []),
+            _FakeResult(rows=bookmaker_rows or []),
             _FakeResult(scalar_value=total_markets),
             _FakeResult(
                 one_value=closing_row

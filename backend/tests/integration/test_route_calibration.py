@@ -94,6 +94,7 @@ def _set_public_calibration_results(
     event_rows=(),
     spreads_rows=(),
     totals_rows=(),
+    bookmaker_rows=(),
     total_markets=0,
     closing_row=None,
 ):
@@ -102,6 +103,7 @@ def _set_public_calibration_results(
         _mock_result(rows=event_rows),
         _mock_result(rows=spreads_rows),
         _mock_result(rows=totals_rows),
+        _mock_result(rows=bookmaker_rows),
         _mock_result(scalar=total_markets),
         _mock_result(one=closing_row or _closing_row(has_closing=0, needs_closing=0, total=0)),
     ]
