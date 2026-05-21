@@ -1527,39 +1527,31 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     no_snap_stats = await _null_untradeable_openings()
 
     # Phase 0c-repair: Restore opening_probability from first snapshot for
-    # outcomes with null opening but real snapshot data. Broadened to any
-    # outcome with at least 1 non-extreme snapshot — we want every outcome
-    # with a real prediction to enter calibration.
+    # outcomes with null opening but real snapshot data. Uses DISTINCT ON
+    # for bulk performance instead of correlated subqueries.
     repair_stats = {"restored": 0, "errors": []}
     try:
-        for _ in range(20):
+        for _ in range(10):
             async with get_task_session() as session:
                 r = await session.execute(
                     text("""
-                        WITH restorable AS (
-                            SELECT fo.id AS outcome_id,
-                                   (SELECT fos.probability
-                                    FROM futures_odds_snapshots fos
-                                    WHERE fos.outcome_id = fo.id
-                                      AND fos.probability > 0.005 AND fos.probability < 0.995
-                                    ORDER BY fos.captured_at ASC LIMIT 1
-                                   ) AS first_prob
-                            FROM futures_outcomes fo
+                        WITH first_snaps AS (
+                            SELECT DISTINCT ON (fos.outcome_id)
+                                fos.outcome_id, fos.probability
+                            FROM futures_odds_snapshots fos
+                            JOIN futures_outcomes fo ON fo.id = fos.outcome_id
                             JOIN futures_markets fm ON fm.id = fo.market_id
                             WHERE fm.status = 'resolved'
                               AND fo.opening_probability IS NULL
-                              AND EXISTS (
-                                  SELECT 1 FROM futures_odds_snapshots fos
-                                  WHERE fos.outcome_id = fo.id
-                                    AND fos.probability > 0.005 AND fos.probability < 0.995
-                              )
-                            LIMIT 5000
+                              AND fos.probability > 0.005
+                              AND fos.probability < 0.995
+                            ORDER BY fos.outcome_id, fos.captured_at ASC
+                            LIMIT 50000
                         )
                         UPDATE futures_outcomes fo
-                        SET opening_probability = r.first_prob
-                        FROM restorable r
-                        WHERE fo.id = r.outcome_id
-                          AND r.first_prob IS NOT NULL
+                        SET opening_probability = fs.probability
+                        FROM first_snaps fs
+                        WHERE fo.id = fs.outcome_id
                     """)
                 )
                 await session.commit()
