@@ -2073,6 +2073,79 @@ async def golf_cross_ref_debug(
         "dg_only_keys": sorted(dg_keys - kalshi_keys),
         "kalshi_only_keys": sorted(kalshi_keys - dg_keys)[:10],
         "kalshi_ticker_samples": [s["ticker"] for s in kalshi_samples[:20]],
+        "cross_ref_dry_run": await _golf_cross_ref_dry_run(db, _normalize_tournament),
+    }
+
+
+async def _golf_cross_ref_dry_run(db, _normalize_tournament):
+    """Dry-run the golf cross-reference to show what would match."""
+    from app.routes.golf import _match_key
+
+    # Get DataGolf leaderboards
+    dg = await db.execute(text("""
+        SELECT name, market_metadata FROM futures_markets
+        WHERE source = 'datagolf' AND status = 'resolved'
+          AND external_id LIKE :p AND market_metadata IS NOT NULL
+    """), {"p": "%:win"})
+
+    tournament_lbs = {}
+    for r in dg.all():
+        meta = r[1] or {}
+        lb = meta.get("leaderboard", [])
+        if lb:
+            key = _normalize_tournament(r[0])
+            tournament_lbs[key] = lb
+
+    # Get a sample Kalshi golf market and try to match
+    kalshi = await db.execute(text("""
+        SELECT fm.id, fm.name, fm.external_id
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
+          AND fm.llm_sport_category = 'golf'
+        LIMIT 5
+    """))
+
+    results = []
+    for row in kalshi.all():
+        t_key = _normalize_tournament(row[1] or row[2] or "")
+        lb = tournament_lbs.get(t_key)
+        market_type = None
+        lower = (row[1] or "").lower()
+        if "winner" in lower or "champion" in lower:
+            market_type = "win"
+        elif "top 5" in lower:
+            market_type = "top_5"
+        elif "make" in lower and "cut" in lower:
+            market_type = "make_cut"
+
+        # Get outcome names
+        outs = await db.execute(text(
+            "SELECT name FROM futures_outcomes WHERE market_id = :mid LIMIT 5"
+        ), {"mid": row[0]})
+        outcome_names = [o[0] for o in outs.all()]
+
+        matched_players = 0
+        if lb:
+            lb_keys = {_match_key(e.get("name", "")): e.get("position") for e in lb if e.get("name")}
+            for oname in outcome_names:
+                if _match_key(oname) in lb_keys:
+                    matched_players += 1
+
+        results.append({
+            "market_name": row[1],
+            "tournament_key": t_key,
+            "market_type": market_type,
+            "lb_found": lb is not None,
+            "lb_size": len(lb) if lb else 0,
+            "outcome_samples": outcome_names[:3],
+            "matched_players": matched_players,
+            "total_outcomes": len(outcome_names),
+        })
+
+    return {
+        "tournaments_with_leaderboards": len(tournament_lbs),
+        "tournament_keys": sorted(tournament_lbs.keys()),
+        "samples": results,
     }
 
 
