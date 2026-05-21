@@ -17,6 +17,43 @@ def _side_label(name: str) -> str:
     return name
 
 
+_MONTH_DAY_RE = re.compile(
+    r"^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    r"\s+\d{1,2}(?:,\s*\d{4})?$",
+    re.IGNORECASE,
+)
+_NUMERIC_OR_THRESHOLD_RE = re.compile(
+    r"^(?:[<>]=?|[+\-]|\u2191|\u2193)?\$?\d+(?:[\.,]\d+)?\s*(?:%|bps|bp|k|m|b|t|x)?$",
+    re.IGNORECASE,
+)
+
+
+def _weak_outcome_label(name: str | None) -> bool:
+    """Return true when an outcome label needs the market title for context."""
+    label = (name or "").strip()
+    if not label:
+        return True
+    lower = label.lower()
+    if lower in {"yes", "no", "no change"}:
+        return False
+    if _MONTH_DAY_RE.match(label):
+        return True
+    if _NUMERIC_OR_THRESHOLD_RE.match(label):
+        return True
+    if re.fullmatch(r"\d+(?:\s*\([^)]+\))?", label):
+        return True
+    return False
+
+
+def _short_market_name(market_name: str | None, max_len: int = 58) -> str:
+    name = (market_name or "").strip()
+    name = re.sub(r"\s*\?\s*$", "", name)
+    if len(name) <= max_len:
+        return name
+    return name[: max_len - 3].rstrip() + "..."
+
+
 # ── Yes/No outcome humanization (BR49) ──────────────────────────────
 
 # Subjects too vague to use as a standalone label
@@ -112,8 +149,7 @@ def humanize_outcome_names_for_feed(
 
     # Only humanize if every outcome is Yes or No
     all_binary = all(
-        (o.get("name") or "").strip().lower() in {"yes", "no"}
-        for o in top_outcomes
+        (o.get("name") or "").strip().lower() in {"yes", "no"} for o in top_outcomes
     )
     if not all_binary:
         return top_outcomes
@@ -168,7 +204,11 @@ def generate_event_reason(
     # Only add text for genuinely insightful context.
     if status in ("completed", "closed"):
         if "upset" in reasons:
-            if home_score is not None and away_score is not None and opening_home_prob is not None:
+            if (
+                home_score is not None
+                and away_score is not None
+                and opening_home_prob is not None
+            ):
                 if home_score > away_score:
                     winner_opening_prob = opening_home_prob
                 else:
@@ -293,12 +333,16 @@ def generate_futures_reason(
             if leader_name and leader_probability is not None:
                 pct = round(leader_probability * 100)
                 return f"{source_count} sources disagree, but {leader_name} leads {market_name} at {pct}%"
-            return f"Sources disagree on {market_name} ({source_count} sources tracking)"
+            return (
+                f"Sources disagree on {market_name} ({source_count} sources tracking)"
+            )
         return f"Sources disagree on {market_name}"
 
     # Major movement
     if "major_movement_24h" in reasons:
         if top_mover_name and top_mover_change is not None:
+            if _weak_outcome_label(top_mover_name):
+                return f"Big odds movement in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
             pct = _point_change(top_mover_change)
             return f"{_side_label(top_mover_name)} moved {direction} {pct} points today in {market_name}"
@@ -307,6 +351,8 @@ def generate_futures_reason(
     # Surprise vs opening
     if "major_surprise" in reasons:
         if top_surprise_name and top_surprise_change is not None:
+            if _weak_outcome_label(top_surprise_name):
+                return f"Big shift from opening in {market_name}"
             direction = "up" if top_surprise_change > 0 else "down"
             pct = _point_change(top_surprise_change)
             return f"{_side_label(top_surprise_name)} moved {direction} {pct} points from opening in {market_name}"
@@ -319,6 +365,8 @@ def generate_futures_reason(
     # Moderate movement
     if "moderate_movement_24h" in reasons:
         if top_mover_name and top_mover_change is not None:
+            if _weak_outcome_label(top_mover_name):
+                return f"Odds shifting in {market_name}"
             direction = "up" if top_mover_change > 0 else "down"
             pct = _point_change(top_mover_change)
             return f"{_side_label(top_mover_name)} odds shifted {direction} {pct} points today in {market_name}"
@@ -326,6 +374,8 @@ def generate_futures_reason(
 
     if "moderate_surprise" in reasons:
         if top_surprise_name and top_surprise_change is not None:
+            if _weak_outcome_label(top_surprise_name):
+                return f"Odds shifted from opening in {market_name}"
             direction = "up" if top_surprise_change > 0 else "down"
             pct = _point_change(top_surprise_change)
             return f"{_side_label(top_surprise_name)} shifted {direction} {pct} points from opening in {market_name}"
@@ -367,6 +417,7 @@ def generate_futures_headline(
     leader_name: Optional[str] = None,
     leader_probability: Optional[float] = None,
     source_count: int = 1,
+    market_name: Optional[str] = None,
 ) -> str:
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
@@ -380,25 +431,53 @@ def generate_futures_headline(
         return "New favorite"
 
     if "source_divergence" in reasons:
-        return f"Sources disagree ({source_count})" if source_count >= 2 else "Sources disagree"
+        return (
+            f"Sources disagree ({source_count})"
+            if source_count >= 2
+            else "Sources disagree"
+        )
 
-    if "major_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
+    if (
+        "major_movement_24h" in reasons
+        and top_mover_name
+        and top_mover_change is not None
+    ):
         direction = "up" if top_mover_change > 0 else "down"
+        if _weak_outcome_label(top_mover_name) and market_name:
+            return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
         return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
 
-    if "major_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
+    if (
+        "major_surprise" in reasons
+        and top_surprise_name
+        and top_surprise_change is not None
+    ):
         direction = "up" if top_surprise_change > 0 else "down"
+        if _weak_outcome_label(top_surprise_name) and market_name:
+            return f"{_short_market_name(market_name)} shifted {_point_change(top_surprise_change)} points"
         return f"{_side_label(top_surprise_name)} {direction} {_point_change(top_surprise_change)} points from opening"
 
     if "rank_shakeup" in reasons:
         return "Multiple ranking changes"
 
-    if "moderate_movement_24h" in reasons and top_mover_name and top_mover_change is not None:
+    if (
+        "moderate_movement_24h" in reasons
+        and top_mover_name
+        and top_mover_change is not None
+    ):
         direction = "up" if top_mover_change > 0 else "down"
+        if _weak_outcome_label(top_mover_name) and market_name:
+            return f"{_short_market_name(market_name)} odds {direction} {_point_change(top_mover_change)} points"
         return f"{_side_label(top_mover_name)} {direction} {_point_change(top_mover_change)} points today"
 
-    if "moderate_surprise" in reasons and top_surprise_name and top_surprise_change is not None:
+    if (
+        "moderate_surprise" in reasons
+        and top_surprise_name
+        and top_surprise_change is not None
+    ):
         direction = "up" if top_surprise_change > 0 else "down"
+        if _weak_outcome_label(top_surprise_name) and market_name:
+            return f"{_short_market_name(market_name)} shifted {_point_change(top_surprise_change)} points"
         return f"{_side_label(top_surprise_name)} {direction} {_point_change(top_surprise_change)} points from opening"
 
     if "resolving_soon_7d" in reasons:
@@ -412,7 +491,11 @@ def generate_futures_headline(
         return "Resolving this month"
 
     if "multi_source" in reasons:
-        return f"Tracked by {source_count} sources" if source_count >= 2 else "Multi-source"
+        return (
+            f"Tracked by {source_count} sources"
+            if source_count >= 2
+            else "Multi-source"
+        )
 
     if leader_name and leader_probability is not None:
         return f"{leader_name} leads at {round(leader_probability * 100)}%"
@@ -451,9 +534,17 @@ def generate_futures_context_summary(
     leader = leader_clause()
 
     if "resolving_soon_7d" in reasons:
-        return f"{leader}; resolves this week" if leader else "Resolution window is this week"
+        return (
+            f"{leader}; resolves this week"
+            if leader
+            else "Resolution window is this week"
+        )
     if "resolving_soon_30d" in reasons and headline == "Resolving this month":
-        return f"{leader}; resolves this month" if leader else "Resolution window is this month"
+        return (
+            f"{leader}; resolves this month"
+            if leader
+            else "Resolution window is this month"
+        )
     if "multi_source" in reasons and headline.startswith("Tracked by"):
         if leader:
             return f"{leader} across {source_count} sources"

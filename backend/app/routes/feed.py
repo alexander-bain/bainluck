@@ -1576,11 +1576,7 @@ def _market_runtime_filter_trace(
         blockers.append("all_outcomes_settled")
     if leader_prob is not None and leader_prob >= 0.98:
         blockers.append("locked_market")
-    if (
-        leader_prob is not None
-        and leader_prob <= 0.02
-        and len(probs_available) <= 2
-    ):
+    if leader_prob is not None and leader_prob <= 0.02 and len(probs_available) <= 2:
         blockers.append("near_zero_binary")
 
     leader_opening = None
@@ -1919,6 +1915,7 @@ def _score_market_trace(
             leader_name=leader_name,
             leader_probability=leader_prob,
             source_count=source_count,
+            market_name=market.name,
         )
         or highlight_result.primary_reason
     )
@@ -3776,10 +3773,7 @@ async def _score_futures(
             ):
                 continue
 
-        if (
-            (market.llm_sport_category or "").lower() == "golf"
-            and market.commence_time
-        ):
+        if (market.llm_sport_category or "").lower() == "golf" and market.commence_time:
             commence_time = _utc(market.commence_time)
             if commence_time and commence_time < now - timedelta(days=6):
                 continue
@@ -3900,6 +3894,7 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_probability=leader_prob,
                 source_count=source_count,
+                market_name=market.name,
             )
             or highlight_result.primary_reason
         )

@@ -28,6 +28,31 @@ def test_futures_headline_names_opening_surprise():
     assert headline == "Fed cut down 18.7 points from opening"
 
 
+def test_futures_headline_uses_market_context_for_numeric_outcome_labels():
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="9",
+        top_surprise_change=0.65,
+        market_name="How many spots will Drake have in the Billboard top 10?",
+    )
+
+    assert (
+        headline
+        == "How many spots will Drake have in the Billboard top 10 shifted 65.0 points"
+    )
+
+
+def test_futures_headline_uses_market_context_for_date_outcome_labels():
+    headline = generate_futures_headline(
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="May 18",
+        top_surprise_change=-0.505,
+        market_name="Iran closes its airspace by...?",
+    )
+
+    assert headline == "Iran closes its airspace by... shifted 50.5 points"
+
+
 def test_futures_reason_explains_opening_surprise_with_market_context():
     reason = generate_futures_reason(
         market_name="Fed Decision in July?",
@@ -36,7 +61,20 @@ def test_futures_reason_explains_opening_surprise_with_market_context():
         top_surprise_change=0.21,
     )
 
-    assert reason == "No change moved up 21.0 points from opening in Fed Decision in July?"
+    assert (
+        reason == "No change moved up 21.0 points from opening in Fed Decision in July?"
+    )
+
+
+def test_futures_reason_uses_market_context_for_weak_outcome_labels():
+    reason = generate_futures_reason(
+        market_name="How many Fed rate cuts in 2026?",
+        highlight_reasons=["major_surprise"],
+        top_surprise_name="0 (0 bps)",
+        top_surprise_change=0.593,
+    )
+
+    assert reason == "Big shift from opening in How many Fed rate cuts in 2026?"
 
 
 def test_futures_reason_describes_movement_as_points_not_percent():
@@ -59,7 +97,10 @@ def test_futures_reason_names_leader_when_sources_disagree():
         source_count=3,
     )
 
-    assert reason == "3 sources disagree, but Sentimental Favorite leads Best Picture at 37%"
+    assert (
+        reason
+        == "3 sources disagree, but Sentimental Favorite leads Best Picture at 37%"
+    )
 
 
 def test_futures_reason_names_leader_for_monthly_resolution():
@@ -81,7 +122,10 @@ def test_futures_reason_names_new_favorite_without_llm_hook():
         leader_probability=0.28,
     )
 
-    assert reason == "New favorite: Gretchen Whitmer (28%) now leads 2028 Democratic nominee"
+    assert (
+        reason
+        == "New favorite: Gretchen Whitmer (28%) now leads 2028 Democratic nominee"
+    )
 
 
 def test_futures_headline_names_new_favorite_without_llm_hook():
@@ -350,14 +394,22 @@ class TestHumanizeBinaryOutcomeName:
     """Yes/No outcomes should be replaced with meaningful entity names."""
 
     def test_extracts_subject_from_will_question(self):
-        assert humanize_binary_outcome_name("Yes", "Will Anthropic IPO first?") == "Anthropic"
+        assert (
+            humanize_binary_outcome_name("Yes", "Will Anthropic IPO first?")
+            == "Anthropic"
+        )
 
     def test_extracts_subject_openai(self):
-        assert humanize_binary_outcome_name("Yes", "Will OpenAI IPO before 2027?") == "OpenAI"
+        assert (
+            humanize_binary_outcome_name("Yes", "Will OpenAI IPO before 2027?")
+            == "OpenAI"
+        )
 
     def test_extracts_subject_with_the(self):
         # "the Dodgers" — "the" is generic but "the Dodgers" is a valid entity
-        result = humanize_binary_outcome_name("Yes", "Will the Dodgers win the World Series?")
+        result = humanize_binary_outcome_name(
+            "Yes", "Will the Dodgers win the World Series?"
+        )
         # "the" is first word, so falls back to truncation
         assert result != "Yes"
         assert "Dodgers" in result
@@ -375,24 +427,43 @@ class TestHumanizeBinaryOutcomeName:
         assert not result.startswith("Rory McIlroy finish Top 5")
 
     def test_extracts_person_name(self):
-        assert humanize_binary_outcome_name("Yes", "Will Taylor Swift be pregnant in 2026?") == "Taylor Swift"
+        assert (
+            humanize_binary_outcome_name(
+                "Yes", "Will Taylor Swift be pregnant in 2026?"
+            )
+            == "Taylor Swift"
+        )
 
     def test_extracts_elon_musk(self):
-        assert humanize_binary_outcome_name("Yes", "Will Elon Musk step down as CEO of Tesla?") == "Elon Musk"
+        assert (
+            humanize_binary_outcome_name(
+                "Yes", "Will Elon Musk step down as CEO of Tesla?"
+            )
+            == "Elon Musk"
+        )
 
     def test_generic_subject_falls_back_to_truncation(self):
-        result = humanize_binary_outcome_name("Yes", "Will there be a government shutdown?")
+        result = humanize_binary_outcome_name(
+            "Yes", "Will there be a government shutdown?"
+        )
         assert result != "Yes"
         assert result != "there"
         assert "government shutdown" in result.lower()
 
     def test_non_will_question_truncates(self):
-        result = humanize_binary_outcome_name("Yes", "Federal Reserve interest rate above 5%?")
+        result = humanize_binary_outcome_name(
+            "Yes", "Federal Reserve interest rate above 5%?"
+        )
         assert result != "Yes"
         assert "Federal Reserve" in result
 
     def test_passthrough_for_named_outcomes(self):
-        assert humanize_binary_outcome_name("OpenAI", "Will Anthropic or OpenAI IPO first?") == "OpenAI"
+        assert (
+            humanize_binary_outcome_name(
+                "OpenAI", "Will Anthropic or OpenAI IPO first?"
+            )
+            == "OpenAI"
+        )
 
     def test_passthrough_for_empty_name(self):
         assert humanize_binary_outcome_name("", "Will X happen?") == ""
@@ -407,16 +478,26 @@ class TestHumanizeBinaryOutcomeName:
 
     def test_caps_at_40_chars(self):
         # Verifies the 40-char cap on the truncation fallback
-        result = humanize_binary_outcome_name("Yes", "GDP growth rate for the United States exceeding expectations?")
+        result = humanize_binary_outcome_name(
+            "Yes", "GDP growth rate for the United States exceeding expectations?"
+        )
         assert len(result) <= 40
 
     def test_strips_year_suffix(self):
-        result = humanize_binary_outcome_name("Yes", "Will Bitcoin reach $100k by December 2026?")
+        result = humanize_binary_outcome_name(
+            "Yes", "Will Bitcoin reach $100k by December 2026?"
+        )
         assert result == "Bitcoin"
 
     def test_case_insensitive_yes_no(self):
-        assert humanize_binary_outcome_name("YES", "Will Anthropic IPO first?") == "Anthropic"
-        assert humanize_binary_outcome_name("yes", "Will Anthropic IPO first?") == "Anthropic"
+        assert (
+            humanize_binary_outcome_name("YES", "Will Anthropic IPO first?")
+            == "Anthropic"
+        )
+        assert (
+            humanize_binary_outcome_name("yes", "Will Anthropic IPO first?")
+            == "Anthropic"
+        )
 
 
 class TestHumanizeOutcomeNamesForFeed:
