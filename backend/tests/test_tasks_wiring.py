@@ -213,6 +213,7 @@ class TestBeatScheduleCompleteness:
         "backfill-kalshi-price-history",
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
+        "backfill-box-scores",
         "backfill-historical-links",
         "update-max-movement",
     }

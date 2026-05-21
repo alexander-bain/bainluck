@@ -407,10 +407,10 @@ def cleanup_bad_espn_matches(self):
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_box_scores")
-def backfill_box_scores(self, limit: int = 100):
+def backfill_box_scores(self, limit: int = 100, priority_calibration: bool = False):
     """Fetch ESPN box scores for completed events missing box_score_data."""
     from app.tasks.espn_sync import _backfill_box_scores
-    return run_async(_backfill_box_scores(limit=limit))
+    return run_async(_backfill_box_scores(limit=limit, priority_calibration=priority_calibration))
 
 
 # --- Team Linking (Futures → Teams) ---
@@ -1223,6 +1223,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_history",
         "schedule": crontab(minute=45, hour="3,9,15,21"),  # Every 6h, 30min after Polymarket
         "kwargs": {"limit": 100, "mode": "open_sparse"},
+        "options": {"queue": "background"},
+    },
+    "backfill-box-scores": {
+        "task": "app.tasks.backfill_box_scores",
+        "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, offset from others
+        "kwargs": {"limit": 200},
         "options": {"queue": "background"},
     },
     "backfill-canonical-keys-daily": {

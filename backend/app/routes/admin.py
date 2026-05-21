@@ -1607,20 +1607,20 @@ async def cleanup_bad_espn_matches(
 async def backfill_box_scores(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process"),
+    priority: str = Query("recent", description="'recent' (default) or 'calibration' (events with Kalshi props)"),
 ):
     """
     Backfill ESPN box score data for completed events.
 
-    Fetches box scores for completed/closed events that have an ESPN ID
-    but are missing box_score_data. Stores player stats for expected-vs-actual
-    display on stat prop markets.
+    priority=calibration targets events with Kalshi player prop markets
+    needing is_winner resolution first.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     from app.tasks import backfill_box_scores as task
 
-    result = task.delay(limit=limit)
+    result = task.delay(limit=limit, priority_calibration=(priority == "calibration"))
     return {
         "status": "queued",
         "task_id": result.id,

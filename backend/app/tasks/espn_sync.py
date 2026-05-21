@@ -832,13 +832,13 @@ async def _cleanup_bad_espn_matches():
     return stats
 
 
-async def _backfill_box_scores(limit: int = 100):
-    """Fetch ESPN box scores for recently completed/live events missing box_score_data.
+async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = False):
+    """Fetch ESPN box scores for completed/live events missing box_score_data.
 
-    Called by admin endpoint POST /api/admin/espn/backfill-boxscores.
-    Queries completed/closed/live events with espn_id set and box_score_data NULL,
-    ordered by most recent first. For live events, box_score_data is refreshed
-    each call (enables live stat prop display).
+    When priority_calibration=True, prioritizes events that have Kalshi
+    player prop markets needing is_winner resolution. This ensures the
+    first box scores backfilled are the ones that directly improve
+    calibration accuracy.
     """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport
@@ -853,27 +853,46 @@ async def _backfill_box_scores(limit: int = 100):
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
-                select(Event)
-                .options(selectinload(Event.sport))
-                .where(
-                    or_(
-                        # Live events: always refresh box scores
-                        and_(
-                            Event.status == "live",
-                            Event.espn_id.isnot(None),
-                        ),
-                        # Completed/closed: only if missing
-                        and_(
-                            Event.status.in_(["completed", "closed"]),
-                            Event.espn_id.isnot(None),
-                            Event.box_score_data.is_(None),
+            if priority_calibration:
+                from app.models.models import FuturesMarket
+                result = await session.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        Event.status.in_(["completed", "closed"]),
+                        Event.espn_id.isnot(None),
+                        Event.box_score_data.is_(None),
+                        Event.id.in_(
+                            select(FuturesMarket.event_id).where(
+                                FuturesMarket.source == "kalshi",
+                                FuturesMarket.event_id.isnot(None),
+                                FuturesMarket.status == "resolved",
+                            )
                         ),
                     )
+                    .order_by(Event.commence_time.desc())
+                    .limit(limit)
                 )
-                .order_by(Event.commence_time.desc())
-                .limit(limit)
-            )
+            else:
+                result = await session.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        or_(
+                            and_(
+                                Event.status == "live",
+                                Event.espn_id.isnot(None),
+                            ),
+                            and_(
+                                Event.status.in_(["completed", "closed"]),
+                                Event.espn_id.isnot(None),
+                                Event.box_score_data.is_(None),
+                            ),
+                        )
+                    )
+                    .order_by(Event.commence_time.desc())
+                    .limit(limit)
+                )
             events = result.scalars().all()
 
             if not events:
