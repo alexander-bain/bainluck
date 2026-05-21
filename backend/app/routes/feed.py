@@ -633,6 +633,37 @@ def _demote_non_exceptional_discover_events(feed_items: list[dict]) -> None:
             item["score"] = min(item["score"], 35)
 
 
+def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
+    """Remove routine game cards from Discover mode after demotion.
+
+    Discover is not the sports scoreboard. Completed games, obscure no-logo
+    live games, and ordinary low-score events should stay on Sports/My Stuff,
+    not take slots from prediction-market stories.
+    """
+    filtered: list[dict] = []
+    for item in feed_items:
+        if item.get("type") != "event":
+            filtered.append(item)
+            continue
+
+        data = item.get("data") or {}
+        status = (data.get("status") or "").lower()
+        if status in {"completed", "closed"}:
+            continue
+
+        if item.get("score", 0) < 45 and not _is_discover_event_demotion_exception(
+            item
+        ):
+            continue
+
+        has_team_media = bool(data.get("home_team_data") or data.get("away_team_data"))
+        if not has_team_media and not _is_discover_event_demotion_exception(item):
+            continue
+
+        filtered.append(item)
+    return filtered
+
+
 def _should_skip_futures_for_recent_dismissal(
     *,
     market,
@@ -839,7 +870,10 @@ async def get_feed(
 
     # --- Redis response cache (anon 15s, auth 5s, my_teams 30s) ---
     _cache_key = None
-    _cache_ttl = 30 if my_teams_only else (60 if user is None else 10)
+    # Session/user feeds change as impressions are recorded. Keep anonymous
+    # no-session cache warmer, but make per-session Discover refreshes respond
+    # quickly to "already seen" suppression.
+    _cache_ttl = 30 if my_teams_only else (5 if (user or session_id) else 60)
     _async_redis = None
     if not debug:
         try:
@@ -1055,6 +1089,7 @@ async def get_feed(
     # events (strong EI or top-tier exception keywords) keep their score.
     if event_pct is not None and event_pct < 0.3:
         _demote_non_exceptional_discover_events(feed_items)
+        feed_items = _filter_discover_event_noise(feed_items)
         # Re-sort after demotion so demoted events fall below high-scoring futures
         feed_items.sort(
             key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True
@@ -1539,6 +1574,14 @@ def _market_runtime_filter_trace(
     )
     if all_settled:
         blockers.append("all_outcomes_settled")
+    if leader_prob is not None and leader_prob >= 0.98:
+        blockers.append("locked_market")
+    if (
+        leader_prob is not None
+        and leader_prob <= 0.02
+        and len(probs_available) <= 2
+    ):
+        blockers.append("near_zero_binary")
 
     leader_opening = None
     if leader_name:
@@ -1610,6 +1653,14 @@ def _market_runtime_filter_trace(
                 blockers.append("soft_settled_binary")
 
     commence_time = _utc(market.commence_time)
+    sport_cat = (sport_category or "").lower()
+    golf_started_too_long_ago = (
+        sport_cat == "golf"
+        and commence_time is not None
+        and commence_time < now - timedelta(days=6)
+    )
+    if golf_started_too_long_ago:
+        blockers.append("stale_golf_tournament")
 
     return {
         "eligible": not blockers,
@@ -1623,9 +1674,15 @@ def _market_runtime_filter_trace(
             "has_any_movement": has_any_movement,
             "max_recent_movement": round(max_recent_movement, 4),
             "soft_settled_binary": soft_settled,
+            "locked_market": bool(leader_prob is not None and leader_prob >= 0.98),
+            "near_zero_binary": bool(
+                leader_prob is not None
+                and leader_prob <= 0.02
+                and len(probs_available) <= 2
+            ),
             "days_stale": round(days_stale, 2) if days_stale is not None else None,
             "commence_time": commence_time.isoformat() if commence_time else None,
-            "commence_time_staleness_applied": False,
+            "commence_time_staleness_applied": golf_started_too_long_ago,
         },
     }
 
@@ -3343,6 +3400,7 @@ async def _score_futures(
             FuturesMarket.market_metadata,
             FuturesMarket.volume_24h,
             FuturesMarket.updated_at,
+            FuturesMarket.commence_time,
             FuturesMarket.resolution_date,
             FuturesMarket.status,
             FuturesMarket.llm_league,
@@ -3666,6 +3724,14 @@ async def _score_futures(
         )
         if all_settled:
             continue
+        if leader_prob is not None and leader_prob >= 0.98:
+            continue
+        if (
+            leader_prob is not None
+            and leader_prob <= 0.02
+            and len(probs_available) <= 2
+        ):
+            continue
 
         # 2) Leader near settled with no interesting journey. Sports futures
         # stale fastest after elimination/advancement, so use a lower threshold.
@@ -3708,6 +3774,14 @@ async def _score_futures(
                 and days_stale > no_resolution_stale_days
                 and not has_any_movement
             ):
+                continue
+
+        if (
+            (market.llm_sport_category or "").lower() == "golf"
+            and market.commence_time
+        ):
+            commence_time = _utc(market.commence_time)
+            if commence_time and commence_time < now - timedelta(days=6):
                 continue
 
         # 4) Soft-settled binary market: leader >=60% with negligible movement.

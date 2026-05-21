@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.routes.feed import (
     _apply_external_curator_recall_score,
     _dedupe_futures_by_canonical,
+    _filter_discover_event_noise,
     _market_base_trace,
     _market_runtime_filter_trace,
     _outcomes_overlap,
@@ -1305,6 +1306,110 @@ class TestFeedQualityDebug:
 
         assert trace["eligible"] is True
         assert "soft_settled_binary" not in trace["blockers"]
+
+    def test_runtime_filter_suppresses_locked_markets(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 1.0,
+                    "probability_change_24h": 0.48,
+                    "opening_probability": 0.52,
+                }
+            ],
+            "Yes",
+            1.0,
+            now,
+            sport_category="health",
+        )
+
+        assert trace["eligible"] is False
+        assert "locked_market" in trace["blockers"]
+
+    def test_runtime_filter_suppresses_near_zero_binary(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 0.0,
+                    "probability_change_24h": -0.25,
+                    "opening_probability": 0.25,
+                }
+            ],
+            "Yes",
+            0.0,
+            now,
+            sport_category="politics",
+        )
+
+        assert trace["eligible"] is False
+        assert "near_zero_binary" in trace["blockers"]
+
+    def test_runtime_filter_suppresses_stale_golf_tournament(self):
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=now - timedelta(days=7),
+            ),
+            [
+                {
+                    "name": "Rory McIlroy",
+                    "probability": 0.13,
+                    "probability_change_24h": 0.0,
+                    "opening_probability": 0.12,
+                },
+                {
+                    "name": "Jon Rahm",
+                    "probability": 0.10,
+                    "probability_change_24h": 0.0,
+                    "opening_probability": 0.09,
+                },
+            ],
+            "Rory McIlroy",
+            0.13,
+            now,
+            sport_category="golf",
+        )
+
+        assert trace["eligible"] is False
+        assert "stale_golf_tournament" in trace["blockers"]
+        assert trace["checks"]["commence_time_staleness_applied"] is True
+
+    def test_discover_event_noise_filter_removes_completed_and_low_score_events(self):
+        items = [
+            {
+                "type": "event",
+                "score": 35,
+                "headline": "Final",
+                "data": {"status": "completed", "sport": "baseball"},
+            },
+            {
+                "type": "event",
+                "score": 35,
+                "headline": "Live",
+                "data": {"status": "live", "sport": "soccer_argentina_primera"},
+            },
+            {
+                "type": "futures",
+                "score": 80,
+                "data": {"name": "Who will be Taylor Swift's bridesmaids?"},
+            },
+        ]
+
+        filtered = _filter_discover_event_noise(items)
+
+        assert [item["type"] for item in filtered] == ["futures"]
 
     def test_canonical_dedupe_does_not_collapse_unrelated_yes_no_markets(self):
         china_invade = {

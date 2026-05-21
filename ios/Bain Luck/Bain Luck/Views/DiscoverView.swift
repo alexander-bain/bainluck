@@ -186,8 +186,13 @@ struct DiscoverView: View {
 
     private func isStale(_ item: FeedItem) -> Bool {
         if let f = item.futures {
-            if let leader = f.topOutcomes?.first, (leader.probability ?? 0) >= 0.90 {
-                if leader.movement == nil || abs(leader.movement ?? 0) < 0.005 { return true }
+            if let leader = f.topOutcomes?.first {
+                let probability = leader.probability ?? 0
+                if probability >= 0.98 { return true }
+                if probability <= 0.02 { return true }
+                if probability >= 0.90 {
+                    if leader.movement == nil || abs(leader.movement ?? 0) < 0.005 { return true }
+                }
             }
             if f.status == "closed" || f.status == "resolved" { return true }
             if let rd = f.resolutionDate, let d = rd.asDate, d < Date() { return true }
@@ -771,6 +776,7 @@ struct DiscoverView: View {
 
     private func hideForSession(_ id: String) {
         dismissed.insert(id)
+        Self.saveDismissed(dismissed)
         if visibleCount >= max(groupedItems.count - 8, 0) {
             visibleCount += 20
             Task { await vm.loadMoreIfNeeded() }

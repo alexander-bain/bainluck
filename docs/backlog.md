@@ -465,13 +465,15 @@ Shows "Limited price history available" instead of error on sparse markets.
 **Files:** Native Discover event card component, `backend/app/routes/feed.py` (event card data)
 **Parallel Safety:** Red (touches Discover card rendering — defer to Discover thread)
 
-### BR78. Stale Golf Tournament in Discover (P2)
+### ~~BR78. Stale Golf Tournament in Discover~~ — FIXED May 20
 
 **Problem:** "Truist Championship Winner" with Rory McIlroy at 13% showing in Discover. Tournament may be completed/resolved but market still appears as active. Staleness filter should catch this.
 
+**Fix:** Discover-mode now removes routine completed game cards, low-score/no-logo sports events, locked 98-100% futures, near-zero binary futures, and golf markets whose tournament commence time is more than 6 days old. Native Discover also locally suppresses 0/100-ish stale futures and persists swipe-dismissed card IDs.
+
 **Screenshot:** `/tmp/bug_78.jpg`
 **Files:** `backend/app/routes/feed.py` (staleness), `backend/app/utils/feed_market_quality.py`
-**Parallel Safety:** Red (touches Discover ranking — defer to Discover thread)
+**Parallel Safety:** Shipped
 
 ### BR77. Stale Weather Market in Discover — 6 Days Past Resolution (P2)
 
