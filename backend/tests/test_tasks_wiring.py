@@ -214,6 +214,7 @@ class TestBeatScheduleCompleteness:
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
         "backfill-box-scores",
+        "backfill-espn-ids",
         "backfill-historical-links",
         "update-max-movement",
     }

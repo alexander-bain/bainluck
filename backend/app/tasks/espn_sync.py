@@ -953,6 +953,108 @@ async def _backfill_box_scores(limit: int = 100, priority_calibration: bool = Fa
     return stats
 
 
+async def _backfill_espn_ids(limit: int = 200, days_back: int = 90):
+    """Backfill ESPN IDs on completed events that don't have one.
+
+    Queries ESPN's scoreboard API for past dates, matches completed events
+    by team name, and sets espn_id. This enables box score fetching for
+    games that weren't live during our ESPN sync window.
+
+    Processes one date per sport per run, working backwards from today.
+    Respectful: 0.5s sleep between API calls.
+    """
+    from app.services.espn_api import ESPNAPIService
+    from app.models.models import Event, Sport
+    import asyncio as _asyncio
+
+    stats = {"dates_checked": 0, "events_matched": 0, "already_had_id": 0, "errors": 0}
+
+    espn_sports = list(ESPN_SPORT_MAPPING.keys())
+
+    try:
+        async with get_task_session() as session:
+            # Find completed events without ESPN IDs in ESPN-supported sports
+            result = await session.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    Event.status.in_(["completed", "closed"]),
+                    Event.espn_id.is_(None),
+                    Event.commence_time.isnot(None),
+                    Event.home_team_name.isnot(None),
+                    Event.away_team_name.isnot(None),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
+            )
+            events = result.scalars().all()
+
+            if not events:
+                return {"status": "no_events_to_backfill", **stats}
+
+            # Filter to ESPN-supported sports
+            events = [e for e in events if e.sport and e.sport.key in ESPN_SPORT_MAPPING]
+            if not events:
+                return {"status": "no_espn_sports_to_backfill", **stats}
+
+            # Group by (sport, date) to minimize API calls
+            from collections import defaultdict
+            by_sport_date: dict[tuple[str, str], list] = defaultdict(list)
+            for event in events:
+                sport_key = event.sport.key
+                date_str = event.commence_time.strftime("%Y%m%d")
+                by_sport_date[(sport_key, date_str)].append(event)
+
+            espn = ESPNAPIService()
+            try:
+                for (sport_key, date_str), date_events in list(by_sport_date.items())[:50]:
+                    stats["dates_checked"] += 1
+
+                    try:
+                        espn_events = await espn.get_scoreboard(sport_key, date=date_str)
+                    except Exception as e:
+                        stats["errors"] += 1
+                        logger.warning(f"ESPN scoreboard error for {sport_key}/{date_str}: {e}")
+                        continue
+
+                    if not espn_events:
+                        continue
+
+                    for event in date_events:
+                        home_names, away_names = get_event_name_variations(event)
+                        for ee in espn_events:
+                            if not ee.home_team or not ee.away_team:
+                                continue
+                            if (espn_team_matches(home_names, ee.home_team)
+                                    and espn_team_matches(away_names, ee.away_team)):
+                                event.espn_id = ee.espn_id
+                                stats["events_matched"] += 1
+                                logger.info(
+                                    f"ESPN ID backfill: matched event {event.id} "
+                                    f"({event.home_team_name} vs {event.away_team_name}) "
+                                    f"→ ESPN {ee.espn_id}"
+                                )
+                                break
+
+                    await _asyncio.sleep(0.5)
+
+                await session.commit()
+
+            finally:
+                await espn.close()
+
+    except Exception as e:
+        stats["errors"] += 1
+        import traceback
+        logger.error(f"ESPN ID backfill error: {e}\n{traceback.format_exc()}")
+
+    logger.info(
+        "ESPN ID backfill: %d dates checked, %d events matched, %d errors",
+        stats["dates_checked"], stats["events_matched"], stats["errors"],
+    )
+    return stats
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 

@@ -413,6 +413,13 @@ def backfill_box_scores(self, limit: int = 100, priority_calibration: bool = Fal
     return run_async(_backfill_box_scores(limit=limit, priority_calibration=priority_calibration))
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_espn_ids")
+def backfill_espn_ids(self, limit: int = 200):
+    """Match completed events to ESPN IDs for box score backfilling."""
+    from app.tasks.espn_sync import _backfill_espn_ids
+    return run_async(_backfill_espn_ids(limit=limit))
+
+
 # --- Team Linking (Futures → Teams) ---
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_links")
@@ -1228,6 +1235,12 @@ celery_app.conf.beat_schedule = {
     "backfill-box-scores": {
         "task": "app.tasks.backfill_box_scores",
         "schedule": crontab(minute=15, hour="5,11,17,23"),  # Every 6h, offset from others
+        "kwargs": {"limit": 200},
+        "options": {"queue": "background"},
+    },
+    "backfill-espn-ids": {
+        "task": "app.tasks.backfill_espn_ids",
+        "schedule": crontab(minute=45, hour="5,11,17,23"),  # Every 6h, 30min after box scores
         "kwargs": {"limit": 200},
         "options": {"queue": "background"},
     },
