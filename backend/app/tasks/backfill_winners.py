@@ -1144,10 +1144,11 @@ async def _null_untradeable_openings():
             stats["nulled_no_movement"] = result3.rowcount
 
             # Pass 4: outcomes with implausibly high opening probability
-            # given the number of outcomes in the market. In a 100-player
-            # tournament, no player should open at 75%. In a 10-outcome
-            # market, no outcome should open at 90%. These are ask-price
-            # corruptions from illiquid Kalshi markets.
+            # in large-field markets (50+ outcomes = tournament fields).
+            # No player in a 100-person tournament should open at 50%+.
+            # Also catches any market with 10+ outcomes where opening > 0.90.
+            # Conservative: does NOT aggressively threshold 10-50 outcome
+            # markets (hockey/basketball props have legitimate 70-80% probs).
             result4 = await session.execute(
                 text("""
                     WITH market_sizes AS (
@@ -1156,7 +1157,7 @@ async def _null_untradeable_openings():
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
                         GROUP BY fm.id
-                        HAVING COUNT(*) >= 5
+                        HAVING COUNT(*) >= 10
                     )
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL,
@@ -1165,8 +1166,6 @@ async def _null_untradeable_openings():
                     WHERE fo.market_id = ms.market_id
                       AND fo.opening_probability > CASE
                           WHEN ms.n_outcomes >= 50 THEN 0.50
-                          WHEN ms.n_outcomes >= 20 THEN 0.70
-                          WHEN ms.n_outcomes >= 10 THEN 0.80
                           ELSE 0.90
                       END
                 """)
