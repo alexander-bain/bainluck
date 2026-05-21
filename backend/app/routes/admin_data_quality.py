@@ -2547,18 +2547,11 @@ async def calibration_coverage_audit(
         ORDER BY completed_events DESC
     """))
 
-    # Per-bookmaker odds_snapshot coverage (untapped potential)
+    # Per-bookmaker odds_snapshot coverage — lightweight estimate
     bookmaker_coverage = await db.execute(text("""
         SELECT
-            COUNT(DISTINCT e.id) AS events_with_snapshots,
-            COUNT(DISTINCT os.bookmaker) AS unique_bookmakers,
-            COUNT(*) AS total_snapshots,
-            COUNT(*) FILTER (WHERE os.home_spread IS NOT NULL) AS spread_snapshots,
-            COUNT(*) FILTER (WHERE os.over_under IS NOT NULL) AS total_snapshots_ou,
-            COUNT(*) FILTER (WHERE os.home_moneyline IS NOT NULL) AS moneyline_snapshots
-        FROM odds_snapshots os
-        JOIN events e ON e.id = os.event_id
-        WHERE e.status IN ('completed', 'closed')
+            (SELECT COUNT(*) FROM events WHERE status IN ('completed', 'closed')) AS completed_events,
+            (SELECT COUNT(DISTINCT bookmaker) FROM odds_snapshots LIMIT 100) AS unique_bookmakers
     """))
     bm_row = bookmaker_coverage.one()
 
@@ -2593,13 +2586,10 @@ async def calibration_coverage_audit(
             for r in events_coverage.all()
         ],
         "odds_snapshot_potential": {
-            "events_with_snapshots": bm_row.events_with_snapshots,
+            "completed_events": bm_row.completed_events,
             "unique_bookmakers": bm_row.unique_bookmakers,
-            "total_snapshots": bm_row.total_snapshots,
-            "spread_snapshots": bm_row.spread_snapshots,
-            "totals_snapshots": bm_row.total_snapshots_ou,
-            "moneyline_snapshots": bm_row.moneyline_snapshots,
-            "note": "Per-bookmaker closing lines NOT yet in calibration. Potential 10-20x outcome expansion.",
+            "estimated_per_book_cal_points": bm_row.completed_events * bm_row.unique_bookmakers * 2,
+            "note": "Per-bookmaker closing lines NOT yet in calibration.",
         },
     }
 
