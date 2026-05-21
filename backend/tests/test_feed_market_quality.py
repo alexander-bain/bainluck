@@ -1747,6 +1747,31 @@ class TestQualityFamilyDiversity:
         assert len(election) == 2
         assert len(stakes) == 2
 
+    def test_diversify_caps_single_stock_earnings_to_one(self):
+        names = [
+            "Will Semtech (SMTC) beat quarterly earnings?",
+            "Will Okta (OKTA) beat quarterly earnings?",
+            "Will Hewlett Packard Enterprise (HPE) beat quarterly earnings?",
+        ]
+        items = []
+        for idx, name in enumerate(names):
+            quality = classify_market_quality(name, sport_category="economics")
+            items.append(
+                {
+                    "score": 100 - idx,
+                    "_quality_class": quality.quality_class,
+                    "_quality_family_key": quality.family_key,
+                    "_quality_story_key": quality.story_key,
+                }
+            )
+
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
+
+        assert len(capped) == 1
+        assert capped[0]["_quality_story_key"] == "story:single_stock_earnings"
+
     def test_diversify_caps_russia_war_territory_story_to_two(self):
         names = [
             "Will Russia capture Kharkiv before July?",

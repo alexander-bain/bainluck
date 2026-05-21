@@ -440,6 +440,11 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
         return "story:macro_rates"
 
+    if re.search(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b", lower) or re.search(
+        r"\bearnings\b.*\b(beat|miss|report|quarterly)\b", lower
+    ):
+        return "story:single_stock_earnings"
+
     if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
         return "story:oil"
 
@@ -1509,6 +1514,7 @@ def diversify_quality_families(
         "story:us_federal_power": 3,
         "story:drake_iceman": 1,
         "story:us_government_stakes": 2,
+        "story:single_stock_earnings": 1,
         "story:golf_truist_championship": 3,
         "story:basketball_finals_path": 4,
         "story:fifa_world_cup": 3,
