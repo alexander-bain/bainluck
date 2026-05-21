@@ -47,15 +47,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 FROM futures_markets fm
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM futures_outcomes fo
-                      WHERE fo.market_id = fm.id AND fo.is_winner = true
-                  )
-                  AND EXISTS (
-                      SELECT 1 FROM futures_outcomes fo
-                      WHERE fo.market_id = fm.id
-                        AND fo.current_probability > 0.10
-                  )
+                  AND fm.updated_at >= NOW() - INTERVAL '90 days'
                 LIMIT :limit
             """),
             {"limit": limit},
