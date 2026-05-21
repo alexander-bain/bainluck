@@ -214,7 +214,8 @@ def _detect_golf_market_type(name: str) -> str | None:
         return "top_20"
     if re.search(r"make.*cut|to make the cut", lower):
         return "make_cut"
-    # Skip: head-to-head, round leaders, playoff, cut line, winning score
+    if re.search(r"head.to.head|h2h|matchup.*vs|vs\.", lower):
+        return "h2h"
     return None
 
 
@@ -311,7 +312,34 @@ async def _resolve_kalshi_golf_from_datagolf():
                     {"mid": row.id},
                 )
 
-                for out in outcomes.all():
+                all_outcomes = outcomes.all()
+
+                if market_type == "h2h" and len(all_outcomes) == 2:
+                    # H2H: compare the two players' positions
+                    positions = []
+                    for out in all_outcomes:
+                        key = _match_key(out.name or "")
+                        pos_str = player_positions.get(key)
+                        if pos_str is None:
+                            break
+                        numeric = pos_str.strip().upper().lstrip("T")
+                        try:
+                            positions.append((out.id, int(numeric)))
+                        except ValueError:
+                            break
+                    if len(positions) == 2:
+                        winner_id = min(positions, key=lambda x: x[1])[0]
+                        for oid, _ in positions:
+                            await session.execute(
+                                text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                                {"won": oid == winner_id, "oid": oid},
+                            )
+                            stats["resolved_outcomes"] += 1
+                    else:
+                        stats["no_player_match"] += 2
+                    continue
+
+                for out in all_outcomes:
                     key = _match_key(out.name or "")
                     pos_str = player_positions.get(key)
 
@@ -322,9 +350,6 @@ async def _resolve_kalshi_golf_from_datagolf():
                             stats["no_player_match"] += 1
                             continue
                     else:
-                        if market_type == "h2h":
-                            stats["skipped_type"] += 1
-                            continue
                         won = _datagolf_check_placement(pos_str, market_type)
                         if won is None:
                             continue
