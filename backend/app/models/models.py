@@ -756,6 +756,7 @@ class FuturesOutcome(Base):
 
     # Resolution
     is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
 
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -107,7 +107,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                                         )
                                     ),
                                 )
-                                .values(is_winner=is_winner)
+                                .values(is_winner=is_winner, resolution_source="api_settlement")
                             )
                             if updated.rowcount > 0:
                                 if is_winner:
@@ -174,7 +174,8 @@ async def _backfill_polymarket_winners():
                            ) = COUNT(*)
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability >= 0.95)
+                    SET is_winner = (fo.current_probability >= 0.95),
+                        resolution_source = 'clean_resolution'
                     FROM cleanly_resolved cr
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
@@ -328,7 +329,7 @@ async def _resolve_kalshi_golf_from_datagolf():
                         winner_id = min(positions, key=lambda x: x[1])[0]
                         for oid, _ in positions:
                             await session.execute(
-                                text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                                text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
                                 {"won": oid == winner_id, "oid": oid},
                             )
                             stats["resolved_outcomes"] += 1
@@ -352,8 +353,8 @@ async def _resolve_kalshi_golf_from_datagolf():
                             continue
 
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
-                        {"won": won, "oid": out.id},
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"),
+                        {"won": won, "oid": out.id, "src": "leaderboard"},
                     )
                     stats["resolved_outcomes"] += 1
 
@@ -419,7 +420,7 @@ async def _resolve_kalshi_from_scores():
                     btts_yes = row.home_score > 0 and row.away_score > 0
                     await session.execute(
                         text("""
-                            UPDATE futures_outcomes SET is_winner = :won
+                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score'
                             WHERE market_id = :mid
                         """),
                         {"won": btts_yes, "mid": row.market_id},
@@ -470,8 +471,8 @@ async def _resolve_kalshi_from_scores():
                         continue
 
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
-                        {"won": won, "oid": out.id},
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src WHERE id = :oid"),
+                        {"won": won, "oid": out.id, "src": "game_score"},
                     )
                     resolved_any = True
 
@@ -596,7 +597,7 @@ async def _resolve_kalshi_spread_total_from_scores():
 
                     won = margin > line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
                     )
                     if is_1h:
@@ -766,7 +767,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
             # Batch update
             for oid, won in updates:
                 await session.execute(
-                    text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                    text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'box_score' WHERE id = :oid"),
                     {"won": won, "oid": oid},
                 )
             stats["resolved"] = len(updates)
@@ -899,7 +900,7 @@ async def _resolve_kalshi_period_props():
                     line = float(sm.group(2))
                     won = (period_home - period_away) > line or (period_away - period_home) > line
                     await session.execute(
-                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        text("UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays' WHERE id = :oid"),
                         {"won": won, "oid": outcome.id},
                     )
                     stats["resolved"] += 1
@@ -1011,7 +1012,7 @@ async def _backfill_datagolf_winners():
 
                     await session.execute(
                         text("""
-                            UPDATE futures_outcomes SET is_winner = :won
+                            UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'scoring_plays'
                             WHERE id = :oid
                         """),
                         {"won": won, "oid": out_row.id},
@@ -1102,7 +1103,8 @@ async def _backfill_from_current_probability():
                            AND COUNT(*) >= 1
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability >= 0.95)
+                    SET is_winner = (fo.current_probability >= 0.95),
+                        resolution_source = 'clean_resolution'
                     FROM cleanly_resolved cr
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
@@ -1147,7 +1149,8 @@ async def _backfill_from_current_probability():
                         WHERE fo.current_probability IS NOT NULL
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = (r.rn = 1)
+                    SET is_winner = (r.rn = 1),
+                        resolution_source = 'pass2_guess'
                     FROM ranked r
                     WHERE fo.id = r.outcome_id
                     RETURNING fo.is_winner
@@ -1176,7 +1179,8 @@ async def _backfill_from_current_probability():
                         LIMIT 50000
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability > 0.50)
+                    SET is_winner = (fo.current_probability > 0.50),
+                        resolution_source = 'pass3_threshold'
                     FROM threshold_markets tm
                     WHERE fo.market_id = tm.market_id
                       AND fo.current_probability IS NOT NULL
@@ -1206,7 +1210,8 @@ async def _backfill_from_current_probability():
                         LIMIT 50000
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = false
+                    SET is_winner = false,
+                        resolution_source = 'all_losers'
                     FROM all_loser_markets al
                     WHERE fo.market_id = al.market_id
                     RETURNING 1
@@ -1233,7 +1238,8 @@ async def _backfill_from_current_probability():
                         LIMIT 50000
                     )
                     UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability > 0.50)
+                    SET is_winner = (fo.current_probability > 0.50),
+                        resolution_source = 'pass3_threshold'
                     FROM single_outcome so
                     WHERE fo.market_id = so.market_id
                       AND fo.current_probability IS NOT NULL
@@ -1848,7 +1854,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             r = await session.execute(
                 text("""
                     UPDATE futures_outcomes fo
-                    SET is_winner = (fo.current_probability >= 0.95)
+                    SET is_winner = (fo.current_probability >= 0.95), resolution_source = 'settlement_sync'
                     FROM futures_markets fm
                     WHERE fo.market_id = fm.id
                       AND fm.source = 'kalshi'

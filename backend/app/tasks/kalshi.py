@@ -566,6 +566,7 @@ async def _poll_kalshi_markets():
                         }
                         if is_winner_value is not None:
                             update_set["is_winner"] = is_winner_value
+                            update_set["resolution_source"] = "api_settlement"
                         # Backfill opening_probability if it was NULL (market had
                         # no trading on first capture) and now has real trading
                         if has_real_trading:
