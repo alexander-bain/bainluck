@@ -200,55 +200,149 @@ async def _backfill_polymarket_winners():
     return stats
 
 
-async def _reset_kalshi_midrange_winners():
-    """Reset is_winner on Kalshi markets where Pass 2 arbitrarily picked a winner.
+_GOLF_MARKET_TYPE_MAP = {
+    "kxpgatour": "win", "kxlpgatour": "win",
+    "kxpgamakecut": "make_cut", "kxlpgamakecut": "make_cut",
+    "kxpgatop5": "top_5", "kxlpgatop5": "top_5",
+    "kxpgatop10": "top_10", "kxlpgatop10": "top_10",
+    "kxpgatop20": "top_20", "kxlpgatop20": "top_20",
+    "kxpgah2h": "h2h", "kxlpgah2h": "h2h",
+}
 
-    Identifies markets where:
-    - is_winner=true exists on some outcome
-    - But no outcome has current_probability >= 0.90 (not cleanly resolved)
-    - And max probability is between 0.10 and 0.80 (Pass 2 territory)
 
-    Resets all outcomes to is_winner=false so the API phases can re-resolve.
+async def _resolve_kalshi_golf_from_datagolf():
+    """Resolve Kalshi golf markets using DataGolf leaderboard results.
+
+    Reuses existing cross-source matching from routes/golf.py:
+    - _normalize_tournament() for tournament matching
+    - _match_key() for player name matching
+    - _datagolf_check_placement() for position → is_winner
     """
-    stats = {"reset_outcomes": 0, "reset_markets": 0, "errors": []}
+    from app.routes.golf import _normalize_tournament, _match_key
+
+    stats = {"matched_tournaments": 0, "resolved_outcomes": 0,
+             "no_tournament_match": 0, "no_player_match": 0,
+             "skipped_type": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
-            result = await session.execute(
+            # 1. Build tournament → leaderboard lookup from DataGolf
+            dg_result = await session.execute(
                 text("""
-                    WITH suspect_markets AS (
-                        SELECT fm.id AS market_id
-                        FROM futures_markets fm
-                        JOIN futures_outcomes fo ON fo.market_id = fm.id
-                        WHERE fm.source = 'kalshi'
-                          AND fm.status = 'resolved'
-                          AND fo.current_probability IS NOT NULL
-                        GROUP BY fm.id
-                        HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) >= 1
-                           AND MAX(fo.current_probability) < 0.90
-                           AND MAX(fo.current_probability) > 0.10
-                        LIMIT 50000
-                    )
-                    UPDATE futures_outcomes fo
-                    SET is_winner = false
-                    FROM suspect_markets sm
-                    WHERE fo.market_id = sm.market_id
-                      AND fo.is_winner = true
-                    RETURNING fo.market_id
+                    SELECT name, market_metadata
+                    FROM futures_markets
+                    WHERE source = 'datagolf'
+                      AND status = 'resolved'
+                      AND market_metadata IS NOT NULL
+                      AND external_id LIKE '%:win'
                 """)
             )
-            rows = result.all()
-            stats["reset_outcomes"] = len(rows)
-            stats["reset_markets"] = len(set(r[0] for r in rows))
+            tournament_leaderboards: dict[str, list] = {}
+            for row in dg_result.all():
+                metadata = row.market_metadata or {}
+                leaderboard = metadata.get("leaderboard")
+                if not leaderboard:
+                    continue
+                key = _normalize_tournament(row.name)
+                if key != "other":
+                    tournament_leaderboards[key] = leaderboard
+
+            if not tournament_leaderboards:
+                logger.info("Golf cross-ref: no DataGolf tournaments with leaderboards")
+                return stats
+
+            logger.info(
+                "Golf cross-ref: %d DataGolf tournaments available",
+                len(tournament_leaderboards),
+            )
+
+            # 2. Find stuck Kalshi golf markets (including ones with WRONG is_winner
+            # from Pass 2's arbitrary pick — use max(current_prob) < 0.90 as signal)
+            kalshi_result = await session.execute(
+                text("""
+                    SELECT fm.id, fm.name, fm.external_id
+                    FROM futures_markets fm
+                    WHERE fm.source = 'kalshi'
+                      AND fm.status = 'resolved'
+                      AND fm.llm_sport_category = 'golf'
+                """)
+            )
+            kalshi_markets = kalshi_result.all()
+
+            for row in kalshi_markets:
+                ticker_lower = (row.external_id or "").lower()
+
+                # Determine market type from ticker prefix
+                market_type = None
+                for prefix, mtype in _GOLF_MARKET_TYPE_MAP.items():
+                    if ticker_lower.startswith(prefix):
+                        market_type = mtype
+                        break
+                if not market_type:
+                    stats["skipped_type"] += 1
+                    continue
+
+                # Match tournament
+                tournament_key = _normalize_tournament(row.name)
+                leaderboard = tournament_leaderboards.get(tournament_key)
+                if not leaderboard:
+                    stats["no_tournament_match"] += 1
+                    continue
+
+                stats["matched_tournaments"] += 1
+
+                # Build player lookup: match_key → position
+                player_positions: dict[str, str] = {}
+                for entry in leaderboard:
+                    pname = entry.get("name", "")
+                    pos = entry.get("position")
+                    if pname and pos is not None:
+                        player_positions[_match_key(pname)] = str(pos)
+
+                can_infer_absent = market_type in ("win", "top_5", "top_10", "top_20")
+
+                # Get outcomes and resolve
+                outcomes = await session.execute(
+                    text("SELECT id, name FROM futures_outcomes WHERE market_id = :mid"),
+                    {"mid": row.id},
+                )
+
+                for out in outcomes.all():
+                    key = _match_key(out.name or "")
+                    pos_str = player_positions.get(key)
+
+                    if pos_str is None:
+                        if can_infer_absent:
+                            won = False
+                        else:
+                            stats["no_player_match"] += 1
+                            continue
+                    else:
+                        if market_type == "h2h":
+                            stats["skipped_type"] += 1
+                            continue
+                        won = _datagolf_check_placement(pos_str, market_type)
+                        if won is None:
+                            continue
+
+                    await session.execute(
+                        text("UPDATE futures_outcomes SET is_winner = :won WHERE id = :oid"),
+                        {"won": won, "oid": out.id},
+                    )
+                    stats["resolved_outcomes"] += 1
+
             await session.commit()
 
     except Exception as e:
         stats["errors"].append(str(e))
-        logger.error("Kalshi midrange reset error: %s", e)
+        logger.error("Golf cross-ref error: %s", e)
 
     logger.info(
-        "Kalshi midrange reset: %d outcomes across %d markets, %d errors",
-        stats["reset_outcomes"], stats["reset_markets"], len(stats["errors"]),
+        "Golf cross-ref: %d tournaments matched, %d outcomes resolved, "
+        "%d no_tournament, %d no_player, %d skipped_type, %d errors",
+        stats["matched_tournaments"], stats["resolved_outcomes"],
+        stats["no_tournament_match"], stats["no_player_match"],
+        stats["skipped_type"], len(stats["errors"]),
     )
     return stats
 
@@ -1381,6 +1475,11 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # passes so Pass 3 doesn't overwrite with incorrect model-prediction logic)
     datagolf_stats = await _backfill_datagolf_winners()
 
+    # Phase 0h: Kalshi golf cross-reference — uses DataGolf leaderboard to
+    # resolve Kalshi golf markets where the API has purged settlement data.
+    # Reuses _normalize_tournament() and _match_key() from routes/golf.py.
+    golf_cross_stats = await _resolve_kalshi_golf_from_datagolf()
+
     # Phase 1a: Kalshi score-based resolution for game markets linked to
     # Events. Resolves moneyline/BTTS/spreads/totals/1H props from actual
     # game scores even when the Kalshi API has purged the market data.
@@ -1405,6 +1504,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "calibration_prices": cal_price_stats,
         "polymarket_api_group_id": api_group_stats,
         "datagolf": datagolf_stats,
+        "golf_cross_reference": golf_cross_stats,
         "kalshi_score_resolution": score_stats,
         "kalshi_spread_total_resolution": spread_total_stats,
         "from_probability": prob_stats,
