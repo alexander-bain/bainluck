@@ -17,6 +17,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [blocked] Finish App Store submission checklist. Issue: [#445](https://github.com/alexander-bain/bainluck/issues/445)
 - [ready] Finish event-detail parity gaps for half maps and player props. Issue: [#446](https://github.com/alexander-bain/bainluck/issues/446)
 - [idea] Add stored full-text search vectors only if production traces justify it. Issue: [#447](https://github.com/alexander-bain/bainluck/issues/447)
+- [ready] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
 
 ## Current Priority: Calibration & Data Quality
 
