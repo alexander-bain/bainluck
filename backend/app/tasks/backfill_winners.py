@@ -1143,6 +1143,32 @@ async def _null_untradeable_openings():
             )
             stats["nulled_no_movement"] = result3.rowcount
 
+            # Pass 4: outcomes in mutually-exclusive markets where opening
+            # probability > 0.90 but the market has 10+ outcomes. These are
+            # ask-price-as-probability corruptions (e.g., golf tournament
+            # longshot with yes_ask=0.98 stored as opening).
+            result4 = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = NULL,
+                        calibration_probability = NULL
+                    WHERE fo.opening_probability > 0.90
+                      AND fo.id IN (
+                          SELECT fo2.id
+                          FROM futures_outcomes fo2
+                          JOIN futures_markets fm ON fm.id = fo2.market_id
+                          WHERE fm.status = 'resolved'
+                            AND fm.mutually_exclusive = true
+                            AND fo2.opening_probability > 0.90
+                          GROUP BY fo2.id, fm.id
+                          HAVING (SELECT COUNT(*) FROM futures_outcomes fo3
+                                  WHERE fo3.market_id = fm.id) >= 10
+                          LIMIT 50000
+                      )
+                """)
+            )
+            stats["nulled_ask_price"] = result4.rowcount
+
             await session.commit()
 
     except Exception as e:
@@ -1150,9 +1176,11 @@ async def _null_untradeable_openings():
         logger.error("Null untradeable openings error: %s", e)
 
     logger.info(
-        "Null untradeable openings: %d zero-snap, %d low-snap, %d no-movement, %d errors",
+        "Null untradeable openings: %d zero-snap, %d low-snap, %d no-movement, "
+        "%d ask-price, %d errors",
         stats["nulled_zero_snap"], stats["nulled_low_snap"],
-        stats["nulled_no_movement"], len(stats["errors"]),
+        stats["nulled_no_movement"], stats.get("nulled_ask_price", 0),
+        len(stats["errors"]),
     )
     return stats
 

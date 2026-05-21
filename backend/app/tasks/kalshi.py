@@ -468,8 +468,7 @@ async def _poll_kalshi_markets():
                         elif market.last_price is not None and market.last_price > 0:
                             prob = market.last_price
                         elif (market.yes_bid is not None and market.yes_ask is not None
-                              and market.yes_ask > 0):
-                            # Bid is 0 but ask exists — use ask as upper bound
+                              and market.yes_ask > 0 and market.yes_ask <= 0.50):
                             prob = market.yes_ask
                         else:
                             continue  # Skip markets without any pricing
@@ -542,8 +541,6 @@ async def _poll_kalshi_markets():
                             and market.yes_bid > 0
                             and market.yes_ask is not None
                             and (market.yes_ask - market.yes_bid) < 0.50
-                        ) or (
-                            market.volume is not None and market.volume > 0
                         )
                         opening_prob = prob if has_real_trading else None
                         opening_american = american if has_real_trading else None
