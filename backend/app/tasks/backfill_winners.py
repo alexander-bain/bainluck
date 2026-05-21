@@ -1143,28 +1143,27 @@ async def _null_untradeable_openings():
             )
             stats["nulled_no_movement"] = result3.rowcount
 
-            # Pass 4: outcomes in mutually-exclusive markets where opening
-            # probability > 0.90 but the market has 10+ outcomes. These are
-            # ask-price-as-probability corruptions (e.g., golf tournament
-            # longshot with yes_ask=0.98 stored as opening).
+            # Pass 4: outcomes where opening > 0.90 in markets with 10+
+            # outcomes. In a market with many outcomes (tournament fields,
+            # multi-candidate elections), no single outcome should have 90%+
+            # opening probability. These are ask-price-as-probability
+            # corruptions from illiquid Kalshi markets.
             result4 = await session.execute(
                 text("""
+                    WITH big_markets AS (
+                        SELECT fm.id AS market_id
+                        FROM futures_markets fm
+                        JOIN futures_outcomes fo ON fo.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                        GROUP BY fm.id
+                        HAVING COUNT(*) >= 10
+                    )
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL,
                         calibration_probability = NULL
-                    WHERE fo.opening_probability > 0.90
-                      AND fo.id IN (
-                          SELECT fo2.id
-                          FROM futures_outcomes fo2
-                          JOIN futures_markets fm ON fm.id = fo2.market_id
-                          WHERE fm.status = 'resolved'
-                            AND fm.mutually_exclusive = true
-                            AND fo2.opening_probability > 0.90
-                          GROUP BY fo2.id, fm.id
-                          HAVING (SELECT COUNT(*) FROM futures_outcomes fo3
-                                  WHERE fo3.market_id = fm.id) >= 10
-                          LIMIT 50000
-                      )
+                    FROM big_markets bm
+                    WHERE fo.market_id = bm.market_id
+                      AND fo.opening_probability > 0.90
                 """)
             )
             stats["nulled_ask_price"] = result4.rowcount
