@@ -114,6 +114,17 @@ def test_futures_reason_names_leader_for_monthly_resolution():
     assert reason == "Fed Decision in June? resolves this month, No change leads at 64%"
 
 
+def test_futures_reason_avoids_date_leader_for_monthly_resolution():
+    reason = generate_futures_reason(
+        market_name="Russia x Ukraine ceasefire agreement by...?",
+        highlight_reasons=["resolving_soon_30d"],
+        leader_name="December 31",
+        leader_probability=0.46,
+    )
+
+    assert reason == "Russia x Ukraine ceasefire agreement by...? resolves this month"
+
+
 def test_futures_reason_names_new_favorite_without_llm_hook():
     reason = generate_futures_reason(
         market_name="2028 Democratic nominee",
@@ -307,6 +318,17 @@ def test_futures_headline_names_leader_for_monthly_resolution():
     assert headline == "No leads; resolves this month"
 
 
+def test_futures_headline_avoids_date_leader_for_monthly_resolution():
+    headline = generate_futures_headline(
+        highlight_reasons=["resolving_soon_30d"],
+        leader_name="December 31",
+        leader_probability=0.46,
+        market_name="Russia x Ukraine ceasefire agreement by...?",
+    )
+
+    assert headline == "Russia x Ukraine ceasefire agreement by... resolves this month"
+
+
 def test_futures_context_summary_combines_signal_and_leader():
     summary = generate_futures_context_summary(
         headline="Yes side up 10.2 points today",
@@ -336,6 +358,18 @@ def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
 
     assert headline == "Sources disagree (3)"
     assert summary == "Sources disagree (3); Sentimental Favorite leads at 37%"
+
+
+def test_futures_context_summary_omits_weak_date_leader():
+    summary = generate_futures_context_summary(
+        headline="Russia x Ukraine ceasefire agreement by... resolves this month",
+        highlight_reasons=["resolving_soon_30d"],
+        market_name="Russia x Ukraine ceasefire agreement by...?",
+        leader_name="December 31",
+        leader_probability=0.46,
+    )
+
+    assert summary == "Resolution window is this month"
 
 
 def test_futures_context_summary_avoids_repeating_market_title_prefix():

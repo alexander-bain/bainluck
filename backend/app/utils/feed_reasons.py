@@ -384,11 +384,15 @@ def generate_futures_reason(
     # Resolving soon
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
+            if _weak_outcome_label(leader_name):
+                return f"{market_name} resolving this week"
             pct = round(leader_probability * 100)
             return f"{market_name} resolving soon, {leader_name} leads at {pct}%"
         return f"{market_name} resolving this week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
+            if _weak_outcome_label(leader_name):
+                return f"{market_name} resolves this month"
             pct = round(leader_probability * 100)
             return f"{market_name} resolves this month, {leader_name} leads at {pct}%"
         return f"{market_name} resolving this month"
@@ -402,6 +406,8 @@ def generate_futures_reason(
 
     # Fallback
     if leader_name and leader_probability is not None:
+        if _weak_outcome_label(leader_name):
+            return market_name
         pct = round(leader_probability * 100)
         return f"{leader_name} ({pct}%) leads {market_name}"
 
@@ -482,11 +488,15 @@ def generate_futures_headline(
 
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
+            if _weak_outcome_label(leader_name) and market_name:
+                return f"{_short_market_name(market_name)} resolving soon"
             return f"Resolving soon: {leader_name} leads at {round(leader_probability * 100)}%"
         return "Resolving soon"
 
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
+            if _weak_outcome_label(leader_name) and market_name:
+                return f"{_short_market_name(market_name)} resolves this month"
             return f"{leader_name} leads; resolves this month"
         return "Resolving this month"
 
@@ -498,6 +508,8 @@ def generate_futures_headline(
         )
 
     if leader_name and leader_probability is not None:
+        if _weak_outcome_label(leader_name) and market_name:
+            return _short_market_name(market_name)
         return f"{leader_name} leads at {round(leader_probability * 100)}%"
 
     return ""
@@ -526,6 +538,8 @@ def generate_futures_context_summary(
 
     def leader_clause() -> str:
         if _copy_repeats_market_name(leader_name, market_name):
+            return ""
+        if _weak_outcome_label(leader_name):
             return ""
         if leader_name and leader_probability is not None:
             return f"{leader_name} leads at {round(leader_probability * 100)}%"
