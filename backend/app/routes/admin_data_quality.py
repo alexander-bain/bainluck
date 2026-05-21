@@ -2489,47 +2489,15 @@ async def calibration_resolution_status(
     """))
     bs_row = bs.one()
 
-    # Kalshi markets by resolution source
+    # Kalshi markets — simple counts by category
     res = await db.execute(text("""
         SELECT
-            CASE
-                WHEN fm.external_id LIKE 'kxnbapts%' OR fm.external_id LIKE 'kxnbaast%'
-                    OR fm.external_id LIKE 'kxnbareb%' OR fm.external_id LIKE 'kxnbablk%'
-                    OR fm.external_id LIKE 'kxnbastl%' OR fm.external_id LIKE 'kxnba3pt%'
-                    OR fm.external_id LIKE 'kxnbapa%' OR fm.external_id LIKE 'kxnbapr%'
-                    OR fm.external_id LIKE 'kxnbapra%' OR fm.external_id LIKE 'kxnbara%'
-                    OR fm.external_id LIKE 'kxnba2d%' OR fm.external_id LIKE 'kxnba3d%'
-                    OR fm.external_id LIKE 'kxnhlgoal%' OR fm.external_id LIKE 'kxnhlanygoal%'
-                    OR fm.external_id LIKE 'kxnhlpts%' OR fm.external_id LIKE 'kxnhlast%'
-                    OR fm.external_id LIKE 'kxnhlsaves%'
-                    OR fm.external_id LIKE 'kxmlbhit%' OR fm.external_id LIKE 'kxmlbhr%'
-                    OR fm.external_id LIKE 'kxmlbks%'
-                THEN 'player_prop'
-                WHEN fm.external_id LIKE 'kx%1h%' OR fm.external_id LIKE 'kx%2h%'
-                    OR fm.external_id LIKE 'kx%1q%' OR fm.external_id LIKE 'kx%2q%'
-                    OR fm.external_id LIKE 'kx%3q%' OR fm.external_id LIKE 'kx%4q%'
-                    OR fm.external_id LIKE 'kxmlbf5%'
-                THEN 'period_prop'
-                WHEN fm.external_id LIKE 'kx%spread%' THEN 'spread'
-                WHEN fm.external_id LIKE 'kx%total%' THEN 'total'
-                WHEN fm.external_id LIKE 'kx%game%' THEN 'moneyline'
-                ELSE 'other'
-            END AS market_type,
-            COUNT(DISTINCT fm.id) AS markets,
-            SUM(CASE WHEN EXISTS (
-                SELECT 1 FROM futures_outcomes fo
-                WHERE fo.market_id = fm.id AND fo.is_winner = true
-            ) THEN 1 ELSE 0 END) AS has_winner,
-            SUM(CASE WHEN fm.event_id IS NOT NULL THEN 1 ELSE 0 END) AS linked_to_event,
-            SUM(CASE WHEN fm.event_id IS NOT NULL AND EXISTS (
-                SELECT 1 FROM events e
-                WHERE e.id = fm.event_id
-                AND e.box_score_data IS NOT NULL
-                AND e.box_score_data->>'error' IS NULL
-            ) THEN 1 ELSE 0 END) AS has_boxscore
+            fm.llm_sport_category AS cat,
+            COUNT(*) AS markets,
+            COUNT(*) FILTER (WHERE fm.event_id IS NOT NULL) AS linked
         FROM futures_markets fm
         WHERE fm.source = 'kalshi' AND fm.status = 'resolved'
-        GROUP BY market_type
+        GROUP BY fm.llm_sport_category
         ORDER BY markets DESC
     """))
 
@@ -2541,15 +2509,8 @@ async def calibration_resolution_status(
             "needs_backfill": bs_row.needs_backfill,
             "total_completed": bs_row.total,
         },
-        "kalshi_by_market_type": [
-            {
-                "type": r.market_type,
-                "markets": r.markets,
-                "has_winner": r.has_winner,
-                "linked_to_event": r.linked_to_event,
-                "has_boxscore": r.has_boxscore,
-                "winner_pct": round(100 * r.has_winner / max(r.markets, 1), 1),
-            }
+        "kalshi_by_category": [
+            {"category": r.cat or "null", "markets": r.markets, "linked": r.linked}
             for r in res.all()
         ],
     }
