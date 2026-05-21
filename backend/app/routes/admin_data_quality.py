@@ -2072,6 +2072,7 @@ async def golf_cross_ref_debug(
         "matching_keys": sorted(overlap),
         "dg_only_keys": sorted(dg_keys - kalshi_keys),
         "kalshi_only_keys": sorted(kalshi_keys - dg_keys)[:10],
+        "kalshi_ticker_samples": [s["ticker"] for s in kalshi_samples[:20]],
     }
 
 
