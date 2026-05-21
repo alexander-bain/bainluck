@@ -2012,7 +2012,10 @@ async def golf_cross_ref_debug(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.routes.golf import _normalize_tournament
+    try:
+        from app.routes.golf import _normalize_tournament
+    except Exception as e:
+        return {"error": f"import failed: {e}"}
 
     # DataGolf win markets with leaderboards
     dg = await db.execute(text("""
