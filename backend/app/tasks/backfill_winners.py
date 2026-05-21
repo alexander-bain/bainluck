@@ -48,6 +48,7 @@ async def _backfill_kalshi_winners(limit: int = 2000, dry_run: bool = False):
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'resolved'
                   AND fm.updated_at >= NOW() - INTERVAL '90 days'
+                ORDER BY fm.updated_at DESC
                 LIMIT :limit
             """),
             {"limit": limit},
