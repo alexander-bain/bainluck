@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import os
+import ssl
 import time
 from typing import Optional
 
@@ -67,7 +68,7 @@ def _get_rate_limiter():
         try:
             if redis_url.startswith("rediss://"):
                 storage = storage_from_string(
-                    redis_url, ssl_cert_reqs="CERT_NONE"
+                    redis_url, ssl_cert_reqs=ssl.CERT_NONE
                 )
             else:
                 storage = storage_from_string(redis_url)

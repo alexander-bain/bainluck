@@ -1,0 +1,47 @@
+name: Alert Intake
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Social Ground Truth
+    types:
+      - completed
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  github-actions-intake:
+    name: GitHub Actions intake
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or update alert issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/alert_intake.py --mode github-workflow-run
+
+  sentry-intake:
+    name: Sentry intake
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or update Sentry alert issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_ENVIRONMENT: prod
+          SENTRY_QUERY: "is:unresolved"
+          SENTRY_STATS_PERIOD: 24h
+          SENTRY_LIMIT: 20
+        run: python3 scripts/alert_intake.py --mode sentry

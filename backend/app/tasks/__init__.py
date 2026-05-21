@@ -763,6 +763,7 @@ def compute_snapshot_distribution(self):
 def update_max_movement(self):
     """Update max_movement_24h on futures_markets from outcome data."""
     async def _impl():
+        from app.tasks.base import get_task_session
         from sqlalchemy import text
         async with get_task_session() as session:
             result = await session.execute(text("""

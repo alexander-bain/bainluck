@@ -550,7 +550,13 @@ async def taxonomy_debug_redis(
 
     import redis
     import os
-    r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    import ssl
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    if redis_url.startswith("rediss://"):
+        r = redis.from_url(redis_url, ssl_cert_reqs=ssl.CERT_NONE)
+    else:
+        r = redis.from_url(redis_url)
     return {
         "taxonomy_debug": r.get("bainluck:taxonomy_debug"),
         "llm_enrich_gate": r.get("bainluck:llm_enrich_gate"),
@@ -1009,4 +1015,3 @@ async def taxonomy_enrichment_status(
         "llm_tag_distribution": llm_tag_distribution,
         "cache_status": cache_status,
     }
-

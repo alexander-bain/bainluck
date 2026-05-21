@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, delete as sa_delete, select, update as sa_update
+from sqlalchemy import func, delete as sa_delete, select, text, update as sa_update
 
 from app.tasks.base import get_task_session, run_async
 

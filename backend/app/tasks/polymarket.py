@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.tasks.base import get_task_session
 

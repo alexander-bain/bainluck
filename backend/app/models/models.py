@@ -772,6 +772,24 @@ class FuturesOutcome(Base):
         back_populates="outcome", cascade="all, delete-orphan"
     )
 
+    @property
+    def probability(self) -> Optional[float]:
+        """Backward-compatible alias for current_probability."""
+        return self.current_probability
+
+    @probability.setter
+    def probability(self, value: Optional[float]) -> None:
+        self.current_probability = value
+
+    @property
+    def american_odds(self) -> Optional[int]:
+        """Backward-compatible alias for current_american_odds."""
+        return self.current_american_odds
+
+    @american_odds.setter
+    def american_odds(self, value: Optional[int]) -> None:
+        self.current_american_odds = value
+
 
 class FuturesOddsSnapshot(Base):
     """Historical odds snapshot for a futures outcome from a specific bookmaker."""
