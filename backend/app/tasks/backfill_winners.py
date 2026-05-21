@@ -13,6 +13,7 @@ Risk mitigations:
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update, text, func
@@ -470,8 +471,6 @@ async def _resolve_kalshi_from_scores():
     )
     return stats
 
-
-import re
 
 _SPREAD_RE = re.compile(
     r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
