@@ -2513,7 +2513,36 @@ async def calibration_resolution_status(
             {"category": r.cat or "null", "markets": r.markets, "linked": r.linked}
             for r in res.all()
         ],
+        "espn_unavailable_breakdown": await _espn_unavailable_breakdown(db),
     }
+
+
+async def _espn_unavailable_breakdown(db):
+    """Why are ESPN box scores unavailable? Retention or coverage?"""
+    result = await db.execute(text("""
+        SELECT s.key AS sport,
+               COUNT(*) AS total,
+               MIN(e.commence_time) AS earliest,
+               MAX(e.commence_time) AS latest
+        FROM events e
+        JOIN sports s ON s.id = e.sport_id
+        WHERE e.status IN ('completed', 'closed')
+          AND e.espn_id IS NOT NULL
+          AND e.box_score_data IS NOT NULL
+          AND e.box_score_data->>'error' = 'not_available'
+        GROUP BY s.key
+        ORDER BY total DESC
+    """))
+    rows = result.all()
+    return [
+        {
+            "sport": r.sport,
+            "count": r.total,
+            "earliest": str(r.earliest)[:10] if r.earliest else None,
+            "latest": str(r.latest)[:10] if r.latest else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/calibration/coverage-audit")
