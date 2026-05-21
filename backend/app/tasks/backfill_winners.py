@@ -200,14 +200,21 @@ async def _backfill_polymarket_winners():
     return stats
 
 
-_GOLF_MARKET_TYPE_MAP = {
-    "kxpgatour": "win", "kxlpgatour": "win",
-    "kxpgamakecut": "make_cut", "kxlpgamakecut": "make_cut",
-    "kxpgatop5": "top_5", "kxlpgatop5": "top_5",
-    "kxpgatop10": "top_10", "kxlpgatop10": "top_10",
-    "kxpgatop20": "top_20", "kxlpgatop20": "top_20",
-    "kxpgah2h": "h2h", "kxlpgah2h": "h2h",
-}
+def _detect_golf_market_type(name: str) -> str | None:
+    """Detect golf market type from market name or external_id."""
+    lower = name.lower()
+    if re.search(r"winner|champion(?!ship)", lower):
+        return "win"
+    if "top 5" in lower or "top five" in lower:
+        return "top_5"
+    if "top 10" in lower or "top ten" in lower:
+        return "top_10"
+    if "top 20" in lower or "top twenty" in lower:
+        return "top_20"
+    if re.search(r"make.*cut|to make the cut", lower):
+        return "make_cut"
+    # Skip: head-to-head, round leaders, playoff, cut line, winning score
+    return None
 
 
 async def _resolve_kalshi_golf_from_datagolf():
@@ -270,14 +277,9 @@ async def _resolve_kalshi_golf_from_datagolf():
             kalshi_markets = kalshi_result.all()
 
             for row in kalshi_markets:
-                ticker_lower = (row.external_id or "").lower()
-
-                # Determine market type from ticker prefix
-                market_type = None
-                for prefix, mtype in _GOLF_MARKET_TYPE_MAP.items():
-                    if ticker_lower.startswith(prefix):
-                        market_type = mtype
-                        break
+                # Determine market type from name (external_id is the market
+                # name for Kalshi golf, not a ticker prefix)
+                market_type = _detect_golf_market_type(row.name or row.external_id or "")
                 if not market_type:
                     stats["skipped_type"] += 1
                     continue
