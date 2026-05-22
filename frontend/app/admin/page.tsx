@@ -1334,8 +1334,8 @@ export default function AdminDashboard() {
 
           <MetricSection
             question="Are infrastructure and markets healthy?"
-            status={data.database.days_until_full !== null && data.database.days_until_full < 30 ? "warning" : "good"}
-            summary={`DB: ${data.database.db_size_mb}MB · ${data.database.plan.connections_limit - (data.database.plan.storage_used_gb || 0)} connections available`}
+            status={data.database?.days_until_full !== null && (data.database?.days_until_full ?? 999) < 30 ? "warning" : "good"}
+            summary={`DB: ${data.database?.db_size_mb ?? '?'}MB · ${data.database?.plan?.connections_limit ?? '?'} max connections`}
             ideal="Database growing sustainably, all markets linked."
           >
           {/* Database + coverage side by side */}
