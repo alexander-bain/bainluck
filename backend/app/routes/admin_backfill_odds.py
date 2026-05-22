@@ -256,3 +256,110 @@ async def backfill_historical_odds(
         import traceback
         logger.exception("Historical backfill failed")
         return {"error": str(exc), "trace": traceback.format_exc()[:500]}
+
+
+
+@router.get("/inventory")
+async def snapshot_inventory(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(...),
+    days_back: int = Query(30),
+    threshold: int = Query(20),
+):
+    """Full inventory of Tier 1 events grouped by sport and date, showing snapshot coverage.
+
+    Returns every event with its snapshot count, grouped by sport then by date.
+    Events below threshold are flagged as sparse.
+    """
+    if not _check_admin_secret(secret):
+        return {"error": "unauthorized"}
+
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '20s'"))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+
+        tier1 = [
+            "basketball_nba", "icehockey_nhl", "baseball_mlb",
+            "americanfootball_nfl", "basketball_ncaab",
+        ]
+
+        inventory = {}
+
+        for sport in tier1:
+            q = await db.execute(text("""
+                SELECT
+                    e.id, e.home_team_name, e.away_team_name,
+                    e.commence_time, e.external_id, e.espn_id,
+                    e.status,
+                    COUNT(os.id) AS snap_count
+                FROM events e
+                JOIN sports s ON e.sport_id = s.id
+                LEFT JOIN odds_snapshots os ON os.event_id = e.id
+                WHERE e.commence_time >= :cutoff
+                  AND s.key = :sport
+                  AND e.status IN ('completed', 'closed', 'live', 'scheduled')
+                GROUP BY e.id, e.home_team_name, e.away_team_name,
+                         e.commence_time, e.external_id, e.espn_id, e.status
+                ORDER BY e.commence_time DESC
+            """), {"cutoff": cutoff, "sport": sport})
+
+            events = []
+            by_date = {}
+            total = 0
+            sparse = 0
+            zero = 0
+
+            for r in q.all():
+                total += 1
+                is_sparse = r.snap_count < threshold
+                if is_sparse:
+                    sparse += 1
+                if r.snap_count == 0:
+                    zero += 1
+
+                day = str(r.commence_time)[:10]
+                by_date.setdefault(day, {"total": 0, "sparse": 0, "zero": 0, "events": []})
+                by_date[day]["total"] += 1
+                if is_sparse:
+                    by_date[day]["sparse"] += 1
+                if r.snap_count == 0:
+                    by_date[day]["zero"] += 1
+                by_date[day]["events"].append({
+                    "id": r.id,
+                    "teams": f"{r.away_team_name} @ {r.home_team_name}",
+                    "time": str(r.commence_time)[:16],
+                    "snaps": r.snap_count,
+                    "has_odds_api": r.external_id is not None,
+                    "has_espn": r.espn_id is not None,
+                    "status": r.status,
+                    "sparse": is_sparse,
+                })
+
+            inventory[sport] = {
+                "total": total,
+                "sparse": sparse,
+                "zero": zero,
+                "coverage_pct": round(100 * (total - sparse) / max(total, 1), 1),
+                "by_date": dict(sorted(by_date.items(), reverse=True)),
+            }
+
+        # Summary
+        all_total = sum(v["total"] for v in inventory.values())
+        all_sparse = sum(v["sparse"] for v in inventory.values())
+        all_zero = sum(v["zero"] for v in inventory.values())
+
+        return {
+            "days_back": days_back,
+            "threshold": threshold,
+            "summary": {
+                "total_tier1_events": all_total,
+                "sparse": all_sparse,
+                "zero_snapshots": all_zero,
+                "coverage_pct": round(100 * (all_total - all_sparse) / max(all_total, 1), 1),
+            },
+            "sports": inventory,
+        }
+
+    except Exception as exc:
+        import traceback
+        return {"error": str(exc), "trace": traceback.format_exc()[:500]}
