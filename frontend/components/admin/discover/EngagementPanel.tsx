@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { StatusPill } from "./ui";
 import { updateDiscoverRuntimeConfig, submitDiscoverReviewDecision } from "./api";
-import { rateText, formatTargetName } from "./utils";
+import { rateText, formatTargetName, itemHref } from "./utils";
 import ScoreBucketList from "./ScoreBucketList";
 import RuntimeActionButton from "./RuntimeActionButton";
 import LaunchHealthList from "./LaunchHealthList";
