@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.dialects.postgresql import dialect as postgresql_dialect
 
 from app.routes import notifications
+from app.services.database import get_db_rw
 
 
 def _client_with_db(db=None) -> TestClient:
@@ -20,6 +21,7 @@ def _client_with_db(db=None) -> TestClient:
             return db
 
         app.dependency_overrides[notifications.get_db] = _override_get_db
+        app.dependency_overrides[get_db_rw] = _override_get_db
 
     return TestClient(app)
 
