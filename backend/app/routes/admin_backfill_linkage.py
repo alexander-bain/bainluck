@@ -72,9 +72,12 @@ async def run_linkage_backfill(
     for orphan in orphans:
         best_match = None
         for target in targets:
-            # Skip if target already has this external_id or a different one
-            if target.external_id == orphan.external_id:
-                continue  # Already linked — this IS the same event
+            # Skip if target IS the orphan
+            if target.id == orphan.id:
+                continue
+            # Skip if target already has the same external_id
+            if target.external_id and target.external_id == orphan.external_id:
+                continue
 
             # Time window: ±6 hours
             time_diff = abs((orphan.commence_time - target.commence_time).total_seconds())
@@ -105,7 +108,9 @@ async def run_linkage_backfill(
                 "target_teams": f"{best_match.away_team_name} @ {best_match.home_team_name}",
                 "target_espn_id": best_match.espn_id,
                 "target_statpal_id": best_match.statpal_fixture_id,
+                "target_existing_ext_id": best_match.external_id,
                 "time_diff_min": round(abs((orphan.commence_time - best_match.commence_time).total_seconds()) / 60),
+                "action": "merge_snapshots" if best_match.external_id else "link_and_merge",
             })
 
             if not dry_run:
