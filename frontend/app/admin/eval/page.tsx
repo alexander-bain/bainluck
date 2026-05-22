@@ -1,10 +1,12 @@
 "use client";
 
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import PageHeader from "@/components/admin/PageHeader";
+
 import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-let _adminSecret = "";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,7 +126,7 @@ interface Override {
 
 async function fetchEvalDecisions(category?: "grid" | "futures"): Promise<EvalDecision[]> {
   try {
-    const params = new URLSearchParams({ secret: _adminSecret });
+    const params = new URLSearchParams({ secret: secret });
     if (category) params.set("category", category);
     const res = await fetch(`${API_URL}/api/admin/eval/decisions?${params}`);
     if (!res.ok) return [];
@@ -147,7 +149,7 @@ async function saveEvalDecision(
   reason: string,
 ) {
   const params = new URLSearchParams({
-    secret: _adminSecret,
+    secret: secret,
     source_name: sourceName,
     decision,
     category,
@@ -175,7 +177,7 @@ async function createOverride(
   decision: string = "approved",
 ) {
   const params = new URLSearchParams({
-    secret: _adminSecret,
+    secret: secret,
     override_type: overrideType,
     source_name: sourceName,
     decision,
@@ -191,7 +193,7 @@ async function createOverride(
 
 async function fetchOverrides(league: string): Promise<Override[]> {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}?secret=${encodeURIComponent(_adminSecret)}`,
+    `${API_URL}/api/admin/matching-review/${league}?secret=${encodeURIComponent(secret)}`,
   );
   if (!res.ok) return [];
   const data = await res.json();
@@ -200,7 +202,7 @@ async function fetchOverrides(league: string): Promise<Override[]> {
 
 async function deleteOverride(league: string, id: number) {
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=${encodeURIComponent(_adminSecret)}`,
+    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=${encodeURIComponent(secret)}`,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error(`Delete override error: ${res.status}`);
@@ -1508,8 +1510,7 @@ export default function EvalPage() {
   useScrollDepth({ pageType: "admin_eval" });
   useEngagementTime({ pageType: "admin_eval" });
 
-  const [secretInput, setSecretInput] = useState("");
-  const [secret, setSecret] = useState<string | null>(null);
+  const { secret } = useAdminAuth();
   const [tab, setTab] = useState<"grid" | "futures" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
 
@@ -1524,27 +1525,7 @@ export default function EvalPage() {
     return () => clearInterval(interval);
   }, [secret]);
 
-  if (!secret) {
-    return (
-      <div style={{ maxWidth: 400, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
-        <h2 style={{ marginBottom: 16 }}>Admin Secret Required</h2>
-        <form onSubmit={(e) => { e.preventDefault(); _adminSecret = secretInput; setSecret(secretInput); }}>
-          <input
-            type="password"
-            value={secretInput}
-            onChange={(e) => setSecretInput(e.target.value)}
-            placeholder="Enter admin secret"
-            style={{ width: "100%", padding: 8, marginBottom: 12, borderRadius: 6, border: "1px solid #444", background: "#1a1a2e", color: "#e2e8f0" }}
-          />
-          <button type="submit" style={{ padding: "8px 24px", borderRadius: 6, background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer" }}>
-            Enter
-          </button>
-        </form>
-      </div>
-    );
-  }
-
-  const gridCount = decisions.filter((d) => d.market_name.includes(":") && !d.market_name.startsWith("futures:")).length;
+    const gridCount = decisions.filter((d) => d.market_name.includes(":") && !d.market_name.startsWith("futures:")).length;
   const futuresCount = decisions.filter((d) => d.market_name.startsWith("futures:")).length;
 
   return (
@@ -1560,12 +1541,13 @@ export default function EvalPage() {
       }}
     >
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>
-          Bain-in-the-Loop
-        </h1>
-        <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>
-          Evaluate matching quality &amp; surface interesting markets
-        </p>
+<PageHeader
+          question="Are our data matches and content picks correct?"
+          status="good"
+          summary={`${decisions.length} decisions recorded`}
+          ideal="Consistent human review of grid matches and market interestingness."
+          subtitle="Evaluate matching quality and surface interesting markets"
+        />
       </div>
 
       <TabBar tab={tab} onTab={setTab} gridCount={gridCount} futuresCount={futuresCount} />

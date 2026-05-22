@@ -7,6 +7,8 @@ import {
   useScrollDepth,
   useEngagementTime,
 } from "@/hooks";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import PageHeader from "@/components/admin/PageHeader";
 import {
   LineChart,
   Line,
@@ -1214,13 +1216,12 @@ export default function AdminDashboard() {
   useScrollDepth({ pageType: "admin_dashboard" });
   useEngagementTime({ pageType: "admin_dashboard" });
 
-  const [secret, setSecret] = useState("");
-  const [submittedSecret, setSubmittedSecret] = useState<string | null>(null);
+  const { secret } = useAdminAuth();
 
   const { data, error, isLoading } = useSWR<DashboardData>(
-    submittedSecret ? ["admin-dashboard", submittedSecret] : null,
+    ["admin-dashboard", secret],
     () =>
-      fetch(API_URL + "/api/admin/dashboard?secret=" + encodeURIComponent(submittedSecret!))
+      fetch(API_URL + "/api/admin/dashboard?secret=" + encodeURIComponent(secret))
         .then((r) => {
           if (!r.ok) throw new Error("API error: " + r.status);
           return r.json();
@@ -1228,51 +1229,26 @@ export default function AdminDashboard() {
     { refreshInterval: 60000 }
   );
 
-  if (!submittedSecret) {
-    return (
-      <div className="max-w-md mx-auto mt-20 space-y-4">
-        <h1 className="text-lg font-bold text-text-primary">Operations Dashboard</h1>
-        <p className="text-sm text-text-muted">Enter admin secret to view backend metrics.</p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSubmittedSecret(secret);
-          }}
-          className="flex gap-2"
-        >
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="Admin secret"
-            className="flex-1 px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-sm text-text-primary"
-          />
-          <span
-            onClick={() => setSubmittedSecret(secret)}
-            className="px-4 py-2 rounded-lg bg-text-primary text-surface-deep text-sm font-medium cursor-pointer select-none"
-          >
-            Load
-          </span>
-        </form>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-text-primary">Operations Dashboard</h1>
-          <a href="/admin/eval" className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
-            Eval &rarr;
-          </a>
-          <a href={`/admin/discover-quality?secret=${secret}`} className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
-            Discover Quality &rarr;
-          </a>
-          <a href={`/admin/bug-reports?secret=${secret}`} className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
-            Bug Reports &rarr;
-          </a>
-        </div>
+        <PageHeader
+          question="Is the system healthy?"
+          status={
+            error ? "critical"
+            : isLoading ? "loading"
+            : data?.worker?.overall_health === "critical" ? "critical"
+            : data?.worker?.overall_health !== "healthy" || (data?.quota?.budget?.projected_surplus ?? 1) < 0 ? "warning"
+            : "good"
+          }
+          summary={
+            isLoading ? "Loading dashboard..."
+            : error ? error.message
+            : `${data?.source_coverage?.length ?? 0} sports tracked · ${data?.quota?.current?.health ?? "unknown"} quota`
+          }
+          ideal="All workers healthy, quota on budget, all sources reporting."
+          subtitle="Operations Dashboard"
+        />
         {data && (
           <span className="text-micro text-text-muted">
             Auto-refreshes every 60s &middot; Updated {new Date(data.generated_at).toLocaleTimeString()}
@@ -1339,7 +1315,7 @@ export default function AdminDashboard() {
             {data.matching_metrics && data.matching_metrics.length > 0 && (
               <MatchingCoverageChart data={data.matching_metrics} />
             )}
-            <LinkRateCard secret={submittedSecret!} />
+            <LinkRateCard secret={secret} />
             {data.game_state_coverage && data.game_state_coverage.length > 0 && (
               <GameStateCoverageChart data={data.game_state_coverage} />
             )}
@@ -1368,11 +1344,11 @@ export default function AdminDashboard() {
           <FuturesCoverageTable data={data.futures_coverage} />
 
           {/* Data Quality */}
-          <DataQualityCard secret={submittedSecret} />
-          <GridHealthCard secret={submittedSecret} />
+          <DataQualityCard secret={secret} />
+          <GridHealthCard secret={secret} />
 
           {/* PREQ Performance */}
-          <PREQCard secret={submittedSecret} />
+          <PREQCard secret={secret} />
 
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />

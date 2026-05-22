@@ -7,6 +7,8 @@ import {
   useScrollDepth,
   useEngagementTime,
 } from "@/hooks";
+import PageHeader from "@/components/admin/PageHeader";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -157,55 +159,23 @@ export default function TaxonomyDashboard() {
   useScrollDepth({ pageType: "admin_taxonomy" });
   useEngagementTime({ pageType: "admin_taxonomy" });
 
-  const [secret, setSecret] = useState("");
-  const [submittedSecret, setSubmittedSecret] = useState<string | null>(null);
+  const { secret } = useAdminAuth();
 
   const { data, error, isLoading } = useSWR(
-    submittedSecret ? ["taxonomy-dashboard", submittedSecret] : null,
-    () => fetchDashboard(submittedSecret!),
+    ["taxonomy-dashboard", secret],
+    () => fetchDashboard(secret),
     { refreshInterval: 60000 }
   );
-
-  if (!submittedSecret) {
-    return (
-      <div className="max-w-md mx-auto mt-20 space-y-4">
-        <h1 className="text-lg font-bold text-text-primary">
-          Taxonomy Dashboard
-        </h1>
-        <p className="text-sm text-text-muted">
-          Enter admin secret to view tag analytics.
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSubmittedSecret(secret);
-          }}
-          className="flex gap-2"
-        >
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="Admin secret"
-            className="flex-1 px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-sm text-text-primary"
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg bg-text-primary text-surface-deep text-sm font-medium"
-          >
-            Load
-          </button>
-        </form>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold text-text-primary">
-          Taxonomy Dashboard
-        </h1>
+<PageHeader
+          question="How well is our content classified?"
+          status={isLoading ? "loading" : data ? (data.event_coverage.untagged > 0 || data.futures_coverage.untagged > 0 ? "warning" : "good") : "good"}
+          summary={isLoading ? "Loading..." : data ? `Events: ${data.event_coverage.tagged}/${data.event_coverage.tagged + data.event_coverage.untagged} tagged` : "No data"}
+          ideal="100% of events and futures markets classified."
+        />
         {data && (
           <span className="text-micro text-text-muted">
             Updated{" "}

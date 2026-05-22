@@ -5,6 +5,8 @@ import { getAuth } from "firebase/auth";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import PageHeader from "@/components/admin/PageHeader";
 
 interface BugReport {
   id: number;
@@ -117,10 +119,7 @@ export default function BugReportsPage() {
   const [showPrompt, setShowPrompt] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(true);
 
-  const secret =
-    typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("secret") || ""
-      : "";
+  const { secret } = useAdminAuth();
 
   const getAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
     try {
@@ -236,7 +235,12 @@ export default function BugReportsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <a href={`/admin?secret=${secret}`} className="text-sm text-blue-600 hover:underline">&larr; Admin Dashboard</a>
-            <h1 className="text-2xl font-bold mt-1">Bug Reports</h1>
+            <PageHeader
+              question="What bugs have users reported?"
+              status={reports.length === 0 ? "good" : reports.some(r => r.status === "new") ? "warning" : "good"}
+              summary={`${reports.filter(r => r.status === "new").length} new · ${reports.length} total`}
+              ideal="Zero unreviewed reports. All bugs triaged within 24h."
+            />
             <p className="text-sm text-gray-500">{reports.length} reports</p>
           </div>
           <div className="flex gap-2">

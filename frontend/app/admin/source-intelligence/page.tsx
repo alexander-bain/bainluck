@@ -1,5 +1,7 @@
 "use client";
 
+import PageHeader from "@/components/admin/PageHeader";
+
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import useSWR from "swr";
@@ -117,9 +119,13 @@ export default function SourceIntelligencePage() {
     <div className="max-w-3xl mx-auto space-y-6 pb-8">
       {/* Hero */}
       <section className="text-center pt-4 pb-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-text-primary tracking-tight">
-          When Sources Disagree, Who&apos;s Right?
-        </h1>
+<PageHeader
+            question="Which probability source is most accurate?"
+            status={isLoading ? "loading" : "good"}
+            summary={isLoading ? "Loading..." : "Brier scores and calibration curves across all sources"}
+            ideal="All sources measured. Best source identified per sport."
+            subtitle="When sources disagree, who is right?"
+          />
         <p className="mt-3 text-text-secondary text-sm md:text-base leading-relaxed max-w-2xl mx-auto">
           We identified {coverage.total_events.toLocaleString()} sporting events with dense,
           overlapping coverage from multiple probability sources — sportsbooks, prediction

@@ -19,6 +19,8 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import { getIdToken } from "@/lib/firebase";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import PageHeader from "@/components/admin/PageHeader";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -2243,8 +2245,7 @@ export default function DiscoverQualityPage() {
   useScrollDepth({ pageType: "admin_discover_quality" });
   useEngagementTime({ pageType: "admin_discover_quality" });
 
-  const [secret, setSecret] = useState("");
-  const [submittedSecret, setSubmittedSecret] = useState<string | null>(null);
+  const { secret: submittedSecret } = useAdminAuth();
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
@@ -2267,23 +2268,15 @@ export default function DiscoverQualityPage() {
   const [traceError, setTraceError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
-  useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("secret");
-    if (fromUrl) {
-      setSecret(fromUrl);
-      setSubmittedSecret(fromUrl);
-    }
-  }, []);
-
-  const debugKey = submittedSecret ? ["discover-quality", submittedSecret] : null;
-  const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
-  const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
-  const launchHealthTrendsKey = submittedSecret ? ["discover-launch-health-trends", submittedSecret] : null;
-  const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
-  const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
-  const externalCuratorStatusKey = submittedSecret ? ["external-curator-ground-truth-status", submittedSecret] : null;
-  const groundTruthHealthKey = submittedSecret ? ["ground-truth-health", submittedSecret] : null;
-  const diagnosticRowsKey = submittedSecret && selectedDiagnosticRunId
+  const debugKey = ["discover-quality", submittedSecret];
+  const hookKey = ["hook-coverage", submittedSecret];
+  const engagementKey = ["discover-engagement", submittedSecret, engagementDays];
+  const launchHealthTrendsKey = ["discover-launch-health-trends", submittedSecret];
+  const diagnosticRunsKey = ["discover-diagnostic-runs", submittedSecret];
+  const diagnosticTrendsKey = ["discover-diagnostic-trends", submittedSecret];
+  const externalCuratorStatusKey = ["external-curator-ground-truth-status", submittedSecret];
+  const groundTruthHealthKey = ["ground-truth-health", submittedSecret];
+  const diagnosticRowsKey = selectedDiagnosticRunId
     ? [
         "discover-diagnostic-rows",
         submittedSecret,
@@ -2602,37 +2595,6 @@ export default function DiscoverQualityPage() {
     }
   };
 
-  if (!submittedSecret) {
-    return (
-      <div className="max-w-md mx-auto mt-20 space-y-4">
-        <h1 className="text-lg font-bold text-text-primary">Discover Quality</h1>
-        <p className="text-sm text-text-muted">Enter admin secret to inspect feed ranking diagnostics.</p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSubmittedSecret(secret);
-          }}
-          className="flex gap-2"
-        >
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="Admin secret"
-            className="flex-1 px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-sm text-text-primary"
-          />
-          <button
-            type="submit"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-text-primary text-surface-deep text-sm font-medium"
-          >
-            <Search className="w-4 h-4" />
-            Load
-          </button>
-        </form>
-      </div>
-    );
-  }
-
   const summary = data?.debug_summary;
   const failedStrict = summary
     ? Object.entries(summary.strict_targets).filter(([, passed]) => !passed)
@@ -2682,7 +2644,25 @@ export default function DiscoverQualityPage() {
 
       {summary && (
         <>
-          <ReviewPathNav
+          <PageHeader
+          question="Is the Discover feed showing good content?"
+          status={
+            error ? "critical"
+            : isLoading ? "loading"
+            : data && data.debug_summary.boring_count > 0 ? "warning"
+            : "good"
+          }
+          summary={
+            isLoading ? "Loading feed debug..."
+            : error ? error.message
+            : data ? `${data.debug_summary.explanation_ok_count}/${data.debug_summary.items} with explanations · ${data.debug_summary.boring_count} boring`
+            : "No data"
+          }
+          ideal="Zero boring/ladder/duplicate items in top 20. 100% explanation coverage."
+          subtitle="Ground truth, engagement, personalization, and card-level traces"
+        />
+
+      <ReviewPathNav
             groundTruthHits={summary.ground_truth_hit_count_50}
             missingCount={data.missing_ground_truth?.length || 0}
             persistedRuns={diagnosticRunsData?.runs?.length || 0}
