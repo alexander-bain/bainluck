@@ -122,11 +122,59 @@ struct NativeEventDiscoverCard: View {
             HStack {
                 Spacer()
 
-                ShareLink(
-                    item: shareURL,
-                    subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
-                    message: Text(shareMessage)
-                ) {
+                Menu {
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
+                        message: Text(shareMessage)
+                    ) {
+                        Label("Share Link", systemImage: "link")
+                    }
+
+                    Button {
+                        if let homeProbability = event.currentOdds?.homeProbability,
+                           let awayProbability = event.currentOdds?.awayProbability,
+                           let image = ShareCardRenderer.renderEventCard(
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeProbability: homeProbability,
+                            awayProbability: awayProbability,
+                            sportName: event.sportName ?? event.sport ?? "Sports",
+                            homeColor: homeColor,
+                            awayColor: awayColor,
+                            status: event.status,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
+                           ) {
+                            ShareCardRenderer.copyImageToClipboard(image)
+                        }
+                    } label: {
+                        Label("Copy Image", systemImage: "doc.on.doc")
+                    }
+
+                    #if os(iOS)
+                    Button {
+                        if let homeProbability = event.currentOdds?.homeProbability,
+                           let awayProbability = event.currentOdds?.awayProbability,
+                           let image = ShareCardRenderer.renderEventCard(
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeProbability: homeProbability,
+                            awayProbability: awayProbability,
+                            sportName: event.sportName ?? event.sport ?? "Sports",
+                            homeColor: homeColor,
+                            awayColor: awayColor,
+                            status: event.status,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
+                           ) {
+                            ShareCardRenderer.saveImageToPhotos(image)
+                        }
+                    } label: {
+                        Label("Save to Photos", systemImage: "square.and.arrow.down")
+                    }
+                    #endif
+                } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
