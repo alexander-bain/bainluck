@@ -123,7 +123,7 @@ bainluck/
 
 ## Core Architecture
 
-**Event Registry** (`services/event_registry.py`): Unified `find_or_create_event()` with 4-step cascade: exact source ID → cross-source ID → structured match (sport + time ± 4h + teams) → create. All 5 source tasks wired up. ESPN is a first-class source.
+**Event Registry** (`services/event_registry.py`): Unified `find_or_create_event()` with 4-step cascade: exact source ID → cross-source ID → structured match (sport + time ± 4h + teams, including completed/closed events) → create. All 5 source tasks wired up. ESPN is a first-class source. The structured match MUST include completed/closed events — omitting them caused 98% of Tier 1 events to lose Odds API linkage (May 2026 incident).
 
 **Probability Aggregation** (`utils/aggregation.py`): `compute_aggregate_probability()` reads from `Event.win_probability_sources` JSONB. Source weights: betting 3.0, ESPN 1.5, stat_model 1.0, Kalshi/Polymarket/MLB 0.8. All sources write via `select+update` pattern (NOT ORM attribute assignment — silently fails due to session caching).
 
@@ -230,7 +230,7 @@ The Odds API quota (5M/month) is the project's most constrained resource. Circui
 | 20K-50K | LIVE_ONLY | Only live games polled |
 | <20K | FULL_STOP | All polling stopped except priority sports |
 
-**Sport-tier polling**: Tier 1 (NBA/NHL/MLB/NFL/NCAAB): 32s live, us+us2. Tier 2 (WNBA/EPL/MLS/UCL/MMA/NCAAF): 64s, us. Tier 3 (everything else): 128s, us. Config in `SPORT_POLLING_TIERS`.
+**Sport-tier polling**: Tier 1 (NBA/NHL/MLB/NFL/NCAAB): 32s live, us+us2. Tier 2 (WNBA/EPL/MLS/UCL/MMA/NCAAF): 64s, us. Tier 3 (everything else): 128s, us. Config in `SPORT_POLLING_TIERS`. Discovery intervals: Tier 1 every 15 min, Tier 2 every 30 min (reverted from doubled values in May 2026). No sport region overrides active.
 
 ---
 
@@ -310,6 +310,7 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 29. **Bug reports must keep anonymous submission working** while using optional auth to capture `user_id` and storing `user_email` at submission time.
 30. **Codex command policy may reject literal `git push`**. Use `git -c push.default=simple push origin master` or the explicit HTTPS remote form.
 31. **Never use CREATE INDEX CONCURRENTLY in Alembic migrations** — Heroku's release phase has a timeout (~5 min). CONCURRENTLY on large tables hangs the release, causing a full outage. Create large indexes manually via psql, not in the migration chain. (Caused a May 22 outage on odds_snapshots index.)
+32. **Event Registry structured match MUST include completed/closed status** — the status filter on Step 3 must be `IN ('scheduled', 'live', 'completed', 'closed')`, not just scheduled+live. If completed events are excluded, any source that polls after game end creates orphaned duplicates instead of merging. This caused 98% of MLB/NBA/NHL events to have no Odds API data for weeks (May 2026). The merge task's SQL also needs swapped home/away and normalized name matching.
 
 ---
 
