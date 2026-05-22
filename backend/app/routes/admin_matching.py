@@ -62,6 +62,19 @@ _LINK_RATE_NON_GAME_NAME_FRAGMENTS = (
     "award",
 )
 
+# Category values that represent season-level / non-game markets.
+# Markets with these categories CANNOT be linked to individual game events
+# and must be excluded from the link-rate denominator.
+_LINK_RATE_NON_GAME_CATEGORIES = frozenset({
+    "championship",
+    "award",
+    "season_win_total",
+    "player_futures",
+    "division",
+    "conference",
+    "series",
+})
+
 
 def _is_obvious_non_game_market_name(name: str | None) -> bool:
     """Identify season-level markets that can look matchup-shaped."""
@@ -421,6 +434,11 @@ async def prediction_market_link_rate(
     # Kalshi: game-level markets only (ticker prefix match). Aggregate in
     # Python so old settlement-open unlinked markets can be excluded using the
     # game date embedded in the ticker.
+    #
+    # Category filter: exclude season-level categories (championship, award,
+    # season_win_total, player_futures, etc.) that cannot be linked to events.
+    # Markets with game_prop category or already-linked (event_id IS NOT NULL)
+    # always pass.
     kalshi_result = await db.execute(
         select(
             FuturesMarket.llm_sport_category.label("sport"),
@@ -428,6 +446,7 @@ async def prediction_market_link_rate(
             FuturesMarket.event_id,
             FuturesMarket.status,
             FuturesMarket.external_id,
+            FuturesMarket.category,
         )
         .where(
             FuturesMarket.source == "kalshi",
@@ -440,8 +459,18 @@ async def prediction_market_link_rate(
     now = datetime.now(timezone.utc)
     kalshi_rows_by_bucket = {}
     excluded_stale_open_unlinked = 0
+    kalshi_excluded_by_category: dict[str, int] = {}
     for row in kalshi_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
+            continue
+        # Exclude season-level categories from denominator, but keep markets
+        # that are already linked (event_id IS NOT NULL) or have game_prop
+        # category since those are correctly game-level.
+        cat = (row.category or "").lower()
+        if cat in _LINK_RATE_NON_GAME_CATEGORIES and row.event_id is None:
+            kalshi_excluded_by_category[cat] = (
+                kalshi_excluded_by_category.get(cat, 0) + 1
+            )
             continue
         if _should_exclude_stale_open_unlinked_game_market(
             source="kalshi",
@@ -523,8 +552,16 @@ async def prediction_market_link_rate(
     poly_excluded_not_matcher_game_level = 0
     poly_excluded_open_not_matcher_game_level = 0
     poly_excluded_samples = []
+    poly_excluded_by_category: dict[str, int] = {}
     for row in poly_result.all():
         if not _should_include_link_rate_bucket(row.sport, row.league):
+            continue
+        # Exclude season-level categories from denominator (same logic as Kalshi).
+        cat = (row.category or "").lower()
+        if cat in _LINK_RATE_NON_GAME_CATEGORIES and row.event_id is None:
+            poly_excluded_by_category[cat] = (
+                poly_excluded_by_category.get(cat, 0) + 1
+            )
             continue
         if not _is_polymarket_matcher_game_level(
             row.name,
@@ -587,6 +624,9 @@ async def prediction_market_link_rate(
     grand_linked = kalshi_totals["linked"] + poly_totals["linked"]
     grand_open_total = kalshi_totals["open_total"] + poly_totals["open_total"]
     grand_open_linked = kalshi_totals["open_linked"] + poly_totals["open_linked"]
+    grand_excluded_by_category = sum(kalshi_excluded_by_category.values()) + sum(
+        poly_excluded_by_category.values()
+    )
 
     return {
         "overall": {
@@ -598,6 +638,7 @@ async def prediction_market_link_rate(
             "open_linked": grand_open_linked,
             "denominator_note": "Headline rate uses open markets only. link_rate_all_pct includes all statuses.",
             "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
+            "excluded_non_game_category": grand_excluded_by_category,
         },
         "kalshi": {
             "totals": {
@@ -607,6 +648,11 @@ async def prediction_market_link_rate(
                 "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
             },
             "by_sport": kalshi_by_sport,
+            "excluded_from_denominator": {
+                "note": "Markets excluded because their category is season-level (not game-level). Already-linked markets are kept even with non-game categories.",
+                "total": sum(kalshi_excluded_by_category.values()),
+                "by_category": kalshi_excluded_by_category,
+            },
         },
         "polymarket": {
             "totals": {
@@ -617,6 +663,11 @@ async def prediction_market_link_rate(
                 "excluded_open_not_matcher_game_level": poly_excluded_open_not_matcher_game_level,
             },
             "by_sport": poly_by_sport,
+            "excluded_from_denominator": {
+                "note": "Markets excluded because their category is season-level (not game-level). Already-linked markets are kept even with non-game categories.",
+                "total": sum(poly_excluded_by_category.values()),
+                "by_category": poly_excluded_by_category,
+            },
             "denominator_diagnostics": {
                 "note": "Excluded rows match the old broad sport + vs/at SQL denominator but fail the matcher is_game_level_market() predicate.",
                 "sample_excluded_open": poly_excluded_samples,

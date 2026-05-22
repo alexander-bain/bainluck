@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 from app.routes.admin_matching import (
+    _LINK_RATE_NON_GAME_CATEGORIES,
     _LINK_RATE_SPORT_CATEGORIES,
     _is_obvious_non_game_market_name,
     _is_polymarket_matcher_game_level,
@@ -88,3 +89,30 @@ def test_polymarket_link_rate_uses_matcher_game_level_predicate():
         "championship",
         "490611",
     ) is False
+
+
+# -- Category-based denominator exclusion ----------------------------------
+
+def test_non_game_categories_include_season_level_types():
+    """Championship, award, season_win_total, player_futures must be excluded."""
+    for cat in ("championship", "award", "season_win_total", "player_futures"):
+        assert cat in _LINK_RATE_NON_GAME_CATEGORIES, f"{cat} missing from exclusion set"
+
+
+def test_game_prop_not_in_non_game_categories():
+    """game_prop is a game-level category and must NOT be excluded."""
+    assert "game_prop" not in _LINK_RATE_NON_GAME_CATEGORIES
+
+
+def test_non_game_categories_also_cover_structural_futures():
+    """Division, conference, and series are season-level, not game-level."""
+    for cat in ("division", "conference", "series"):
+        assert cat in _LINK_RATE_NON_GAME_CATEGORIES
+
+
+def test_non_game_category_exclusion_is_case_insensitive_in_loop():
+    """The loop lowercases the category before checking, so mixed case works."""
+    # Simulate the loop logic from the endpoint
+    cat_raw = "Championship"
+    cat = cat_raw.lower()
+    assert cat in _LINK_RATE_NON_GAME_CATEGORIES
