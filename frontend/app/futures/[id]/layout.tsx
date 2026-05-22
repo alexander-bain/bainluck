@@ -39,16 +39,16 @@ export async function generateMetadata({
   const market = await fetchMarket(id);
   if (!market) {
     return {
-      title: "Market Odds - Bain Luck",
+      title: "Market Odds",
       description: "Prediction market probabilities translated into plain English.",
     };
   }
 
   const leader = topOutcome(market);
   const probability = formatShareProbability(leader?.probability);
-  const title = leader && probability
-    ? `${leader.name} ${probability} - ${market.name} | Bain Luck`
-    : `${market.name} | Bain Luck`;
+  const titleText = leader && probability
+    ? `${leader.name} ${probability} - ${market.name}`
+    : market.name;
   const description = truncateShareText(
     market.hook_description ||
       (leader && probability
@@ -59,11 +59,11 @@ export async function generateMetadata({
   const image = buildShareUrl(`/futures/${market.id}/opengraph-image`);
 
   return {
-    title,
+    title: titleText,
     description,
     alternates: { canonical: url },
     openGraph: {
-      title,
+      title: `${titleText} | Bain Luck`,
       description,
       url,
       siteName: "Bain Luck",
@@ -72,7 +72,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title,
+      title: `${titleText} | Bain Luck`,
       description,
       images: [image],
     },
