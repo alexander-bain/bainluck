@@ -19,9 +19,7 @@ router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
 
 
-def _check_admin_secret(secret: str) -> bool:
-    expected = os.getenv("ADMIN_SECRET", "")
-    return bool(expected) and secret == expected
+from app.routes.admin_utils import _check_admin_secret
 
 
 @router.post("")
