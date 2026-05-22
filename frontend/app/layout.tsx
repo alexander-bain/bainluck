@@ -23,8 +23,57 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Bain Luck - Win Probabilities",
-  description: "See sports betting odds as intuitive win probabilities",
+  title: {
+    template: "%s | Bain Luck",
+    default: "Bain Luck — Prediction Market Discovery",
+  },
+  description:
+    "See what the world thinks will happen. Explore prediction markets as intuitive probabilities across sports, politics, economics, entertainment, and weather.",
+  keywords: [
+    "prediction markets",
+    "odds",
+    "probabilities",
+    "sports odds",
+    "politics predictions",
+    "economics forecasts",
+    "Kalshi",
+    "Polymarket",
+    "calibration",
+  ],
+  metadataBase: new URL("https://bainluck.com"),
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    type: "website",
+    siteName: "Bain Luck",
+    title: "Bain Luck — Prediction Market Discovery",
+    description:
+      "See what the world thinks will happen. Explore prediction markets as intuitive probabilities.",
+    url: "https://bainluck.com",
+  },
+  twitter: {
+    card: "summary",
+    title: "Bain Luck — Prediction Market Discovery",
+    description:
+      "See what the world thinks will happen. Explore prediction markets as intuitive probabilities.",
+  },
+};
+
+
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "Bain Luck",
+  url: "https://bainluck.com",
+  description:
+    "Prediction market discovery platform that translates betting and prediction markets into intuitive probabilities.",
+  applicationCategory: "FinanceApplication",
+  operatingSystem: "Web, iOS, macOS",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
 };
 
 export default function RootLayout({
@@ -45,6 +94,10 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://a.espncdn.com" />
       </head>
       <body className="font-sans">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        />
         <GoogleAnalytics />
         <SWRProvider>
         <AnalyticsProvider>
