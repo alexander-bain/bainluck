@@ -373,6 +373,22 @@ def check_snapshot_sparsity(self):
         raise self.retry(exc=exc, countdown=300)
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_historical_odds", soft_time_limit=1800, time_limit=1860)
+def backfill_historical_odds_task(self, sport: str = "baseball_mlb", days_back: int = 30, max_events: int = 500):
+    """Backfill sparse events from The Odds API historical endpoint. Runs in background."""
+    from app.tasks.snapshot_sparsity import _backfill_historical_for_sport
+    try:
+        result = _tracked_run(
+            "backfill_historical_odds",
+            _backfill_historical_for_sport(sport=sport, days_back=days_back, max_events=max_events),
+        )
+        return result
+    except Exception as exc:
+        logger.exception("backfill_historical_odds failed for %s", sport)
+        raise self.retry(exc=exc, countdown=60, max_retries=1)
+
+
+
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_historical_links", soft_time_limit=300, time_limit=360)
