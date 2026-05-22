@@ -1628,6 +1628,33 @@ async def backfill_box_scores(
     }
 
 
+@router.post("/espn/clear-unavailable")
+async def clear_espn_unavailable(
+    secret: str = Query(...),
+    sport: str = Query(..., description="Sport key prefix to clear (e.g., 'icehockey')"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear 'not_available' box_score_data on events so they get retried."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import Event, Sport
+    result = await db.execute(
+        text("""
+            UPDATE events e
+            SET box_score_data = NULL
+            FROM sports s
+            WHERE e.sport_id = s.id
+              AND s.key LIKE :pattern
+              AND e.box_score_data IS NOT NULL
+              AND e.box_score_data->>'error' = 'not_available'
+        """),
+        {"pattern": f"{sport}%"},
+    )
+    await db.commit()
+    return {"cleared": result.rowcount, "sport_pattern": f"{sport}%"}
+
+
 @router.post("/events/backfill-game-state")
 async def backfill_game_state(
     secret: str = Query(..., description="Admin secret for authorization"),
