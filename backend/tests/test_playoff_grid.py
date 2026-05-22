@@ -36,6 +36,8 @@ from app.routes.playoffs import (
     _is_playoff_relevant_market,
     _should_prefix_merge,
     _alias_matches,
+    _extract_season_max_year,
+    _is_future_season_market,
 )
 
 
@@ -1207,3 +1209,143 @@ class TestSportKeyToLeagueMapping:
         for sport_key, slug in _SPORT_KEY_TO_LEAGUE_SLUG.items():
             config = get_league_config(slug)
             assert config is not None, f"Slug '{slug}' for sport_key '{sport_key}' not in registry"
+
+
+# ============================================================================
+# Season filtering — reject next-season markets (#471)
+# ============================================================================
+
+
+class TestExtractSeasonMaxYear:
+    """Tests for _extract_season_max_year helper."""
+
+    def test_hyphenated_season_pattern(self):
+        """'2025-26' → 2026 (NBA/NHL/NFL style)."""
+        assert _extract_season_max_year("2025-26") == 2026
+
+    def test_single_year_pattern(self):
+        """'2026' → 2026 (MLB/WNBA style)."""
+        assert _extract_season_max_year("2026") == 2026
+
+    def test_forward_hyphenated_season(self):
+        """'2026-27' → 2027."""
+        assert _extract_season_max_year("2026-27") == 2027
+
+    def test_empty_pattern_returns_none(self):
+        assert _extract_season_max_year("") is None
+
+    def test_all_league_configs_have_parseable_season(self):
+        """Every league config's season_pattern should be parseable."""
+        for slug, cfg in LEAGUE_CONFIGS.items():
+            year = _extract_season_max_year(cfg.season_pattern)
+            assert year is not None, (
+                f"League '{slug}' has unparseable season_pattern '{cfg.season_pattern}'"
+            )
+            assert 2024 <= year <= 2030, (
+                f"League '{slug}' season max year {year} is out of expected range"
+            )
+
+
+class TestIsFutureSeasonMarket:
+    """Tests for _is_future_season_market — guards against next-season contamination."""
+
+    def test_future_year_rejected(self):
+        """'NBA: 2027 Champion' with max_year=2026 should be rejected."""
+        assert _is_future_season_market("NBA: 2027 Champion", 2026) is True
+
+    def test_current_year_accepted(self):
+        """'2026 NBA Champion' with max_year=2026 should be accepted."""
+        assert _is_future_season_market("2026 NBA Champion", 2026) is False
+
+    def test_no_year_accepted(self):
+        """'NBA Championship Winner' (no year) should be accepted."""
+        assert _is_future_season_market("NBA Championship Winner", 2026) is False
+
+    def test_past_year_accepted(self):
+        """'2025 NBA Champion' with max_year=2026 should be accepted."""
+        assert _is_future_season_market("2025 NBA Champion", 2026) is False
+
+    def test_hyphenated_future_season(self):
+        """'NBA 2026-27 Champion' with max_year=2026 should be rejected (contains 2027)."""
+        assert _is_future_season_market("NBA 2026-27 Champion", 2026) is True
+
+    def test_hyphenated_current_season(self):
+        """'NBA 2025-26 Champion' with max_year=2026 is fine (no year > 2026)."""
+        assert _is_future_season_market("NBA 2025-26 Champion", 2026) is False
+
+    def test_polymarket_nba_2027_real_case(self):
+        """Real market name that caused issue #471."""
+        assert _is_future_season_market("NBA: 2027 Champion", 2026) is True
+
+    def test_polymarket_2026_nba_real_case(self):
+        """Real market name that should stay."""
+        assert _is_future_season_market("2026 NBA Champion", 2026) is False
+
+    def test_conference_market_no_year(self):
+        """Conference markets without year reference should pass through."""
+        assert _is_future_season_market(
+            "NBA Playoffs: Eastern Conference Champion", 2026
+        ) is False
+
+    def test_odds_api_no_year(self):
+        """Odds API generic championship market should pass through."""
+        assert _is_future_season_market("NBA Championship Winner", 2026) is False
+
+    def test_nfl_next_season(self):
+        """NFL next-season Super Bowl market with max_year=2026."""
+        assert _is_future_season_market(
+            "NFL: 2027 Super Bowl Champion", 2026
+        ) is True
+
+    def test_mlb_current_season(self):
+        """MLB current-season market should pass."""
+        assert _is_future_season_market("2026 World Series Winner", 2026) is False
+
+
+class TestColumnSumSanity:
+    """Conference column sums should be reasonable after normalization (#471)."""
+
+    def test_normalize_column_sums_warns_on_extreme_overshoot(self):
+        """Column sums > 2.5x expected trigger a warning, not normalization."""
+        from app.utils.playoff_grid import normalize_column_sums
+
+        teams = [
+            {"name": "Team A", "cells": {"conference": {"merged_probability": 1.0, "sources": []}}},
+            {"name": "Team B", "cells": {"conference": {"merged_probability": 0.8, "sources": []}}},
+            {"name": "Team C", "cells": {"conference": {"merged_probability": 0.5, "sources": []}}},
+        ]
+        # Total = 2.3, expected = 2.0, ratio = 1.15 — this should normalize (within 1.05-2.5x)
+        columns = [GridColumn(key="conference", label="Conference", order=3)]
+        normalize_column_sums(teams, columns, "nba")
+        conf_sum = sum(t["cells"]["conference"]["merged_probability"] for t in teams)
+        assert abs(conf_sum - 2.0) < 0.01, f"Conference sum should be ~200% after normalization, got {conf_sum*100:.1f}%"
+
+    def test_normalize_column_sums_extreme_warns_but_no_normalize(self):
+        """Column sums > 2.5x expected should NOT be normalized (matching bug)."""
+        from app.utils.playoff_grid import normalize_column_sums
+
+        teams = [
+            {"name": "Team A", "cells": {"conference": {"merged_probability": 3.0, "sources": []}}},
+            {"name": "Team B", "cells": {"conference": {"merged_probability": 2.0, "sources": []}}},
+        ]
+        # Total = 5.0, expected = 2.0, ratio = 2.5 — too extreme, should warn but NOT normalize
+        columns = [GridColumn(key="conference", label="Conference", order=3)]
+        normalize_column_sums(teams, columns, "nba")
+        conf_sum = sum(t["cells"]["conference"]["merged_probability"] for t in teams)
+        # Should be capped at 1.0 per cell but not normalized
+        assert conf_sum <= 2.0 + 0.01  # Capped at 1.0 each = 2.0
+
+    def test_championship_column_normalizes_to_100(self):
+        """Championship column with moderate overshoot normalizes to ~100%."""
+        from app.utils.playoff_grid import normalize_column_sums
+
+        teams = [
+            {"name": "Team A", "cells": {"championship": {"merged_probability": 0.55, "sources": []}}},
+            {"name": "Team B", "cells": {"championship": {"merged_probability": 0.35, "sources": []}}},
+            {"name": "Team C", "cells": {"championship": {"merged_probability": 0.20, "sources": []}}},
+        ]
+        # Total = 1.10, expected = 1.0 — moderate overshoot, should normalize
+        columns = [GridColumn(key="championship", label="Champion", order=4)]
+        normalize_column_sums(teams, columns, "nba")
+        champ_sum = sum(t["cells"]["championship"]["merged_probability"] for t in teams)
+        assert abs(champ_sum - 1.0) < 0.01
