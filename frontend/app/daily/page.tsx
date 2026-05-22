@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import {
   ArrowDown,
@@ -459,6 +460,7 @@ export default function DailyPage() {
   }
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <main className="min-h-screen bg-surface-deep text-text-primary">
       <DailyHeader streak={meta.streak} countdown={nextMidnightLabel(now)} />
 
@@ -565,6 +567,7 @@ export default function DailyPage() {
         </aside>
       </section>
     </main>
+    </ErrorBoundary>
   );
 }
 

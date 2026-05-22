@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
@@ -99,6 +100,7 @@ export default function PreferencesPage() {
   const rivalTeams = prefs?.favorites.filter(f => f.relation_type === "rival") ?? [];
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="max-w-lg mx-auto space-y-6">
       <h1 className="text-xl font-bold text-text-primary">Preferences</h1>
 
@@ -272,6 +274,7 @@ export default function PreferencesPage() {
         </section>
       )}
     </div>
+    </ErrorBoundary>
   );
 }
 

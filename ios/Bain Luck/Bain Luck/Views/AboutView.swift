@@ -93,9 +93,14 @@ struct AboutView: View {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 7, weight: .bold))
                                     .foregroundStyle(.green)
-                                Text(p.title).font(.caption2).fontWeight(.semibold)
-                                + Text(" — ").font(.caption2).foregroundColor(.secondary)
-                                + Text(p.desc).font(.caption2).foregroundColor(.secondary)
+                                HStack(spacing: 0) {
+                                    Text(p.title)
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                    Text(" — \(p.desc)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }

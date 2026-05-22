@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useRef } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "framer-motion";
 import { fetchEventsByIds, fetchFuturesByIds, fetchFeed, fetchGroupedFeed } from "@/lib/api";
@@ -234,6 +235,7 @@ export default function SportsPage() {
   // =========================================================================
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="space-y-5">
       {/* Toast feedback */}
       {toast && (
@@ -476,5 +478,6 @@ export default function SportsPage() {
         </>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

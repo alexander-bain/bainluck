@@ -554,7 +554,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
-                } else if let error = vm.error {
+                } else if let error = vm.error, vm.items.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "wifi.slash")
                             .font(.largeTitle)
@@ -874,6 +874,8 @@ struct ExpandableNativeContextText: View {
                 .font(font)
                 .foregroundStyle(.secondary)
                 .lineLimit(expanded ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if canExpand {
                 Button {

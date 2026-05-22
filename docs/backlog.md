@@ -20,6 +20,36 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [shipped] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
 - [shipped] Rage Shake BR31: harden sports futures effective-settlement staleness. Issue: [#456](https://github.com/alexander-bain/bainluck/issues/456)
 - [shipped] Flag effectively-settled Discover sports futures for settlement follow-up. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
+- [ready] Investigate May 21 API outage (503s during Manus sweep). Issue: [#469](https://github.com/alexander-bain/bainluck/issues/469)
+- [ready] NBA championship grid data staleness — column sums off, Knicks stale. Issue: [#471](https://github.com/alexander-bain/bainluck/issues/471)
+- [ready] Discover feed health score 30/100 — stale dates, no temporal cues. Issue: [#470](https://github.com/alexander-bain/bainluck/issues/470)
+- [ready] Weather page zombie markets and health/pandemic misclassification. Issue: [#472](https://github.com/alexander-bain/bainluck/issues/472)
+- [ready] Standardize error/loading states across all pages. Issue: [#473](https://github.com/alexander-bain/bainluck/issues/473)
+- [ready] Calibration per-category accuracy hill-climb (parent). Issue: [#474](https://github.com/alexander-bain/bainluck/issues/474)
+- [ready] Verify golf MCE drop after DataGolf leaderboard fix. Issue: [#475](https://github.com/alexander-bain/bainluck/issues/475)
+- [ready] Verify hockey MCE drop + expand to non-NHL. Issue: [#476](https://github.com/alexander-bain/bainluck/issues/476)
+- [idea] Time-horizon calibration for non-event markets. Issue: [#477](https://github.com/alexander-bain/bainluck/issues/477)
+- [idea] Source "fair fight" accuracy comparison methodology. Issue: [#478](https://github.com/alexander-bain/bainluck/issues/478)
+- [ready] God functions extraction — 4 remaining targets. Issue: [#479](https://github.com/alexander-bain/bainluck/issues/479)
+- [ready] Split admin.py (8,684 lines). Issue: [#480](https://github.com/alexander-bain/bainluck/issues/480)
+- [ready] Split get_db() into read-only and read-write. Issue: [#481](https://github.com/alexander-bain/bainluck/issues/481)
+- [blocked] Redesign first 30 seconds — hero headline. Issue: [#482](https://github.com/alexander-bain/bainluck/issues/482)
+- [idea] Ship production push notifications. Issue: [#483](https://github.com/alexander-bain/bainluck/issues/483)
+- [idea] Email compliance infrastructure. Issue: [#484](https://github.com/alexander-bain/bainluck/issues/484)
+- [ready] BR79: Discover event card missing sport label. Issue: [#485](https://github.com/alexander-bain/bainluck/issues/485)
+- [ready] BR77: Stale weather market past resolution date. Issue: [#486](https://github.com/alexander-bain/bainluck/issues/486)
+- [ready] BR62: Better aggregation for related/clustered markets. Issue: [#487](https://github.com/alexander-bain/bainluck/issues/487)
+- [ready] Link rate denominator accuracy — season futures and taxonomy. Issue: [#488](https://github.com/alexander-bain/bainluck/issues/488)
+- [ready] Period markers: fix tennis + remaining non-ESPN sports. Issue: [#489](https://github.com/alexander-bain/bainluck/issues/489)
+- [idea] Confidence tiers on Discover cards — signal bars. Issue: [#490](https://github.com/alexander-bain/bainluck/issues/490)
+- [ready] Configure Sentry alert rules for outages and error spikes. Issue: [#498](https://github.com/alexander-bain/bainluck/issues/498)
+- [ready] Add SEO metadata and structured data to all pages. Issue: [#499](https://github.com/alexander-bain/bainluck/issues/499)
+- [ready] Accessibility audit — 10/63 components have aria attributes. Issue: [#500](https://github.com/alexander-bain/bainluck/issues/500)
+- [ready] Add error boundaries to all page-level components. Issue: [#501](https://github.com/alexander-bain/bainluck/issues/501)
+- [ready] Add general /health endpoint for uptime monitoring. Issue: [#506](https://github.com/alexander-bain/bainluck/issues/506)
+- [ready] Fill test coverage gaps — 4 untested tasks, 7 untested routes. Issue: [#507](https://github.com/alexander-bain/bainluck/issues/507)
+- [ready] Investigate DB connection pool sizing. Issue: [#508](https://github.com/alexander-bain/bainluck/issues/508)
+- [idea] Automate weekly Manus health sweep. Issue: [#509](https://github.com/alexander-bain/bainluck/issues/509)
 
 ## Current Priority: Calibration & Data Quality
 
@@ -393,6 +423,80 @@ Use actual engagement data (clicks, shares, swipes) to calibrate ranking weights
 ---
 
 ## ~~Rage Shake Triage #7 (May 17) — Bugs #49-58~~ — ALL 7 FIXED (May 17)
+
+---
+
+## Manus Sweep Findings (May 21, 2026) — 0/7 RESOLVED
+
+10-module sweep launched May 21 ~11:30 PM PT. All 10 tasks completed (19,210 credits). **Critical context:** The `api.bainluck.com` backend was down (503 Heroku Application Error) during the entire audit window, which severely limited what modules could test. Most modules fell back to auditing Kalshi/Polymarket source data directly.
+
+Reports: `Manus/audit_results/2026-05-21/`
+
+### MS21-1. API Outage During Sweep Window (P0 — INVESTIGATE)
+
+The backend returned 503 / "Application Error" / sustained timeouts across all 10 modules for the full sweep duration (~30 min window starting ~11:30 PM PT May 21). Feed, event detail, category pages, league pages, championship grids — all failed. This may have been transient (dyno cycling, DB connection exhaustion, memory) or a real regression.
+
+**Action:** Check Heroku logs and Sentry for the May 21 11:30 PM - 12:15 AM PT window. Determine root cause and whether it self-resolved or required intervention. If transient, add monitoring/alerting for sustained 503s.
+
+**Issue:** [#469](https://github.com/alexander-bain/bainluck/issues/469)
+
+### MS21-2. NBA Championship Grid Data Staleness (P1)
+
+The NBA grid loaded but had critical data issues:
+- **Conference column sums wildly off:** East summed to 8.8%, West to 181.6% (should each be ~100%)
+- **Knicks showing 1.6%** championship probability vs ~20% on Kalshi/Polymarket live
+- NHL, MLB, and Golf grids failed to load entirely (outage-related)
+
+**Root cause hypothesis:** Either the aggregation task hasn't run recently, or the grid is pulling stale cached data. The Conference column sum error suggests a deeper aggregation bug — possibly double-counting West teams or missing East teams entirely.
+
+**Action:** Check `compute_aggregate_probability` for grid data, verify the grid backfill task is running, and compare grid values against live source data.
+
+**Issue:** [#471](https://github.com/alexander-bain/bainluck/issues/471)
+
+### MS21-3. Feed Scored 30/100 — Stale Dates and No Temporal Organization (P1)
+
+Feed module gave an overall health score of 30/100. Key issues:
+- Stale market dates visible in Discover cards
+- No "Live Now" or "Upcoming" temporal sections in the feed
+- Category pages hanging on loading screens (outage-related, but the lack of timeout/error UX is a real issue)
+
+**Context:** Some of these may overlap with existing Discover ranking work (0u items). The stale dates issue may be separate from the staleness filters already shipped — could be a display-layer problem where resolution dates are shown even when the market hasn't resolved.
+
+**Action:** Separate outage-caused failures from real feed quality issues. The "no temporal organization" observation may be an intentional design choice (Discover is score-ranked, not time-ranked) but worth evaluating.
+
+**Issue:** [#470](https://github.com/alexander-bain/bainluck/issues/470)
+
+### MS21-4. Weather Page Zombie Markets and Misclassification (P2)
+
+Weather page briefly loaded before the outage hit. Found:
+- **Zombie markets:** Stale/resolved weather markets still appearing in active sections
+- **Misclassified content:** Health/pandemic markets appearing in the climate section (wrong `llm_sport_category` or sub-theme classification)
+
+**Action:** Audit weather route classification logic. Add resolved-market filtering to weather endpoint. Check `_classify_kind()` for weather-specific edge cases where health/pandemic content leaks through.
+
+**Issue:** [#472](https://github.com/alexander-bain/bainluck/issues/472)
+
+### MS21-5. Inconsistent Error States Across Pages (P2)
+
+Different pages handle API failures differently:
+- Weather page: skeleton loaders (good)
+- Category pages (politics/entertainment/economics): hang indefinitely on loading screen (bad)
+- League pages: frontend shell loads but content area blank (okay but not great)
+- Event detail pages: mixed — some show error messages, others just spin
+
+**Action:** Standardize error/loading states across all pages. All data-dependent pages should have: (1) skeleton loaders during load, (2) a timeout with a user-friendly error message, (3) a retry button. Weather page is the gold standard.
+
+**Issue:** [#473](https://github.com/alexander-bain/bainluck/issues/473)
+
+### MS21-6. Chart Timing Quality Verified (INFO — POSITIVE)
+
+The one NBA event that loaded (Knicks vs Cavaliers) showed excellent chart quality: win probability and score differential charts perfectly aligned, clean start/end boundaries, accurate game state markers. Confirms the chart timing work from prior sessions is holding up.
+
+### MS21-7. Re-Run Sweep After API Stabilization (ACTION)
+
+This sweep was mostly wasted due to the outage — 8 of 10 modules couldn't fully execute their audits. Once MS21-1 is investigated and the API is confirmed stable, re-run the full 10-module suite to get actionable results on event detail quality, market accuracy, chart timing across sports, and market completeness.
+
+**Action:** `MANUS_API_KEY=... python3 backend/scripts/manus_health_suite.py` after confirming API health.
 
 ---
 
@@ -1048,6 +1152,22 @@ Higher/Lower game is live in Discover. Daily challenge card shipped. Dedicated `
 
 **Depends on:** Auth (shipped), preferences (shipped).
 **Parallel Safety:** Green
+
+### 24. Admin/API Surface Audit
+
+**Idea:** Audit the admin and diagnostic API endpoints that accumulated because production-shaped database queries are hard to run locally. The goal is not to remove useful tools, but to distinguish durable product/admin surfaces from one-off incident/debug endpoints.
+
+**Why it matters:** One-off operational endpoints can quietly become permanent surface area with inconsistent auth, naming, response shape, docs, and query cost. The risk is moderate rather than urgent, but it grows as admin diagnostics, matching tools, calibration tools, and ranking/debug endpoints keep expanding.
+
+**Suggested scope:**
+1. Build an endpoint catalog: route, auth model, owner area, purpose, last known use, frontend/admin usage, and expensive query risk.
+2. Classify endpoints as `public_product`, `admin_dashboard`, `admin_diagnostic`, `agent_debug`, `temporary_migration_or_backfill`, or `obsolete`.
+3. Consolidate overlapping diagnostics under consistent namespaces such as `/api/admin/discover/*`, `/api/admin/matching/*`, `/api/admin/calibration/*`, and `/api/admin/tasks/*`.
+4. Delete or hide stale one-off endpoints created for resolved incidents, migrations, or backfills.
+5. Separately evaluate better production-data observability: sanitized prod snapshot, read-only replica access, strict allowlisted SQL runner, or recurring exports for ranking/matching/calibration datasets.
+
+**Files:** `backend/app/routes/admin*.py`, `backend/app/routes/*.py`, `frontend/app/admin/*`, `docs/architecture-reference.md`
+**Parallel Safety:** Yellow
 
 ---
 

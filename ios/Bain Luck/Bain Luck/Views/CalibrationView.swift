@@ -28,10 +28,9 @@ struct CalibrationView: View {
     private var scrollContent: some View {
         ScrollView {
             VStack(spacing: 24) {
-                heroSection; statCardsSection; cohortPicker
-                calibrationChartSection; sourceComparisonSection
-                tradingActivitySection; categoryBreakdownSection
-                benchmarkSection
+                heroSection; statCardsSection
+                sourceComparisonSection; benchmarkSection
+                calibrationChartSection; tradingActivitySection; categoryBreakdownSection
             }
             .padding(.horizontal).padding(.bottom, 32)
         }
@@ -41,8 +40,8 @@ struct CalibrationView: View {
 
     private var heroSection: some View {
         VStack(spacing: 6) {
-            Text("Do Markets Predict?").font(.title2.weight(.bold))
-            Text("How well prediction market prices correspond to real-world outcomes across \(viewModel.formattedOutcomes) resolved predictions.")
+            Text("Do Prediction Markets Predict Anything?").font(.title2.weight(.bold))
+            Text("We compare \(viewModel.formattedOutcomes) resolved predictions with what actually happened. A well-calibrated market saying 30% should happen about 30% of the time.")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Text("March\u{2013}May 2026 \u{00B7} Updated hourly")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -94,19 +93,11 @@ struct CalibrationView: View {
         .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private var cohortPicker: some View {
-        Picker("Cohort", selection: $viewModel.cohort) {
-            Text("All").tag(CalibrationCohort.all)
-            Text("Closing Line").tag(CalibrationCohort.closing)
-            Text("Opening Price").tag(CalibrationCohort.opening)
-        }.pickerStyle(.segmented)
-    }
-
     // MARK: - Calibration Chart
 
     private var calibrationChartSection: some View {
         cardSection("Calibration Curve",
-                    sub: "Points on the diagonal = perfect. Above = outcomes happened more than predicted. Point size = sample count.") {
+                    sub: "The diagonal line is perfect calibration. Points above it happened more often than predicted; points below it happened less often. Point size reflects sample count.") {
             calibrationChart(points: viewModel.chartPoints, color: viewModel.cohortColor, height: 300)
         }
     }
@@ -206,12 +197,12 @@ struct CalibrationView: View {
         if movedN > 0 && unchangedN > 0 {
             let movedMCE = viewModel.computeMCE(moved), unchangedMCE = viewModel.computeMCE(unchanged)
             cardSection("Does Trading Activity Matter?",
-                        sub: "Price moved (active trading) vs. price unchanged from listing.") {
+                        sub: "Markets that keep trading tend to be better calibrated than markets that stay stale after listing.") {
                 calibrationChart(points: moved, color: .green, height: 220,
                                  secondSeries: (pts: unchanged, color: .red))
                 HStack(spacing: 10) {
                     tradingCard("Active Trading", movedMCE, movedN, .green)
-                    tradingCard("Opening Price", unchangedMCE, unchangedN, .red)
+                    tradingCard("No Trading", unchangedMCE, unchangedN, .red)
                 }
                 if movedMCE > 0 && unchangedMCE > 0 {
                     Text("Markets with active trading are \(String(format: "%.1f", unchangedMCE / movedMCE))x more accurately calibrated.")
@@ -234,30 +225,78 @@ struct CalibrationView: View {
     // MARK: - Category Breakdown
 
     private var categoryBreakdownSection: some View {
-        cardSection("By Category", sub: "Categories with 50+ resolved outcomes.") {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                ForEach(Array(viewModel.categoryRows.enumerated()), id: \.element.name) { idx, row in
-                    categoryCard(row, idx)
+        cardSection("Category Breakdown",
+                    sub: "Raw leagues are rolled up into product-level categories. Lower MCE means the predicted probabilities matched reality more closely.") {
+            if let best = viewModel.bestCategoryRow, let worst = viewModel.worstCategoryRow {
+                HStack(spacing: 10) {
+                    categorySummaryCard("Best calibrated", best, .green)
+                    categorySummaryCard("Needs attention", worst, .orange)
                 }
             }
+
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Category").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Outcomes").frame(width: 78, alignment: .trailing)
+                    Text("MCE").frame(width: 58, alignment: .trailing)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                ForEach(Array(viewModel.topCategoryRows.enumerated()), id: \.element.name) { idx, row in
+                    categoryMetricRow(row, color: Self.catColors[idx % Self.catColors.count])
+                    if row.name != viewModel.topCategoryRows.last?.name { Divider().padding(.leading, 12) }
+                }
+            }
+            .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
-    private func categoryCard(_ row: CalibrationTableRow, _ idx: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Circle().fill(Self.catColors[idx % Self.catColors.count]).frame(width: 8, height: 8)
-                Text(row.name).font(.caption.weight(.semibold)).lineLimit(1)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(String(format: "%.1f", row.mce * 100))
-                    .font(.title3.weight(.bold).monospacedDigit()).foregroundStyle(mceColor(row.mce * 100))
-                Text("pp").font(.caption2).foregroundStyle(.secondary)
+    private func categorySummaryCard(_ label: String, _ row: CalibrationTableRow, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(row.name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(String(format: "%.1fpp", row.mce * 100))
+                    .font(.callout.weight(.bold).monospacedDigit())
+                    .foregroundStyle(color)
                 Spacer()
-                Text(fmtN(row.n)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                Text(fmtN(row.n))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(10).background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func categoryMetricRow(_ row: CalibrationTableRow, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(row.name)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(fmtN(row.n))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .trailing)
+            Text(String(format: "%.1fpp", row.mce * 100))
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(mceColor(row.mce * 100))
+                .frame(width: 58, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Benchmark
@@ -332,8 +371,6 @@ struct CalibrationView: View {
 }
 
 // MARK: - Supporting Models
-
-enum CalibrationCohort: String { case closing, opening, all }
 
 struct CalibrationChartPoint: Identifiable {
     let id = UUID()

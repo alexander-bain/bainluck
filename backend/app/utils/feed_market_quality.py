@@ -882,7 +882,7 @@ _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS = {
     "company_drama": 2,
     "big_name": 2,
     "weird_news": 2,
-    "absurd_but_real": 2,
+    "absurd_but_real": 3,
     "other": 3,
 }
 
@@ -1021,6 +1021,17 @@ _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
         "federal_power",
         re.compile(
             r"\b(attorney general|fbi director|save act|cabinet|supreme court)\b",
+            re.IGNORECASE,
+        ),
+        86,
+    ),
+    (
+        "shareable_life_story",
+        re.compile(
+            r"\b("
+            r"bridesmaids?|wedding|engaged|engagement|married|divorce|"
+            r"pregnan(?:t|cy)|baby"
+            r")\b",
             re.IGNORECASE,
         ),
         86,

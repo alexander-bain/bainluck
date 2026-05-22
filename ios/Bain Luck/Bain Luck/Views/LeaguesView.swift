@@ -54,136 +54,242 @@ struct LeaguesView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                Section("Explore") {
-                    NavigationLink(value: Route.futuresList) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.body)
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Color.indigo, in: RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Futures Markets")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("Browse all prediction markets")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    NavigationLink(value: Route.calibration) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "chart.dots.scatter")
-                                .font(.body)
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Color.teal, in: RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Calibration")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("Do markets predict?")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    NavigationLink(value: Route.dailyChallenge) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "flame.fill")
-                                .font(.body)
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Color.orange, in: RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Daily Challenge")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("5 questions, track your streak")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    NavigationLink(value: Route.about) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "info.circle")
-                                .font(.body)
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Color.gray, in: RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("About Bain Luck")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("Sources, methodology, philosophy")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    browseHeader
+                    featuredGrid
+                    topicSection
+                    leagueSections
                 }
-
-                Section("Prediction Markets") {
-                    ForEach(categoryLinks) { cat in
-                        NavigationLink(value: cat.route) {
-                            HStack(spacing: 12) {
-                                Image(systemName: cat.icon)
-                                    .font(.body)
-                                    .foregroundStyle(.white)
-                                    .frame(width: 32, height: 32)
-                                    .background(cat.color, in: RoundedRectangle(cornerRadius: 8))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(cat.label)
-                                        .font(.subheadline.weight(.semibold))
-                                    Text(cat.desc)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                }
-
-                ForEach(groupOrder, id: \.self) { group in
-                    let leagues = allLeagues.filter { $0.group == group }
-                    if !leagues.isEmpty {
-                        Section(group) {
-                            ForEach(leagues) { league in
-                                NavigationLink(value: league.slug == "golf" ? Route.golfCategory : Route.leagueGrid(slug: league.slug)) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: league.icon)
-                                            .font(.body)
-                                            .foregroundStyle(.white)
-                                            .frame(width: 32, height: 32)
-                                            .background(Color.secondary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(league.label)
-                                                .font(.subheadline)
-                                                .fontWeight(.semibold)
-                                            Text(league.fullName)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .padding(.vertical, 2)
-                                }
-                            }
-                        }
-                    }
-                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 18)
+                .frame(maxWidth: 1100, alignment: .leading)
             }
-            #if os(iOS)
-            .listStyle(.insetGrouped)
-            #endif
+            .background(Color.groupedBackground.opacity(0.35))
             .navigationTitle("Browse")
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
             .onAppear {
                 AnalyticsService.trackScreen(name: "leagues", type: "leagues_index")
             }
         }
+    }
+
+    private var browseHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Browse")
+                .font(.title2.weight(.bold))
+            Text("Markets, sports, and tools")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var featuredGrid: some View {
+        LazyVGrid(columns: adaptiveColumns(minimum: 230), spacing: 14) {
+            BrowseFeatureCard(
+                title: "Futures Markets",
+                subtitle: "All prediction markets",
+                icon: "chart.line.uptrend.xyaxis",
+                color: .indigo,
+                route: .futuresList
+            )
+            BrowseFeatureCard(
+                title: "Calibration",
+                subtitle: "Market track record",
+                icon: "chart.dots.scatter",
+                color: .teal,
+                route: .calibration
+            )
+            BrowseFeatureCard(
+                title: "Daily Challenge",
+                subtitle: "Five probability calls",
+                icon: "flame.fill",
+                color: .orange,
+                route: .dailyChallenge
+            )
+            BrowseFeatureCard(
+                title: "About Bain Luck",
+                subtitle: "Sources and methodology",
+                icon: "info.circle.fill",
+                color: .gray,
+                route: .about
+            )
+        }
+    }
+
+    private var topicSection: some View {
+        BrowseSection(title: "Prediction Markets") {
+            LazyVGrid(columns: adaptiveColumns(minimum: 190), spacing: 12) {
+                ForEach(categoryLinks) { cat in
+                    BrowseTopicCard(category: cat)
+                }
+            }
+        }
+    }
+
+    private var leagueSections: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            ForEach(groupOrder, id: \.self) { group in
+                let leagues = allLeagues.filter { $0.group == group }
+                if !leagues.isEmpty {
+                    BrowseSection(title: group) {
+                        LazyVGrid(columns: adaptiveColumns(minimum: 150), spacing: 10) {
+                            ForEach(leagues) { league in
+                                BrowseLeagueTile(
+                                    league: league,
+                                    color: leagueColor(league)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func adaptiveColumns(minimum: CGFloat) -> [GridItem] {
+        [GridItem(.adaptive(minimum: minimum, maximum: 320), spacing: 12)]
+    }
+
+    private func leagueColor(_ league: LeagueInfo) -> Color {
+        switch league.slug {
+        case "nba", "ncaa-basketball", "ncaa-women-basketball", "wnba": return .orange
+        case "nfl", "ncaa-football": return .green
+        case "mlb": return .red
+        case "nhl": return .blue
+        case "mls", "epl", "la-liga", "champions-league", "bundesliga": return .mint
+        case "golf": return .teal
+        default: return .secondary
+        }
+    }
+}
+
+private struct BrowseSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.6)
+            content
+        }
+    }
+}
+
+private struct BrowseFeatureCard: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let color: Color
+    let route: Route
+
+    var body: some View {
+        NavigationLink(value: route) {
+            HStack(spacing: 13) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(minHeight: 76)
+            .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.35), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct BrowseTopicCard: View {
+    let category: CategoryLink
+
+    var body: some View {
+        NavigationLink(value: category.route) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Image(systemName: category.icon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(category.color.gradient, in: RoundedRectangle(cornerRadius: 10))
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(category.color.opacity(0.75))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(category.label)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text(category.desc)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(15)
+            .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
+            .background(category.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(category.color.opacity(0.18), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct BrowseLeagueTile: View {
+    let league: LeagueInfo
+    let color: Color
+
+    var body: some View {
+        NavigationLink(value: league.slug == "golf" ? Route.golfCategory : Route.leagueGrid(slug: league.slug)) {
+            HStack(spacing: 10) {
+                Image(systemName: league.icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 34, height: 34)
+                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(league.label)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(league.fullName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack.opacity(0.25), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
     }
 }

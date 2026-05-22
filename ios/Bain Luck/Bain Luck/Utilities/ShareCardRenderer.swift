@@ -75,6 +75,19 @@ struct ShareableFuturesCardView: View {
         }
     }
 
+    private var heroOutcomeLabel: String {
+        let trimmed = leaderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Market probability" }
+        if trimmed.count > 44 || trimmed == marketName {
+            return "Leading outcome"
+        }
+        return trimmed
+    }
+
+    private var hookLineLimit: Int {
+        outcomes.count > 1 ? 4 : 8
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Hero section with gradient background
@@ -100,17 +113,18 @@ struct ShareableFuturesCardView: View {
                         .padding(.vertical, 5)
                         .background(.black.opacity(0.24), in: Capsule())
 
-                    Spacer(minLength: 20)
+                    Spacer(minLength: 16)
 
                     Text("\(Int((probability * 100).rounded()))%")
                         .font(.system(size: 64, weight: .black).monospacedDigit())
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.30), radius: 10, x: 0, y: 4)
 
-                    Text(leaderName)
+                    Text(heroOutcomeLabel)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(3)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(18)
@@ -130,7 +144,7 @@ struct ShareableFuturesCardView: View {
                     Text(hook)
                         .font(.system(size: 14))
                         .foregroundStyle(Color(red: 0.35, green: 0.35, blue: 0.40))
-                        .lineLimit(3)
+                        .lineLimit(hookLineLimit)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 

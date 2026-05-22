@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -324,6 +325,7 @@ export default function LeagueShowcasePage() {
   const heroTournament = liveTournaments[0] || upcomingTournaments[0];
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen">
       {/* Header */}
       <div className="border-b border-surface-border">
@@ -526,5 +528,6 @@ export default function LeagueShowcasePage() {
         )}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

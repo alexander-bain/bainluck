@@ -1,6 +1,7 @@
 "use client";
 
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import WeatherHero from "@/components/weather/WeatherHero";
 import TemperatureMap from "@/components/weather/TemperatureMap";
 import RainForecast from "@/components/weather/RainForecast";
@@ -15,6 +16,7 @@ export default function WeatherPage() {
   useEngagementTime({ pageType: "weather" });
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="-mx-3 md:-mx-6 -mt-4">
       <WeatherHero />
       <TemperatureMap />
@@ -50,5 +52,6 @@ export default function WeatherPage() {
         </div>
       </footer>
     </div>
+    </ErrorBoundary>
   );
 }

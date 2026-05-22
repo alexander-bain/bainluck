@@ -7,9 +7,17 @@ import UIKit
 
 private let logger = Logger(subsystem: "com.bainluck", category: "pins")
 
+struct PinActionFeedback: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let systemImage: String
+    let isWarning: Bool
+}
+
 final class PinManager: ObservableObject {
     @Published var pinnedEventIDs: Set<Int> = []
     @Published var pinnedFuturesIDs: Set<Int> = []
+    @Published var feedback: PinActionFeedback?
 
     static let maxPinsPerType = 6
 
@@ -59,6 +67,11 @@ final class PinManager: ObservableObject {
                 #if os(iOS)
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 #endif
+                feedback = PinActionFeedback(
+                    message: "Pin limit reached",
+                    systemImage: "exclamationmark.triangle.fill",
+                    isWarning: true
+                )
                 return
             }
             addLocally(type: type, id: id)
@@ -68,6 +81,11 @@ final class PinManager: ObservableObject {
         }
 
         saveToDefaults()
+        feedback = PinActionFeedback(
+            message: alreadyPinned ? "Removed from My Stuff" : "Pinned to My Stuff",
+            systemImage: alreadyPinned ? "bookmark.slash.fill" : "bookmark.fill",
+            isWarning: false
+        )
 
         // Sync to server if authenticated
         if isAuthenticated {

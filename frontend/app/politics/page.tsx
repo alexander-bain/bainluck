@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -1105,6 +1106,7 @@ export default function PoliticsPage() {
     : "just now";
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
       {/* Page header */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 20px 20px" }}>
@@ -1195,6 +1197,7 @@ export default function PoliticsPage() {
         </footer>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
 

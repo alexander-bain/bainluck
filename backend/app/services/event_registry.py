@@ -35,9 +35,9 @@ _SOURCE_PRIORITY = {
     "espn": 3,
 }
 
-# Time window for structured matching (±4 hours covers timezone errors
-# without matching doubleheaders, which are typically 3-4 hours apart)
-_MATCH_WINDOW = timedelta(hours=4)
+# Time window for structured matching (±28 hours covers Kalshi settlement
+# dates that are 24h off from game start, and UTC/local date boundary issues)
+_MATCH_WINDOW = timedelta(hours=28)  # Wide enough for cross-source date disagreements (Kalshi settlement vs game start)
 
 # Maximum retries on IntegrityError (race condition between concurrent tasks)
 _MAX_RETRIES = 2
@@ -206,16 +206,28 @@ async def _find_by_structured_match(
     )
     candidates = candidates_result.scalars().all()
 
+    # Score all name-matching candidates and pick the closest by time.
+    # This handles doubleheaders: Game 1 at 1 PM and Game 2 at 7 PM both
+    # match by team names, but the closer one wins.
+    matches = []
     for candidate in candidates:
-        # Normal orientation: our home = their home
+        matched = False
+        # Normal orientation
         if (names_match(home_team, candidate.home_team_name) and
                 names_match(away_team, candidate.away_team_name)):
-            return candidate
-
-        # Swapped orientation: our home = their away (sources disagree on home/away)
-        if (names_match(home_team, candidate.away_team_name) and
+            matched = True
+        # Swapped orientation
+        elif (names_match(home_team, candidate.away_team_name) and
                 names_match(away_team, candidate.home_team_name)):
-            return candidate
+            matched = True
+
+        if matched:
+            time_diff = abs((commence_time - candidate.commence_time).total_seconds())
+            matches.append((time_diff, candidate))
+
+    if matches:
+        matches.sort(key=lambda x: x[0])
+        return matches[0][1]
 
     return None
 

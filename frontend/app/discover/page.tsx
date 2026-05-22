@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR, { useSWRConfig } from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
@@ -725,6 +726,7 @@ export default function DiscoverPage() {
   }, [data, dismissed]);
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen bg-surface-deep">
       {/* Header */}
       <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
@@ -912,6 +914,7 @@ export default function DiscoverPage() {
         )}
       </main>
     </div>
+    </ErrorBoundary>
   );
 }
 

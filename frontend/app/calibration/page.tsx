@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -155,7 +156,7 @@ export default function CalibrationPage() {
 
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string | null>(null);
-  const [priceCohort, setPriceCohort] = useState<"all" | "closing" | "opening">("all");
+  const priceCohort: "all" | "closing" | "opening" = "all";
 
   const normalized = useMemo(() => {
     if (!data) return null;
@@ -272,6 +273,7 @@ export default function CalibrationPage() {
   }));
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
       {/* Hero */}
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
@@ -626,6 +628,7 @@ export default function CalibrationPage() {
         </p>
       </footer>
     </div>
+    </ErrorBoundary>
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   SectionHeader, Card, SourceChip, MarketRow, FooterNote,
@@ -136,6 +137,7 @@ export default function EconomicsPage() {
   const t = data.themes;
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="-mx-3 md:-mx-6 -mt-4 bg-surface-deep">
       {/* Hero */}
       <div className="px-4 md:px-6 pt-10 pb-8" style={{ maxWidth: 1440, margin: "0 auto" }}>
@@ -463,5 +465,6 @@ export default function EconomicsPage() {
         </div>
       </footer>
     </div>
+    </ErrorBoundary>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
@@ -279,6 +280,7 @@ function MyTeamsFeed() {
   const hasContent = hasEvents || hasFutures || hasPinned;
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -418,6 +420,7 @@ function MyTeamsFeed() {
         </>
       )}
     </div>
+    </ErrorBoundary>
   );
 }
 

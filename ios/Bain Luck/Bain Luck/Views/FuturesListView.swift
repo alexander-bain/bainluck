@@ -43,7 +43,7 @@ struct FuturesListView: View {
                 }
             }
         }
-        .onChange(of: viewModel.sortOption) { _ in
+        .onChange(of: viewModel.sortOption) { _, _ in
             viewModel.onSortChange()
         }
         .task {

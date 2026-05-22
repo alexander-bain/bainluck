@@ -3,7 +3,7 @@ import Foundation
 
 final class DiscoverViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = []
-    @Published private(set) var loading = false
+    @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var loadingMore = false
 
@@ -25,6 +25,7 @@ final class DiscoverViewModel: ObservableObject {
             items = Self.interleave(response.items)
             hasMore = response.hasMore
             nextOffset = response.offset + response.items.count
+            error = nil
         } catch is CancellationError {
             return
         } catch let urlError as URLError where urlError.code == .cancelled {
@@ -63,6 +64,7 @@ final class DiscoverViewModel: ObservableObject {
                 items = Self.interleave(items + fresh)
                 nextOffset = max(nextOffset, response.offset + response.items.count)
                 hasMore = response.hasMore
+                error = nil
                 return
             }
 

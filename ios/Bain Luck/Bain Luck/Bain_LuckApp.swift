@@ -69,6 +69,10 @@ struct Bain_LuckApp: App {
                 .environmentObject(authManager)
                 .environmentObject(navCoordinator)
                 .environmentObject(pinManager)
+                .overlay {
+                    PinFeedbackToast()
+                        .environmentObject(pinManager)
+                }
                 #if os(macOS)
                 .navigationTitle(navCoordinator.liveGameTitle)
                 .task { await pollLiveGames() }

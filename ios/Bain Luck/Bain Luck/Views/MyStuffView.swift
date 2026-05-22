@@ -129,6 +129,7 @@ struct MyStuffView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                             .multilineTextAlignment(.center)
+                            .onTapGesture { authManager.error = nil }
                     }
                 }
                 .padding(.horizontal, 40)

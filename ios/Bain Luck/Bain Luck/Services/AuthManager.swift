@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Combine
 import GoogleSignIn
+import Network
 import os
 import SwiftUI
 #if canImport(UIKit)
@@ -81,42 +82,34 @@ final class AuthManager: ObservableObject {
     /// Starts native Apple Sign-In and exchanges the Apple identity token with
     /// the backend for a Bain Luck session token.
     func signInWithApple() {
-        #if os(iOS)
-        // Pre-check: ensure a foreground scene exists before starting Apple
-        // Sign-In. On iPad with Stage Manager, the scene may need a moment
-        // to reach foregroundActive after app launch or scene transition.
-        if Self.findRootViewController() == nil {
-            logger.info("No foreground scene for Apple sign-in, deferring briefly")
-            Task {
-                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                if Self.findRootViewController() != nil {
-                    self.performAppleSignIn()
-                } else {
-                    self.error = "Cannot present sign-in. Please try again."
-                    logger.error("Still no foreground scene for Apple sign-in after delay")
-                }
+        Task {
+            guard await checkNetworkAvailable() else {
+                self.error = "No internet connection. Connect to Wi-Fi or cellular and try again."
+                return
             }
-            return
-        }
-        #endif
-        performAppleSignIn()
-    }
 
-    private func performAppleSignIn() {
-        let coordinator = AppleSignInCoordinator { [weak self] result in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                switch result {
-                case .success(let credential):
-                    await self.handleAppleCredential(credential)
-                case .failure(let error):
-                    self.error = Self.userFacingAuthError(error)
-                    logger.error("Apple sign-in error: \(error)")
+            #if os(iOS)
+            guard Self.findRootViewController() != nil else {
+                self.error = "Cannot present sign-in. Please try again."
+                return
+            }
+            #endif
+
+            let coordinator = AppleSignInCoordinator { [weak self] result in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    switch result {
+                    case .success(let credential):
+                        await self.handleAppleCredential(credential)
+                    case .failure(let error):
+                        self.error = Self.userFacingAuthError(error)
+                        logger.error("Apple sign-in error: \(error)")
+                    }
                 }
             }
+            self.appleSignInCoordinator = coordinator
+            coordinator.performRequest()
         }
-        self.appleSignInCoordinator = coordinator
-        coordinator.performRequest()
     }
 
     // MARK: - Google Sign-In
@@ -224,6 +217,18 @@ final class AuthManager: ObservableObject {
         }
     }
 
+    private func checkNetworkAvailable() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor()
+            let queue = DispatchQueue(label: "com.bainluck.auth-network-check")
+            monitor.pathUpdateHandler = { path in
+                monitor.cancel()
+                continuation.resume(returning: path.status == .satisfied)
+            }
+            monitor.start(queue: queue)
+        }
+    }
+
     private func clearStoredAuth() {
         KeychainHelper.delete(key: keychainTokenKey)
         KeychainHelper.delete(key: keychainAppleUserIdKey)
@@ -277,6 +282,11 @@ final class AuthManager: ObservableObject {
     }
 
     private func handleGoogleSignIn() async {
+        guard await checkNetworkAvailable() else {
+            error = "No internet connection. Connect to Wi-Fi or cellular and try again."
+            return
+        }
+
         guard let clientID = googleClientID() else {
             error = "Google Sign-In not configured"
             logger.error("GoogleService-Info.plist missing or has no CLIENT_ID")
@@ -287,20 +297,9 @@ final class AuthManager: ObservableObject {
 
         do {
             #if os(iOS)
-            // On iPad (especially with Stage Manager), the foreground scene may
-            // not be ready immediately. Retry briefly before giving up.
-            var rootViewController: UIViewController?
-            for attempt in 0..<3 {
-                rootViewController = Self.findRootViewController()
-                if rootViewController != nil { break }
-                if attempt < 2 {
-                    logger.info("No root VC on attempt \(attempt + 1), retrying after brief delay")
-                    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
-                }
-            }
-            guard let rootViewController else {
-                error = "Cannot present sign-in. Please try again."
-                logger.error("No root view controller found for Google sign-in after retries (scenes: \(UIApplication.shared.connectedScenes.map { "\(($0 as? UIWindowScene)?.activationState.rawValue ?? -1)" }))")
+            guard let rootViewController = Self.findRootViewController() else {
+                error = "Cannot present sign-in"
+                logger.error("No root view controller found for Google sign-in")
                 return
             }
             let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
@@ -354,29 +353,16 @@ final class AuthManager: ObservableObject {
     #if os(iOS)
     /// Returns the foreground scene's root view controller for native auth UI
     /// presentation, preferring the key window under iPad multi-window modes.
-    ///
-    /// On iPad with Stage Manager, `.foregroundActive` may not be set yet during
-    /// app launch or scene transitions. Falls back to `.foregroundInactive` which
-    /// is still a visible, presentable scene. Never returns a view controller from
-    /// a `.background` scene — that causes sign-in sheets to fail silently.
     @MainActor
     static func findRootViewController() -> UIViewController? {
-        let windowScenes = UIApplication.shared.connectedScenes
+        let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-
-        // Prefer foregroundActive, then foregroundInactive (still visible on iPad)
-        let scene = windowScenes
             .first(where: { $0.activationState == .foregroundActive })
-            ?? windowScenes
-                .first(where: { $0.activationState == .foregroundInactive })
-
-        guard let scene else {
-            logger.warning("findRootViewController: no foreground scene available (total scenes: \(windowScenes.count), states: \(windowScenes.map { $0.activationState.rawValue }))")
-            return nil
-        }
-
-        return scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
-            ?? scene.windows.first?.rootViewController
+            ?? UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first
+        return scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+            ?? scene?.windows.first?.rootViewController
     }
     #endif
 
@@ -387,23 +373,29 @@ final class AuthManager: ObservableObject {
             case .networkError:
                 return "Connection failed. Check your network and try again."
             case .httpError(let code, _) where code >= 500:
-                return "Server error (\(code)). Please try again in a moment."
+                return "Server error (\(code)). Please try again."
             case .httpError(let code, _):
                 return "Sign-in rejected (\(code)). Please try again."
             case .decodingError:
                 return "Unexpected server response. Please try again."
             case .invalidURL:
-                return "Sign-in configuration error. Please restart the app."
+                return "Sign-in failed. Please try again."
             }
         }
-        // Include the underlying error type for debugging without exposing internals
         let nsError = error as NSError
-        if nsError.domain == "com.apple.AuthenticationServices.AuthorizationError" {
-            return "Apple Sign-In failed (\(nsError.code)). Please try again."
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
+                return "No internet connection. Connect to Wi-Fi or cellular and try again."
+            case NSURLErrorTimedOut:
+                return "Connection timed out. Check your network and try again."
+            case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed:
+                return "Cannot reach sign-in servers. Check your network and try again."
+            default:
+                break
+            }
         }
-        if nsError.domain.contains("GIDSignIn") || nsError.domain.contains("Google") {
-            return "Google Sign-In failed. Please try again."
-        }
+
         return "Sign-in failed. Please try again."
     }
 }
@@ -445,20 +437,12 @@ private class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegat
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
             #if os(iOS)
-            let windowScenes = UIApplication.shared.connectedScenes
+            let scene = UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
-
-            // Prefer foregroundActive, then foregroundInactive (visible on iPad
-            // with Stage Manager). Never use a background scene.
-            let scene = windowScenes
                 .first(where: { $0.activationState == .foregroundActive })
-                ?? windowScenes
-                    .first(where: { $0.activationState == .foregroundInactive })
-
-            if scene == nil {
-                logger.warning("presentationAnchor: no foreground scene for Apple Sign-In (total scenes: \(windowScenes.count), states: \(windowScenes.map { $0.activationState.rawValue }))")
-            }
-
+                ?? UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first
             return scene?.windows.first(where: { $0.isKeyWindow })
                 ?? scene?.windows.first
                 ?? ASPresentationAnchor()

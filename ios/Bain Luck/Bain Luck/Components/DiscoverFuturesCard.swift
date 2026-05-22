@@ -164,55 +164,11 @@ struct NativeFuturesDiscoverCard: View {
 
                     Spacer()
 
-                    Menu {
-                        ShareLink(
-                            item: shareURL,
-                            subject: Text(data.name),
-                            message: Text(shareMessage)
-                        ) {
-                            Label("Share Link", systemImage: "link")
-                        }
-
-                        Button {
-                            let outcomes: [(name: String, probability: Double)] = (data.topOutcomes ?? []).compactMap { o in
-                                guard let p = o.probability else { return nil }
-                                return (o.name, p)
-                            }
-                            if let image = ShareCardRenderer.renderFuturesCard(
-                                marketName: data.name,
-                                leaderName: leader?.name ?? "",
-                                probability: leaderProbability,
-                                category: data.llmSportCategory ?? data.sportName ?? "Market",
-                                hookDescription: data.hookDescription,
-                                outcomes: outcomes
-                            ) {
-                                ShareCardRenderer.copyImageToClipboard(image)
-                            }
-                        } label: {
-                            Label("Copy Image", systemImage: "doc.on.doc")
-                        }
-
-                        #if os(iOS)
-                        Button {
-                            let outcomes: [(name: String, probability: Double)] = (data.topOutcomes ?? []).compactMap { o in
-                                guard let p = o.probability else { return nil }
-                                return (o.name, p)
-                            }
-                            if let image = ShareCardRenderer.renderFuturesCard(
-                                marketName: data.name,
-                                leaderName: leader?.name ?? "",
-                                probability: leaderProbability,
-                                category: data.llmSportCategory ?? data.sportName ?? "Market",
-                                hookDescription: data.hookDescription,
-                                outcomes: outcomes
-                            ) {
-                                ShareCardRenderer.saveImageToPhotos(image)
-                            }
-                        } label: {
-                            Label("Save to Photos", systemImage: "square.and.arrow.down")
-                        }
-                        #endif
-                    } label: {
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text(data.name),
+                        message: Text(shareMessage)
+                    ) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -220,6 +176,17 @@ struct NativeFuturesDiscoverCard: View {
                             .background(Color.secondary.opacity(0.10), in: Circle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(action: copyShareImage) {
+                            Label("Copy Image", systemImage: "doc.on.doc")
+                        }
+
+                        #if os(iOS)
+                        Button(action: saveShareImage) {
+                            Label("Save Image", systemImage: "square.and.arrow.down")
+                        }
+                        #endif
+                    }
                 }
             }
             .padding(14)
@@ -237,32 +204,12 @@ struct NativeFuturesDiscoverCard: View {
 
     @ViewBuilder
     private var heroBackground: some View {
-        if let imageUrl = data.imageUrl, let url = URL(string: imageUrl) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .overlay(
-                            LinearGradient(
-                                colors: [.black.opacity(0.08), .black.opacity(0.78)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                default:
-                    LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                }
-            }
-        } else {
-            LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
-                .overlay(
-                    Text(categoryEmoji(data.llmSportCategory))
-                        .font(.system(size: 96))
-                        .opacity(0.10)
-                )
-        }
+        LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay(
+                Text(categoryEmoji(data.llmSportCategory))
+                    .font(.system(size: 96))
+                    .opacity(0.10)
+            )
     }
 
     private func outcomeRow(_ outcome: FeedFuturesOutcome, isLeader: Bool) -> some View {
@@ -288,6 +235,35 @@ struct NativeFuturesDiscoverCard: View {
                 .font(.caption.weight(.bold).monospacedDigit())
                 .frame(width: 34, alignment: .trailing)
         }
+    }
+
+    private func renderedShareImage() -> PlatformImage? {
+        let outcomes: [(name: String, probability: Double)] = (data.topOutcomes ?? []).compactMap { outcome in
+            guard let probability = outcome.probability else { return nil }
+            return (outcome.name, probability)
+        }
+        return ShareCardRenderer.renderFuturesCard(
+            marketName: data.name,
+            leaderName: leader?.name ?? "",
+            probability: leaderProbability,
+            category: data.llmSportCategory ?? data.sportName ?? "Market",
+            hookDescription: data.hookDescription,
+            outcomes: outcomes
+        )
+    }
+
+    private func copyShareImage() {
+        if let image = renderedShareImage() {
+            ShareCardRenderer.copyImageToClipboard(image)
+        }
+    }
+
+    private func saveShareImage() {
+        #if os(iOS)
+        if let image = renderedShareImage() {
+            ShareCardRenderer.saveImageToPhotos(image)
+        }
+        #endif
     }
 
     private func categoryEmoji(_ category: String?) -> String {

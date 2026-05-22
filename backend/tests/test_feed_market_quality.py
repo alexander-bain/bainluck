@@ -375,14 +375,16 @@ class TestMarketQualityClassification:
         examples = [
             "Who will be Taylor Swift's bridesmaids?",
             "Will Taylor Swift and Travis Kelce get married in 2026?",
+            "Will Trump attend his son's wedding?",
         ]
 
         for name in examples:
-            quality = classify_market_quality(name, sport_category="entertainment")
+            category = "politics" if "Trump" in name else "entertainment"
+            quality = classify_market_quality(name, sport_category=category)
             assert quality.quality_class == "compelling", name
             assert "absurd_but_real" in quality.reasons, name
             assert quality_score_adjustment(quality) >= 20, name
-            assert editorial_archetype(name, "entertainment") == "absurd_but_real"
+            assert editorial_archetype(name, category) == "absurd_but_real"
 
     def test_sports_personnel_story_gets_extra_boost(self):
         quality = classify_market_quality(
@@ -2270,6 +2272,25 @@ class TestDiscoverFirstPageMixer:
 
         assert "Los Angeles Mayor winner?" in top50_names
 
+    def test_editorial_tail_backfill_adds_shareable_life_story(self):
+        items = [
+            self._item(i, "economics", 100, name=f"Company IPO Closing Market Cap {i}")
+            for i in range(55)
+        ]
+        items.append(
+            self._item(
+                1000,
+                "politics",
+                93,
+                name="Will Trump attend his son's wedding?",
+            )
+        )
+
+        mixed = backfill_discover_editorial_tail(items, window_size=50, preserve_top=20)
+        top50_names = [item["data"]["name"] for item in mixed[:50]]
+
+        assert "Will Trump attend his son's wedding?" in top50_names
+
     def test_editorial_tail_backfill_does_not_replace_much_stronger_cards(self):
         items = [
             self._item(i, "economics", 100, name=f"Strong macro story {i}")
@@ -2403,6 +2424,7 @@ class TestEditorialArchetypes:
             "Will the U.S. confirm that aliens exist before 2027?": "absurd_but_real",
             "Will Taylor Swift be pregnant in 2026?": "absurd_but_real",
             "Who will be Taylor Swift's bridesmaids?": "absurd_but_real",
+            "Will Trump attend his son's wedding?": "absurd_but_real",
         }
 
         for name, expected in examples.items():

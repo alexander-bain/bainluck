@@ -122,59 +122,11 @@ struct NativeEventDiscoverCard: View {
             HStack {
                 Spacer()
 
-                Menu {
-                    ShareLink(
-                        item: shareURL,
-                        subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
-                        message: Text(shareMessage)
-                    ) {
-                        Label("Share Link", systemImage: "link")
-                    }
-
-                    Button {
-                        if let homeProbability = event.currentOdds?.homeProbability,
-                           let awayProbability = event.currentOdds?.awayProbability,
-                           let image = ShareCardRenderer.renderEventCard(
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeProbability: homeProbability,
-                            awayProbability: awayProbability,
-                            sportName: event.sportName ?? event.sport ?? "Sports",
-                            homeColor: homeColor,
-                            awayColor: awayColor,
-                            status: event.status,
-                            homeScore: event.homeScore,
-                            awayScore: event.awayScore
-                           ) {
-                            ShareCardRenderer.copyImageToClipboard(image)
-                        }
-                    } label: {
-                        Label("Copy Image", systemImage: "doc.on.doc")
-                    }
-
-                    #if os(iOS)
-                    Button {
-                        if let homeProbability = event.currentOdds?.homeProbability,
-                           let awayProbability = event.currentOdds?.awayProbability,
-                           let image = ShareCardRenderer.renderEventCard(
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeProbability: homeProbability,
-                            awayProbability: awayProbability,
-                            sportName: event.sportName ?? event.sport ?? "Sports",
-                            homeColor: homeColor,
-                            awayColor: awayColor,
-                            status: event.status,
-                            homeScore: event.homeScore,
-                            awayScore: event.awayScore
-                           ) {
-                            ShareCardRenderer.saveImageToPhotos(image)
-                        }
-                    } label: {
-                        Label("Save to Photos", systemImage: "square.and.arrow.down")
-                    }
-                    #endif
-                } label: {
+                ShareLink(
+                    item: shareURL,
+                    subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
+                    message: Text(shareMessage)
+                ) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -182,6 +134,17 @@ struct NativeEventDiscoverCard: View {
                         .background(Color.secondary.opacity(0.10), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button(action: copyShareImage) {
+                        Label("Copy Image", systemImage: "doc.on.doc")
+                    }
+
+                    #if os(iOS)
+                    Button(action: saveShareImage) {
+                        Label("Save Image", systemImage: "square.and.arrow.down")
+                    }
+                    #endif
+                }
             }
         }
         .padding(14)
@@ -260,5 +223,38 @@ struct NativeEventDiscoverCard: View {
         }
         .frame(height: 8)
         .background(Color.barTrack.opacity(0.25), in: Capsule())
+    }
+
+    private func renderedShareImage() -> PlatformImage? {
+        guard let homeProbability = event.currentOdds?.homeProbability,
+              let awayProbability = event.currentOdds?.awayProbability else {
+            return nil
+        }
+        return ShareCardRenderer.renderEventCard(
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeProbability: homeProbability,
+            awayProbability: awayProbability,
+            sportName: event.sportName ?? event.sport ?? "Sports",
+            homeColor: homeColor,
+            awayColor: awayColor,
+            status: event.status,
+            homeScore: event.homeScore,
+            awayScore: event.awayScore
+        )
+    }
+
+    private func copyShareImage() {
+        if let image = renderedShareImage() {
+            ShareCardRenderer.copyImageToClipboard(image)
+        }
+    }
+
+    private func saveShareImage() {
+        #if os(iOS)
+        if let image = renderedShareImage() {
+            ShareCardRenderer.saveImageToPhotos(image)
+        }
+        #endif
     }
 }

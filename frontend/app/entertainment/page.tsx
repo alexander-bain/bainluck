@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import Link from "next/link";
 import { searchMovie, posterUrl, hasTMDBToken } from "@/lib/tmdb";
@@ -1373,6 +1374,7 @@ export default function EntertainmentPage() {
   const show = (key: FilterKey) => filter === "all" || filter === key;
 
   return (
+    <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
       {/* Page header */}
       <div className={s.pageHead}>
@@ -1454,6 +1456,7 @@ export default function EntertainmentPage() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
 
