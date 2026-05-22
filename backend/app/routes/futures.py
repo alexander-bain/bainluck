@@ -624,6 +624,7 @@ async def faceted_futures_search(
     narrative: Optional[str] = Query(None, description="Narrative tag value"),
     audience: Optional[str] = Query(None, description="Audience tag value"),
     q: Optional[str] = Query(None, description="Search within market names"),
+    sort: Optional[str] = Query(None, description="Sort order: soonest (default), newest, trending"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     db: AsyncSession = Depends(get_db),
@@ -683,14 +684,46 @@ async def faceted_futures_search(
 
     # Data
     offset_val = (page - 1) * per_page
-    data_q = (
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(*conditions)
-        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .offset(offset_val)
-        .limit(per_page)
-    )
+
+    # Sort order
+    if sort == "trending":
+        # Order by max absolute 24h movement across outcomes (desc)
+        trending_sub = (
+            select(
+                FuturesOutcome.market_id,
+                func.max(func.abs(FuturesOutcome.probability_change_24h)).label("max_move"),
+            )
+            .group_by(FuturesOutcome.market_id)
+            .subquery()
+        )
+        data_q = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .outerjoin(trending_sub, FuturesMarket.id == trending_sub.c.market_id)
+            .where(*conditions)
+            .order_by(trending_sub.c.max_move.desc().nulls_last())
+            .offset(offset_val)
+            .limit(per_page)
+        )
+    elif sort == "newest":
+        data_q = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(*conditions)
+            .order_by(FuturesMarket.updated_at.desc().nulls_last())
+            .offset(offset_val)
+            .limit(per_page)
+        )
+    else:
+        # Default: soonest resolution date
+        data_q = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(*conditions)
+            .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+            .offset(offset_val)
+            .limit(per_page)
+        )
     markets = (await db.execute(data_q)).scalars().unique().all()
 
     formatted = []
@@ -722,6 +755,8 @@ async def faceted_futures_search(
             "market_tags": market.market_tags or [],
             "top_outcomes": top3,
             "outcome_count": len(real_outcomes),
+            "image_url": market.image_url,
+            "hook_description": market.hook_description,
         })
 
     # Facet counts

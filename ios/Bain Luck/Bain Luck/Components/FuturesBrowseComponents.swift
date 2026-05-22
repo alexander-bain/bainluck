@@ -230,6 +230,14 @@ struct FuturesBrowseMarketRow: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if let hook = market.hookDescription, !hook.isEmpty {
+                    Text(hook)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let outcomes = market.topOutcomes, !outcomes.isEmpty {
                     VStack(spacing: 5) {
                         ForEach(Array(outcomes.prefix(3))) { outcome in

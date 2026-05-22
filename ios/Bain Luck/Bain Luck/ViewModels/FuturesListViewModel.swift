@@ -4,6 +4,31 @@ import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "futuresList")
 
+/// Sort options for the futures browse list.
+enum FuturesBrowseSortOption: String, CaseIterable, Identifiable {
+    case soonest = "soonest"
+    case trending = "trending"
+    case newest = "newest"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .soonest: return "Soonest"
+        case .trending: return "Trending"
+        case .newest: return "Newest"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .soonest: return "clock"
+        case .trending: return "flame"
+        case .newest: return "sparkles"
+        }
+    }
+}
+
 final class FuturesListViewModel: ObservableObject {
     @Published private(set) var markets: [FacetedFuturesMarket] = []
     @Published private(set) var facets: [String: [FacetTag]] = [:]
@@ -15,6 +40,7 @@ final class FuturesListViewModel: ObservableObject {
     @Published private(set) var loadMoreError: String?
     @Published var selectedCategory = ""
     @Published var searchText = ""
+    @Published var sortOption: FuturesBrowseSortOption = .soonest
     @Published private(set) var page = 1
     @Published private(set) var hasMore = true
 
@@ -39,6 +65,7 @@ final class FuturesListViewModel: ObservableObject {
         let generation = loadGeneration
         let category = selectedCategory
         let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sort = sortOption
 
         loading = markets.isEmpty
         loadingMore = false
@@ -49,7 +76,8 @@ final class FuturesListViewModel: ObservableObject {
             let response = try await APIClient.shared.fetchFacetedFutures(
                 tags: tags,
                 page: 1,
-                search: search.isEmpty ? nil : search
+                search: search.isEmpty ? nil : search,
+                sort: sort.rawValue
             )
             guard shouldApplyLoadResult(generation: generation, category: category, search: search) else { return }
             markets = response.markets
@@ -72,6 +100,7 @@ final class FuturesListViewModel: ObservableObject {
         let generation = loadGeneration
         let category = selectedCategory
         let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sort = sortOption
         let nextPage = page + 1
         loadingMore = true
         loadMoreError = nil
@@ -80,7 +109,8 @@ final class FuturesListViewModel: ObservableObject {
             let response = try await APIClient.shared.fetchFacetedFutures(
                 tags: tags,
                 page: nextPage,
-                search: search.isEmpty ? nil : search
+                search: search.isEmpty ? nil : search,
+                sort: sort.rawValue
             )
             guard shouldApplyLoadResult(generation: generation, category: category, search: search) else {
                 loadingMore = false
@@ -118,6 +148,11 @@ final class FuturesListViewModel: ObservableObject {
 
     @MainActor
     func onCategoryChange() {
+        Task { await load() }
+    }
+
+    @MainActor
+    func onSortChange() {
         Task { await load() }
     }
 
