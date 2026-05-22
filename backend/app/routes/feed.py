@@ -3861,9 +3861,12 @@ async def _score_futures(
         # Read blend weight (default 0.2; set to 0 to disable)
         raw_weight = await _int_redis.get("interestingness:blend_weight")
         if raw_weight is not None:
-            _interestingness_blend_weight = float(
-                raw_weight.decode() if isinstance(raw_weight, bytes) else raw_weight
-            )
+            try:
+                _interestingness_blend_weight = float(
+                    raw_weight.decode() if isinstance(raw_weight, bytes) else str(raw_weight)
+                )
+            except (ValueError, TypeError):
+                _interestingness_blend_weight = 0.2
         else:
             _interestingness_blend_weight = 0.2  # default
 

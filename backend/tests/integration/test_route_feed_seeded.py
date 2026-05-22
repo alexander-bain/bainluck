@@ -116,6 +116,9 @@ def _make_futures_row(
     row.updated_at = datetime.now(timezone.utc)
     row.image_url = None
     row.hook_description = None
+    row.hook_generated_at = None
+    row.hook_leader_at_generation = None
+    row.created_at = datetime.now(timezone.utc) - timedelta(days=2)
     row.market_metadata = {}
     row.llm_league = None
     row.llm_gender = None
