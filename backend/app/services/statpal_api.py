@@ -886,7 +886,11 @@ def _normalize_status(status: str) -> str:
     if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt",
              "q1", "q2", "q3", "q4", "ot",
              "s1", "s2", "s3", "s4", "s5", "set 1", "set 2", "set 3", "set 4", "set 5",
-             "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"):
+             "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th",
+             "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
+             "round 1", "round 2", "round 3", "round 4", "round 5", "round 6",
+             "round 7", "round 8", "round 9", "round 10", "round 11", "round 12",
+             "1st innings", "2nd innings", "3rd innings", "4th innings"):
         return "live"
     if s in ("finished", "final", "ft", "aet", "pen", "completed", "game over",
              "after over time", "after overtime", "after extra time"):
