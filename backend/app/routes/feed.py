@@ -1440,6 +1440,40 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _compute_temporal_badge(
+    *,
+    status: str | None = None,
+    resolution_date: datetime | None = None,
+    created_at: datetime | None = None,
+    now: datetime,
+) -> str | None:
+    """Compute a temporal badge for a feed card.
+
+    Returns one of "Live", "Closing Soon", "New", or None.
+    - Live events/markets get "Live"
+    - Resolution within 48 hours → "Closing Soon"
+    - Market created within last 24 hours → "New"
+    - Resolution > 30 days away → None (and frontend should hide the date)
+    """
+    normalized_status = (status or "").lower()
+    if normalized_status in ("live", "in_progress"):
+        return "Live"
+
+    res_dt = _utc(resolution_date)
+    if res_dt:
+        hours_until = (res_dt - now).total_seconds() / 3600
+        if 0 < hours_until <= 48:
+            return "Closing Soon"
+
+    created_dt = _utc(created_at)
+    if created_dt:
+        hours_since_created = (now - created_dt).total_seconds() / 3600
+        if hours_since_created <= 24:
+            return "New"
+
+    return None
+
+
 def _is_sports_market_category(sport_category: str | None) -> bool:
     category = (sport_category or "").lower()
     return category in DISCOVER_SPORTS_CATEGORIES or category in {
@@ -3432,6 +3466,10 @@ async def _score_events(
             inline_tags=inline_tags,
             ended_at=ended_at,
         )
+        event_data["temporal_badge"] = _compute_temporal_badge(
+            status=event.status,
+            now=now,
+        )
 
         sort_time = event.commence_time.timestamp()
         if event.status == "live":
@@ -3555,6 +3593,7 @@ async def _score_futures(
             FuturesMarket.commence_time,
             FuturesMarket.resolution_date,
             FuturesMarket.status,
+            FuturesMarket.created_at,
             FuturesMarket.llm_league,
             FuturesMarket.llm_gender,
             FuturesMarket.llm_level,
@@ -4380,6 +4419,12 @@ async def _score_futures(
             "group_type": market.group_type,
             "image_url": market.image_url,
             "hook_description": effective_hook,
+            "temporal_badge": _compute_temporal_badge(
+                status=market.status,
+                resolution_date=market.resolution_date,
+                created_at=market.created_at,
+                now=now,
+            ),
         }
         if discover_llm_metadata:
             futures_data["discover_llm"] = {

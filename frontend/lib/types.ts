@@ -814,6 +814,7 @@ export interface FeedEventData {
     label: string;
   };
   event_tags?: string[];
+  temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   /** ESPN live game data */
   espn?: {
     game_clock?: string;
@@ -846,6 +847,7 @@ export interface FeedFuturesData {
   canonical_market_key: string | null;
   image_url?: string | null;
   hook_description?: string | null;
+  temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   // Resolved market metadata (leader ≥97% with interesting journey)
   resolved?: boolean;
   winner?: string;
