@@ -1291,6 +1291,8 @@ export interface ChampionshipGridColumn {
   sequential: boolean;
   /** Primary market ID for this column (for evolution chart) */
   market_id?: number | null;
+  /** All market IDs for this column (cross-source aggregation) */
+  market_ids?: number[];
 }
 
 export interface ChampionshipGridCellSource {

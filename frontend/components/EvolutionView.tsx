@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { EvolutionChart } from "@/components/EvolutionChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
-import { fetchFuturesHistory } from "@/lib/api";
+import { fetchFuturesHistory, fetchMultiMarketHistory } from "@/lib/api";
 
 type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
 
@@ -12,6 +12,8 @@ export interface PositionOption {
   key: string;   // "win", "top_5", "top_10", "top_20"
   label: string;  // "Win", "Top 5", "Top 10", "Top 20"
   marketId: number;
+  /** All market IDs for this stage (cross-source aggregation) */
+  marketIds?: number[];
 }
 
 interface EvolutionViewProps {
@@ -126,9 +128,17 @@ export function EvolutionView({
       ? `tournament-${tournamentFetchHours}`
       : "week";
 
+  // Use multi-market aggregation when multiple source market IDs are available.
+  // Cache key includes all IDs so switching positions invalidates correctly.
+  const cacheKey = activeMarketIds.length > 1
+    ? `futures-evolution-multi-${activeMarketIds.join(",")}-${fetchKey}`
+    : `futures-evolution-${activeMarketId}-${fetchKey}`;
+
   const { data, error, isLoading } = useSWR(
-    `futures-evolution-${activeMarketId}-${fetchKey}`,
-    () => fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
+    cacheKey,
+    () => activeMarketIds.length > 1
+      ? fetchMultiMarketHistory(activeMarketIds, fetchHours, 50)
+      : fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
     { refreshInterval: 60_000, keepPreviousData: true }
   );
 

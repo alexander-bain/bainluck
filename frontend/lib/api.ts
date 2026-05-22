@@ -579,6 +579,28 @@ export async function fetchFuturesHistory(
 }
 
 /**
+ * Fetch aggregated odds history across multiple markets (cross-source).
+ * Falls back to single-market history if only one ID is provided.
+ */
+export async function fetchMultiMarketHistory(
+  marketIds: number[],
+  hours = 168,
+  topN?: number
+): Promise<FuturesHistoryResponse> {
+  if (marketIds.length === 1) {
+    return fetchFuturesHistory(marketIds[0], hours, undefined, topN);
+  }
+  const params = new URLSearchParams();
+  params.set("market_ids", marketIds.join(","));
+  params.set("hours", hours.toString());
+  if (topN) params.set("top_n", topN.toString());
+
+  return apiFetch<FuturesHistoryResponse>(
+    `/api/futures/multi-history?${params.toString()}`
+  );
+}
+
+/**
  * Fetch futures movers (biggest probability changes)
  */
 export async function fetchFuturesMovers(

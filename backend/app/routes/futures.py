@@ -1604,6 +1604,171 @@ async def grouped_feed(
     }
 
 
+@router.get("/multi-history")
+async def get_multi_market_history(
+    market_ids: str = Query(..., description="Comma-separated market IDs to aggregate"),
+    hours: int = Query(168, description="Hours of history (default 7 days)"),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get aggregated historical odds across multiple markets (cross-source).
+
+    Merges snapshots from multiple market IDs (e.g., Kalshi + Polymarket + Odds API
+    for the same stage) into a single timeline. Outcomes are matched across markets
+    by team_id or normalized name, and probabilities are averaged per time bucket.
+
+    Returns the same shape as the single-market history endpoint for drop-in compatibility.
+    """
+    # Parse market IDs
+    try:
+        parsed_ids = [int(x.strip()) for x in market_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="market_ids must be comma-separated integers")
+
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="At least one market_id is required")
+
+    # Single market: delegate to the standard endpoint logic
+    if len(parsed_ids) == 1:
+        return await get_futures_history(parsed_ids[0], hours=hours, top_n=top_n, db=db)
+
+    # Load all markets with their outcomes
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.id.in_(parsed_ids))
+    )
+    markets = list(result.scalars().unique().all())
+
+    if not markets:
+        raise HTTPException(status_code=404, detail="No markets found")
+
+    # Use the first market for metadata
+    primary_market = markets[0]
+
+    # Merge outcomes across markets by team_id or normalized name
+    # merge_key -> {name, outcome_ids: [int], current_probabilities: [float]}
+    merged_outcomes: dict[str, dict] = {}
+    for market in markets:
+        for outcome in market.outcomes:
+            merge_key = _progression_merge_key(outcome)
+            if merge_key not in merged_outcomes:
+                merged_outcomes[merge_key] = {
+                    "name": outcome.name,
+                    "outcome_ids": [],
+                    "current_probabilities": [],
+                    "changes_24h": [],
+                }
+            entry = merged_outcomes[merge_key]
+            entry["outcome_ids"].append(outcome.id)
+            if outcome.current_probability is not None:
+                entry["current_probabilities"].append(float(outcome.current_probability))
+            if outcome.probability_change_24h is not None:
+                entry["changes_24h"].append(float(outcome.probability_change_24h))
+
+    # Sort by average current probability to pick top N
+    # Track merge_key alongside each entry for later lookup
+    sorted_merged: list[tuple[str, dict]] = sorted(
+        merged_outcomes.items(),
+        key=lambda kv: mean(kv[1]["current_probabilities"]) if kv[1]["current_probabilities"] else 0,
+        reverse=True,
+    )
+
+    capped_n = min(top_n, 50)
+    top_entries = sorted_merged[:capped_n]
+
+    all_outcome_ids = []
+    for _, entry in sorted_merged:
+        all_outcome_ids.extend(entry["outcome_ids"])
+
+    if not all_outcome_ids:
+        return {
+            "market_id": primary_market.id,
+            "market_name": primary_market.name,
+            "hours": hours,
+            "outcomes": [],
+            "round_boundaries": None,
+            "leaderboard": None,
+        }
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Fetch all snapshots
+    snapshot_query = (
+        select(FuturesOddsSnapshot)
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+            FuturesOddsSnapshot.captured_at >= cutoff,
+        )
+        .order_by(FuturesOddsSnapshot.captured_at)
+    )
+    snap_result = await db.execute(snapshot_query)
+    snapshots = snap_result.scalars().all()
+
+    # Build outcome_id -> merge_key lookup
+    oid_to_merge_key: dict[int, str] = {}
+    for mk, entry in merged_outcomes.items():
+        for oid in entry["outcome_ids"]:
+            oid_to_merge_key[oid] = mk
+
+    # Group snapshots: merge_key -> captured_at -> [probabilities]
+    # This naturally averages across sources since different outcome_ids
+    # from different source markets map to the same merge_key
+    merged_time_groups: dict[str, dict[datetime, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    for snap in snapshots:
+        if snap.probability is not None:
+            mk = oid_to_merge_key.get(snap.outcome_id)
+            if mk is None:
+                continue
+            merged_time_groups[mk][snap.captured_at].append(float(snap.probability))
+
+    # Build aggregated history per merged outcome
+    outcome_history_list = []
+
+    for mk, entry in top_entries:
+        synthetic_id = entry["outcome_ids"][0]
+        time_groups = merged_time_groups.get(mk, {})
+
+        history = []
+        for captured_at in sorted(time_groups.keys()):
+            probs = time_groups[captured_at]
+            avg_prob = mean(probs)
+            history.append({
+                "timestamp": captured_at.isoformat(),
+                "probability": avg_prob,
+                "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
+                "bookmaker": "consensus",
+            })
+
+        elim = _detect_elimination(history)
+        outcome_history_list.append({
+            "outcome_id": synthetic_id,
+            "name": entry["name"],
+            "history": history,
+            "eliminated": elim["eliminated"],
+            "eliminated_at": elim["eliminated_at"],
+        })
+
+    # Round boundaries from primary market
+    explicit_boundaries = _derive_round_boundaries(primary_market.market_metadata)
+    round_boundaries = _detect_round_boundaries_from_eliminations(
+        {oh["outcome_id"]: oh for oh in outcome_history_list}, explicit_boundaries
+    )
+
+    return {
+        "market_id": primary_market.id,
+        "market_name": primary_market.name,
+        "hours": hours,
+        "outcomes": outcome_history_list,
+        "round_boundaries": round_boundaries,
+        "leaderboard": (primary_market.market_metadata or {}).get("leaderboard"),
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,
