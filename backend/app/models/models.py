@@ -2,11 +2,12 @@
 SQLAlchemy database models.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -18,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.services.database import Base
@@ -1415,4 +1416,43 @@ class DiscoverPairwiseLabel(Base):
     )
     card_b_market: Mapped["FuturesMarket"] = relationship(
         foreign_keys=[card_b_market_id]
+    )
+
+
+class RankingJudgment(Base):
+    """Human judgment on a feed card from the Discover admin review.
+
+    Labels (love/fine/bad/kill) with reason tags and optional pairwise
+    comparisons. Captures the scoring context at review time so judgments
+    can be used for scorer regression tests.
+    """
+
+    __tablename__ = "ranking_judgments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date, server_default=func.current_date())
+    surface: Mapped[str] = mapped_column(String(50), default="discover")
+    rank_seen: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    item_type: Mapped[str] = mapped_column(String(20), default="futures")
+    market_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("futures_markets.id"), nullable=True
+    )
+    event_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("events.id"), nullable=True
+    )
+    market_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    label: Mapped[str] = mapped_column(String(10), nullable=False)
+    reason_tags: Mapped[Optional[list]] = mapped_column(ARRAY(String), default=[])
+    better_than: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    worse_than: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    score_at_review: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    category_at_review: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    archetype_at_review: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    quality_class_at_review: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    headline_at_review: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    feed_request_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(100), default="alex")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
