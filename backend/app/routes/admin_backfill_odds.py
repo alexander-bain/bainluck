@@ -107,7 +107,7 @@ async def backfill_historical_odds(
     secret: str = Query(...),
     sport: str = Query("baseball_mlb"),
     days_back: int = Query(30),
-    max_events: int = Query(20),
+    max_events: int = Query(500),
     interval_minutes: int = Query(10),
 ):
     """Backfill sparse Tier 1 events from The Odds API historical endpoint.
