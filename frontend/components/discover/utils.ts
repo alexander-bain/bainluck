@@ -5,11 +5,12 @@ export function resolvesLabel(d: string | null | undefined): string {
   const date = new Date(d);
   const diffH = (date.getTime() - Date.now()) / 36e5;
   if (diffH < 0) return "Resolved";
-  if (diffH < 3) return `Resolves in ${Math.round(diffH * 60)}m`;
-  if (diffH < 24) return `Resolves in ${Math.round(diffH)}h`;
-  if (diffH < 48) return "Resolves tomorrow";
-  if (diffH < 168) return `Resolves in ${Math.round(diffH / 24)} days`;
-  return `Resolves ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  if (diffH < 1) return `Closes in ${Math.max(1, Math.round(diffH * 60))}m`;
+  if (diffH < 24) return `Closes in ${Math.round(diffH)}h`;
+  if (diffH < 48) return "Closes tomorrow";
+  if (diffH < 168) return `Closes ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  // Beyond 7 days: don't show on the card (available in detail view)
+  return "";
 }
 
 export function isTrending(item: FeedItem): boolean {

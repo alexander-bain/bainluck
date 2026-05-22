@@ -6,7 +6,7 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, ActionBar, MovementBadge, ExpandableContextText } from "./shared";
+import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText } from "./shared";
 import type { CardActionCallbacks } from "./types";
 
 interface FuturesCardProps extends CardActionCallbacks {
@@ -53,7 +53,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <div className="text-white/70 text-sm mt-1 font-medium max-w-[85%] text-center line-clamp-2">{leader.name}</div>
             <div className="mt-2 flex items-center gap-2">
               <MovementBadge m={leader.movement} />
-              {resolveText && !outcomesAreDate && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
+              <TemporalBadge badge={data.temporal_badge} />
+              {resolveText && !outcomesAreDate && !data.temporal_badge && <span className="text-white/50 text-[10px] font-medium">{resolveText}</span>}
             </div>
           </>
         )}

@@ -114,6 +114,30 @@ export function TrendBadge() {
   );
 }
 
+// ── Temporal Badge ──
+
+const TEMPORAL_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
+  Live: { bg: "bg-red-500/90", text: "text-white" },
+  "Closing Soon": { bg: "bg-amber-500/90", text: "text-white" },
+  New: { bg: "bg-emerald-500/90", text: "text-white" },
+};
+
+export function TemporalBadge({ badge }: { badge: string | null | undefined }) {
+  if (!badge) return null;
+  const style = TEMPORAL_BADGE_STYLES[badge];
+  if (!style) return null;
+  return (
+    <span
+      className={[style.bg, style.text, "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"].join(" ")}
+    >
+      {badge === "Live" && (
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-1 align-middle" />
+      )}
+      {badge}
+    </span>
+  );
+}
+
 // ── Action Bar ──
 
 export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare }: ActionBarProps) {
