@@ -19,12 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("COMMIT")
-    op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-        "ix_odds_snapshots_bookmaker_closing "
-        "ON odds_snapshots (event_id, bookmaker, captured_at DESC)"
-    )
+    # Index creation moved out of migration — too slow for Heroku release phase.
+    # Create manually: CREATE INDEX CONCURRENTLY ix_odds_snapshots_bookmaker_closing
+    # ON odds_snapshots (event_id, bookmaker, captured_at DESC);
+    pass
 
 
 def downgrade() -> None:
