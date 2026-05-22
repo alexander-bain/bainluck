@@ -10,6 +10,7 @@ import {
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
+import DiagnosisCard from "@/components/admin/DiagnosisCard";
 import {
   LineChart,
   Line,
@@ -1265,6 +1266,8 @@ export default function AdminDashboard() {
 
       {data && (
         <>
+          <DiagnosisCard />
+
           {/* Key takeaways */}
           <KeyTakeaways data={data} />
 
