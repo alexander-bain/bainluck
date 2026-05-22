@@ -12,6 +12,7 @@ from app.utils.cross_source_matching import (
     GARBAGE_OUTCOME_RE,
     clean_outcomes,
     find_cross_source_markets,
+    group_markets_by_group_id,
     is_resolved,
     normalize_question,
     source,
@@ -440,3 +441,213 @@ class TestFindCrossSourceMarkets:
         result = find_cross_source_markets(markets, market_row_fn=row_fn_with_theme)
         assert len(result) == 1
         assert result[0]["category"] == "weather"
+
+
+# ---------------------------------------------------------------------------
+# group_markets_by_group_id
+# ---------------------------------------------------------------------------
+
+
+def _grouped_market(
+    *,
+    market_id: int = 1,
+    name: str = "Will it happen?",
+    group_id: str | None = None,
+    outcomes: list | None = None,
+    volume_24h: float | None = None,
+) -> SimpleNamespace:
+    """Create a market-like object with group_id support."""
+    return SimpleNamespace(
+        id=market_id,
+        name=name,
+        group_id=group_id,
+        source="polymarket",
+        outcomes=outcomes or [_outcome("Yes", 0.6), _outcome("No", 0.4)],
+        volume_24h=volume_24h,
+    )
+
+
+class TestGroupMarketsByGroupId:
+    def test_null_group_id_passes_through(self):
+        """Markets with no group_id should pass through unchanged."""
+        markets = [
+            _grouped_market(market_id=1, group_id=None),
+            _grouped_market(market_id=2, group_id=None),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 2
+
+    def test_single_member_group_passes_through(self):
+        """A group with only one member should pass through unchanged."""
+        markets = [
+            _grouped_market(market_id=1, group_id="g1"),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+
+    def test_group_collapses_to_one_representative(self):
+        """Multiple markets with the same group_id should collapse to one."""
+        markets = [
+            _grouped_market(
+                market_id=1,
+                name="Will A win Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Yes", 0.3), _outcome("No", 0.7)],
+            ),
+            _grouped_market(
+                market_id=2,
+                name="Will B win Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)],
+            ),
+            _grouped_market(
+                market_id=3,
+                name="Will C win Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Yes", 0.2), _outcome("No", 0.8)],
+            ),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+
+    def test_group_merges_unique_outcomes(self):
+        """The representative should have merged unique outcomes from all siblings."""
+        markets = [
+            _grouped_market(
+                market_id=1,
+                name="Who wins Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Movie A", 0.3)],
+            ),
+            _grouped_market(
+                market_id=2,
+                name="Who wins Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Movie B", 0.5)],
+            ),
+            _grouped_market(
+                market_id=3,
+                name="Who wins Best Picture?",
+                group_id="polymarket:123",
+                outcomes=[_outcome("Movie C", 0.2)],
+            ),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+        outcome_names = {o.name for o in result[0].outcomes}
+        assert outcome_names == {"Movie A", "Movie B", "Movie C"}
+
+    def test_duplicate_outcome_names_not_merged(self):
+        """Outcomes with the same name (case-insensitive) should not be duplicated."""
+        markets = [
+            _grouped_market(
+                market_id=1,
+                name="Q1",
+                group_id="g1",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
+            _grouped_market(
+                market_id=2,
+                name="Q2",
+                group_id="g1",
+                outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)],
+            ),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+        # Both markets have "Yes" and "No" — should not duplicate
+        outcome_names = [o.name for o in result[0].outcomes]
+        assert outcome_names.count("Yes") == 1
+        assert outcome_names.count("No") == 1
+
+    def test_representative_has_most_outcomes(self):
+        """The market with the most outcomes should be the representative."""
+        markets = [
+            _grouped_market(
+                market_id=1,
+                name="Small market",
+                group_id="g1",
+                outcomes=[_outcome("A", 0.5)],
+            ),
+            _grouped_market(
+                market_id=2,
+                name="Big market",
+                group_id="g1",
+                outcomes=[_outcome("X", 0.3), _outcome("Y", 0.4), _outcome("Z", 0.3)],
+            ),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+        assert result[0].id == 2  # market with most outcomes is representative
+
+    def test_volume_tiebreaker(self):
+        """When outcome counts are equal, higher volume_24h wins."""
+        markets = [
+            _grouped_market(
+                market_id=1,
+                name="Low volume",
+                group_id="g1",
+                outcomes=[_outcome("Yes", 0.5)],
+                volume_24h=100,
+            ),
+            _grouped_market(
+                market_id=2,
+                name="High volume",
+                group_id="g1",
+                outcomes=[_outcome("Yes", 0.6)],
+                volume_24h=5000,
+            ),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 1
+        assert result[0].id == 2
+
+    def test_mixed_grouped_and_ungrouped(self):
+        """Ungrouped and grouped markets should both appear in output."""
+        markets = [
+            _grouped_market(market_id=1, group_id=None),
+            _grouped_market(market_id=2, group_id="g1"),
+            _grouped_market(market_id=3, group_id="g1"),
+            _grouped_market(market_id=4, group_id=None),
+        ]
+        result = group_markets_by_group_id(markets)
+        # 2 ungrouped + 1 collapsed group = 3
+        assert len(result) == 3
+        result_ids = {m.id for m in result}
+        assert 1 in result_ids
+        assert 4 in result_ids
+
+    def test_multiple_distinct_groups(self):
+        """Different group_ids should create separate groups."""
+        markets = [
+            _grouped_market(market_id=1, group_id="g1"),
+            _grouped_market(market_id=2, group_id="g1"),
+            _grouped_market(market_id=3, group_id="g2"),
+            _grouped_market(market_id=4, group_id="g2"),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 2
+
+    def test_empty_input(self):
+        """Empty input should return empty output."""
+        result = group_markets_by_group_id([])
+        assert result == []
+
+    def test_does_not_mutate_input_list(self):
+        """The original list should not be modified."""
+        markets = [
+            _grouped_market(market_id=1, group_id="g1"),
+            _grouped_market(market_id=2, group_id="g1"),
+        ]
+        original_len = len(markets)
+        group_markets_by_group_id(markets)
+        assert len(markets) == original_len
+
+    def test_objects_without_group_id_attribute(self):
+        """Objects without a group_id attribute should be treated as ungrouped."""
+        markets = [
+            SimpleNamespace(id=1, name="No group_id attr", outcomes=[], source="x"),
+            SimpleNamespace(id=2, name="Also no group_id", outcomes=[], source="y"),
+        ]
+        result = group_markets_by_group_id(markets)
+        assert len(result) == 2

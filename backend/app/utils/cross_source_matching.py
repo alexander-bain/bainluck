@@ -3,6 +3,10 @@
 Extracts the common pattern of finding markets that exist on both Kalshi and
 Polymarket, then ranking by probability disagreement.  Used by politics.py,
 entertainment.py, and economics.py.
+
+Also provides ``group_markets_by_group_id`` for collapsing Polymarket
+sub-markets that share a ``group_id`` into a single representative market
+with merged outcomes — used by all four category pages.
 """
 
 import re
@@ -237,3 +241,80 @@ def find_cross_source_markets(
 
     matches.sort(key=lambda x: -x["delta"])
     return matches[:max_results]
+
+
+# ---------------------------------------------------------------------------
+# Group-ID market collapsing for category pages
+# ---------------------------------------------------------------------------
+
+
+def group_markets_by_group_id(
+    markets: Sequence[FuturesMarket],
+) -> list[FuturesMarket]:
+    """Collapse markets sharing a ``group_id`` into a single representative.
+
+    Polymarket decomposes multi-outcome questions (e.g. "Who wins Best
+    Picture?") into N independent binary sub-markets, each with its own
+    ``FuturesMarket`` row but the same ``group_id``.  On category pages this
+    causes N duplicate rows for what the user perceives as one question.
+
+    This helper groups by ``group_id``, picks the representative market
+    (most outcomes, then highest volume), and **merges** the unique outcomes
+    from all sibling markets onto the representative so it carries the full
+    outcome set.
+
+    Markets with ``group_id IS NULL`` pass through unchanged.
+
+    Returns a new list — the input is not mutated.
+    """
+    ungrouped: list[FuturesMarket] = []
+    by_group: dict[str, list[FuturesMarket]] = defaultdict(list)
+
+    for m in markets:
+        gid = getattr(m, "group_id", None)
+        if gid is None:
+            ungrouped.append(m)
+        else:
+            by_group[gid].append(m)
+
+    result: list[FuturesMarket] = list(ungrouped)
+
+    for _gid, members in by_group.items():
+        if len(members) == 1:
+            result.append(members[0])
+            continue
+
+        # Pick representative: most outcomes first, then highest volume_24h
+        members.sort(
+            key=lambda m: (
+                len(getattr(m, "outcomes", None) or []),
+                getattr(m, "volume_24h", 0) or 0,
+            ),
+            reverse=True,
+        )
+        representative = members[0]
+
+        rep_outcomes = getattr(representative, "outcomes", None) or []
+        # Collect outcome names already on the representative
+        existing_names: set[str] = {
+            (o.name or "").lower().strip() for o in rep_outcomes
+        }
+
+        # Merge unique outcomes from sibling markets
+        merged_outcomes = list(rep_outcomes)
+        for sibling in members[1:]:
+            for o in getattr(sibling, "outcomes", None) or []:
+                name_key = (o.name or "").lower().strip()
+                if name_key and name_key not in existing_names:
+                    merged_outcomes.append(o)
+                    existing_names.add(name_key)
+
+        # Attach merged outcomes.  We mutate the relationship list in-place
+        # because SQLAlchemy lazy-loaded lists support item assignment.
+        # This is safe because we are in a read-only request context and the
+        # session will not be flushed/committed.
+        representative.outcomes = merged_outcomes  # type: ignore[assignment]
+
+        result.append(representative)
+
+    return result

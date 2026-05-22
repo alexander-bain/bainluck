@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
+from app.utils.cross_source_matching import group_markets_by_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,8 @@ async def get_cross_source(db: AsyncSession = Depends(get_db)):
     """Return weather markets that appear on both Kalshi and Polymarket."""
     result = await db.execute(_open_weather_query())
     all_markets: list[FuturesMarket] = list(result.scalars().unique().all())
+    # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
+    all_markets = group_markets_by_group_id(all_markets)
     return _find_cross_source(all_markets)
 
 
@@ -403,6 +406,9 @@ async def get_featured(db: AsyncSession = Depends(get_db)):
     query = _open_weather_query()
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
+
+    # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
+    markets = group_markets_by_group_id(markets)
 
     # Score markets for "featured-ness":
     # - has outcomes
@@ -694,6 +700,9 @@ async def get_events(db: AsyncSession = Depends(get_db)):
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
 
+    # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
+    markets = group_markets_by_group_id(markets)
+
     groups: dict[str, list] = {
         "hurricane": [],
         "earthquake": [],
@@ -757,6 +766,9 @@ async def get_climate(db: AsyncSession = Depends(get_db)):
     )
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
+
+    # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
+    markets = group_markets_by_group_id(markets)
 
     _EXCLUDE_RE = re.compile(
         r"\b(?:Ifo|temperature|rain |snow |daily"
@@ -827,6 +839,9 @@ async def get_wildcards(db: AsyncSession = Depends(get_db)):
     )
     result = await db.execute(query)
     markets: list[FuturesMarket] = list(result.scalars().all())
+
+    # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
+    markets = group_markets_by_group_id(markets)
 
     items = []
     for m in markets:
