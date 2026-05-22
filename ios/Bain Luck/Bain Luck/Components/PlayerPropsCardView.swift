@@ -300,9 +300,11 @@ struct PlayerPropsCardView: View {
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
                 Text("chance of hitting")
                     .font(.system(size: 8))
                     .foregroundStyle(.quaternary)
+                    .lineLimit(1)
             }
             ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
                 rungRow(rung, card: card, statType: group.type)
@@ -320,7 +322,10 @@ struct PlayerPropsCardView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(showActual && isHit ? card.color : .secondary)
                 .fontWeight(showActual && isHit ? .bold : .regular)
-                .frame(width: 22, alignment: .trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 28, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
 
             GeometryReader { geo in
                 Capsule()
@@ -346,7 +351,10 @@ struct PlayerPropsCardView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .frame(width: 28, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
