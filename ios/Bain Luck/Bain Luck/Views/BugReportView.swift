@@ -19,6 +19,7 @@ struct BugReportView: View {
     @State private var submitted = false
     @State private var submitError: String? = nil
     @State private var showErrorAlert = false
+    @State private var savedLocally = false
 
     #if os(iOS)
     @State private var canvasView = PKCanvasView()
@@ -168,7 +169,18 @@ struct BugReportView: View {
                         .padding()
                     }
 
-                    if let error = submitError {
+                    if savedLocally {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.down.doc.fill")
+                                .foregroundStyle(.blue)
+                            Text("Saved locally. We'll send it automatically next time you open a bug report.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                    }
+
+                    if let error = submitError, !savedLocally {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
@@ -195,93 +207,243 @@ struct BugReportView: View {
                         ProgressView()
                     } else {
                         Button("Submit") { submitReport() }
-                            .disabled(submitted)
+                            .disabled(submitted || savedLocally)
                             .fontWeight(.semibold)
                     }
                 }
             }
             .alert("Couldn't Submit", isPresented: $showErrorAlert) {
                 Button("Try Again") { submitReport() }
+                Button("Save for Later") { saveReportLocally() }
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text(submitError ?? "Check your connection and try again.")
             }
+            .task { await retryPendingDrafts() }
         }
     }
+
+    /// Maximum base64 screenshot size accepted by the backend (~1.5MB decoded).
+    private static let maxScreenshotBase64Length = 2_000_000
 
     private func submitReport() {
         submitting = true
         Task {
             do {
-                let imageData = flattenedScreenshot()
-                let base64 = imageData.map { $0.base64EncodedString() }
-
-                let tabNames = ["Feed", "Discover", "Leagues", "Search", "My Stuff"]
-                let tabName = navCoordinator.selectedTab.rawValue < tabNames.count
-                    ? tabNames[navCoordinator.selectedTab.rawValue]
-                    : "Tab \(navCoordinator.selectedTab.rawValue)"
-
-                var currentPage = tabName
-                if let route = navCoordinator.pendingRoute {
-                    switch route {
-                    case .eventDetail(let id): currentPage = "Event Detail (id: \(id))"
-                    case .futuresDetail(let id): currentPage = "Futures Detail (id: \(id))"
-                    case .leagueGrid(let slug): currentPage = "League Grid (\(slug))"
-                    case .sportCategory(let key, _): currentPage = "Sport Category (\(key))"
-                    case .teamDetail(let slug): currentPage = "Team Detail (\(slug))"
-                    case .golfCategory: currentPage = "Golf"
-                    case .golfLeaderboard: currentPage = "Golf Leaderboard"
-                    case .golfTournament(_, let name): currentPage = "Golf: \(name)"
-                    case .preferences: currentPage = "Preferences"
-                    case .futuresList: currentPage = "Futures Browser"
-                    case .predictionStats: currentPage = "Prediction Stats"
-                    case .weather: currentPage = "Weather"
-                    case .economics: currentPage = "Economics"
-                    case .politics: currentPage = "Politics"
-                    case .entertainment: currentPage = "Entertainment"
-                    case .about: currentPage = "About"
-                    case .dailyChallenge: currentPage = "Daily Challenge"
-                    case .friendChallenge(let code): currentPage = "Challenge (\(code))"
-                    case .eventModels(let id): currentPage = "Event Models (\(id))"
-                    case .calibration: currentPage = "Calibration"
-                    }
-                }
-
-                let networkType = await currentNetworkType()
-                let userName = authManager.user?.displayName ?? authManager.user.map { "User \($0.id)" } ?? "anonymous"
-
-                var appState: [String: String] = [
-                    "current_page": currentPage,
-                    "current_tab": tabName,
-                    "user_name": userName,
-                    "user_id": authManager.user.map { "\($0.id)" } ?? "anonymous",
-                    "network": networkType,
-                    "platform": platformString(),
-                    "device_model": deviceModel(),
-                    "os_version": osVersion(),
-                    "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
-                    "live_game_count": "\(navCoordinator.liveGameCount)",
-                    "screen_size": screenSize(),
-                    "timestamp": ISO8601DateFormatter().string(from: Date()),
-                ]
-                appState.merge(NativeDiscoverDebugState.appStateFields()) { _, new in new }
-
-                let submission = BugReportSubmission(
-                    description: description,
-                    screenshotBase64: base64,
-                    appState: appState,
-                    notifyOnFix: notifyOnFix
-                )
-                _ = try await APIClient.shared.submitBugReport(submission)
+                let submission = await buildSubmission()
+                try await submitWithRetry(submission, maxRetries: 2)
                 submitError = nil
                 submitted = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
             } catch {
-                submitError = "Couldn't submit. Try removing the screenshot or check your connection."
+                let message = userFacingErrorMessage(for: error)
+                submitError = message
                 showErrorAlert = true
             }
             submitting = false
         }
+    }
+
+    /// Build the submission payload from the current view state.
+    private func buildSubmission() async -> BugReportSubmission {
+        let base64 = compressedScreenshotBase64()
+
+        let tabNames = ["Feed", "Discover", "Leagues", "Search", "My Stuff"]
+        let tabName = navCoordinator.selectedTab.rawValue < tabNames.count
+            ? tabNames[navCoordinator.selectedTab.rawValue]
+            : "Tab \(navCoordinator.selectedTab.rawValue)"
+
+        var currentPage = tabName
+        if let route = navCoordinator.pendingRoute {
+            switch route {
+            case .eventDetail(let id): currentPage = "Event Detail (id: \(id))"
+            case .futuresDetail(let id): currentPage = "Futures Detail (id: \(id))"
+            case .leagueGrid(let slug): currentPage = "League Grid (\(slug))"
+            case .sportCategory(let key, _): currentPage = "Sport Category (\(key))"
+            case .teamDetail(let slug): currentPage = "Team Detail (\(slug))"
+            case .golfCategory: currentPage = "Golf"
+            case .golfLeaderboard: currentPage = "Golf Leaderboard"
+            case .golfTournament(_, let name): currentPage = "Golf: \(name)"
+            case .preferences: currentPage = "Preferences"
+            case .futuresList: currentPage = "Futures Browser"
+            case .predictionStats: currentPage = "Prediction Stats"
+            case .weather: currentPage = "Weather"
+            case .economics: currentPage = "Economics"
+            case .politics: currentPage = "Politics"
+            case .entertainment: currentPage = "Entertainment"
+            case .about: currentPage = "About"
+            case .dailyChallenge: currentPage = "Daily Challenge"
+            case .friendChallenge(let code): currentPage = "Challenge (\(code))"
+            case .eventModels(let id): currentPage = "Event Models (\(id))"
+            case .calibration: currentPage = "Calibration"
+            }
+        }
+
+        let networkType = await currentNetworkType()
+        let userName = authManager.user?.displayName ?? authManager.user.map { "User \($0.id)" } ?? "anonymous"
+
+        var appState: [String: String] = [
+            "current_page": currentPage,
+            "current_tab": tabName,
+            "user_name": userName,
+            "user_id": authManager.user.map { "\($0.id)" } ?? "anonymous",
+            "network": networkType,
+            "platform": platformString(),
+            "device_model": deviceModel(),
+            "os_version": osVersion(),
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
+            "live_game_count": "\(navCoordinator.liveGameCount)",
+            "screen_size": screenSize(),
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+        ]
+        appState.merge(NativeDiscoverDebugState.appStateFields()) { _, new in new }
+
+        return BugReportSubmission(
+            description: description,
+            screenshotBase64: base64,
+            appState: appState,
+            notifyOnFix: notifyOnFix
+        )
+    }
+
+    /// Compress the screenshot to fit within the backend's 2MB base64 limit.
+    /// Tries progressively lower JPEG quality, then scales down if needed.
+    private func compressedScreenshotBase64() -> String? {
+        guard let imageData = flattenedScreenshot() else { return nil }
+
+        // Already small enough at default quality
+        let base64 = imageData.base64EncodedString()
+        if base64.count <= Self.maxScreenshotBase64Length {
+            return base64
+        }
+
+        #if os(iOS)
+        guard let uiImage = UIImage(data: imageData) else { return base64 }
+
+        // Try lower JPEG quality levels
+        for quality in [0.5, 0.3, 0.15] as [CGFloat] {
+            if let compressed = uiImage.jpegData(compressionQuality: quality) {
+                let b64 = compressed.base64EncodedString()
+                if b64.count <= Self.maxScreenshotBase64Length {
+                    return b64
+                }
+            }
+        }
+
+        // Scale down the image as a last resort (50% dimensions)
+        let scaledSize = CGSize(width: uiImage.size.width * 0.5, height: uiImage.size.height * 0.5)
+        let renderer = UIGraphicsImageRenderer(size: scaledSize)
+        let scaled = renderer.image { _ in
+            uiImage.draw(in: CGRect(origin: .zero, size: scaledSize))
+        }
+        if let compressed = scaled.jpegData(compressionQuality: 0.3) {
+            let b64 = compressed.base64EncodedString()
+            if b64.count <= Self.maxScreenshotBase64Length {
+                return b64
+            }
+        }
+
+        // Absolute fallback: drop the screenshot rather than fail submission
+        return nil
+        #else
+        // macOS: try re-encoding at lower quality
+        guard let nsImage = NSImage(data: imageData),
+              let tiff = nsImage.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else {
+            return base64
+        }
+        for quality in [0.5, 0.3, 0.15] as [Double] {
+            if let compressed = rep.representation(using: .jpeg, properties: [.compressionFactor: quality]) {
+                let b64 = compressed.base64EncodedString()
+                if b64.count <= Self.maxScreenshotBase64Length {
+                    return b64
+                }
+            }
+        }
+        return nil
+        #endif
+    }
+
+    /// Submit a bug report with retry and exponential backoff.
+    /// Retries only on network errors, not on HTTP 4xx/5xx.
+    private func submitWithRetry(_ submission: BugReportSubmission, maxRetries: Int) async throws {
+        var lastError: Error?
+
+        for attempt in 0...maxRetries {
+            do {
+                _ = try await APIClient.shared.submitBugReport(submission)
+                return
+            } catch let error as APIError {
+                switch error {
+                case .networkError:
+                    lastError = error
+                    if attempt < maxRetries {
+                        // Exponential backoff: 1s, 2s
+                        let delay = UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
+                        try? await Task.sleep(nanoseconds: delay)
+                    }
+                default:
+                    // HTTP errors or decoding errors: don't retry
+                    throw error
+                }
+            } catch {
+                lastError = error
+                if attempt < maxRetries {
+                    let delay = UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
+                    try? await Task.sleep(nanoseconds: delay)
+                }
+            }
+        }
+
+        if let lastError { throw lastError }
+    }
+
+    /// Save the current report locally when all retries are exhausted.
+    private func saveReportLocally() {
+        Task {
+            let submission = await buildSubmission()
+            BugReportDraftStore.saveDraft(submission)
+            savedLocally = true
+            submitError = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { dismiss() }
+        }
+    }
+
+    /// Retry any previously saved drafts in the background when the view appears.
+    private func retryPendingDrafts() async {
+        let drafts = BugReportDraftStore.loadDrafts()
+        guard !drafts.isEmpty else { return }
+
+        for (index, draft) in drafts.enumerated().reversed() {
+            do {
+                _ = try await APIClient.shared.submitBugReport(draft)
+                BugReportDraftStore.removeDraft(at: index)
+            } catch {
+                // Failed again — leave it for next time
+                break
+            }
+        }
+    }
+
+    /// Map API errors to user-friendly messages.
+    private func userFacingErrorMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .networkError:
+                return "No internet connection. You can save this report and we'll send it later."
+            case .httpError(let code, _) where code == 413:
+                return "Screenshot is too large. Try removing the screenshot and submitting again."
+            case .httpError(let code, _) where code == 422:
+                return "Report content was too large. Try shortening your description."
+            case .httpError(let code, _) where code >= 500:
+                return "Our server is having trouble. You can save this report and we'll send it later."
+            case .httpError(let code, _):
+                return "Submission failed (error \(code)). Please try again."
+            default:
+                return "Something went wrong. You can save this report and we'll send it later."
+            }
+        }
+        return "Something went wrong. You can save this report and we'll send it later."
     }
 
     private func flattenedScreenshot() -> Data? {
