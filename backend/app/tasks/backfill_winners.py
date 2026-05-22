@@ -1829,29 +1829,39 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         repair_stats["errors"].append(str(e))
 
     # Phase 0c-retrotag: Tag resolution_source on pre-existing outcomes.
-    # Moved early so it runs before heavy API phases that might time out.
+    # Runs in batches of 50K (proven to work within statement timeout).
     retro_stats = {"tagged": 0, "errors": []}
     try:
-        async with get_task_session() as session:
-            r = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET resolution_source = 'clean_resolution'
-                    WHERE fo.id IN (
-                        SELECT fo2.id FROM futures_outcomes fo2
-                        JOIN futures_markets fm ON fo2.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo2.resolution_source IS NULL
-                          AND fo2.current_probability IS NOT NULL
-                          AND (fo2.current_probability >= 0.95 OR fo2.current_probability <= 0.05)
-                        LIMIT 200000
-                    )
-                """)
-            )
-            retro_stats["tagged"] = r.rowcount
-            await session.commit()
+        for _ in range(5):
+            async with get_task_session() as session:
+                r = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET resolution_source = 'clean_resolution'
+                        WHERE fo.id IN (
+                            SELECT fo2.id FROM futures_outcomes fo2
+                            JOIN futures_markets fm ON fo2.market_id = fm.id
+                            WHERE fm.status = 'resolved'
+                              AND fo2.resolution_source IS NULL
+                              AND fo2.current_probability IS NOT NULL
+                              AND (fo2.current_probability >= 0.95
+                                   OR fo2.current_probability <= 0.05)
+                            LIMIT 50000
+                        )
+                    """)
+                )
+                await session.commit()
+                if r.rowcount == 0:
+                    break
+                retro_stats["tagged"] += r.rowcount
+                logger.info("Retro-tagging: %d tagged this batch", r.rowcount)
     except Exception as e:
         retro_stats["errors"].append(str(e))
+        logger.error("Retro-tagging error: %s", e)
+
+    # Phase 0c-bookmaker: Precompute per-bookmaker calibration into Redis.
+    # Moved early because it's a one-shot DB query + Redis write.
+    bookmaker_stats = await _precompute_bookmaker_calibration()
 
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
@@ -1933,7 +1943,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
-        "bookmaker_calibration": await _precompute_bookmaker_calibration(),
+        "bookmaker_calibration": bookmaker_stats,
     }
 
 
