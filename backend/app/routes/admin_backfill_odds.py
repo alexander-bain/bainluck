@@ -34,8 +34,8 @@ async def snapshot_sparsity_audit(
         q = await db.execute(text("""
             SELECT
                 e.id,
-                e.home_team,
-                e.away_team,
+                e.home_team_name,
+                e.away_team_name,
                 e.commence_time,
                 e.external_id,
                 e.status,
@@ -46,7 +46,7 @@ async def snapshot_sparsity_audit(
             WHERE e.status IN ('completed', 'closed')
               AND e.commence_time >= :cutoff
               AND s.key = :sport
-            GROUP BY e.id, e.home_team, e.away_team, e.commence_time, e.external_id, e.status
+            GROUP BY e.id, e.home_team_name, e.away_team_name, e.commence_time, e.external_id, e.status
             ORDER BY snapshot_count ASC
             LIMIT 200
         """), {"cutoff": cutoff, "sport": sport})
@@ -64,8 +64,8 @@ async def snapshot_sparsity_audit(
                 zero_count += 1
             events.append({
                 "event_id": r.id,
-                "home_team": r.home_team,
-                "away_team": r.away_team,
+                "home_team": r.home_team_name,
+                "away_team": r.away_team_name,
                 "commence_time": r.commence_time.isoformat() if r.commence_time else None,
                 "external_id": r.external_id,
                 "status": r.status,
