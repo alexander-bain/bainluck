@@ -181,10 +181,13 @@ async def snapshot_inventory(
 
             for r in q.all():
                 total += 1
-                is_sparse = r.snap_count < threshold
+                # Only flag completed/closed events as sparse — scheduled events
+                # far in the future naturally have few snapshots
+                is_completed = r.status in ('completed', 'closed')
+                is_sparse = is_completed and r.snap_count < threshold
                 if is_sparse:
                     sparse += 1
-                if r.snap_count == 0:
+                if is_completed and r.snap_count == 0:
                     zero += 1
 
                 day = str(r.commence_time)[:10]
@@ -192,7 +195,7 @@ async def snapshot_inventory(
                 by_date[day]["total"] += 1
                 if is_sparse:
                     by_date[day]["sparse"] += 1
-                if r.snap_count == 0:
+                if is_completed and r.snap_count == 0:
                     by_date[day]["zero"] += 1
                 by_date[day]["events"].append({
                     "id": r.id,
