@@ -63,9 +63,9 @@ class TestDetermineApiParams:
         assert markets == "h2h"
         assert regions == "us"
 
-    def test_region_override_applied(self):
+    def test_tier1_gets_dual_regions(self):
         markets, regions = determine_api_params("live", 1, "baseball_mlb", quota_conservation=False)
-        assert regions == "us"  # MLB has a region override to us-only
+        assert regions == "us,us2"  # Tier 1 sports get full region coverage
 
     def test_region_override_not_applied_in_conservation(self):
         markets, regions = determine_api_params("live", 1, "baseball_mlb", quota_conservation=True)

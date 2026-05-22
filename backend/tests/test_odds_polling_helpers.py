@@ -80,9 +80,9 @@ class TestGetMaxDurationForSport:
 class TestQuotaSafePollingConfig:
     """Guardrails for high-volume sports that intentionally use lighter requests."""
 
-    def test_mlb_region_override_stays_single_region(self):
-        """MLB has high event volume, so it must not silently return to us+us2."""
-        assert SPORT_REGION_OVERRIDES["baseball_mlb"] == "us"
+    def test_no_region_overrides_active(self):
+        """All sports use tier-default regions (overrides cleared May 2026)."""
+        assert len(SPORT_REGION_OVERRIDES) == 0
 
 
 # ── _snapshots_are_equal ────────────────────────────────────────────────
