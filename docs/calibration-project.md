@@ -4,7 +4,9 @@
 
 **Principle**: No shortcuts. If we don't know the real outcome, we exclude it and document why. If we're guessing, we flag it and fix it. If we broke something, we document what happened and make sure it can't happen again.
 
-**Monitor**: `GET /api/admin/calibration/decomposition` (automated, every 6h) + this document (manual, updated every session)
+**Monitor**: `GET /api/admin/calibration/decomposition` (quality funnel) + `GET /api/admin/calibration/resolution-status` (ESPN coverage) + this document
+
+**Last updated**: May 21, 2026
 
 ---
 
@@ -117,13 +119,33 @@
 
 ---
 
-## 7. What's NOT in this document yet (needs automated decomposition)
+## 7. Infrastructure Shipped (May 21)
 
-- Exact outcome counts per source × league × market_type × age
-- Resolution source breakdown per cell (API vs game_score vs Pass 2 guess)
-- Opening probability derivation breakdown
+### Endpoints
+- `GET /api/admin/calibration/decomposition` — full quality funnel by source × league × market_type × age, with resolution_source breakdown and flagging of cells with >20% guessed resolutions
+- `GET /api/admin/calibration/resolution-status` — ESPN box score coverage, Kalshi market linkage
+- `GET /api/admin/calibration/coverage-audit` — total DB universe vs calibration inclusion
+- `POST /api/admin/espn/clear-unavailable?sport=...` — retry failed ESPN box score fetches
+
+### Resolution tracking
+- `resolution_source` column on FuturesOutcome — tags every resolution with how it was derived
+- Values: api_settlement, game_score, box_score, scoring_plays, leaderboard, clean_resolution, pass2_guess, pass3_threshold, all_losers, settlement_sync
+- Populates on every backfill run; after 2-3 cycles, all resolved outcomes tagged
+
+### Per-bookmaker moneyline calibration
+- Precomputed in backfill task every 6h, stored in Redis (24h TTL)
+- Calibration endpoint reads cached data instantly
+- ~200K new data points with exact resolution from game scores
+
+### NHL box score fix
+- ESPN hockey uses `labels` field instead of `names` for stat headers
+- Fixed parser + added hockey stat abbreviations (BS, HT, TK, PIM, SV, GA)
+- 308 NHL games will be retried after clearing the unavailable flag
+
+## 8. What's NOT in this document yet
+
+- Exact outcome counts per cell (populating as resolution_source backfills)
+- MCE per cell (only meaningful once resolution_source is populated)
+- Per-bookmaker calibration results (first precomputation on next backfill run)
 - Forward capture verification per cell
-- MCE per cell (only meaningful with authoritative resolution)
-- Per-bookmaker moneyline calibration data
-
-These will be populated by the automated decomposition endpoint (Deliverable 2).
+- Historical ESPN ID backfill progress (just started)
