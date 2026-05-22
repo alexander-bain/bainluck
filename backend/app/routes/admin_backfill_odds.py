@@ -28,9 +28,11 @@ async def snapshot_sparsity_audit(
         return {"error": "unauthorized"}
 
     try:
-        await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+        await db.execute(text("SET LOCAL statement_timeout = '30s'"))
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
+        # Use a lateral subquery to count snapshots per event instead of
+        # a full JOIN + GROUP BY on the massive odds_snapshots table.
         q = await db.execute(text("""
             SELECT
                 e.id,
@@ -39,14 +41,17 @@ async def snapshot_sparsity_audit(
                 e.commence_time,
                 e.external_id,
                 e.status,
-                COUNT(os.id) AS snapshot_count
+                COALESCE(sc.cnt, 0) AS snapshot_count
             FROM events e
             JOIN sports s ON e.sport_id = s.id
-            LEFT JOIN odds_snapshots os ON os.event_id = e.id
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS cnt
+                FROM odds_snapshots os
+                WHERE os.event_id = e.id
+            ) sc ON true
             WHERE e.status IN ('completed', 'closed')
               AND e.commence_time >= :cutoff
               AND s.key = :sport
-            GROUP BY e.id, e.home_team_name, e.away_team_name, e.commence_time, e.external_id, e.status
             ORDER BY snapshot_count ASC
             LIMIT 200
         """), {"cutoff": cutoff, "sport": sport})
