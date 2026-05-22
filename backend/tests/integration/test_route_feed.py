@@ -6,6 +6,7 @@ The feed is the home page — the most important endpoint for user experience.
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -365,6 +366,86 @@ class TestDiscoverQualityTrace:
         assert body["rank_phases"]["returned_rank"] == 1
         assert body["final_ranking"]["survived_final_caps"] is True
         assert "suggested_fix" in body
+
+
+class TestDiscoverEffectiveSettlementFollowups:
+    async def test_followups_require_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get(
+            "/api/admin/discover-quality/effective-settlement-followups"
+        )
+
+        assert resp.status_code == 422
+
+    async def test_followups_reject_bad_admin_secret(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+        resp = await client.get(
+            "/api/admin/discover-quality/effective-settlement-followups?secret=bad"
+        )
+
+        assert resp.status_code == 403
+
+    async def test_followups_return_suppressed_market_diagnostics(
+        self,
+        client,
+        mock_db,
+        monkeypatch,
+    ):
+        from app.routes import feed
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+        markets = [
+            SimpleNamespace(id=101, source="kalshi"),
+            SimpleNamespace(id=202, source="polymarket"),
+        ]
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = markets
+        mock_db.execute.return_value = result
+
+        def _fake_followup(market, now):
+            if market.id == 202:
+                return None
+            return {
+                "market_id": market.id,
+                "source": market.source,
+                "name": "Will the Knicks make the NBA Finals?",
+                "status": "open",
+                "category": "sports",
+                "llm_sport_category": "basketball",
+                "leader_name": "No",
+                "leader_probability": 0.91,
+                "leader_opening_probability": 0.18,
+                "max_recent_movement": 0.004,
+                "updated_at": "2026-05-21T00:00:00+00:00",
+                "days_since_update": 1.2,
+                "age_bucket": "recent_source_update",
+                "resolution_date": None,
+                "commence_time": None,
+                "blockers": ["sports_effectively_settled"],
+                "checks": {"sports_effectively_settled": True},
+                "top_outcomes": [{"name": "No", "probability": 0.91}],
+                "suggested_action": "Run or inspect Kalshi settlement/API winner backfill for this market.",
+            }
+
+        monkeypatch.setattr(
+            feed, "build_effective_settlement_followup_item", _fake_followup
+        )
+
+        resp = await client.get(
+            "/api/admin/discover-quality/effective-settlement-followups?secret=test-admin&limit=10"
+        )
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert body["count"] == 1
+        assert body["source_counts"] == {"kalshi": 1}
+        assert body["category_counts"] == {"basketball": 1}
+        assert body["age_buckets"] == {"recent_source_update": 1}
+        assert body["items"][0]["market_id"] == 101
+        assert body["items"][0]["blockers"] == ["sports_effectively_settled"]
+        assert "settlement" in body["items"][0]["suggested_action"].lower()
 
 
 class TestDiscoverInteractions:

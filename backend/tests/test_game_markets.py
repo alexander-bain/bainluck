@@ -175,6 +175,16 @@ class TestClassifyGameMarket:
             "Chiefs at Eagles", external_id="KXNFL2HSPREAD-26FEB09KCEPHI"
         ) == "half_spread"
 
+    def test_ncaamb_2h_total_via_ticker(self):
+        assert _classify_game_market(
+            "Duke at North Carolina", external_id="KXNCAAMB2HTOTAL-26MAR20DUKEUNC"
+        ) == "half_total"
+
+    def test_ncaamb_2h_spread_via_ticker(self):
+        assert _classify_game_market(
+            "Duke at North Carolina", external_id="KXNCAAMB2HSPREAD-26MAR20DUKEUNC"
+        ) == "half_spread"
+
     def test_name_still_wins_when_explicit(self):
         """When the name already says '1st Half Total', the ticker is irrelevant."""
         assert _classify_game_market(
@@ -295,6 +305,12 @@ class TestExtractPeriodFromTicker:
 
     def test_nfl_2h_spread(self):
         assert _extract_period_from_ticker("KXNFL2HSPREAD-26FEB09KCEPHI") == "2H"
+
+    def test_ncaamb_1h_spread(self):
+        assert _extract_period_from_ticker("KXNCAAMB1HSPREAD-26MAR20DUKEUNC") == "1H"
+
+    def test_ncaamb_2h_total(self):
+        assert _extract_period_from_ticker("KXNCAAMB2HTOTAL-26MAR20DUKEUNC") == "2H"
 
     def test_nba_1q(self):
         assert _extract_period_from_ticker("KXNBA1QTOTAL-26MAY15BOSNYQ") == "1Q"

@@ -2785,8 +2785,12 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
 
 # Ticker-prefix → market type mapping.  Built once at import time so
 # the hot path in _classify_game_market does a cheap dict lookup.
+_KALSHI_PERIOD_LEAGUE_PREFIXES = (
+    "nba", "nfl", "nhl", "mlb", "wnba", "mls", "ncaab", "ncaamb", "ncaaf"
+)
+
 _TICKER_PERIOD_MAP: dict[str, str] = {}
-for _league in ("nba", "nfl", "nhl", "mlb", "wnba", "mls", "ncaab", "ncaaf"):
+for _league in _KALSHI_PERIOD_LEAGUE_PREFIXES:
     for _h in ("1h", "2h"):
         _TICKER_PERIOD_MAP[f"kx{_league}{_h}total"] = "half_total"
         _TICKER_PERIOD_MAP[f"kx{_league}{_h}spread"] = "half_spread"
@@ -2820,7 +2824,7 @@ def _classify_from_ticker(external_id: str) -> str:
 # Ticker-prefix → period label.  Built once at import time alongside
 # _TICKER_PERIOD_MAP so _extract_period_from_ticker is a cheap dict lookup.
 _TICKER_PERIOD_LABEL: dict[str, str] = {}
-for _league2 in ("nba", "nfl", "nhl", "mlb", "wnba", "mls", "ncaab", "ncaaf"):
+for _league2 in _KALSHI_PERIOD_LEAGUE_PREFIXES:
     for _h2 in ("1h", "2h"):
         for _kind in ("total", "spread", "winner"):
             _TICKER_PERIOD_LABEL[f"kx{_league2}{_h2}{_kind}"] = _h2.upper()

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update, and_, text, func
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket
 
@@ -179,6 +180,62 @@ async def discover_quality_market_trace(
     if not trace:
         raise HTTPException(status_code=404, detail="Market not found")
     return trace
+
+
+@router.get("/discover-quality/effective-settlement-followups")
+async def list_effective_settlement_followups(
+    secret: str = Query(...),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """List open sports futures suppressed as effectively settled for ops follow-up."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.routes.feed import (
+        DISCOVER_SPORTS_CATEGORIES,
+        build_effective_settlement_followup_item,
+    )
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.llm_sport_category.in_(DISCOVER_SPORTS_CATEGORIES),
+        )
+        .order_by(FuturesMarket.updated_at.desc().nullslast(), FuturesMarket.id.desc())
+        .limit(min(limit * 5, 1000))
+    )
+    rows = []
+    for market in result.scalars().all():
+        item = build_effective_settlement_followup_item(market, now)
+        if item:
+            rows.append(item)
+        if len(rows) >= limit:
+            break
+
+    source_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    age_buckets: dict[str, int] = {}
+    for row in rows:
+        source_key = row.get("source") or "unknown"
+        category_key = row.get("llm_sport_category") or "unknown"
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
+        category_counts[category_key] = category_counts.get(category_key, 0) + 1
+        age_buckets[row["age_bucket"]] = age_buckets.get(row["age_bucket"], 0) + 1
+
+    return {
+        "generated_at": now.isoformat(),
+        "limit": limit,
+        "count": len(rows),
+        "source_counts": source_counts,
+        "category_counts": category_counts,
+        "age_buckets": age_buckets,
+        "items": rows,
+    }
 
 
 _DISCOVER_CONFIG_KEY = "bainluck:discover_runtime_config"

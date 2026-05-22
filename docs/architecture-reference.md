@@ -386,6 +386,8 @@ All category pages follow the same architecture:
 
 There is intentionally no stored `ts_vector` migration yet. If search volume or latency requires indexes later, add them as a measured Postgres-only migration rather than embedding trigger complexity before the query traces justify it.
 
+Decision runbook: `docs/search-fts-runbook.md`. Read-only measurement script: `scripts/audit_search_fts_readiness.py`.
+
 ### Politics Page (`/politics`)
 
 **Backend:** `GET /api/politics` in `routes/politics.py`

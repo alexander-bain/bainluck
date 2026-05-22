@@ -1676,6 +1676,81 @@ def _market_runtime_filter_trace(
     }
 
 
+def build_effective_settlement_followup_item(
+    market: FuturesMarket,
+    now: datetime,
+) -> dict | None:
+    """Return admin follow-up data for sports futures hidden as effectively settled."""
+    outcomes_data, leader_name, leader_prob = _top_outcomes_for_trace(market)
+    runtime_filters = _market_runtime_filter_trace(
+        market,
+        outcomes_data,
+        leader_name,
+        leader_prob,
+        now,
+        sport_category=market.llm_sport_category,
+    )
+    if "sports_effectively_settled" not in runtime_filters["blockers"]:
+        return None
+
+    checks = runtime_filters.get("checks") or {}
+    leader_opening = checks.get("leader_opening_probability")
+    updated_at = _utc(market.updated_at)
+    resolution_date = _utc(market.resolution_date)
+    commence_time = _utc(market.commence_time)
+    days_since_update = (
+        round((now - updated_at).total_seconds() / 86400, 2) if updated_at else None
+    )
+    if days_since_update is None:
+        age_bucket = "unknown"
+    elif days_since_update <= 2:
+        age_bucket = "recent_source_update"
+    elif days_since_update <= 14:
+        age_bucket = "aging_source_update"
+    else:
+        age_bucket = "old_source_update"
+
+    source = (market.source or "").lower()
+    if source == "kalshi":
+        suggested_action = (
+            "Run or inspect Kalshi settlement/API winner backfill for this market."
+        )
+    elif source == "polymarket":
+        suggested_action = (
+            "Run or inspect Polymarket settlement lookup/backfill for this market."
+        )
+    else:
+        suggested_action = (
+            "Inspect source settlement state and polling freshness for this market."
+        )
+
+    return {
+        "market_id": market.id,
+        "source": market.source,
+        "name": market.name,
+        "status": market.status,
+        "category": market.category,
+        "llm_sport_category": market.llm_sport_category,
+        "event_id": market.event_id,
+        "group_id": market.group_id,
+        "canonical_market_key": market.canonical_market_key,
+        "external_id": market.external_id,
+        "leader_name": leader_name,
+        "leader_probability": leader_prob,
+        "leader_opening_probability": leader_opening,
+        "max_recent_movement": checks.get("max_recent_movement"),
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "days_since_update": days_since_update,
+        "age_bucket": age_bucket,
+        "resolution_date": resolution_date.isoformat() if resolution_date else None,
+        "commence_time": commence_time.isoformat() if commence_time else None,
+        "blockers": runtime_filters["blockers"],
+        "checks": checks,
+        "top_outcomes": outcomes_data[:5],
+        "suggested_action": suggested_action,
+    }
+
+
 async def _discover_candidate_pool_trace(
     db: AsyncSession,
     now: datetime,
@@ -2016,10 +2091,12 @@ def _suggest_trace_fix(trace: dict) -> str:
     blockers = trace["score_trace"]["blockers"]
     if "quality_suppressed" in blockers:
         return "Tune the quality classifier if this is genuinely editorial."
-    if "stale_no_movement" in blockers or "effectively_resolved" in blockers:
-        return (
-            "No ranking fix unless stale/resolved markets need a special recap surface."
-        )
+    if (
+        "stale_no_movement" in blockers
+        or "effectively_resolved" in blockers
+        or "sports_effectively_settled" in blockers
+    ):
+        return "No ranking fix; inspect settlement/backfill diagnostics for the stale source state."
     rank_phases = trace.get("rank_phases") or {}
     if rank_phases.get("dropped_by_canonical_dedupe"):
         return (

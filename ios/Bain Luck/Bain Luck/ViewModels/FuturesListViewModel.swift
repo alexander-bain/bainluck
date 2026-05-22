@@ -9,14 +9,17 @@ final class FuturesListViewModel: ObservableObject {
     @Published private(set) var facets: [String: [FacetTag]] = [:]
     @Published private(set) var movers: [FuturesMover] = []
     @Published private(set) var loading = true
+    @Published private(set) var loadingMore = false
     @Published private(set) var moversLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var loadMoreError: String?
     @Published var selectedCategory = ""
     @Published var searchText = ""
     @Published private(set) var page = 1
     @Published private(set) var hasMore = true
 
     private var totalCount = 0
+    private var loadGeneration = 0
     private var searchDebounce: AnyCancellable?
 
     init() {
@@ -32,16 +35,23 @@ final class FuturesListViewModel: ObservableObject {
 
     @MainActor
     func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let category = selectedCategory
+        let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
         loading = markets.isEmpty
+        loadingMore = false
+        loadMoreError = nil
         page = 1
         do {
-            let tags = selectedCategory.isEmpty ? [] : [selectedCategory]
-            let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tags = category.isEmpty ? [] : [category]
             let response = try await APIClient.shared.fetchFacetedFutures(
                 tags: tags,
                 page: 1,
                 search: search.isEmpty ? nil : search
             )
+            guard shouldApplyLoadResult(generation: generation, category: category, search: search) else { return }
             markets = response.markets
             facets = response.facets
             totalCount = response.total
@@ -49,6 +59,7 @@ final class FuturesListViewModel: ObservableObject {
             error = nil
             loading = false
         } catch {
+            guard shouldApplyLoadResult(generation: generation, category: category, search: search) else { return }
             self.error = error.localizedDescription
             loading = false
             logger.error("Futures load failed: \(error)")
@@ -57,20 +68,36 @@ final class FuturesListViewModel: ObservableObject {
 
     @MainActor
     func loadMore() async {
-        guard hasMore, !loading else { return }
+        guard hasMore, !loading, !loadingMore else { return }
+        let generation = loadGeneration
+        let category = selectedCategory
+        let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextPage = page + 1
+        loadingMore = true
+        loadMoreError = nil
         do {
-            let tags = selectedCategory.isEmpty ? [] : [selectedCategory]
-            let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tags = category.isEmpty ? [] : [category]
             let response = try await APIClient.shared.fetchFacetedFutures(
                 tags: tags,
                 page: nextPage,
                 search: search.isEmpty ? nil : search
             )
+            guard shouldApplyLoadResult(generation: generation, category: category, search: search) else {
+                loadingMore = false
+                return
+            }
             markets.append(contentsOf: response.markets)
             page = nextPage
             hasMore = markets.count < response.total
+            totalCount = response.total
+            loadingMore = false
         } catch {
+            guard shouldApplyLoadResult(generation: generation, category: category, search: search) else {
+                loadingMore = false
+                return
+            }
+            loadMoreError = error.localizedDescription
+            loadingMore = false
             logger.error("Futures load more failed: \(error)")
         }
     }
@@ -99,5 +126,12 @@ final class FuturesListViewModel: ObservableObject {
         (facets["llm_sport_category"] ?? [])
             .filter { !$0.tag.isEmpty }
             .sorted { $0.count > $1.count }
+    }
+
+    @MainActor
+    private func shouldApplyLoadResult(generation: Int, category: String, search: String) -> Bool {
+        generation == loadGeneration
+            && category == selectedCategory
+            && search == searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

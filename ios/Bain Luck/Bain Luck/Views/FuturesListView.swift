@@ -127,7 +127,24 @@ struct FuturesListView: View {
                 }
             }
 
-            if viewModel.hasMore {
+            if let loadMoreError = viewModel.loadMoreError {
+                Section {
+                    VStack(spacing: 8) {
+                        Label(loadMoreError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button("Try Again") {
+                            Task { await viewModel.loadMore() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+                .listRowBackground(Color.clear)
+            } else if viewModel.hasMore {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)

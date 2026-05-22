@@ -19,7 +19,7 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [idea] Add stored full-text search vectors only if production traces justify it. Issue: [#447](https://github.com/alexander-bain/bainluck/issues/447)
 - [shipped] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
 - [shipped] Rage Shake BR31: harden sports futures effective-settlement staleness. Issue: [#456](https://github.com/alexander-bain/bainluck/issues/456)
-- [ready] Flag effectively-settled Discover sports futures for settlement follow-up. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
+- [shipped] Flag effectively-settled Discover sports futures for settlement follow-up. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
 
 ## Current Priority: Calibration & Data Quality
 
@@ -442,10 +442,10 @@ Not a normalization bug — probabilities are genuinely flat in the database. Th
 **Fix options (ordered by complexity):**
 1. ~~**Lower staleness threshold further** — drop from 95% to 90% leader probability for sports futures. Risk: some interesting markets between 90-95% get hidden.~~ ✅ Shipped May 14 with an opening-probability guard so real underdog/surprise journeys can still surface.
 2. ~~**Add an "effectively settled" heuristic** — for sports futures, if the leader has been ≥90% with no meaningful 24h movement, treat as settled regardless of original underdog journey.~~ ✅ Shipped May 21 with admin/debug reason `sports_effectively_settled`.
-3. **Flag suppressed effectively-settled markets for ops follow-up** — suppression protects the feed, but the market should also appear in diagnostics so we can investigate why the exchange/source did not resolve cleanly. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
+3. ~~**Flag suppressed effectively-settled markets for ops follow-up** — suppression protects the feed, but the market should also appear in diagnostics so we can investigate why the exchange/source did not resolve cleanly.~~ ✅ Shipped May 21 via `/api/admin/discover-quality/effective-settlement-followups`. Issue: [#465](https://github.com/alexander-bain/bainluck/issues/465)
 4. **Cross-reference game results** — when a team is eliminated (completed playoff series), mark all their "will they advance" markets as stale. Most robust but requires connecting futures markets to series outcomes.
 
-**Current status:** Probability-based hardening has shipped via options 1 and 2. The next step is option 3 so suppressed stale stories become actionable settlement/backfill diagnostics, then option 4 for explicit playoff-series truth.
+**Current status:** Probability-based hardening and admin follow-up diagnostics have shipped via options 1-3. The remaining deeper fix is option 4 for explicit playoff-series truth.
 
 **Files:** `backend/app/routes/feed.py` (staleness filters ~line 2131), `backend/app/utils/feed_market_quality.py`
 **Parallel Safety:** Yellow
@@ -915,6 +915,8 @@ Polymarket has rich playoff series markets ("Celtics vs Cavaliers"). Need: stage
 Team names weight A, market names weight B, outcome names weight C. Use PostgreSQL full-text search with weighted ranking.
 
 **May 18 first slice shipped:** `/api/events/search` now uses query-time PostgreSQL full-text ranking (`websearch_to_tsquery`, weighted vectors) without a migration. Event/team names rank at weight A, futures market names at B, and futures outcome names at C. Existing ILIKE matching/fallback behavior and typeahead remain unchanged. A stored/indexed `ts_vector` migration can come later only if production search latency needs it.
+
+**May 21 decision gate:** Added `docs/search-fts-runbook.md` and `scripts/audit_search_fts_readiness.py` so issue #447 can be decided from production traces plus optional read-only `EXPLAIN ANALYZE` evidence. No migration/triggers until the runbook criteria are met.
 
 **Files:** `backend/app/routes/events.py`, future migration only if indexing becomes necessary
 **Parallel Safety:** Yellow
