@@ -9,6 +9,7 @@ import {
 } from "@/hooks";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
+import MetricSection from "@/components/admin/MetricSection";
 import {
   LineChart,
   Line,
@@ -1304,12 +1305,26 @@ export default function AdminDashboard() {
             />
           </div>
 
+          <MetricSection
+            question="Is the Odds API budget on track?"
+            status={(data.quota.budget.projected_surplus ?? 1) < 0 ? "warning" : "good"}
+            summary={`${data.quota.current.pct_used}% used · ${Math.round(data.quota.budget.projected_surplus ?? 0).toLocaleString()} projected surplus`}
+            ideal="Positive surplus projected through end of month."
+          >
           {/* Quota + burn charts */}
           <div className="grid md:grid-cols-2 gap-4">
             <QuotaChart data={data.quota.daily_usage} budget={data.quota.budget} />
             <DailyBurnChart data={data.quota.daily_usage} byTask={data.quota.daily_by_task || []} dailyBudget={data.quota.budget.linear_daily_budget} />
           </div>
 
+          </MetricSection>
+
+          <MetricSection
+            question="Are infrastructure and markets healthy?"
+            status={data.database.days_until_full !== null && data.database.days_until_full < 30 ? "warning" : "good"}
+            summary={`DB: ${data.database.db_size_mb}MB · ${data.database.plan.connections_limit - (data.database.plan.storage_used_gb || 0)} connections available`}
+            ideal="Database growing sustainably, all markets linked."
+          >
           {/* Database + coverage side by side */}
           <div className="grid md:grid-cols-2 gap-4">
             {data.matching_metrics && data.matching_metrics.length > 0 && (
@@ -1336,22 +1351,46 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          </MetricSection>
+
           {/* Source coverage trend */}
           <CoverageTrendChart data={data.coverage_trend || []} />
 
-          {/* Source coverage */}
+          <MetricSection
+            question="Do we have data from all sources?"
+            status={data.source_coverage.some((s: Record<string, number>) => s.odds_api === 0 && s.total > 0) ? "warning" : "good"}
+            summary={`${data.source_coverage.length} sports tracked`}
+            ideal="All expected sources reporting for each sport."
+          >
           <SourceCoverageTable data={data.source_coverage} />
           <FuturesCoverageTable data={data.futures_coverage} />
 
-          {/* Data Quality */}
+          </MetricSection>
+
+          <MetricSection
+            question="Is our classification and grid data accurate?"
+            status="good"
+            summary="Classification and grid health"
+            ideal="All markets classified. Grid accuracy above 95%."
+          >
           <DataQualityCard secret={secret} />
           <GridHealthCard secret={secret} />
+
+          </MetricSection>
 
           {/* PREQ Performance */}
           <PREQCard secret={secret} />
 
-          {/* Worker tasks */}
+          <MetricSection
+            question="Are all workers healthy?"
+            status={data.worker.overall_health === "critical" ? "critical" : data.worker.overall_health !== "healthy" ? "warning" : "good"}
+            summary={`${data.worker.critical_tasks.length} critical · ${data.worker.degraded_tasks.length} degraded`}
+            ideal="All essential tasks running successfully every cycle."
+            action={data.worker.critical_tasks.length > 0 ? `Critical: ${data.worker.critical_tasks.join(", ")}` : undefined}
+          >
           <TasksTable tasks={data.worker.tasks} />
+
+          </MetricSection>
 
           {/* Monthly costs */}
           <ProjectCosts />
