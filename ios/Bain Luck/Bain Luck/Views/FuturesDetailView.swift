@@ -1,5 +1,41 @@
 import SwiftUI
 
+// MARK: - Category Gradients (shared with Discover card)
+
+private let detailCategoryGradients: [String: (Color, Color)] = [
+    "basketball": (Color(red: 0.49, green: 0.18, blue: 0.07), Color(red: 0.76, green: 0.25, blue: 0.05)),
+    "football": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.08, green: 0.50, blue: 0.24)),
+    "baseball": (Color(red: 0.50, green: 0.11, blue: 0.11), Color(red: 0.73, green: 0.11, blue: 0.11)),
+    "hockey": (Color(red: 0.12, green: 0.23, blue: 0.37), Color(red: 0.15, green: 0.39, blue: 0.92)),
+    "soccer": (Color(red: 0.02, green: 0.31, blue: 0.23), Color(red: 0.02, green: 0.60, blue: 0.40)),
+    "golf": (Color(red: 0.08, green: 0.33, blue: 0.18), Color(red: 0.09, green: 0.40, blue: 0.20)),
+    "mma": (Color(red: 0.27, green: 0.04, blue: 0.04), Color(red: 0.60, green: 0.11, blue: 0.11)),
+    "economics": (Color(red: 0.18, green: 0.06, blue: 0.40), Color(red: 0.49, green: 0.23, blue: 0.93)),
+    "politics": (Color(red: 0.12, green: 0.11, blue: 0.29), Color(red: 0.26, green: 0.22, blue: 0.79)),
+    "tech": (Color(red: 0.03, green: 0.20, blue: 0.27), Color(red: 0.03, green: 0.57, blue: 0.70)),
+    "culture": (Color(red: 0.51, green: 0.09, blue: 0.26), Color(red: 0.86, green: 0.15, blue: 0.47)),
+    "weather": (Color(red: 0.05, green: 0.29, blue: 0.43), Color(red: 0.01, green: 0.52, blue: 0.78)),
+    "entertainment": (Color(red: 0.44, green: 0.10, blue: 0.46), Color(red: 0.75, green: 0.15, blue: 0.83)),
+    "cricket": (Color(red: 0.07, green: 0.31, blue: 0.29), Color(red: 0.08, green: 0.72, blue: 0.65)),
+    "olympics": (Color(red: 0.47, green: 0.21, blue: 0.06), Color(red: 0.85, green: 0.47, blue: 0.02)),
+]
+
+private let detailDefaultGradient: (Color, Color) = (Color(red: 0.06, green: 0.09, blue: 0.16), Color(red: 0.12, green: 0.16, blue: 0.24))
+
+private func detailCategoryEmoji(_ category: String?) -> String {
+    switch category?.lowercased() {
+    case "politics": return "🏛"
+    case "geopolitics": return "🌍"
+    case "economics": return "📈"
+    case "tech": return "💻"
+    case "entertainment": return "🎬"
+    case "culture": return "🎭"
+    case "weather": return "🌤"
+    case "health": return "🏥"
+    default: return "🍀"
+    }
+}
+
 // MARK: - Sort
 
 private enum FuturesSortField: String, CaseIterable {
@@ -34,25 +70,40 @@ struct FuturesDetailView: View {
                 )
             } else if let market = viewModel.market {
                 ScrollView {
-                    VStack(spacing: 16) {
-                        headerSection(market)
+                    VStack(spacing: 0) {
+                        // Hero section (matches Discover card visual quality)
+                        heroSection(market)
 
-                        // Probability evolution chart
-                        // Show for any market with outcomes (>= 1), including
-                        // binary markets that have only a single "Yes" outcome
-                        if market.outcomes.count >= 1 {
-                            EvolutionChartView(
-                                marketId: marketId,
-                                hours: 168,
-                                tournamentStart: golfTournamentStart(market),
-                                tournamentEnd: golfTournamentEnd(market)
-                            )
+                        VStack(spacing: 16) {
+                            // Hook description (journalist-style blurb)
+                            if let hook = market.hookDescription, !hook.isEmpty {
+                                Text(hook)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineSpacing(3)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                                    .background(Color.cardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+
+                            // Market metadata (status, outcomes, dates, bookmakers)
+                            metadataSection(market)
+
+                            // Probability evolution chart
+                            if market.outcomes.count >= 1 {
+                                EvolutionChartView(
+                                    marketId: marketId,
+                                    hours: 168,
+                                    tournamentStart: golfTournamentStart(market),
+                                    tournamentEnd: golfTournamentEnd(market)
+                                )
+                            }
+
+                            outcomesSection(market)
                         }
-
-                        leaderSection(market)
-                        outcomesSection(market)
+                        .padding()
                     }
-                    .padding()
                     .frame(maxWidth: 700)
                     .frame(maxWidth: .infinity)
                 }
@@ -85,43 +136,160 @@ struct FuturesDetailView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Hero Section
 
-    private func headerSection(_ market: FuturesMarketDetail) -> some View {
+    private func heroSection(_ market: FuturesMarketDetail) -> some View {
+        let gradient = detailCategoryGradients[market.llmSportCategory?.lowercased() ?? ""] ?? detailDefaultGradient
+        let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+        let isResolved = market.status == "resolved"
+
+        return ZStack(alignment: .bottomLeading) {
+            // Background: image with gradient overlay, or category gradient
+            heroBackground(market: market, gradient: gradient)
+                .frame(height: 220)
+                .clipped()
+
+            // Overlay content
+            VStack(alignment: .leading, spacing: 10) {
+                // Top row: category pill + status badges
+                HStack {
+                    if let category = market.llmSportCategory {
+                        Text(category.uppercased())
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.24), in: Capsule())
+                    }
+                    Spacer()
+                    if isResolved {
+                        Text("RESOLVED")
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.24), in: Capsule())
+                    }
+                    if let source = market.source {
+                        Text(sourceLabel(source).uppercased())
+                            .font(.system(size: 9, weight: .heavy))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.24), in: Capsule())
+                    }
+                }
+
+                Spacer(minLength: 16)
+
+                // Probability + movement
+                if let leader, let prob = leader.probability {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        Text("\(Int((prob * 100).rounded()))%")
+                            .font(.system(size: 52, weight: .black).monospacedDigit())
+                            .minimumScaleFactor(0.76)
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+
+                        detailMovementBadge(leader.probabilityChange24h)
+                            .padding(.bottom, 8)
+                    }
+
+                    Text(leader.name)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.92)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if leader.isWinner == true {
+                        Text("Winner")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.green.opacity(0.6), in: Capsule())
+                    }
+                }
+
+                // Market name
+                Text(market.name)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    @ViewBuilder
+    private func heroBackground(market: FuturesMarketDetail, gradient: (Color, Color)) -> some View {
+        if let imageUrlStr = market.imageUrl, let url = URL(string: imageUrlStr) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .overlay(
+                            LinearGradient(
+                                colors: [.black.opacity(0.08), .black.opacity(0.78)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                default:
+                    LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+        } else {
+            LinearGradient(colors: [gradient.0, gradient.1], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .overlay(
+                    Text(detailCategoryEmoji(market.llmSportCategory))
+                        .font(.system(size: 96))
+                        .opacity(0.10)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func detailMovementBadge(_ change: Double?) -> some View {
+        if let m = change, abs(m) >= 0.005 {
+            let up = m > 0
+            HStack(spacing: 2) {
+                Image(systemName: up ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 7, weight: .black))
+                Text("\(abs(Int((m * 100).rounded())))%")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background((up ? Color.green : Color.red).opacity(0.5))
+            .clipShape(Capsule())
+        }
+    }
+
+    private func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "polymarket": return "Polymarket"
+        case "kalshi": return "Kalshi"
+        case "odds_api": return "Sportsbooks"
+        default: return source.capitalized
+        }
+    }
+
+    // MARK: - Metadata Section
+
+    private func metadataSection(_ market: FuturesMarketDetail) -> some View {
         let isResolved = market.status == "resolved"
 
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                if let category = market.llmSportCategory {
-                    Text(category.capitalized)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(categoryColor(market).opacity(0.9))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(categoryColor(market).opacity(0.1))
-                        .clipShape(Capsule())
-                }
-                Spacer()
-                if isResolved {
-                    Text("Resolved")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.1))
-                        .clipShape(Capsule())
-                }
-                if let source = market.source {
-                    sourceBadge(source)
-                }
-            }
-
-            Text(market.name)
-                .font(.title3)
-                .fontWeight(.semibold)
-
             if let desc = market.description, !desc.isEmpty {
                 Text(desc)
                     .font(.subheadline)
@@ -133,13 +301,13 @@ struct FuturesDetailView: View {
                 if let status = market.status, !isResolved {
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(status == "active" ? .green : .secondary)
+                            .fill(status == "active" || status == "open" ? .green : .secondary)
                             .frame(width: 6, height: 6)
                         Text(status.capitalized)
                             .font(.caption2)
                             .fontWeight(.medium)
                     }
-                    .foregroundStyle(status == "active" ? .green : .secondary)
+                    .foregroundStyle(status == "active" || status == "open" ? .green : .secondary)
                 }
                 HStack(spacing: 4) {
                     Image(systemName: "list.bullet")
@@ -196,90 +364,6 @@ struct FuturesDetailView: View {
         .padding()
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
-    // MARK: - Current Leader
-
-    @ViewBuilder
-    private func leaderSection(_ market: FuturesMarketDetail) -> some View {
-        if let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) }),
-           let prob = leader.probability {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Current Favorite")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    HStack(spacing: 8) {
-                        Text("1")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .frame(width: 28, height: 28)
-                            .background(Color.orange.opacity(0.15))
-                            .foregroundStyle(.orange)
-                            .clipShape(Circle())
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Text(leader.name)
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                if leader.isWinner == true {
-                                    Text("Winner")
-                                        .font(.caption2)
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(.green)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.green.opacity(0.12))
-                                        .clipShape(Capsule())
-                                }
-                            }
-                            if let odds = leader.americanOdds {
-                                Text(odds > 0 ? "+\(odds)" : "\(odds)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                        }
-                    }
-                    Spacer()
-                    Text(formatProbability(prob))
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                }
-            }
-            .padding()
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-    }
-
-    // MARK: - Source Badge
-
-    private func sourceBadge(_ source: String) -> some View {
-        let label: String
-        let color: Color
-        switch source {
-        case "polymarket":
-            label = "Polymarket"
-            color = .blue
-        case "kalshi":
-            label = "Kalshi"
-            color = Color(hex: "#22c55e")
-        case "odds_api":
-            label = "Sportsbooks"
-            color = Color(hex: "#d97706")
-        default:
-            label = source.capitalized
-            color = .gray
-        }
-        return Text(label)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.12))
-            .clipShape(Capsule())
     }
 
     // MARK: - Category Color

@@ -385,6 +385,8 @@ export interface FuturesMarket {
   source_count?: number;
   group_id?: string | null;
   canonical_market_key?: string | null;
+  hook_description?: string | null;
+  image_url?: string | null;
 }
 
 // ---------------------------------------------------------------------------

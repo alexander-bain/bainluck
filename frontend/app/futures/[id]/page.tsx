@@ -78,6 +78,46 @@ function getSportEmoji(sportKey: string | null): string {
   return "🏆";
 }
 
+/**
+ * Category gradient backgrounds for the hero section
+ */
+const CATEGORY_GRADIENTS: Record<string, string> = {
+  basketball: "linear-gradient(135deg, #7d2e12, #c24005)",
+  football: "linear-gradient(135deg, #14542e, #0d803d)",
+  baseball: "linear-gradient(135deg, #801c1c, #ba1c1c)",
+  hockey: "linear-gradient(135deg, #1e3b5e, #2663eb)",
+  soccer: "linear-gradient(135deg, #054f3a, #049966)",
+  golf: "linear-gradient(135deg, #145433, #176633)",
+  mma: "linear-gradient(135deg, #450a0a, #991c1c)",
+  economics: "linear-gradient(135deg, #2e0f66, #7c3aed)",
+  politics: "linear-gradient(135deg, #1f1c4a, #4338ca)",
+  tech: "linear-gradient(135deg, #083345, #0891b2)",
+  culture: "linear-gradient(135deg, #821745, #db2777)",
+  weather: "linear-gradient(135deg, #0d4a6e, #0284c7)",
+  entertainment: "linear-gradient(135deg, #701a75, #bf26d6)",
+  cricket: "linear-gradient(135deg, #124f4a, #14b8a6)",
+  olympics: "linear-gradient(135deg, #78350f, #d97706)",
+};
+const DEFAULT_GRADIENT = "linear-gradient(135deg, #0f172a, #1e293b)";
+
+/**
+ * Category emoji for non-image hero backgrounds
+ */
+function getCategoryEmoji(category: string | null): string {
+  if (!category) return "🍀";
+  switch (category.toLowerCase()) {
+    case "politics": return "🏛";
+    case "geopolitics": return "🌍";
+    case "economics": return "📈";
+    case "tech": return "💻";
+    case "entertainment": return "🎬";
+    case "culture": return "🎭";
+    case "weather": return "🌤";
+    case "health": return "🏥";
+    default: return "🍀";
+  }
+}
+
 type SortField = "probability" | "change" | "name";
 type SortDirection = "asc" | "desc";
 
@@ -308,7 +348,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     );
   }
 
-  const sportEmoji = getSportEmoji(market.sport);
   const isResolved = market.status === "resolved";
 
   return (
@@ -340,173 +379,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Hero Section */}
-      <div
-        className={`rounded-card shadow-card p-6 ${
-          isResolved
-            ? "bg-slate-50 border border-slate-200"
-            : "bg-surface-card"
-        }`}
-      >
-        {/* Sport badge */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            {/* Pin button */}
-            <button
-              onClick={() => togglePin(marketId)}
-              disabled={isMaxReached && !marketIsPinned}
-              className={`
-                p-1.5 rounded-full transition-all
-                ${marketIsPinned
-                  ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                  : 'text-text-secondary/40 hover:text-text-secondary hover:bg-slate/10'
-                }
-                ${isMaxReached && !marketIsPinned ? 'cursor-not-allowed opacity-30' : ''}
-                focus:outline-none focus:ring-2 focus:ring-amber-300
-              `}
-              title={marketIsPinned ? 'Unpin market' : isMaxReached ? 'Maximum 6 pins' : 'Pin market'}
-              aria-label={marketIsPinned ? 'Unpin market' : 'Pin market'}
-            >
-              <PinIcon filled={marketIsPinned} className="w-5 h-5" />
-            </button>
-
-            {market.sport && (() => {
-              const categoryKey = market.llm_sport_category || undefined;
-              const badge = (
-                <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-                  <span className="text-lg">{sportEmoji}</span>
-                  <span className="text-text-secondary font-medium">
-                    {market.sport_name || market.sport}
-                  </span>
-                </span>
-              );
-              return categoryKey ? (
-                <Link href={`/categories/${categoryKey}`} className="hover:opacity-80 transition-opacity">
-                  {badge}
-                </Link>
-              ) : badge;
-            })()}
-          </div>
-
-          {/* Status badge */}
-          {isResolved && (
-            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
-              Resolved
-            </span>
-          )}
-        </div>
-
-        {/* Market name */}
-        <h1 className="text-title-1 text-text-primary mb-2">{market.name}</h1>
-
-        {market.description && (
-          <p className="text-body text-text-secondary mb-4">{market.description}</p>
-        )}
-
-        {/* Market info strip */}
-        <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
-          <span>
-            {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
-          </span>
-          {market.commence_time && (
-            <span>
-              Starts:{" "}
-              {new Date(market.commence_time).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-          )}
-          {market.resolution_date && (
-            <span>
-              Resolves:{" "}
-              {new Date(market.resolution_date).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-          )}
-          {market.updated_at && (
-            <span>
-              Updated:{" "}
-              {new Date(market.updated_at).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-              })}{" "}
-              at{" "}
-              {new Date(market.updated_at).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-          )}
-        </div>
-
-        {/* Sportsbooks */}
-        {market.bookmakers && market.bookmakers.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-surface-border">
-            <div className="text-sm text-text-secondary mb-2">
-              Odds from {market.bookmakers.length} sportsbook{market.bookmakers.length !== 1 ? "s" : ""}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {market.bookmakers.map((bookmaker) => (
-                <span
-                  key={bookmaker}
-                  className="text-xs bg-slate/10 px-2 py-1 rounded-full text-text-secondary capitalize"
-                >
-                  {formatBookmakerName(bookmaker)}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Current Leader / Winner */}
-        {leader && (
-          <div className="mt-6 pt-4 border-t border-surface-border">
-            <div className="text-sm text-text-secondary mb-2">
-              {isResolved && leader.is_winner ? "Winner" : "Current Favorite"}
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className={`w-8 h-8 flex items-center justify-center text-lg rounded-full font-bold ${
-                  isResolved && leader.is_winner
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-amber-100 text-amber-700"
-                }`}>
-                  {isResolved && leader.is_winner ? "✓" : "1"}
-                </span>
-                <span className="text-xl font-semibold text-text-primary">
-                  {leader.name}
-                </span>
-                {leader.is_winner && (
-                  <span className="text-sm bg-emerald-500/15 text-emerald-600 px-2 py-0.5 rounded font-medium">
-                    Won
-                  </span>
-                )}
-              </div>
-              <div className="text-right">
-                {isResolved && leader.is_winner ? (
-                  <div className="font-mono text-2xl font-bold text-emerald-600">
-                    100%
-                  </div>
-                ) : (
-                  <>
-                    <div className="font-mono text-2xl font-bold text-text-primary">
-                      {formatProbability(leader.probability)}
-                    </div>
-                    <div className="text-sm text-text-secondary">
-                      {formatAmericanOdds(leader.american_odds)}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* Visual Hero Section */}
+      <HeroSection
+        market={market}
+        leader={leader}
+        isResolved={isResolved}
+        marketIsPinned={marketIsPinned}
+        isMaxReached={isMaxReached}
+        togglePin={() => togglePin(marketId)}
+      />
 
       {/* Cross-Source Comparison (when market is tracked by multiple sources) */}
       {hasMultipleSources && groupData && (
@@ -1059,6 +940,177 @@ function RelatedEventRow({ event }: { event: RelatedEvent }) {
         ))}
       </div>
     </Link>
+  );
+}
+
+
+/**
+ * Visual hero section matching Discover card quality
+ */
+function HeroSection({
+  market,
+  leader,
+  isResolved,
+  marketIsPinned,
+  isMaxReached,
+  togglePin,
+}: {
+  market: FuturesMarket & { outcomes: FuturesOutcome[]; display_category?: string; hook_description?: string | null; image_url?: string | null };
+  leader: FuturesOutcome | null;
+  isResolved: boolean;
+  marketIsPinned: boolean;
+  isMaxReached: boolean;
+  togglePin: () => void;
+}) {
+  const hasImage = !!market.image_url;
+  const gradientBg = CATEGORY_GRADIENTS[market.llm_sport_category?.toLowerCase() ?? ""] || DEFAULT_GRADIENT;
+
+  return (
+    <div className="rounded-2xl overflow-hidden shadow-card">
+      {/* Hero background with probability overlay */}
+      <div
+        className="relative flex flex-col justify-end bg-cover bg-center"
+        style={{
+          height: hasImage ? "14rem" : "11rem",
+          background: hasImage
+            ? `linear-gradient(to bottom, rgba(0,0,0,0.15), rgba(0,0,0,0.78)), url(${market.image_url}) center/cover`
+            : gradientBg,
+        }}
+      >
+        {/* Emoji watermark when no image */}
+        {!hasImage && (
+          <span className="absolute inset-0 flex items-center justify-center text-[96px] opacity-[0.08] select-none pointer-events-none">
+            {getCategoryEmoji(market.llm_sport_category)}
+          </span>
+        )}
+
+        <div className="relative z-10 p-5 flex flex-col gap-2">
+          {/* Top badges */}
+          <div className="flex items-center justify-between mb-auto">
+            <div className="flex items-center gap-2">
+              {market.llm_sport_category && (
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-white/80 bg-black/25 px-2.5 py-1 rounded-full backdrop-blur-sm">
+                  {market.sport_name || market.llm_sport_category}
+                </span>
+              )}
+              <button
+                onClick={togglePin}
+                disabled={isMaxReached && !marketIsPinned}
+                className={`p-1.5 rounded-full transition-all backdrop-blur-sm ${
+                  marketIsPinned
+                    ? "text-amber-300 bg-amber-500/30"
+                    : "text-white/60 hover:text-white bg-black/20"
+                } ${isMaxReached && !marketIsPinned ? "cursor-not-allowed opacity-30" : ""}`}
+                title={marketIsPinned ? "Unpin market" : isMaxReached ? "Maximum 6 pins" : "Pin market"}
+                aria-label={marketIsPinned ? "Unpin market" : "Pin market"}
+              >
+                <PinIcon filled={marketIsPinned} className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {isResolved && (
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-white/80 bg-black/25 px-2.5 py-1 rounded-full backdrop-blur-sm">
+                  Resolved
+                </span>
+              )}
+              {market.source && (
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-white/80 bg-black/25 px-2.5 py-1 rounded-full backdrop-blur-sm">
+                  {formatBookmakerName(market.source)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Large probability + movement */}
+          {leader && (
+            <div className="mt-auto">
+              <div className="flex items-end gap-3">
+                {isResolved && leader.is_winner ? (
+                  <span className="text-5xl font-black tabular-nums tracking-tight text-emerald-300 drop-shadow-lg">100%</span>
+                ) : (
+                  <span className="text-5xl font-black tabular-nums tracking-tight text-white drop-shadow-lg">
+                    {formatProbability(leader.probability)}
+                  </span>
+                )}
+                {leader.probability_change_24h !== null && leader.probability_change_24h !== undefined && leader.probability_change_24h !== 0 && Math.abs(leader.probability_change_24h) >= 0.005 && (
+                  <span className={`mb-2 inline-flex items-center gap-0.5 text-xs font-bold px-2 py-0.5 rounded-full ${
+                    leader.probability_change_24h > 0
+                      ? "bg-green-500/40 text-white"
+                      : "bg-red-500/40 text-white"
+                  }`}>
+                    {leader.probability_change_24h > 0 ? "↑" : "↓"}
+                    {Math.abs(Math.round(leader.probability_change_24h * 100))}%
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-lg font-bold text-white/90 line-clamp-2">{leader.name}</span>
+                {leader.is_winner && (
+                  <span className="text-xs font-bold text-white bg-emerald-500/60 px-2 py-0.5 rounded-full">Won</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Below hero: market name, hook, metadata */}
+      <div className={`p-5 ${isResolved ? "bg-slate-50" : "bg-surface-card"}`}>
+        <h1 className="text-title-1 text-text-primary mb-1">{market.name}</h1>
+
+        {market.description && (
+          <p className="text-body text-text-secondary mb-3">{market.description}</p>
+        )}
+
+        {market.hook_description && (
+          <p className="text-sm text-text-secondary leading-relaxed mb-4">{market.hook_description}</p>
+        )}
+
+        <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
+          <span>
+            {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
+          </span>
+          {market.commence_time && (
+            <span>
+              Starts:{" "}
+              {new Date(market.commence_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </span>
+          )}
+          {market.resolution_date && (
+            <span>
+              Resolves:{" "}
+              {new Date(market.resolution_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </span>
+          )}
+          {market.updated_at && (
+            <span>
+              Updated:{" "}
+              {new Date(market.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
+              at{" "}
+              {new Date(market.updated_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        {market.bookmakers && market.bookmakers.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-surface-border">
+            <div className="text-sm text-text-secondary mb-2">
+              Odds from {market.bookmakers.length} sportsbook{market.bookmakers.length !== 1 ? "s" : ""}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {market.bookmakers.map((bookmaker) => (
+                <span
+                  key={bookmaker}
+                  className="text-xs bg-slate/10 px-2 py-1 rounded-full text-text-secondary capitalize"
+                >
+                  {formatBookmakerName(bookmaker)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

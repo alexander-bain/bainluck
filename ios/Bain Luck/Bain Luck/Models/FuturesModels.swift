@@ -113,6 +113,8 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let outcomeCount: Int?
     let bookmakers: [String]?
     let outcomes: [FuturesOutcome]
+    let hookDescription: String?
+    let imageUrl: String?
 }
 
 // MARK: - Futures Outcome
