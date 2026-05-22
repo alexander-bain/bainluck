@@ -361,6 +361,19 @@ def backfill_winners(self, dry_run: bool = False, limit: int = 2000):
     from app.tasks.backfill_winners import _backfill_all_winners
     return run_async(_backfill_all_winners(dry_run=dry_run, limit=limit))
 
+@celery_app.task(bind=True, name="app.tasks.check_snapshot_sparsity", soft_time_limit=600, time_limit=660)
+def check_snapshot_sparsity(self):
+    """Daily check for sparse snapshot events + auto-backfill from historical API."""
+    from app.tasks.snapshot_sparsity import check_and_backfill_sparse_snapshots
+    try:
+        result = _tracked_run("check_snapshot_sparsity", check_and_backfill_sparse_snapshots())
+        return result
+    except Exception as exc:
+        logger.exception("check_snapshot_sparsity failed")
+        raise self.retry(exc=exc, countdown=300)
+
+
+
 
 @celery_app.task(bind=True, name="app.tasks.backfill_historical_links", soft_time_limit=300, time_limit=360)
 def backfill_historical_links(self, batch_size: int = 100):
@@ -1234,6 +1247,10 @@ celery_app.conf.beat_schedule = {
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
         "schedule": crontab(minute=15, hour="2,8,14,20"),  # Every 6 hours — keeps resolved futures from cluttering feed (was daily)
+    },
+    "check-snapshot-sparsity-daily": {
+        "task": "app.tasks.check_snapshot_sparsity",
+        "schedule": crontab(minute=15, hour=8),  # Daily at 8:15 AM UTC
     },
     "backfill-winners": {
         "task": "app.tasks.backfill_winners",
