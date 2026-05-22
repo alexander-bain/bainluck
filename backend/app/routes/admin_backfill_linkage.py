@@ -131,6 +131,31 @@ async def run_linkage_backfill(
     if not dry_run and linked > 0:
         await db.commit()
 
+    # Sample orphans and targets for debugging
+    orphan_samples = [
+        {
+            "id": o.id,
+            "home": o.home_team_name,
+            "away": o.away_team_name,
+            "time": o.commence_time.isoformat() if o.commence_time else None,
+            "ext_id": o.external_id,
+            "status": o.status,
+        }
+        for o in orphans[:15]
+    ]
+    target_samples = [
+        {
+            "id": t.id,
+            "home": t.home_team_name,
+            "away": t.away_team_name,
+            "time": t.commence_time.isoformat() if t.commence_time else None,
+            "espn_id": t.espn_id,
+            "statpal_id": t.statpal_fixture_id,
+            "status": t.status,
+        }
+        for t in targets[:15]
+    ]
+
     return {
         "sport": sport,
         "days_back": days_back,
@@ -140,4 +165,6 @@ async def run_linkage_backfill(
         "matches_found": len(matches),
         "linked": linked,
         "matches": matches[:50],
+        "orphan_samples": orphan_samples,
+        "target_samples": target_samples,
     }
