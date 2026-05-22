@@ -2705,7 +2705,7 @@ async def test_retrotag(
                   AND fo2.resolution_source IS NULL
                   AND fo2.current_probability IS NOT NULL
                   AND (fo2.current_probability >= 0.95 OR fo2.current_probability <= 0.05)
-                LIMIT 1000
+                LIMIT 50000
             )
         """))
         await db.commit()
