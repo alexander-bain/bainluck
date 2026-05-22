@@ -59,8 +59,7 @@ async def run_linkage_backfill(
                s.key AS sport_key
         FROM events e
         JOIN sports s ON e.sport_id = s.id
-        WHERE e.external_id IS NULL
-          AND (e.espn_id IS NOT NULL OR e.statpal_fixture_id IS NOT NULL)
+        WHERE (e.espn_id IS NOT NULL OR e.statpal_fixture_id IS NOT NULL)
           AND e.commence_time >= :cutoff
           AND s.key = :sport
         ORDER BY e.commence_time DESC
@@ -73,6 +72,10 @@ async def run_linkage_backfill(
     for orphan in orphans:
         best_match = None
         for target in targets:
+            # Skip if target already has this external_id or a different one
+            if target.external_id == orphan.external_id:
+                continue  # Already linked — this IS the same event
+
             # Time window: ±6 hours
             time_diff = abs((orphan.commence_time - target.commence_time).total_seconds())
             if time_diff > 21600:
