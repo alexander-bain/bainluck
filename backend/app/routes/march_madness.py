@@ -142,57 +142,20 @@ def _is_ncaab_championship_market(market_name: str, tournament_type: str) -> boo
 # Main endpoint implementation
 # ============================================================================
 
-async def _get_march_madness_data(
+
+def _aggregate_championship_odds(
+    championship_markets: list,
     tournament_type: str,
-    db: AsyncSession,
-    user: Optional[User],
-) -> dict:
-    """Build the full March Madness response for a tournament type."""
-    now = datetime.now(timezone.utc)
-    config = _SPORT_FILTERS[tournament_type]
-    tournament_state = _get_tournament_state()
-
-    # ==================================================================
-    # 1. Championship futures — cross-source aggregation
-    # ==================================================================
-    futures_query = (
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(
-            FuturesMarket.status == "open",
-            or_(
-                FuturesMarket.external_id.ilike(f"{config['sport_prefix']}%"),
-                FuturesMarket.llm_sport_category == config["llm_category"],
-            ),
-        )
-    )
-    result = await db.execute(futures_query)
-    all_markets = result.scalars().unique().all()
-
-    # Filter to championship markets for the right tournament type
-    championship_markets = [
-        m for m in all_markets
-        if _is_ncaab_championship_market(m.name, tournament_type)
-    ]
-
-    logger.info(
-        "March Madness %s: %d championship markets from %d total",
-        tournament_type, len(championship_markets), len(all_markets),
-    )
-
-    # Merge teams across sources (same pattern as Oscars)
-    team_data: dict[str, dict] = {}  # match_key -> aggregated data
+) -> list[dict]:
+    """Merge teams across sources and compute normalized championship odds."""
+    team_data: dict[str, dict] = {}
 
     for market in championship_markets:
         source = market.source or "unknown"
-
         for outcome in market.outcomes:
             if outcome.current_probability is None:
                 continue
-
             prob = float(outcome.current_probability)
-
-            # Skip Kalshi 0.5 noise
             if source == "kalshi" and prob == 0.5:
                 continue
 
@@ -217,18 +180,15 @@ async def _get_march_madness_data(
             team_data[key]["sources"][source] = round(prob, 3)
             team_data[key]["probabilities"].append(prob)
 
-            # 24h movement
             if outcome.probability_change_24h is not None:
                 existing = team_data[key]["movement_24h"]
                 change = float(outcome.probability_change_24h)
                 if existing is None or abs(change) > abs(existing):
                     team_data[key]["movement_24h"] = round(change, 4)
 
-            # Opening probability
             if outcome.opening_probability is not None and team_data[key]["opening_probability"] is None:
                 team_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
 
-    # Compute average probability and build response
     championship_odds = []
     for data in team_data.values():
         avg_prob = sum(data["probabilities"]) / len(data["probabilities"])
@@ -245,26 +205,28 @@ async def _get_march_madness_data(
             "american_odds": probability_to_american(avg_prob),
         })
 
-    # Sort by probability descending
     championship_odds.sort(key=lambda t: t["probability"], reverse=True)
 
-    # Normalize top teams' probabilities
     total_prob = sum(t["probability"] for t in championship_odds)
     if total_prob > 0:
         for team in championship_odds:
             team["probability"] = round(team["probability"] / total_prob, 4)
             team["american_odds"] = probability_to_american(team["probability"])
 
-    # ==================================================================
-    # 2. 24h Biggest movers (from FuturesOddsSnapshot)
-    # ==================================================================
+    return championship_odds
+
+
+async def _compute_biggest_movers(
+    championship_markets: list,
+    now: datetime,
+    db: AsyncSession,
+) -> list[dict]:
+    """Compute 24h biggest movers from snapshot data."""
     all_outcome_ids = []
-    outcome_id_to_team: dict[int, str] = {}
     for market in championship_markets:
         for outcome in market.outcomes:
             if outcome.current_probability is not None:
                 all_outcome_ids.append(outcome.id)
-                outcome_id_to_team[outcome.id] = outcome.name.strip()
 
     prob_24h_ago: dict[int, float] = {}
     if all_outcome_ids:
@@ -286,14 +248,12 @@ async def _get_march_madness_data(
             )
             .subquery()
         )
-
         snap_result = await db.execute(
             select(snapshot_subq.c.outcome_id, snapshot_subq.c.probability)
             .where(snapshot_subq.c.rn == 1)
         )
         prob_24h_ago = {row.outcome_id: float(row.probability) for row in snap_result}
 
-    # Build movers list
     biggest_movers = []
     for market in championship_markets:
         for outcome in market.outcomes:
@@ -303,7 +263,7 @@ async def _get_march_madness_data(
             past = prob_24h_ago.get(outcome.id)
             if past is not None:
                 movement = current - past
-                if abs(movement) >= 0.005:  # At least 0.5% change
+                if abs(movement) >= 0.005:
                     biggest_movers.append({
                         "team_name": outcome.name.strip(),
                         "movement_24h": round(movement, 4),
@@ -311,20 +271,239 @@ async def _get_march_madness_data(
                         "seed": None,
                     })
 
-    # Sort by absolute movement descending, take top 10
     biggest_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
-    biggest_movers = biggest_movers[:10]
+    return biggest_movers[:10]
 
-    # ==================================================================
-    # 3. Tournament bracket games
-    # ==================================================================
+
+def _build_bracket_game(event, tournament_type: str) -> dict:
+    """Build a single bracket game dict from an Event row."""
+    game = {
+        "event_id": event.id,
+        "round": event.tournament_round,
+        "region": event.tournament_region,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "seed_home": event.tournament_seed_home,
+        "seed_away": event.tournament_seed_away,
+        "score_home": event.score_home,
+        "score_away": event.score_away,
+        "status": event.status,
+        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+    }
+
+    if event.current_odds:
+        home_prob = event.current_odds.get("home")
+        away_prob = event.current_odds.get("away")
+        game["prob_home"] = round(home_prob, 3) if home_prob else None
+        game["prob_away"] = round(away_prob, 3) if away_prob else None
+    else:
+        game["prob_home"] = None
+        game["prob_away"] = None
+
+    if event.tournament_seed_home and event.tournament_seed_away:
+        hist = get_historical_upset_rate(
+            tournament_type,
+            event.tournament_seed_home,
+            event.tournament_seed_away,
+        )
+        game["historical_upset_rate"] = hist["upset_pct"] if hist else None
+        game["seed_context"] = get_seed_context_text(
+            tournament_type,
+            min(event.tournament_seed_home, event.tournament_seed_away),
+            max(event.tournament_seed_home, event.tournament_seed_away),
+        )
+    else:
+        game["historical_upset_rate"] = None
+        game["seed_context"] = None
+
+    game["ei"] = round(event.raw_ei * 100) if event.raw_ei else None
+    return game
+
+
+def _detect_upset(event, game: dict, tournament_type: str) -> dict | None:
+    """Return an upset dict if this completed event is a seed upset, else None."""
+    if event.status not in ("completed", "closed"):
+        return None
+    if event.score_home is None or event.score_away is None:
+        return None
+    seed_h = event.tournament_seed_home
+    seed_a = event.tournament_seed_away
+    if not seed_h or not seed_a or seed_h == seed_a:
+        return None
+
+    home_won = event.score_home > event.score_away
+    if not ((home_won and seed_h > seed_a) or (not home_won and seed_a > seed_h)):
+        return None
+
+    winner = event.home_team_name if home_won else event.away_team_name
+    loser = event.away_team_name if home_won else event.home_team_name
+    seed_winner = seed_h if home_won else seed_a
+    seed_loser = seed_a if home_won else seed_h
+    hist = get_historical_upset_rate(tournament_type, seed_winner, seed_loser)
+
+    return {
+        "event_id": event.id,
+        "winner": winner,
+        "loser": loser,
+        "seed_winner": seed_winner,
+        "seed_loser": seed_loser,
+        "score": (
+            f"{event.score_home}-{event.score_away}" if home_won
+            else f"{event.score_away}-{event.score_home}"
+        ),
+        "winner_pre_game_prob": game.get("prob_home") if home_won else game.get("prob_away"),
+        "historical_upset_rate": hist["upset_pct"] if hist else None,
+        "round": event.tournament_round,
+    }
+
+
+def _find_cinderellas(
+    championship_odds: list[dict],
+    tournament_events: list,
+) -> list[dict]:
+    """Find cinderella teams (seed 9+, still alive, with title odds)."""
+    cinderellas = []
+    for team in championship_odds:
+        seed = team.get("seed")
+        if not seed or seed < 9 or team["is_eliminated"] or team["probability"] <= 0:
+            continue
+
+        games_won = 0
+        games_played = 0
+        team_key = _team_match_key(team["team_name"])
+        for event in tournament_events:
+            tk_home = _team_match_key(event.home_team_name) if event.home_team_name else ""
+            tk_away = _team_match_key(event.away_team_name) if event.away_team_name else ""
+            if team_key in (tk_home, tk_away) and event.status in ("completed", "closed"):
+                games_played += 1
+                if event.score_home is not None and event.score_away is not None:
+                    if (team_key == tk_home and event.score_home > event.score_away) or \
+                       (team_key == tk_away and event.score_away > event.score_home):
+                        games_won += 1
+
+        cinderellas.append({
+            "team_name": team["team_name"],
+            "seed": seed,
+            "region": team.get("region"),
+            "title_odds": team["probability"],
+            "games_won": games_won,
+            "games_played": games_played,
+        })
+
+    cinderellas.sort(key=lambda c: (c["games_won"], c["title_odds"]), reverse=True)
+    return cinderellas
+
+
+async def _process_bracket(
+    tournament_type: str,
+    tournament_events: list,
+    championship_odds: list[dict],
+    now: datetime,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Process bracket games, live games, upsets, and cinderellas from tournament events."""
+    bracket_games = []
+    live_games = []
+    upsets = []
+    team_seed_map: dict[str, int] = {}
+    team_region_map: dict[str, str] = {}
+
+    for event in tournament_events:
+        game = _build_bracket_game(event, tournament_type)
+        bracket_games.append(game)
+
+        # Track seeds/regions for championship odds enrichment
+        if event.tournament_seed_home and event.home_team_name:
+            team_seed_map[_team_match_key(event.home_team_name)] = event.tournament_seed_home
+            if event.tournament_region:
+                team_region_map[_team_match_key(event.home_team_name)] = event.tournament_region
+        if event.tournament_seed_away and event.away_team_name:
+            team_seed_map[_team_match_key(event.away_team_name)] = event.tournament_seed_away
+            if event.tournament_region:
+                team_region_map[_team_match_key(event.away_team_name)] = event.tournament_region
+
+        if event.status == "live":
+            live_games.append(game)
+        elif (event.status == "scheduled" and event.commence_time
+              and event.commence_time <= now + timedelta(hours=6)):
+            live_games.append(game)
+
+        upset = _detect_upset(event, game, tournament_type)
+        if upset:
+            upsets.append(upset)
+
+    # Enrich championship odds with seed/region data
+    for team in championship_odds:
+        key = _team_match_key(team["team_name"])
+        if key in team_seed_map:
+            team["seed"] = team_seed_map[key]
+        if key in team_region_map:
+            team["region"] = team_region_map[key]
+
+    # Mark eliminated teams
+    eliminated_teams: set[str] = set()
+    for event in tournament_events:
+        if event.status in ("completed", "closed") and event.score_home is not None and event.score_away is not None:
+            if event.score_home > event.score_away:
+                eliminated_teams.add(_team_match_key(event.away_team_name))
+            else:
+                eliminated_teams.add(_team_match_key(event.home_team_name))
+
+    for team in championship_odds:
+        if _team_match_key(team["team_name"]) in eliminated_teams:
+            team["is_eliminated"] = True
+
+    cinderellas = _find_cinderellas(championship_odds, tournament_events)
+    upsets.sort(key=lambda u: u["seed_winner"] - u["seed_loser"], reverse=True)
+
+    return bracket_games, live_games, upsets, cinderellas
+
+
+async def _get_march_madness_data(
+    tournament_type: str,
+    db: AsyncSession,
+    user: Optional[User],
+) -> dict:
+    """Build the full March Madness response for a tournament type."""
+    now = datetime.now(timezone.utc)
+    config = _SPORT_FILTERS[tournament_type]
+    tournament_state = _get_tournament_state()
+
+    # 1. Championship futures
+    futures_query = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.external_id.ilike(f"{config['sport_prefix']}%"),
+                FuturesMarket.llm_sport_category == config["llm_category"],
+            ),
+        )
+    )
+    result = await db.execute(futures_query)
+    all_markets = result.scalars().unique().all()
+
+    championship_markets = [
+        m for m in all_markets
+        if _is_ncaab_championship_market(m.name, tournament_type)
+    ]
+    logger.info(
+        "March Madness %s: %d championship markets from %d total",
+        tournament_type, len(championship_markets), len(all_markets),
+    )
+
+    championship_odds = _aggregate_championship_odds(championship_markets, tournament_type)
+
+    # 2. Biggest movers
+    biggest_movers = await _compute_biggest_movers(championship_markets, now, db)
+
+    # 3. Bracket games
     bracket_games = []
     live_games = []
     upsets = []
     cinderellas = []
 
     if tournament_state in ("pre_tournament", "in_progress", "completed"):
-        # Query tournament-tagged events
         bracket_query = (
             select(Event)
             .where(
@@ -336,163 +515,11 @@ async def _get_march_madness_data(
         bracket_result = await db.execute(bracket_query)
         tournament_events = bracket_result.scalars().all()
 
-        # Also enrich championship_odds with seed/region from bracket data
-        team_seed_map: dict[str, int] = {}
-        team_region_map: dict[str, str] = {}
+        bracket_games, live_games, upsets, cinderellas = await _process_bracket(
+            tournament_type, tournament_events, championship_odds, now,
+        )
 
-        for event in tournament_events:
-            game = {
-                "event_id": event.id,
-                "round": event.tournament_round,
-                "region": event.tournament_region,
-                "home_team": event.home_team_name,
-                "away_team": event.away_team_name,
-                "seed_home": event.tournament_seed_home,
-                "seed_away": event.tournament_seed_away,
-                "score_home": event.score_home,
-                "score_away": event.score_away,
-                "status": event.status,
-                "commence_time": event.commence_time.isoformat() if event.commence_time else None,
-            }
-
-            # Add current odds if available
-            if event.current_odds:
-                home_prob = event.current_odds.get("home")
-                away_prob = event.current_odds.get("away")
-                game["prob_home"] = round(home_prob, 3) if home_prob else None
-                game["prob_away"] = round(away_prob, 3) if away_prob else None
-            else:
-                game["prob_home"] = None
-                game["prob_away"] = None
-
-            # Historical upset rate for this seed matchup
-            if event.tournament_seed_home and event.tournament_seed_away:
-                hist = get_historical_upset_rate(
-                    tournament_type,
-                    event.tournament_seed_home,
-                    event.tournament_seed_away,
-                )
-                game["historical_upset_rate"] = hist["upset_pct"] if hist else None
-                game["seed_context"] = get_seed_context_text(
-                    tournament_type,
-                    min(event.tournament_seed_home, event.tournament_seed_away),
-                    max(event.tournament_seed_home, event.tournament_seed_away),
-                )
-            else:
-                game["historical_upset_rate"] = None
-                game["seed_context"] = None
-
-            # EI if available
-            if event.raw_ei:
-                game["ei"] = round(event.raw_ei * 100)
-            else:
-                game["ei"] = None
-
-            bracket_games.append(game)
-
-            # Track seeds/regions for championship odds enrichment
-            if event.tournament_seed_home and event.home_team_name:
-                team_seed_map[_team_match_key(event.home_team_name)] = event.tournament_seed_home
-                if event.tournament_region:
-                    team_region_map[_team_match_key(event.home_team_name)] = event.tournament_region
-            if event.tournament_seed_away and event.away_team_name:
-                team_seed_map[_team_match_key(event.away_team_name)] = event.tournament_seed_away
-                if event.tournament_region:
-                    team_region_map[_team_match_key(event.away_team_name)] = event.tournament_region
-
-            # Live games (currently playing or starting within 6h)
-            if event.status == "live":
-                live_games.append(game)
-            elif (event.status == "scheduled" and event.commence_time
-                  and event.commence_time <= now + timedelta(hours=6)):
-                live_games.append(game)
-
-            # Upset detection (completed games where lower seed won)
-            if event.status in ("completed", "closed") and event.score_home is not None and event.score_away is not None:
-                seed_h = event.tournament_seed_home
-                seed_a = event.tournament_seed_away
-                if seed_h and seed_a and seed_h != seed_a:
-                    home_won = event.score_home > event.score_away
-                    # Upset = higher-numbered seed won
-                    if (home_won and seed_h > seed_a) or (not home_won and seed_a > seed_h):
-                        winner = event.home_team_name if home_won else event.away_team_name
-                        loser = event.away_team_name if home_won else event.home_team_name
-                        seed_winner = seed_h if home_won else seed_a
-                        seed_loser = seed_a if home_won else seed_h
-
-                        hist = get_historical_upset_rate(tournament_type, seed_winner, seed_loser)
-
-                        upsets.append({
-                            "event_id": event.id,
-                            "winner": winner,
-                            "loser": loser,
-                            "seed_winner": seed_winner,
-                            "seed_loser": seed_loser,
-                            "score": f"{event.score_home}-{event.score_away}" if home_won else f"{event.score_away}-{event.score_home}",
-                            "winner_pre_game_prob": game.get("prob_home") if home_won else game.get("prob_away"),
-                            "historical_upset_rate": hist["upset_pct"] if hist else None,
-                            "round": event.tournament_round,
-                        })
-
-        # Enrich championship odds with seed/region data
-        for team in championship_odds:
-            key = _team_match_key(team["team_name"])
-            if key in team_seed_map:
-                team["seed"] = team_seed_map[key]
-            if key in team_region_map:
-                team["region"] = team_region_map[key]
-
-        # Cinderella watch: seeds 9+ still alive with title odds
-        # Find teams still alive by looking at which teams haven't lost
-        eliminated_teams: set[str] = set()
-        for event in tournament_events:
-            if event.status in ("completed", "closed") and event.score_home is not None and event.score_away is not None:
-                if event.score_home > event.score_away:
-                    eliminated_teams.add(_team_match_key(event.away_team_name))
-                else:
-                    eliminated_teams.add(_team_match_key(event.home_team_name))
-
-        # Mark eliminated teams in championship odds
-        for team in championship_odds:
-            key = _team_match_key(team["team_name"])
-            if key in eliminated_teams:
-                team["is_eliminated"] = True
-
-        # Build cinderella list
-        for team in championship_odds:
-            seed = team.get("seed")
-            if seed and seed >= 9 and not team["is_eliminated"] and team["probability"] > 0:
-                games_won = 0
-                games_played = 0
-                for event in tournament_events:
-                    tk_home = _team_match_key(event.home_team_name) if event.home_team_name else ""
-                    tk_away = _team_match_key(event.away_team_name) if event.away_team_name else ""
-                    team_key = _team_match_key(team["team_name"])
-                    if team_key in (tk_home, tk_away) and event.status in ("completed", "closed"):
-                        games_played += 1
-                        if event.score_home is not None and event.score_away is not None:
-                            if (team_key == tk_home and event.score_home > event.score_away) or \
-                               (team_key == tk_away and event.score_away > event.score_home):
-                                games_won += 1
-
-                cinderellas.append({
-                    "team_name": team["team_name"],
-                    "seed": seed,
-                    "region": team.get("region"),
-                    "title_odds": team["probability"],
-                    "games_won": games_won,
-                    "games_played": games_played,
-                })
-
-        # Sort cinderellas by games won then title odds
-        cinderellas.sort(key=lambda c: (c["games_won"], c["title_odds"]), reverse=True)
-
-    # Sort upsets by seed differential
-    upsets.sort(key=lambda u: u["seed_winner"] - u["seed_loser"], reverse=True)
-
-    # ==================================================================
     # 4. Alma mater personalization
-    # ==================================================================
     alma_mater_teams: list[str] = []
     if user:
         fav_result = await db.execute(
@@ -507,21 +534,16 @@ async def _get_march_madness_data(
             if fav.team and fav.team.name:
                 alma_mater_teams.append(fav.team.name)
 
-        # Mark alma mater teams in championship odds
         alma_keys = {_team_match_key(name) for name in alma_mater_teams}
         for team in championship_odds:
             if _team_match_key(team["team_name"]) in alma_keys:
                 team["is_alma_mater"] = True
 
-    # ==================================================================
-    # 5. Seed history (static reference data)
-    # ==================================================================
+    # 5. Seed history
     seed_history = get_first_round_seed_history(tournament_type)
     notable_upsets = NOTABLE_UPSETS.get(tournament_type, [])
 
-    # ==================================================================
     # Build bracket structure
-    # ==================================================================
     bracket = None
     if bracket_games:
         regions = sorted(set(
