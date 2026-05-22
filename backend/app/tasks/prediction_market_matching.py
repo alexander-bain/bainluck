@@ -273,6 +273,395 @@ async def _check_and_fix_inversion(
 _KALSHI_TICKER_LIKE_PATTERNS = [f"{prefix}%" for prefix in _KALSHI_GAME_TICKER_PREFIXES]
 
 
+async def _try_link_market(
+    session, market, matchup, matched_event, stats: dict,
+    ticker_game_date, now: datetime, polymarket_backfill_queue: list,
+) -> None:
+    """Link a matched market to its event, or auto-create an event if needed."""
+    from app.models.models import FuturesMarket
+
+    if matched_event:
+        if not await _check_duplicate_kalshi_linkage(
+            session, matched_event["event_id"], market, ticker_game_date,
+        ):
+            stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
+            stats["funnel"]["duplicate_linkage_blocked"] += 1
+            matched_event = None
+
+    if matched_event:
+        market.event_id = matched_event["event_id"]
+        _set_market_sport_fields(market, matched_event)
+        stats["newly_linked"] += 1
+        stats["funnel"]["linked"] += 1
+        logger.info(
+            "Linked %s market '%s' -> event %d (%s vs %s)",
+            market.source, market.name, matched_event["event_id"],
+            matched_event["home_team"], matched_event["away_team"],
+        )
+        await _register_market_team_identities(
+            session, matched_event["event_id"], matchup, market,
+        )
+        if market.group_id and market.source == "polymarket":
+            from sqlalchemy import text as _text
+            await session.execute(_text("""
+                UPDATE futures_markets
+                SET event_id = :eid
+                WHERE group_id = :gid
+                  AND group_type = 'polymarket_sub_market'
+                  AND (event_id IS NULL OR event_id != :eid)
+            """), {"eid": matched_event["event_id"], "gid": market.group_id})
+        if market.source == "polymarket":
+            polymarket_backfill_queue.append(
+                (market.id, matched_event["event_id"])
+            )
+        return
+
+    # No existing event — try auto-creating
+    if matchup and matchup.team_b:
+        auto_event = await _create_event_from_prediction_market(
+            session, matchup, market, now,
+        )
+        if auto_event:
+            market.event_id = auto_event["event_id"]
+            _set_market_sport_fields(market, auto_event)
+            stats["newly_linked"] += 1
+            stats["funnel"]["linked"] += 1
+            stats["funnel"].setdefault("auto_created_events", 0)
+            stats["funnel"]["auto_created_events"] += 1
+            if market.source == "polymarket":
+                polymarket_backfill_queue.append(
+                    (market.id, auto_event["event_id"])
+                )
+            return
+
+    # Record failure
+    if not matchup:
+        stats["funnel"]["no_matchup_extracted"] += 1
+    stats["funnel"]["no_event_found"] += 1
+    if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+        stats["funnel"]["sample_game_level_no_event"].append({
+            "source": market.source,
+            "name": market.name,
+            "team_a": matchup.team_a if matchup else None,
+            "team_b": matchup.team_b if matchup else None,
+            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+            "external_id": market.external_id,
+        })
+
+
+async def _phase1_pass1_ticker_scan(
+    session, stats: dict, now: datetime,
+    polymarket_backfill_queue: list, _time_remaining,
+) -> set[int]:
+    """Phase 1 Pass 1: scan Kalshi markets with known game ticker patterns."""
+    from app.models.models import FuturesMarket
+
+    ticker_conditions = [
+        func.lower(FuturesMarket.external_id).like(pattern)
+        for pattern in _KALSHI_TICKER_LIKE_PATTERNS
+    ]
+    ticker_result = await session.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.event_id.is_(None),
+            or_(*ticker_conditions),
+        )
+        .order_by(FuturesMarket.updated_at.desc())
+    )
+    ticker_markets = ticker_result.scalars().all()
+    stats["funnel"]["ticker_scan_count"] = len(ticker_markets)
+
+    processed_ids = set()
+    for market in ticker_markets:
+        if _time_remaining() < 120:
+            logger.info("Phase 1 Pass 1 time budget exhausted after %d/%d ticker markets",
+                        stats["markets_scanned"], len(ticker_markets))
+            break
+        processed_ids.add(market.id)
+        stats["markets_scanned"] += 1
+        stats["funnel"]["game_level_detected"] += 1
+
+        matchup = extract_matchup_with_ticker_fallback(
+            market.name, external_id=market.external_id,
+        )
+
+        ticker_sport = get_sport_prefix_from_ticker(market.external_id)
+        if ticker_sport:
+            stats["funnel"].setdefault("sport_key_extracted", 0)
+            stats["funnel"]["sport_key_extracted"] += 1
+        else:
+            stats["funnel"].setdefault("sport_key_extraction_failed", 0)
+            stats["funnel"]["sport_key_extraction_failed"] += 1
+
+        ticker_game_date = extract_game_date_from_ticker(market.external_id)
+
+        if matchup:
+            matched_event = await _find_matching_event(
+                session, matchup, market, now,
+                game_date_override=ticker_game_date,
+            )
+            if matched_event and matchup.format_type == "ticker_parsed":
+                stats["funnel"].setdefault("ticker_abbrev_linked", 0)
+                stats["funnel"]["ticker_abbrev_linked"] += 1
+        else:
+            matched_event = await _find_event_by_sport_and_time(
+                session, market, now,
+                game_date_override=ticker_game_date,
+            )
+            if matched_event:
+                stats["funnel"].setdefault("sport_time_fallback_linked", 0)
+                stats["funnel"]["sport_time_fallback_linked"] += 1
+
+        await _try_link_market(
+            session, market, matchup, matched_event, stats,
+            ticker_game_date, now, polymarket_backfill_queue,
+        )
+
+    return processed_ids
+
+
+async def _phase1_pass2_general_scan(
+    session, stats: dict, now: datetime, limit: int,
+    processed_ids: set[int], polymarket_backfill_queue: list,
+    _time_remaining,
+) -> None:
+    """Phase 1 Pass 2: scan non-ticker game markets (Polymarket + edge cases)."""
+    from app.models.models import FuturesMarket
+
+    _matchup_base_where = [
+        FuturesMarket.source.in_(["kalshi", "polymarket"]),
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.status == "open",
+    ]
+    _matchup_name_filter = or_(
+        FuturesMarket.name.ilike("% vs.%"),
+        FuturesMarket.name.ilike("% vs %"),
+        FuturesMarket.name.ilike("% – %"),
+    )
+
+    matchup_result = await session.execute(
+        select(FuturesMarket)
+        .where(*_matchup_base_where, _matchup_name_filter)
+        .order_by(FuturesMarket.updated_at.desc())
+        .limit(limit)
+    )
+    matchup_markets = matchup_result.scalars().all()
+
+    remaining_budget = max(0, limit // 5)
+    remaining_markets = []
+    if remaining_budget > 0:
+        remaining_result = await session.execute(
+            select(FuturesMarket)
+            .where(*_matchup_base_where, ~_matchup_name_filter)
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(remaining_budget)
+        )
+        remaining_markets = remaining_result.scalars().all()
+
+    unlinked_markets = matchup_markets + remaining_markets
+    stats["funnel"]["general_scan_count"] = len(unlinked_markets)
+    stats["funnel"]["matchup_scan_count"] = len(matchup_markets)
+    stats["funnel"]["remaining_scan_count"] = len(remaining_markets)
+
+    for market in unlinked_markets:
+        if _time_remaining() < 120:
+            logger.info("Phase 1 Pass 2 time budget exhausted after %d markets scanned",
+                        stats["markets_scanned"])
+            break
+        if market.id in processed_ids:
+            continue
+
+        stats["markets_scanned"] += 1
+
+        if not is_game_level_market(
+            market.name, market.category,
+            external_id=market.external_id,
+        ):
+            stats["funnel"]["not_game_level"] += 1
+            if len(stats["funnel"]["sample_not_game_level"]) < 10:
+                stats["funnel"]["sample_not_game_level"].append(
+                    {"source": market.source, "name": market.name,
+                     "external_id": market.external_id}
+                )
+            continue
+
+        matchup = extract_matchup_with_ticker_fallback(
+            market.name, external_id=market.external_id,
+        )
+        if not matchup:
+            stats["funnel"]["no_matchup_extracted"] += 1
+            continue
+
+        stats["funnel"]["game_level_detected"] += 1
+        pass2_game_date = (
+            extract_game_date_from_ticker(market.external_id)
+            if market.source == "kalshi" else None
+        )
+
+        matched_event = await _find_matching_event(
+            session, matchup, market, now,
+            game_date_override=pass2_game_date,
+        )
+
+        await _try_link_market(
+            session, market, matchup, matched_event, stats,
+            pass2_game_date, now, polymarket_backfill_queue,
+        )
+
+
+async def _phase15_revalidate(
+    session, stats: dict, now: datetime, _time_remaining,
+) -> None:
+    """Phase 1.5: fix stale and mislinked markets."""
+    from app.models.models import FuturesMarket, Event, WinProbSnapshot
+
+    stats["funnel"].setdefault("stale_relinked", 0)
+    stats["funnel"].setdefault("mislink_fixed", 0)
+    stats["funnel"].setdefault("phase15_skipped_budget", False)
+    stats["funnel"].setdefault("phase15_checked", 0)
+
+    if _time_remaining() < 120:
+        logger.info("Skipping Phase 1.5 — only %.0fs remaining", _time_remaining())
+        stats["funnel"]["phase15_skipped_budget"] = True
+        return
+
+    all_linked_result = await session.execute(
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+            FuturesMarket.status == "open",
+        )
+        .order_by(
+            case(
+                (Event.status.in_(["completed", "closed"]), 0),
+                (Event.external_id.is_(None), 1),
+                else_=2,
+            ),
+            FuturesMarket.updated_at.desc(),
+        )
+        .limit(1000)
+    )
+    all_linked_rows = all_linked_result.all()
+
+    for market, linked_event in all_linked_rows:
+        if _time_remaining() < 60:
+            logger.info("Phase 1.5 time budget exhausted after %d/%d markets",
+                        stats["funnel"]["phase15_checked"], len(all_linked_rows))
+            break
+        stats["funnel"]["phase15_checked"] += 1
+        try:
+            # Backfill sport_id from event if missing
+            if market.sport_id is None and linked_event.sport_id:
+                market.sport_id = linked_event.sport_id
+                stats["funnel"].setdefault("sport_id_backfilled", 0)
+                stats["funnel"]["sport_id_backfilled"] += 1
+
+            ticker_cat = _derive_sport_category(market.external_id)
+            if ticker_cat and market.llm_sport_category != ticker_cat:
+                market.llm_sport_category = ticker_cat
+                stats["funnel"].setdefault("sport_category_fixed", 0)
+                stats["funnel"]["sport_category_fixed"] += 1
+
+            if not is_game_level_market(
+                market.name, market.category, external_id=market.external_id,
+            ):
+                continue
+
+            matchup = extract_matchup_with_ticker_fallback(
+                market.name, external_id=market.external_id,
+            )
+            if not matchup or not matchup.team_b:
+                continue
+
+            a_matches = (
+                _fuzzy_team_match(matchup.team_a, linked_event.home_team_name)
+                or _fuzzy_team_match(matchup.team_a, linked_event.away_team_name)
+            )
+            b_matches = (
+                _fuzzy_team_match(matchup.team_b, linked_event.home_team_name)
+                or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
+            )
+            teams_match = a_matches and b_matches
+            is_finished = linked_event.status in ("completed", "closed")
+            is_auto_created = (
+                linked_event.external_id
+                and str(linked_event.external_id).startswith("pm_")
+            )
+
+            if teams_match and not is_finished and not is_auto_created:
+                continue
+
+            reason = (
+                "auto_created" if is_auto_created
+                else "mislinked" if not teams_match
+                else "completed"
+            )
+            ticker_game_date = (
+                extract_game_date_from_ticker(market.external_id)
+                if market.source == "kalshi" else None
+            )
+
+            better_match = await _find_matching_event(
+                session, matchup, market, now,
+                game_date_override=ticker_game_date,
+            )
+
+            if better_match and better_match["event_id"] != linked_event.id:
+                logger.info(
+                    "Re-linking %s '%s' from %s event %d -> event %d",
+                    market.source, market.name, reason,
+                    linked_event.id, better_match["event_id"],
+                )
+                if is_auto_created or not teams_match:
+                    del_result = await session.execute(
+                        delete(WinProbSnapshot).where(
+                            WinProbSnapshot.event_id == linked_event.id,
+                            WinProbSnapshot.source == market.source,
+                        )
+                    )
+                    stats["orphaned_snapshots_deleted"] += del_result.rowcount
+                market.event_id = better_match["event_id"]
+                _set_market_sport_fields(market, better_match)
+                if market.group_id and market.source == "polymarket":
+                    from sqlalchemy import text as _text
+                    await session.execute(_text("""
+                        UPDATE futures_markets
+                        SET event_id = :eid
+                        WHERE group_id = :gid
+                          AND group_type = 'polymarket_sub_market'
+                          AND (event_id IS NULL OR event_id != :eid)
+                    """), {"eid": better_match["event_id"], "gid": market.group_id})
+                if is_auto_created:
+                    stats["funnel"].setdefault("auto_created_relinked", 0)
+                    stats["funnel"]["auto_created_relinked"] += 1
+                elif not teams_match:
+                    stats["funnel"]["mislink_fixed"] += 1
+                else:
+                    stats["funnel"]["stale_relinked"] += 1
+            elif is_auto_created:
+                pass
+            elif not teams_match:
+                logger.info(
+                    "Unlinking %s '%s' from mismatched event %d — no better match",
+                    market.source, market.name, linked_event.id,
+                )
+                del_result = await session.execute(
+                    delete(WinProbSnapshot).where(
+                        WinProbSnapshot.event_id == linked_event.id,
+                        WinProbSnapshot.source == market.source,
+                    )
+                )
+                stats["orphaned_snapshots_deleted"] += del_result.rowcount
+                market.event_id = None
+                stats["funnel"]["mislink_fixed"] += 1
+        except Exception as e:
+            logger.debug("Error checking link for market %d: %s", market.id, e)
+            continue
+
+
 async def _match_prediction_markets(limit: int = 500):
     """
     Match game-level prediction markets to events and write win_prob_snapshots.
@@ -293,7 +682,6 @@ async def _match_prediction_markets(limit: int = 500):
         "snapshots_deduped": 0,
         "orphaned_snapshots_deleted": 0,
         "errors": [],
-        # Funnel stats: track where markets drop off
         "funnel": {
             "total_unlinked": 0,
             "not_game_level": 0,
@@ -301,538 +689,42 @@ async def _match_prediction_markets(limit: int = 500):
             "game_level_detected": 0,
             "no_event_found": 0,
             "linked": 0,
-            "sample_game_level_no_event": [],  # Sample of game-level markets that couldn't match
-            "sample_not_game_level": [],  # Sample of markets that weren't detected as game-level
+            "sample_game_level_no_event": [],
+            "sample_not_game_level": [],
         },
     }
 
     import time as _time
     _task_start = _time.monotonic()
-    _TIME_BUDGET_SECONDS = 780  # Leave 60s buffer before the 840s soft limit
+    _TIME_BUDGET_SECONDS = 780
 
     def _time_remaining() -> float:
         return _TIME_BUDGET_SECONDS - (_time.monotonic() - _task_start)
 
     now = datetime.now(timezone.utc)
-    # Track newly linked Polymarket markets for price history backfill
     polymarket_backfill_queue = []
 
     async with get_task_session() as session:
-        # ── Phase 1: Link unlinked game-level markets ────────────────────
+        # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
-        #
-        # Two-pass strategy:
-        # Pass 1 (targeted): Directly query Kalshi markets with game ticker
-        #   patterns (KXNBAGAME%, KXNFLGAME%, etc.) — guaranteed game-level,
-        #   no limit needed since there are relatively few.
-        # Pass 2 (general): Scan remaining unlinked markets with a limit,
-        #   using name-based pattern matching to detect Polymarket game
-        #   markets and any Kalshi markets with non-standard tickers.
-
-        # ── Pass 1: Targeted Kalshi game ticker scan ────────────────────
-        # Order by most recently updated so new/active markets are processed
-        # first (critical when there are thousands of unlinked markets and
-        # the task has a 780s time budget).
-        ticker_conditions = [
-            func.lower(FuturesMarket.external_id).like(pattern)
-            for pattern in _KALSHI_TICKER_LIKE_PATTERNS
-        ]
-        ticker_result = await session.execute(
-            select(FuturesMarket)
-            .where(
-                FuturesMarket.source == "kalshi",
-                FuturesMarket.event_id.is_(None),
-                or_(*ticker_conditions),
-            )
-            .order_by(FuturesMarket.updated_at.desc())
-        )
-        ticker_markets = ticker_result.scalars().all()
-        stats["funnel"]["ticker_scan_count"] = len(ticker_markets)
-
-        # Track IDs already processed so Pass 2 doesn't re-scan
-        processed_ids = set()
-
-        for market in ticker_markets:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 1 time budget exhausted after %d/%d ticker markets", stats["markets_scanned"], len(ticker_markets))
-                break
-            processed_ids.add(market.id)
-            stats["markets_scanned"] += 1
-            stats["funnel"]["game_level_detected"] += 1
-
-            # Try name-based extraction first, then ticker abbreviation parsing
-            matchup = extract_matchup_with_ticker_fallback(
-                market.name, external_id=market.external_id,
-            )
-
-            # Track sport key extraction success/failure for monitoring
-            ticker_sport = get_sport_prefix_from_ticker(market.external_id)
-            if ticker_sport:
-                stats["funnel"].setdefault("sport_key_extracted", 0)
-                stats["funnel"]["sport_key_extracted"] += 1
-            else:
-                stats["funnel"].setdefault("sport_key_extraction_failed", 0)
-                stats["funnel"]["sport_key_extraction_failed"] += 1
-
-            # Extract game date from ticker — Kalshi commence_time is the
-            # market RESOLUTION date (often weeks after the game), not the
-            # actual game date. The ticker embeds the real date.
-            ticker_game_date = extract_game_date_from_ticker(market.external_id)
-
-            if matchup:
-                # Team-name based matching (either from name or ticker)
-                matched_event = await _find_matching_event(
-                    session, matchup, market, now,
-                    game_date_override=ticker_game_date,
-                )
-                if matched_event and matchup.format_type == "ticker_parsed":
-                    stats["funnel"].setdefault("ticker_abbrev_linked", 0)
-                    stats["funnel"]["ticker_abbrev_linked"] += 1
-            else:
-                # Last resort: sport + time matching for truly unrecognizable markets
-                matched_event = await _find_event_by_sport_and_time(
-                    session, market, now,
-                    game_date_override=ticker_game_date,
-                )
-                if matched_event:
-                    stats["funnel"].setdefault("sport_time_fallback_linked", 0)
-                    stats["funnel"]["sport_time_fallback_linked"] += 1
-
-            if matched_event:
-                # Guard: prevent multi-game Kalshi linkage (sawtooth prevention)
-                if not await _check_duplicate_kalshi_linkage(
-                    session, matched_event["event_id"], market, ticker_game_date,
-                ):
-                    stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
-                    stats["funnel"]["duplicate_linkage_blocked"] += 1
-                    matched_event = None  # Fall through to auto-create or skip
-
-            if matched_event:
-                market.event_id = matched_event["event_id"]
-                _set_market_sport_fields(market, matched_event)
-                stats["newly_linked"] += 1
-                stats["funnel"]["linked"] += 1
-                logger.info(
-                    "Linked %s market '%s' → event %d (%s vs %s) [ticker=%s]",
-                    market.source, market.name, matched_event["event_id"],
-                    matched_event["home_team"], matched_event["away_team"],
-                    market.external_id,
-                )
-                await _register_market_team_identities(
-                    session, matched_event["event_id"], matchup, market,
-                )
-                # Propagate event_id to Polymarket sub-markets in the same group
-                if market.group_id and market.source == "polymarket":
-                    from sqlalchemy import text as _text
-                    await session.execute(_text("""
-                        UPDATE futures_markets
-                        SET event_id = :eid
-                        WHERE group_id = :gid
-                          AND group_type = 'polymarket_sub_market'
-                          AND (event_id IS NULL OR event_id != :eid)
-                    """), {"eid": matched_event["event_id"], "gid": market.group_id})
-            else:
-                # No existing event found — try auto-creating one.
-                # This handles sports The Odds API doesn't cover (e.g., Olympics).
-                if matchup and matchup.team_b:
-                    auto_event = await _create_event_from_prediction_market(
-                        session, matchup, market, now,
-                    )
-                    if auto_event:
-                        market.event_id = auto_event["event_id"]
-                        _set_market_sport_fields(market, auto_event)
-                        stats["newly_linked"] += 1
-                        stats["funnel"]["linked"] += 1
-                        stats["funnel"].setdefault("auto_created_events", 0)
-                        stats["funnel"]["auto_created_events"] += 1
-                    else:
-                        if not matchup:
-                            stats["funnel"]["no_matchup_extracted"] += 1
-                        stats["funnel"]["no_event_found"] += 1
-                        if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                            stats["funnel"]["sample_game_level_no_event"].append(
-                                {
-                                    "source": market.source,
-                                    "name": market.name,
-                                    "team_a": matchup.team_a if matchup else None,
-                                    "team_b": matchup.team_b if matchup else None,
-                                    "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                                    "external_id": market.external_id,
-                                }
-                            )
-                else:
-                    if not matchup:
-                        stats["funnel"]["no_matchup_extracted"] += 1
-                    stats["funnel"]["no_event_found"] += 1
-                    if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                        stats["funnel"]["sample_game_level_no_event"].append(
-                            {
-                                "source": market.source,
-                                "name": market.name,
-                                "team_a": matchup.team_a if matchup else None,
-                                "team_b": matchup.team_b if matchup else None,
-                                "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                                "external_id": market.external_id,
-                            }
-                        )
-
-        # ── Pass 2: General scan for non-ticker game markets ─────────────
-        # Catches Polymarket game markets and any Kalshi markets with
-        # non-standard tickers (e.g., esports like KXLOLGAME).
-        #
-        # Two sub-queries to maximize coverage of game-level markets:
-        # 2a: Markets with matchup name patterns (contains "vs." / "vs ")
-        #     — these are almost certainly game-level. Full budget.
-        # 2b: Remaining markets (catches unusual naming).
-        #     — small budget for edge cases.
-        #
-        # Without this split, 13,000+ Polymarket markets (politics, crypto,
-        # weather, etc.) compete for 500 scan slots and crowd out game
-        # markets like "Celtics vs. Lakers".
-
-        _matchup_base_where = [
-            FuturesMarket.source.in_(["kalshi", "polymarket"]),
-            FuturesMarket.event_id.is_(None),
-            FuturesMarket.status == "open",
-        ]
-        _matchup_name_filter = or_(
-            FuturesMarket.name.ilike("% vs.%"),
-            FuturesMarket.name.ilike("% vs %"),
-            FuturesMarket.name.ilike("% – %"),  # en-dash matchups
+        processed_ids = await _phase1_pass1_ticker_scan(
+            session, stats, now, polymarket_backfill_queue, _time_remaining,
         )
 
-        # Pass 2a: matchup-patterned markets (prioritized)
-        matchup_result = await session.execute(
-            select(FuturesMarket)
-            .where(*_matchup_base_where, _matchup_name_filter)
-            .order_by(FuturesMarket.updated_at.desc())
-            .limit(limit)
+        # Phase 1, Pass 2: General scan
+        stats["funnel"]["total_unlinked"] = (
+            stats["funnel"].get("ticker_scan_count", 0)
         )
-        matchup_markets = matchup_result.scalars().all()
+        await _phase1_pass2_general_scan(
+            session, stats, now, limit, processed_ids,
+            polymarket_backfill_queue, _time_remaining,
+        )
+        stats["funnel"]["total_unlinked"] += stats["funnel"].get("general_scan_count", 0)
 
-        # Pass 2b: remaining non-matchup markets (edge cases, small budget)
-        remaining_budget = max(0, limit // 5)  # 20% of budget for edge cases
-        remaining_markets = []
-        if remaining_budget > 0:
-            remaining_result = await session.execute(
-                select(FuturesMarket)
-                .where(*_matchup_base_where, ~_matchup_name_filter)
-                .order_by(FuturesMarket.updated_at.desc())
-                .limit(remaining_budget)
-            )
-            remaining_markets = remaining_result.scalars().all()
-
-        unlinked_markets = matchup_markets + remaining_markets
-        stats["funnel"]["total_unlinked"] = len(unlinked_markets) + len(ticker_markets)
-        stats["funnel"]["general_scan_count"] = len(unlinked_markets)
-        stats["funnel"]["matchup_scan_count"] = len(matchup_markets)
-        stats["funnel"]["remaining_scan_count"] = len(remaining_markets)
-
-        for market in unlinked_markets:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 2 time budget exhausted after %d markets scanned", stats["markets_scanned"])
-                break
-            # Skip markets already processed in Pass 1
-            if market.id in processed_ids:
-                continue
-
-            stats["markets_scanned"] += 1
-
-            # Check if market name looks like a game-level matchup.
-            # Note: we do NOT gate on outcome count here. Polymarket bundles
-            # moneyline + spread + totals under one game event, so a game
-            # like "Celtics vs. Warriors" can have 3-5+ outcomes. The name
-            # pattern is the reliable signal, not outcome count.
-            #
-            # For Kalshi, we also check the external_id (event ticker) for
-            # reliable game-level detection: "KXNBAGAME-..." is always a game.
-            if not is_game_level_market(
-                market.name, market.category,
-                external_id=market.external_id,
-            ):
-                stats["funnel"]["not_game_level"] += 1
-                if len(stats["funnel"]["sample_not_game_level"]) < 10:
-                    stats["funnel"]["sample_not_game_level"].append(
-                        {"source": market.source, "name": market.name,
-                         "external_id": market.external_id}
-                    )
-                continue
-
-            # Extract matchup info (with ticker fallback for Kalshi)
-            matchup = extract_matchup_with_ticker_fallback(
-                market.name, external_id=market.external_id,
-            )
-            if not matchup:
-                stats["funnel"]["no_matchup_extracted"] += 1
-                continue
-
-            stats["funnel"]["game_level_detected"] += 1
-
-            # For Kalshi markets in Pass 2, extract game date from ticker
-            # (commence_time is resolution date, not game date)
-            pass2_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
-
-            # Find candidate events by team name matching
-            # Search for events where either team matches either market team
-            matched_event = await _find_matching_event(
-                session, matchup, market, now,
-                game_date_override=pass2_game_date,
-            )
-
-            if matched_event:
-                # Guard: prevent multi-game Kalshi linkage (sawtooth prevention)
-                if not await _check_duplicate_kalshi_linkage(
-                    session, matched_event["event_id"], market, pass2_game_date,
-                ):
-                    stats["funnel"].setdefault("duplicate_linkage_blocked", 0)
-                    stats["funnel"]["duplicate_linkage_blocked"] += 1
-                    matched_event = None
-
-            if matched_event:
-                market.event_id = matched_event["event_id"]
-                _set_market_sport_fields(market, matched_event)
-                stats["newly_linked"] += 1
-                stats["funnel"]["linked"] += 1
-                logger.info(
-                    "Linked %s market '%s' → event %d (%s vs %s) [yes_is_home=%s]",
-                    market.source, market.name, matched_event["event_id"],
-                    matched_event["home_team"], matched_event["away_team"],
-                    matched_event["yes_is_home"],
-                )
-                await _register_market_team_identities(
-                    session, matched_event["event_id"], matchup, market,
-                )
-                # Propagate event_id to Polymarket sub-markets in the same group
-                if market.group_id and market.source == "polymarket":
-                    from sqlalchemy import text as _text
-                    await session.execute(_text("""
-                        UPDATE futures_markets
-                        SET event_id = :eid
-                        WHERE group_id = :gid
-                          AND group_type = 'polymarket_sub_market'
-                          AND (event_id IS NULL OR event_id != :eid)
-                    """), {"eid": matched_event["event_id"], "gid": market.group_id})
-                # Queue Polymarket markets for price history backfill
-                if market.source == "polymarket":
-                    polymarket_backfill_queue.append(
-                        (market.id, matched_event["event_id"])
-                    )
-            else:
-                # No existing event — try auto-creating for sports not in The Odds API
-                if matchup.team_b:
-                    auto_event = await _create_event_from_prediction_market(
-                        session, matchup, market, now,
-                    )
-                    if auto_event:
-                        market.event_id = auto_event["event_id"]
-                        _set_market_sport_fields(market, auto_event)
-                        stats["newly_linked"] += 1
-                        stats["funnel"]["linked"] += 1
-                        stats["funnel"].setdefault("auto_created_events", 0)
-                        stats["funnel"]["auto_created_events"] += 1
-                        if market.source == "polymarket":
-                            polymarket_backfill_queue.append(
-                                (market.id, auto_event["event_id"])
-                            )
-                    else:
-                        stats["funnel"]["no_event_found"] += 1
-                        if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                            stats["funnel"]["sample_game_level_no_event"].append(
-                                {
-                                    "source": market.source,
-                                    "name": market.name,
-                                    "team_a": matchup.team_a,
-                                    "team_b": matchup.team_b,
-                                    "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                                    "external_id": market.external_id,
-                                }
-                            )
-                else:
-                    stats["funnel"]["no_event_found"] += 1
-                    if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                        stats["funnel"]["sample_game_level_no_event"].append(
-                            {
-                                "source": market.source,
-                                "name": market.name,
-                                "team_a": matchup.team_a,
-                                "team_b": matchup.team_b,
-                                "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                                "external_id": market.external_id,
-                            }
-                        )
-
-        # ── Phase 1.5: Fix stale and mislinked markets ────────────────────
-        logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining", stats["markets_scanned"], stats["newly_linked"], _time_remaining())
-        # Scan ALL linked markets for two problems:
-        # (a) Stale: linked to completed/closed events — try to find the next game
-        # (b) Mislinked: teams don't both match the linked event (e.g.,
-        #     "Pistons vs. Bulls" linked to "Georgia Southern vs South Florida Bulls"
-        #     because "Bulls" substring-matched but "Pistons" didn't)
-        #
-        # Time-budgeted: skip if running low on time (most expensive phase)
-        stats["funnel"].setdefault("stale_relinked", 0)
-        stats["funnel"].setdefault("mislink_fixed", 0)
-        stats["funnel"].setdefault("phase15_skipped_budget", False)
-        stats["funnel"].setdefault("phase15_checked", 0)
-
-        _skip_phase15 = _time_remaining() < 120
-        if _skip_phase15:
-            logger.info("Skipping Phase 1.5 — only %.0fs remaining", _time_remaining())
-            stats["funnel"]["phase15_skipped_budget"] = True
-
-        all_linked_rows = []
-        if not _skip_phase15:
-            # Prioritize markets linked to completed/closed events — these are
-            # most likely to need re-linking to the next scheduled game between
-            # the same teams (e.g., Polymarket "Celtics vs 76ers" linked to
-            # last night's game instead of tomorrow's).
-            all_linked_result = await session.execute(
-                select(FuturesMarket, Event)
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(
-                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                    FuturesMarket.event_id.isnot(None),
-                    FuturesMarket.status == "open",
-                )
-                .order_by(
-                    case(
-                        (Event.status.in_(["completed", "closed"]), 0),
-                        (Event.external_id.is_(None), 1),
-                        else_=2,
-                    ),
-                    FuturesMarket.updated_at.desc(),
-                )
-                .limit(1000)
-            )
-            all_linked_rows = all_linked_result.all()
-
-        for market, linked_event in all_linked_rows:
-            # Time budget check inside the loop
-            if _time_remaining() < 60:
-                logger.info("Phase 1.5 time budget exhausted after %d/%d markets", stats["funnel"]["phase15_checked"], len(all_linked_rows))
-                break
-            stats["funnel"]["phase15_checked"] += 1
-            try:
-                # Backfill sport_id from event if missing on market
-                if market.sport_id is None and linked_event.sport_id:
-                    market.sport_id = linked_event.sport_id
-                    stats["funnel"].setdefault("sport_id_backfilled", 0)
-                    stats["funnel"]["sport_id_backfilled"] += 1
-
-                # Fix wrong llm_sport_category from ticker
-                ticker_cat = _derive_sport_category(market.external_id)
-                if ticker_cat and market.llm_sport_category != ticker_cat:
-                    market.llm_sport_category = ticker_cat
-                    stats["funnel"].setdefault("sport_category_fixed", 0)
-                    stats["funnel"]["sport_category_fixed"] += 1
-
-                if not is_game_level_market(
-                    market.name, market.category,
-                    external_id=market.external_id,
-                ):
-                    continue
-
-                matchup = extract_matchup_with_ticker_fallback(
-                    market.name, external_id=market.external_id,
-                )
-                if not matchup or not matchup.team_b:
-                    continue
-
-                # Verify both teams actually match the linked event
-                a_matches = (
-                    _fuzzy_team_match(matchup.team_a, linked_event.home_team_name)
-                    or _fuzzy_team_match(matchup.team_a, linked_event.away_team_name)
-                )
-                b_matches = (
-                    _fuzzy_team_match(matchup.team_b, linked_event.home_team_name)
-                    or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
-                )
-                teams_match = a_matches and b_matches
-                is_finished = linked_event.status in ("completed", "closed")
-
-                # Check if linked to an auto-created prediction market event
-                # (external_id starts with "pm_"). These should be re-linked to
-                # real Odds API events when available.
-                is_auto_created = (
-                    linked_event.external_id
-                    and str(linked_event.external_id).startswith("pm_")
-                )
-
-                # Skip if teams match AND event is still active AND not auto-created
-                if teams_match and not is_finished and not is_auto_created:
-                    continue
-
-                # Need to re-link: teams don't match, event finished, or auto-created
-                reason = (
-                    "auto_created" if is_auto_created
-                    else "mislinked" if not teams_match
-                    else "completed"
-                )
-                ticker_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
-
-                better_match = await _find_matching_event(
-                    session, matchup, market, now,
-                    game_date_override=ticker_game_date,
-                )
-
-                if better_match and better_match["event_id"] != linked_event.id:
-                    logger.info(
-                        "Re-linking %s '%s' from %s event %d (%s vs %s) → event %d (%s vs %s)",
-                        market.source, market.name, reason,
-                        linked_event.id, linked_event.home_team_name, linked_event.away_team_name,
-                        better_match["event_id"],
-                        better_match["home_team"], better_match["away_team"],
-                    )
-                    # Move snapshots from auto-created event to real event
-                    if is_auto_created or not teams_match:
-                        del_result = await session.execute(
-                            delete(WinProbSnapshot).where(
-                                WinProbSnapshot.event_id == linked_event.id,
-                                WinProbSnapshot.source == market.source,
-                            )
-                        )
-                        stats["orphaned_snapshots_deleted"] += del_result.rowcount
-                    market.event_id = better_match["event_id"]
-                    _set_market_sport_fields(market, better_match)
-                    if market.group_id and market.source == "polymarket":
-                        from sqlalchemy import text as _text
-                        await session.execute(_text("""
-                            UPDATE futures_markets
-                            SET event_id = :eid
-                            WHERE group_id = :gid
-                              AND group_type = 'polymarket_sub_market'
-                              AND (event_id IS NULL OR event_id != :eid)
-                        """), {"eid": better_match["event_id"], "gid": market.group_id})
-                    if is_auto_created:
-                        stats["funnel"].setdefault("auto_created_relinked", 0)
-                        stats["funnel"]["auto_created_relinked"] += 1
-                    elif not teams_match:
-                        stats["funnel"]["mislink_fixed"] += 1
-                    else:
-                        stats["funnel"]["stale_relinked"] += 1
-                elif is_auto_created:
-                    # Auto-created but no better match — keep as-is for now
-                    pass
-                elif not teams_match:
-                    # Teams don't match and no better event found — unlink to prevent wrong data
-                    logger.info(
-                        "Unlinking %s '%s' from mismatched event %d (%s vs %s) — no better match",
-                        market.source, market.name, linked_event.id,
-                        linked_event.home_team_name, linked_event.away_team_name,
-                    )
-                    # Delete orphaned snapshots from the mislinked event
-                    del_result = await session.execute(
-                        delete(WinProbSnapshot).where(
-                            WinProbSnapshot.event_id == linked_event.id,
-                            WinProbSnapshot.source == market.source,
-                        )
-                    )
-                    stats["orphaned_snapshots_deleted"] += del_result.rowcount
-                    market.event_id = None
-                    stats["funnel"]["mislink_fixed"] += 1
-            except Exception as e:
-                logger.debug("Error checking link for market %d: %s", market.id, e)
-                continue
+        # Phase 1.5: Re-validate linked markets
+        logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
+                    stats["markets_scanned"], stats["newly_linked"], _time_remaining())
+        await _phase15_revalidate(session, stats, now, _time_remaining)
 
         await session.commit()
 

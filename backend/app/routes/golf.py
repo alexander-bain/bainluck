@@ -791,67 +791,430 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
     return "other"
 
 
+def _is_h2h_matchup(market) -> bool:
+    """Check if a market is a head-to-head matchup (exactly 2 golfer outcomes summing to ~1.0)."""
+    valid = [
+        o for o in market.outcomes
+        if o.current_probability is not None
+        and o.name.strip().lower() not in (
+            "yes", "no", "tie", "field", "other", "the field",
+        )
+    ]
+    if len(valid) != 2:
+        return False
+    prob_sum = sum(float(o.current_probability) for o in valid)
+    if prob_sum < 0.85 or prob_sum > 1.15:
+        return False
+    for o in valid:
+        if not _match_key(o.name):
+            return False
+        if len(o.name.strip().split()) < 2:
+            return False
+    return True
+
+
+async def _fetch_24h_snapshots(
+    db: AsyncSession, outcome_ids: list[int], now: datetime,
+) -> dict[int, float]:
+    """Batch-fetch probabilities from ~24h ago for a list of outcome IDs."""
+    if not outcome_ids:
+        return {}
+
+    snapshot_subq = (
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            FuturesOddsSnapshot.probability,
+            sqlfunc.row_number().over(
+                partition_by=FuturesOddsSnapshot.outcome_id,
+                order_by=FuturesOddsSnapshot.captured_at.desc()
+            ).label("rn")
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+            FuturesOddsSnapshot.captured_at.between(
+                now - timedelta(hours=25),
+                now - timedelta(hours=23),
+            ),
+        )
+        .subquery()
+    )
+
+    snap_result = await db.execute(
+        select(snapshot_subq.c.outcome_id, snapshot_subq.c.probability)
+        .where(snapshot_subq.c.rn == 1)
+    )
+    return {row.outcome_id: float(row.probability) for row in snap_result}
+
+
+def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str, int], set[int]]:
+    """Per-source dedup of winner-type markets, keeping the one with most golfer outcomes.
+
+    Returns (source_best, dedup_candidates) where source_best maps source to best market id.
+    """
+    source_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    dedup_candidates: set[int] = set()
+
+    for m in tourn_markets:
+        if _NON_WINNER_MARKET_RE.search(m.name):
+            continue
+        src = m.source or "unknown"
+        golfer_count = sum(
+            1 for o in m.outcomes
+            if o.current_probability is not None
+            and o.name.strip().lower() not in ("tie", "field", "other", "the field")
+            and not _PROP_OUTCOME_RE.search(o.name.strip())
+        )
+        source_groups[src].append((m.id, golfer_count))
+        dedup_candidates.add(m.id)
+
+    source_best: dict[str, int] = {}
+    for src, candidates in source_groups.items():
+        best_id, best_count = max(candidates, key=lambda x: x[1])
+        source_best[src] = best_id
+        if len(candidates) > 1:
+            logger.info(
+                "Golf dedup: source '%s' has %d winner markets for %s, "
+                "selected market %d (%d golfer outcomes, skipping %d)",
+                src, len(candidates), tourn_key, best_id, best_count,
+                len(candidates) - 1,
+            )
+
+    return source_best, dedup_candidates
+
+
+def _extract_prop_market(market, source_label: str) -> dict | None:
+    """Extract a prop market (Top 5/10/20, Make Cut) into a response dict."""
+    source = market.source or "unknown"
+    prop_outcomes = []
+    for outcome in market.outcomes:
+        if outcome.current_probability is None:
+            continue
+        p = float(outcome.current_probability)
+        if source == "kalshi" and p == 0.5:
+            continue
+        raw = outcome.name.strip()
+        if raw.lower() in ("tie", "field", "other", "the field"):
+            continue
+        prop_outcomes.append({
+            "name": _normalize_golfer_name(raw),
+            "probability": round(p, 3),
+        })
+    if not prop_outcomes:
+        return None
+    prop_outcomes.sort(key=lambda x: x["probability"], reverse=True)
+    return {
+        "name": market.name,
+        "source": source_label,
+        "outcomes": prop_outcomes[:5],
+    }
+
+
+def _aggregate_golfer_outcome(
+    outcome, source_label: str, golfer_data: dict[str, dict],
+    prob_24h_ago: dict[int, float],
+) -> None:
+    """Aggregate a single outcome into golfer_data, tracking sources and movement."""
+    prob = float(outcome.current_probability)
+    raw_name = outcome.name.strip()
+
+    if raw_name.lower() in ("tie", "field", "other", "the field"):
+        return
+    if _PROP_OUTCOME_RE.search(raw_name):
+        return
+
+    display_name = _normalize_golfer_name(raw_name)
+    key = _match_key(raw_name)
+    if not key:
+        return
+
+    if key not in golfer_data:
+        golfer_data[key] = {
+            "name": display_name,
+            "sources": {},
+            "movement_24h": None,
+            "opening_probability": None,
+        }
+
+    golfer_data[key]["sources"][source_label] = round(prob, 3)
+
+    if outcome.id in prob_24h_ago:
+        delta = prob - prob_24h_ago[outcome.id]
+        if abs(delta) >= 0.001:
+            existing = golfer_data[key]["movement_24h"]
+            if existing is None or abs(delta) > abs(existing):
+                golfer_data[key]["movement_24h"] = round(delta, 4)
+
+    if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
+        change = float(outcome.probability_change_24h)
+        if abs(change) >= 0.001:
+            golfer_data[key]["movement_24h"] = round(change, 4)
+
+    if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
+        golfer_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
+
+
+def _build_tournament_entry(
+    tourn_key: str, tourn_markets: list,
+    golfer_data: dict[str, dict], prop_markets_list: list[dict],
+    market_ids: list[int], market_sources: list[str],
+    earliest_commence, latest_resolution,
+) -> dict | None:
+    """Build a single tournament response dict from aggregated golfer data."""
+    golfer_data = _merge_abbreviated_golfers(golfer_data)
+
+    # Filter to invitees when DataGolf field data exists
+    has_datagolf = "datagolf" in market_sources
+    if has_datagolf:
+        datagolf_keys = {k for k, v in golfer_data.items() if "datagolf_model" in v["sources"]}
+        if datagolf_keys:
+            filtered_count = len(golfer_data) - len(datagolf_keys)
+            if filtered_count > 0:
+                logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
+            golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
+
+    golfers = []
+    for data in golfer_data.values():
+        source_vals = list(data["sources"].values())
+        avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
+        golfers.append({
+            "name": data["name"],
+            "probability": avg_prob,
+            "movement_24h": data["movement_24h"],
+            "sources": data["sources"],
+            "opening_probability": data["opening_probability"],
+        })
+
+    golfers.sort(key=lambda g: g["probability"], reverse=True)
+
+    if not golfers:
+        return None
+
+    all_golfers = golfers
+    for g in all_golfers:
+        g["probability"] = round(g["probability"], 3)
+        g["american_odds"] = probability_to_american(g["probability"])
+    for i, g in enumerate(all_golfers):
+        g["rank"] = i + 1
+
+    golfers = all_golfers[:_MAX_GOLFERS]
+
+    order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
+    display_name = TOURNAMENT_DISPLAY_NAMES.get(
+        tourn_key,
+        _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title()),
+    )
+    is_tour_event = tourn_key not in TOURNAMENT_ORDER and not tourn_key.startswith("other_") and tourn_key != "other"
+
+    if tourn_key.startswith("other_"):
+        display_name = tourn_markets[0].name if tourn_markets else "Other"
+        display_name = re.sub(r"\s*\?\s*$", "", display_name)
+        order_idx = TOURNAMENT_ORDER.index("other") if "other" in TOURNAMENT_ORDER else 99
+
+    if is_tour_event and latest_resolution:
+        order_idx = 50
+
+    market_names = [m.name for m in tourn_markets]
+    is_womens = (
+        bool(_WOMENS_RE.search(display_name))
+        or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
+    )
+
+    tour_name_for_classify = display_name
+    if tourn_markets:
+        tour_name_for_classify = tourn_markets[0].name
+    market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
+    market_metadata_tours = [
+        m.market_metadata.get("tour")
+        for m in tourn_markets
+        if m.market_metadata and m.market_metadata.get("tour")
+    ]
+    tour = _classify_tour(
+        tour_name_for_classify, tourn_key,
+        tourn_key in MAJOR_TOURNAMENTS, is_womens,
+        market_external_ids=market_ext_ids,
+        market_metadata_tours=market_metadata_tours,
+    )
+
+    return {
+        "key": tourn_key,
+        "name": display_name,
+        "is_major": tourn_key in MAJOR_TOURNAMENTS,
+        "is_tour_event": is_tour_event,
+        "is_womens": is_womens,
+        "tour": tour,
+        "tour_label": TOUR_DISPLAY_NAMES.get(tour, tour),
+        "order": order_idx,
+        "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
+        "commence_time": earliest_commence.isoformat() if earliest_commence else None,
+        "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
+        "market_ids": market_ids,
+        "market_sources": market_sources,
+        "market_names": market_names,
+        "golfers": golfers,
+        "prop_markets": prop_markets_list,
+        "_all_golfers": all_golfers,
+    }
+
+
+def _route_h2h_to_tournament(
+    market, golfer_to_tournaments: dict[str, set[str]],
+    tourn_by_commence: list[tuple[datetime, str]], schedule: list,
+) -> str | None:
+    """Route a head-to-head matchup market to its tournament."""
+    valid_outcomes = [
+        o for o in market.outcomes
+        if o.current_probability is not None
+        and o.name.strip().lower() not in ("yes", "no", "tie", "field", "other", "the field")
+    ]
+    if len(valid_outcomes) != 2:
+        return None
+
+    a, b = valid_outcomes
+    a_key = _match_key(a.name)
+    b_key = _match_key(b.name)
+    if not a_key or not b_key:
+        return None
+
+    a_tourns = golfer_to_tournaments.get(a_key, set())
+    b_tourns = golfer_to_tournaments.get(b_key, set())
+    shared = a_tourns & b_tourns
+
+    name_key = _normalize_tournament(market.name, schedule)
+    if name_key != "other" and _WOMENS_RE.search(market.name):
+        name_key = name_key + "_womens"
+
+    if len(shared) == 1:
+        return next(iter(shared))
+    if len(shared) > 1:
+        return name_key if name_key in shared else next(iter(shared))
+
+    either = a_tourns | b_tourns
+    if len(either) == 1:
+        return next(iter(either))
+    if name_key != "other":
+        return name_key
+
+    # commence_time fallback
+    if not market.commence_time:
+        return None
+    m_ct = market.commence_time
+    best_key = None
+    best_delta = timedelta(days=4)
+    for ct, tk in tourn_by_commence:
+        delta = abs(ct - m_ct) if ct.tzinfo else abs(ct.replace(tzinfo=timezone.utc) - m_ct)
+        if delta < best_delta:
+            best_delta = delta
+            best_key = tk
+    return best_key
+
+
+def _build_h2h_entry(market, tourn_key: str) -> dict:
+    """Build a single H2H matchup dict from a market."""
+    valid_outcomes = [
+        o for o in market.outcomes
+        if o.current_probability is not None
+        and o.name.strip().lower() not in ("yes", "no", "tie", "field", "other", "the field")
+    ]
+    a, b = valid_outcomes[0], valid_outcomes[1]
+    source = market.source or "unknown"
+    source_label = "datagolf_model" if source == "datagolf" else source
+    a_prob = float(a.current_probability)
+    b_prob = float(b.current_probability)
+    if b_prob > a_prob:
+        a, b = b, a
+        a_prob, b_prob = b_prob, a_prob
+
+    return {
+        "market_id": market.id,
+        "source": source_label,
+        "golfer_a": {
+            "name": _normalize_golfer_name(a.name.strip()),
+            "probability": round(a_prob, 3),
+        },
+        "golfer_b": {
+            "name": _normalize_golfer_name(b.name.strip()),
+            "probability": round(b_prob, 3),
+        },
+    }
+
+
+def _enrich_with_schedule(
+    tournaments: list[dict], schedule_by_key: dict[str, dict],
+) -> None:
+    """Enrich tournaments with DataGolf schedule data (venue, dates, etc.)."""
+    _TOURN_TO_SCHED_KEY = {
+        "masters": "masters_tournament",
+        "us_open": "u_s_open",
+        "the_open": "the_open_championship",
+        "players": "the_players_championship",
+    }
+    for t in tournaments:
+        t["slug"] = _clean_slug(t["name"])
+        sched = schedule_by_key.get(t["key"]) or schedule_by_key.get(_TOURN_TO_SCHED_KEY.get(t["key"], ""))
+        if sched:
+            t["venue"] = sched.get("venue") or t.get("venue") or None
+            t["location"] = sched.get("location") or None
+            t["schedule_status"] = sched.get("status") or None
+            if sched.get("start_date"):
+                t["start_date"] = sched["start_date"]
+            if sched.get("end_date"):
+                t["end_date"] = sched["end_date"]
+
+
+def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[dict]:
+    """Remove completed or stale tournaments based on schedule/date signals."""
+    now_date = now.date()
+    filtered = []
+    for t in tournaments:
+        if t.get("schedule_status") == "completed":
+            continue
+        end_date_str = t.get("end_date")
+        if end_date_str:
+            try:
+                if datetime.fromisoformat(end_date_str).date() < now_date - timedelta(days=1):
+                    continue
+            except (ValueError, TypeError):
+                pass
+        elif t.get("start_date"):
+            try:
+                if datetime.fromisoformat(t["start_date"]).date() < now_date - timedelta(days=7):
+                    continue
+            except (ValueError, TypeError):
+                pass
+        elif t.get("resolution_date"):
+            try:
+                if datetime.fromisoformat(t["resolution_date"]).date() < now_date - timedelta(days=7):
+                    continue
+            except (ValueError, TypeError):
+                pass
+        filtered.append(t)
+    return filtered
+
+
 @router.get("")
 async def get_golf(
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get golf tournament futures with aggregated odds across sources.
-
-    Returns tournaments ordered by importance (Majors first), with golfers
-    merged across Polymarket, Kalshi, and Odds API sources.
-    """
+    """Get golf tournament futures with aggregated odds across sources."""
     now = datetime.now(timezone.utc)
 
-    # Query golf-related futures markets using both sport key and LLM category
+    # Query + filter golf markets
     query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
             FuturesMarket.status == "open",
             or_(
-                # Odds API markets with golf_ sport key (authoritative)
                 FuturesMarket.external_id.ilike("golf_%"),
-                # LLM-classified golf markets (may have false positives)
                 FuturesMarket.llm_sport_category == "golf",
             ),
         )
     )
-
     result = await db.execute(query)
     markets_all = result.scalars().unique().all()
-
-    # Filter out non-golf false positives (esports, entertainment, politics, etc.)
     markets_all = [m for m in markets_all if _is_golf_market(m)]
 
-    # Structurally split off head-to-head matchup markets. Odds API matchup
-    # markets don't always have " vs " in the market name — the two golfers
-    # are in the *outcomes*. A market is a matchup if it has exactly two
-    # valid golfer-named outcomes whose probabilities sum to ~1.0. Keeping
-    # these out of winner aggregation prevents them from polluting the top
-    # contenders' averages.
-    def _is_h2h_matchup(market) -> bool:
-        valid = [
-            o for o in market.outcomes
-            if o.current_probability is not None
-            and o.name.strip().lower() not in (
-                "yes", "no", "tie", "field", "other", "the field",
-            )
-        ]
-        if len(valid) != 2:
-            return False
-        prob_sum = sum(float(o.current_probability) for o in valid)
-        if prob_sum < 0.85 or prob_sum > 1.15:
-            return False
-        # Each outcome must look like a human name (produces a match key)
-        for o in valid:
-            if not _match_key(o.name):
-                return False
-            # Reject single-word or generic outcome names
-            if len(o.name.strip().split()) < 2:
-                return False
-        return True
-
+    # Split H2H matchups from winner markets
     h2h_markets_raw: list = []
     markets: list = []
     for m in markets_all:
@@ -859,57 +1222,22 @@ async def get_golf(
             h2h_markets_raw.append(m)
         else:
             markets.append(m)
-
     logger.info(
         "Golf endpoint: %d markets after filtering (%d h2h matchups)",
         len(markets), len(h2h_markets_raw),
     )
 
-    # ========================================================================
-    # Compute 24h movement from futures_odds_snapshots
-    # ========================================================================
-    # Collect all outcome IDs to query snapshots in one batch
+    # 24h movement snapshots
     all_outcome_ids = []
     for market in markets:
         for outcome in market.outcomes:
             if outcome.current_probability is not None:
                 all_outcome_ids.append(outcome.id)
-
-    # Get probability from ~24h ago for each outcome (single batch query)
-    prob_24h_ago: dict[int, float] = {}
-    if all_outcome_ids:
-        # Use row_number to get the most recent snapshot in the 23-25h window
-        snapshot_subq = (
-            select(
-                FuturesOddsSnapshot.outcome_id,
-                FuturesOddsSnapshot.probability,
-                sqlfunc.row_number().over(
-                    partition_by=FuturesOddsSnapshot.outcome_id,
-                    order_by=FuturesOddsSnapshot.captured_at.desc()
-                ).label("rn")
-            )
-            .where(
-                FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
-                FuturesOddsSnapshot.captured_at.between(
-                    now - timedelta(hours=25),
-                    now - timedelta(hours=23),
-                ),
-            )
-            .subquery()
-        )
-
-        snap_result = await db.execute(
-            select(snapshot_subq.c.outcome_id, snapshot_subq.c.probability)
-            .where(snapshot_subq.c.rn == 1)
-        )
-        prob_24h_ago = {row.outcome_id: float(row.probability) for row in snap_result}
-
+    prob_24h_ago = await _fetch_24h_snapshots(db, all_outcome_ids, now)
     logger.info("Golf endpoint: found 24h-ago snapshots for %d/%d outcomes",
                 len(prob_24h_ago), len(all_outcome_ids))
 
-    # ========================================================================
-    # Fetch DataGolf schedule for date enrichment + tournament matching
-    # ========================================================================
+    # DataGolf schedule
     schedule = await _get_golf_schedule()
     schedule_by_key: dict[str, dict] = {}
     for s_event in schedule:
@@ -917,81 +1245,35 @@ async def get_golf(
         if key != "other" and key not in schedule_by_key:
             schedule_by_key[key] = s_event
 
-    # ========================================================================
-    # Group markets by tournament and aggregate golfer odds
-    # ========================================================================
+    # Group markets by tournament
     tournament_markets: dict[str, list] = defaultdict(list)
-
     for market in markets:
         tournament_key = _normalize_tournament(market.name, schedule)
         if tournament_key == "other":
-            # Don't merge unrelated markets — give each its own entry
-            per_market_key = f"other_{market.id}"
-            tournament_markets[per_market_key].append(market)
+            tournament_markets[f"other_{market.id}"].append(market)
         else:
-            # Separate men's and women's majors that share the same base key.
-            # E.g., "PGA Championship" and "KPMG Women's PGA Championship" both
-            # normalize to "pga_championship" — append "_womens" to distinguish.
             if _WOMENS_RE.search(market.name):
                 tournament_key = tournament_key + "_womens"
             tournament_markets[tournament_key].append(market)
 
-    # Build tournament response with cross-source aggregation
+    # Build tournament entries with cross-source aggregation
     tournaments = []
-
     for tourn_key, tourn_markets in tournament_markets.items():
-        golfer_data: dict[str, dict] = {}  # match_key -> aggregated data
-        prop_markets_list: list[dict] = []  # Non-winner markets shown separately
-
+        golfer_data: dict[str, dict] = {}
+        prop_markets_list: list[dict] = []
         market_ids = []
         market_sources = []
         earliest_commence = None
         latest_resolution = None
 
-        # ----------------------------------------------------------------
-        # Per-source market dedup: when a source has multiple WINNER-type
-        # markets for the same tournament (e.g., Kalshi winner + tour prop +
-        # nationality prop + cross-sport), keep only the one with the most
-        # golfer-like outcomes.  Non-winner markets (Top 5/10/20, Make Cut)
-        # are excluded from dedup so they still appear on the detail page.
-        # ----------------------------------------------------------------
-        _source_best: dict[str, int] = {}  # source -> best winner market id
-        _dedup_candidates: set[int] = set()  # market ids in the dedup pool
-        _source_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
-        for m in tourn_markets:
-            # Non-winner markets (Top 5, Top 10, Make Cut, etc.) are excluded
-            # from dedup — they're needed for the detail page sub-groups.
-            if _NON_WINNER_MARKET_RE.search(m.name):
-                continue
-            src = m.source or "unknown"
-            golfer_count = sum(
-                1 for o in m.outcomes
-                if o.current_probability is not None
-                and o.name.strip().lower() not in ("tie", "field", "other", "the field")
-                and not _PROP_OUTCOME_RE.search(o.name.strip())
-            )
-            _source_groups[src].append((m.id, golfer_count))
-            _dedup_candidates.add(m.id)
-
-        for src, candidates in _source_groups.items():
-            best_id, best_count = max(candidates, key=lambda x: x[1])
-            _source_best[src] = best_id
-            if len(candidates) > 1:
-                skipped = len(candidates) - 1
-                logger.info(
-                    "Golf dedup: source '%s' has %d winner markets for %s, "
-                    "selected market %d (%d golfer outcomes, skipping %d)",
-                    src, len(candidates), tourn_key, best_id, best_count, skipped,
-                )
+        source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
         for market in tourn_markets:
             market_ids.append(market.id)
             market_sources.append(market.source or "unknown")
             source = market.source or "unknown"
-            # DataGolf provides model predictions, not market prices — label accordingly
             source_label = "datagolf_model" if source == "datagolf" else source
 
-            # Track tournament timing
             if market.commence_time:
                 if earliest_commence is None or market.commence_time < earliest_commence:
                     earliest_commence = market.commence_time
@@ -999,246 +1281,48 @@ async def get_golf(
                 if latest_resolution is None or market.resolution_date > latest_resolution:
                     latest_resolution = market.resolution_date
 
-            # Per-source dedup: only process the best winner market per source.
-            # Non-winner markets (Top 5/10/20) bypass dedup entirely.
-            # Metadata (market_ids, sources, timing) is still tracked for all.
-            if market.id in _dedup_candidates and market.id != _source_best.get(source):
+            if market.id in dedup_candidates and market.id != source_best.get(source):
                 continue
 
-            # Guard: per-golfer binary markets ("Tiger Woods: Open Winner?"
-            # with Yes/No outcomes) look like winner markets but are individual
-            # predictions. Route to props — they're not multi-outcome fields.
+            # Skip per-golfer binary markets
             if len(market.outcomes) <= 2:
                 outcome_names = {o.name.strip().lower() for o in market.outcomes if o.name}
                 if outcome_names & {"yes", "no"}:
-                    logger.info(
-                        "Golf: skipping binary market '%s' (source=%s, outcomes=%s)",
-                        market.name, source, outcome_names,
-                    )
                     continue
 
-            # Guard: participation/field markets have outcome probabilities
-            # that sum to far more than 100% (each golfer has 80-95% chance of
-            # being in the field). Detect and route to prop markets.
+            # Skip participation/field markets (prob sum >> 1)
             outcome_prob_sum = sum(
                 float(o.current_probability)
                 for o in market.outcomes
                 if o.current_probability is not None
             )
             if outcome_prob_sum > 1.5:
-                logger.info(
-                    "Golf: skipping non-winner market '%s' (source=%s, outcome_sum=%.2f)",
-                    market.name, source, outcome_prob_sum,
-                )
                 continue
 
-            # Non-winner markets (captain, participation, placement, etc.)
-            # are shown separately with proper labels — not mixed into winner odds.
+            # Non-winner markets go to props
             if _NON_WINNER_MARKET_RE.search(market.name):
-                prop_outcomes = []
-                for outcome in market.outcomes:
-                    if outcome.current_probability is None:
-                        continue
-                    p = float(outcome.current_probability)
-                    if source == "kalshi" and p == 0.5:
-                        continue
-                    raw = outcome.name.strip()
-                    if raw.lower() in ("tie", "field", "other", "the field"):
-                        continue
-                    prop_outcomes.append({
-                        "name": _normalize_golfer_name(raw),
-                        "probability": round(p, 3),
-                    })
-                if prop_outcomes:
-                    prop_outcomes.sort(key=lambda x: x["probability"], reverse=True)
-                    prop_markets_list.append({
-                        "name": market.name,
-                        "source": source_label,
-                        "outcomes": prop_outcomes[:5],
-                    })
+                prop = _extract_prop_market(market, source_label)
+                if prop:
+                    prop_markets_list.append(prop)
                 continue
 
+            # Aggregate winner outcomes
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
                     continue
-
                 prob = float(outcome.current_probability)
-
-                # Skip Kalshi entries at exactly 0.5 — illiquid binary markets
                 if source == "kalshi" and prob == 0.5:
                     continue
+                _aggregate_golfer_outcome(outcome, source_label, golfer_data, prob_24h_ago)
 
-                # Skip generic outcomes
-                raw_name = outcome.name.strip()
-                if raw_name.lower() in ("tie", "field", "other", "the field"):
-                    continue
-
-                # Skip prop/meta outcomes that aren't individual golfer names
-                if _PROP_OUTCOME_RE.search(raw_name):
-                    continue
-
-                display_name = _normalize_golfer_name(raw_name)
-                key = _match_key(raw_name)
-
-                if not key:
-                    continue
-
-                if key not in golfer_data:
-                    golfer_data[key] = {
-                        "name": display_name,
-                        "sources": {},
-                        "movement_24h": None,
-                        "opening_probability": None,
-                    }
-
-                golfer_data[key]["sources"][source_label] = round(prob, 3)
-
-                # Compute 24h movement from snapshots
-                if outcome.id in prob_24h_ago:
-                    delta = prob - prob_24h_ago[outcome.id]
-                    if abs(delta) >= 0.001:  # Skip noise
-                        existing = golfer_data[key]["movement_24h"]
-                        if existing is None or abs(delta) > abs(existing):
-                            golfer_data[key]["movement_24h"] = round(delta, 4)
-
-                # Fall back to outcome field if snapshot not available
-                if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
-                    change = float(outcome.probability_change_24h)
-                    if abs(change) >= 0.001:
-                        golfer_data[key]["movement_24h"] = round(change, 4)
-
-                # Track opening probability
-                if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
-                    golfer_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
-
-        # Merge abbreviated-name entries (e.g., "c smith" from Odds API)
-        # into full-name entries (e.g., "cameron smith" from DataGolf)
-        # before applying the invitee filter.
-        golfer_data = _merge_abbreviated_golfers(golfer_data)
-
-        # Filter to invitees only — when DataGolf field data exists for a
-        # tournament, only include golfers who appear in the DataGolf field.
-        # Prevents non-invitees from sportsbooks polluting the landing page
-        # (e.g., Gary Woodland showing 8.7% to "win Masters" because sportsbooks
-        # still have odds on him even though he's not invited).
-        has_datagolf = "datagolf" in market_sources
-        if has_datagolf:
-            datagolf_keys = {k for k, v in golfer_data.items() if "datagolf_model" in v["sources"]}
-            if datagolf_keys:  # Only filter if DataGolf actually has outcomes
-                filtered_count = len(golfer_data) - len(datagolf_keys)
-                if filtered_count > 0:
-                    logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
-                golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
-
-        # Compute average probability — one value per source (deduplicates
-        # if the same source contributed multiple markets to this tournament)
-        golfers = []
-        for data in golfer_data.values():
-            source_vals = list(data["sources"].values())
-            avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
-            golfers.append({
-                "name": data["name"],
-                "probability": avg_prob,
-                "movement_24h": data["movement_24h"],
-                "sources": data["sources"],
-                "opening_probability": data["opening_probability"],
-            })
-
-        # Sort by probability descending
-        golfers.sort(key=lambda g: g["probability"], reverse=True)
-
-        # Skip tournaments where all markets were filtered out
-        if not golfers:
-            continue
-
-        # Keep full list for detail pages, cap for landing page cards
-        all_golfers = golfers
-
-        # Round probabilities (no renormalization — raw source averages are
-        # already meaningful and renormalizing across 144 golfers dilutes
-        # the top contenders to unrealistically low values)
-        for g in all_golfers:
-            g["probability"] = round(g["probability"], 3)
-            g["american_odds"] = probability_to_american(g["probability"])
-
-        # Assign ranks (full list)
-        for i, g in enumerate(all_golfers):
-            g["rank"] = i + 1
-
-        # Landing page cards use the capped list
-        golfers = all_golfers[:_MAX_GOLFERS]
-
-        order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
-        display_name = TOURNAMENT_DISPLAY_NAMES.get(
-            tourn_key,
-            _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title()),
+        entry = _build_tournament_entry(
+            tourn_key, tourn_markets, golfer_data, prop_markets_list,
+            market_ids, market_sources, earliest_commence, latest_resolution,
         )
-        is_tour_event = tourn_key not in TOURNAMENT_ORDER and not tourn_key.startswith("other_") and tourn_key != "other"
+        if entry:
+            tournaments.append(entry)
 
-        # Per-market "other" entries: use market name as display name, group with Other
-        if tourn_key.startswith("other_"):
-            display_name = tourn_markets[0].name if tourn_markets else "Other"
-            # Clean up common suffixes from market names for display
-            display_name = re.sub(r"\s*\?\s*$", "", display_name)  # trailing "?"
-            order_idx = TOURNAMENT_ORDER.index("other") if "other" in TOURNAMENT_ORDER else 99
-
-        # For dynamic tour events, sort by resolution date (nearest first)
-        if is_tour_event and latest_resolution:
-            # Use resolution date as tiebreaker within the tour events band (50-98)
-            order_idx = 50
-
-        # Collect market names parallel to market_ids (needed by detail page
-        # to build sub-groups via _detect_market_type)
-        market_names = [m.name for m in tourn_markets]
-
-        # Detect women's / LPGA tournaments
-        is_womens = (
-            bool(_WOMENS_RE.search(display_name))
-            or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
-        )
-
-        # Classify tour (use DataGolf external_ids for authoritative classification)
-        tour_name_for_classify = display_name
-        if tourn_markets:
-            tour_name_for_classify = tourn_markets[0].name
-        market_ext_ids = [m.external_id for m in tourn_markets if m.external_id]
-        market_metadata_tours = [
-            m.market_metadata.get("tour")
-            for m in tourn_markets
-            if m.market_metadata and m.market_metadata.get("tour")
-        ]
-        tour = _classify_tour(
-            tour_name_for_classify, tourn_key,
-            tourn_key in MAJOR_TOURNAMENTS, is_womens,
-            market_external_ids=market_ext_ids,
-            market_metadata_tours=market_metadata_tours,
-        )
-
-        tournaments.append({
-            "key": tourn_key,
-            "name": display_name,
-            "is_major": tourn_key in MAJOR_TOURNAMENTS,
-            "is_tour_event": is_tour_event,
-            "is_womens": is_womens,
-            "tour": tour,
-            "tour_label": TOUR_DISPLAY_NAMES.get(tour, tour),
-            "order": order_idx,
-            "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
-            "commence_time": earliest_commence.isoformat() if earliest_commence else None,
-            "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
-            "market_ids": market_ids,
-            "market_sources": market_sources,
-            "market_names": market_names,
-            "golfers": golfers,
-            "prop_markets": prop_markets_list,
-            "_all_golfers": all_golfers,  # Full list for detail endpoint
-        })
-
-    # ========================================================================
-    # Group head-to-head matchup markets by tournament
-    # ========================================================================
-    # Build a reverse index: golfer match_key -> {tournament_key, ...}
-    # so we can route h2h markets by which tournament has their golfers.
+    # Route H2H matchups to tournaments
     golfer_to_tournaments: dict[str, set[str]] = defaultdict(set)
     for t in tournaments:
         for g in t.get("_all_golfers", t.get("golfers", [])):
@@ -1246,8 +1330,6 @@ async def get_golf(
             if k:
                 golfer_to_tournaments[k].add(t["key"])
 
-    # Also index tournaments by their commence_time so we can route matchups
-    # with no golfer overlap (e.g., very long tail tours) by timestamp.
     tourn_by_commence: list[tuple[datetime, str]] = []
     for t in tournaments:
         ct_str = t.get("commence_time")
@@ -1257,96 +1339,23 @@ async def get_golf(
             except (ValueError, TypeError):
                 pass
 
-    def _route_by_commence(market) -> str | None:
-        if not market.commence_time:
-            return None
-        m_ct = market.commence_time
-        best_key = None
-        best_delta = timedelta(days=4)
-        for ct, tk in tourn_by_commence:
-            delta = abs(ct - m_ct) if ct.tzinfo else abs(ct.replace(tzinfo=timezone.utc) - m_ct)
-            if delta < best_delta:
-                best_delta = delta
-                best_key = tk
-        return best_key
-
     h2h_by_tournament: dict[str, list[dict]] = defaultdict(list)
     h2h_unrouted = 0
     for market in h2h_markets_raw:
-        # Structural pre-filter guarantees exactly 2 valid golfer outcomes
-        valid_outcomes = [
-            o for o in market.outcomes
-            if o.current_probability is not None
-            and o.name.strip().lower() not in ("yes", "no", "tie", "field", "other", "the field")
-        ]
-        if len(valid_outcomes) != 2:
-            continue
-
-        a, b = valid_outcomes
-        a_key = _match_key(a.name)
-        b_key = _match_key(b.name)
-        if not a_key or not b_key:
-            continue
-
-        # Route by tournament that contains BOTH golfers, then either golfer,
-        # then market commence_time, then market name regex.
-        tourn_key: str | None = None
-        a_tourns = golfer_to_tournaments.get(a_key, set())
-        b_tourns = golfer_to_tournaments.get(b_key, set())
-        shared = a_tourns & b_tourns
-
-        name_key = _normalize_tournament(market.name, schedule)
-        if name_key != "other" and _WOMENS_RE.search(market.name):
-            name_key = name_key + "_womens"
-
-        if len(shared) == 1:
-            tourn_key = next(iter(shared))
-        elif len(shared) > 1:
-            tourn_key = name_key if name_key in shared else next(iter(shared))
-        else:
-            # Either golfer matches a single tournament
-            either = a_tourns | b_tourns
-            if len(either) == 1:
-                tourn_key = next(iter(either))
-            elif name_key != "other":
-                tourn_key = name_key
-            else:
-                # commence_time fallback
-                tourn_key = _route_by_commence(market)
-
+        tourn_key = _route_h2h_to_tournament(
+            market, golfer_to_tournaments, tourn_by_commence, schedule,
+        )
         if not tourn_key:
             h2h_unrouted += 1
             continue
-
-        source = market.source or "unknown"
-        source_label = "datagolf_model" if source == "datagolf" else source
-        # Normalize so the higher probability is always on the left
-        a_prob = float(a.current_probability)
-        b_prob = float(b.current_probability)
-        if b_prob > a_prob:
-            a, b = b, a
-            a_prob, b_prob = b_prob, a_prob
-
-        h2h_by_tournament[tourn_key].append({
-            "market_id": market.id,
-            "source": source_label,
-            "golfer_a": {
-                "name": _normalize_golfer_name(a.name.strip()),
-                "probability": round(a_prob, 3),
-            },
-            "golfer_b": {
-                "name": _normalize_golfer_name(b.name.strip()),
-                "probability": round(b_prob, 3),
-            },
-        })
+        h2h_by_tournament[tourn_key].append(_build_h2h_entry(market, tourn_key))
 
     if h2h_unrouted:
         logger.info("Golf h2h: %d matchups unrouted (no matching tournament)", h2h_unrouted)
 
-    # Attach h2h matchups to their tournament; dedupe by golfer pair across sources
+    # Attach and dedupe H2H matchups
     for t in tournaments:
         raw_matchups = h2h_by_tournament.get(t["key"], [])
-        # Dedupe: same pair from multiple sources collapses to one entry (first wins)
         seen_pairs: set[tuple[str, str]] = set()
         deduped: list[dict] = []
         for m in raw_matchups:
@@ -1358,88 +1367,20 @@ async def get_golf(
                 continue
             seen_pairs.add(key)
             deduped.append(m)
-        # Sort by closeness (tightest matchups first)
         deduped.sort(key=lambda m: abs(m["golfer_a"]["probability"] - m["golfer_b"]["probability"]))
         t["h2h_matchups"] = deduped
 
-    # Sort tournaments by order, then by resolution date for tour events
+    # Sort and clean up
     tournaments.sort(key=lambda t: (t["order"], t.get("sort_date") or "9999"))
-    # Remove internal sort fields from response
     for t in tournaments:
         del t["order"]
         t.pop("sort_date", None)
 
-    # ========================================================================
-    # Enrich tournaments with DataGolf schedule data
-    # ========================================================================
-    # Map tournament keys (from _normalize_tournament) to schedule keys (from DataGolf).
-    # e.g., "masters" → "masters_tournament", "us_open" → "u_s_open", etc.
-    _TOURN_TO_SCHED_KEY = {
-        "masters": "masters_tournament",
-        "us_open": "u_s_open",
-        "the_open": "the_open_championship",
-        "players": "the_players_championship",
-    }
-    for t in tournaments:
-        # Add slug for tournament detail page URLs
-        t["slug"] = _clean_slug(t["name"])
+    # Enrich + filter
+    _enrich_with_schedule(tournaments, schedule_by_key)
+    tournaments = _filter_stale_tournaments(tournaments, now)
 
-        sched = schedule_by_key.get(t["key"]) or schedule_by_key.get(_TOURN_TO_SCHED_KEY.get(t["key"], ""))
-        if sched:
-            t["venue"] = sched.get("venue") or t.get("venue") or None
-            t["location"] = sched.get("location") or None
-            t["schedule_status"] = sched.get("status") or None
-            if sched.get("start_date"):
-                t["start_date"] = sched["start_date"]
-            if sched.get("end_date"):
-                t["end_date"] = sched["end_date"]
-
-    # ========================================================================
-    # Filter out completed/stale tournaments
-    # ========================================================================
-    now_date = now.date()
-    filtered_tournaments = []
-    for t in tournaments:
-        # Explicit schedule status check — most reliable signal
-        if t.get("schedule_status") == "completed":
-            logger.debug("Golf: filtering completed tournament '%s' (schedule_status=completed)", t["name"])
-            continue
-
-        # Filter by end_date (>1 day past end = completed)
-        end_date_str = t.get("end_date")
-        if end_date_str:
-            try:
-                end_dt = datetime.fromisoformat(end_date_str).date()
-                if end_dt < now_date - timedelta(days=1):
-                    logger.debug("Golf: filtering completed tournament '%s' (ended %s)", t["name"], end_dt)
-                    continue
-            except (ValueError, TypeError):
-                pass
-        # Fallback: filter by start_date when no end_date
-        # (tournaments starting >7 days ago with no end_date are stale)
-        elif t.get("start_date"):
-            try:
-                start_dt = datetime.fromisoformat(t["start_date"]).date()
-                if start_dt < now_date - timedelta(days=7):
-                    logger.debug("Golf: filtering stale tournament '%s' (started %s, no end_date)", t["name"], start_dt)
-                    continue
-            except (ValueError, TypeError):
-                pass
-        # Fallback: filter by resolution_date for tournaments with no schedule data
-        elif t.get("resolution_date"):
-            try:
-                res_dt = datetime.fromisoformat(t["resolution_date"]).date()
-                if res_dt < now_date - timedelta(days=7):
-                    logger.debug("Golf: filtering stale tournament '%s' (resolution %s)", t["name"], res_dt)
-                    continue
-            except (ValueError, TypeError):
-                pass
-        filtered_tournaments.append(t)
-    tournaments = filtered_tournaments
-
-    # ========================================================================
-    # Biggest movers — top 5 golfers across all tournaments by |movement_24h|
-    # ========================================================================
+    # Biggest movers
     all_movers = []
     for tourn in tournaments:
         for g in tourn["golfers"]:
@@ -1454,20 +1395,15 @@ async def get_golf(
     all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
     biggest_movers = all_movers[:5]
 
-    # ========================================================================
-    # Golf events — live + upcoming from events table
-    # ========================================================================
+    # Upcoming events
     events_query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
         .where(
             Sport.key.ilike("golf_%"),
             or_(
-                # Currently live events
                 Event.status == "live",
-                # Upcoming events in next 30 days
                 Event.commence_time.between(now, now + timedelta(days=30)),
-                # Recently started (last 6h, may not be marked 'live' yet)
                 Event.commence_time.between(now - timedelta(hours=6), now),
             ),
         )
@@ -1475,8 +1411,6 @@ async def get_golf(
         .limit(10)
     )
     events_result = await db.execute(events_query)
-    upcoming_events_rows = events_result.scalars().all()
-
     upcoming_events = [
         {
             "id": e.id,
@@ -1484,12 +1418,9 @@ async def get_golf(
             "commence_time": e.commence_time.isoformat() if e.commence_time else None,
             "status": e.status,
         }
-        for e in upcoming_events_rows
+        for e in events_result.scalars().all()
     ]
 
-    # ========================================================================
-    # Current tour event — smart detection using DataGolf dates + fallback
-    # ========================================================================
     current_event = _find_current_event(tournaments, schedule_by_key, now)
 
     return {

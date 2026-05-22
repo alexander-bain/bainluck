@@ -1125,6 +1125,359 @@ async def _build_golf_grid_from_datagolf(
         await service.close()
 
 
+def _find_current_golf_tournament(schedule: list, tour: str):
+    """Find the current or upcoming tournament from a DataGolf schedule."""
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    for t in schedule:
+        if t.status and t.status != "completed":
+            return t
+        if t.end_date and t.end_date >= now_str:
+            return t
+    logger.debug("Golf grid [%s]: no current event", tour)
+    return None
+
+
+def _validate_in_play_data(
+    in_play_players: list, in_play_info: dict | None,
+    current_event, tour: str,
+) -> list:
+    """Discard stale in-play data if it's from a different event than the schedule."""
+    if not in_play_players or not in_play_info:
+        return in_play_players
+    in_play_event = in_play_info.get("event_name", "")
+    schedule_event = current_event.event_name
+    if in_play_event and schedule_event:
+        ip_lower = in_play_event.lower().strip()
+        sched_lower = schedule_event.lower().strip()
+        if ip_lower not in sched_lower and sched_lower not in ip_lower:
+            logger.warning(
+                "Golf grid [%s]: in-play event '%s' differs from schedule "
+                "event '%s' — discarding stale in-play data",
+                tour, in_play_event, schedule_event,
+            )
+            return []
+    return in_play_players
+
+
+def _build_player_lookups(
+    players: list, pre_tournament_players: list, tour: str,
+) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+    """Build canonical golfer field, display name, and pre-tournament lookups.
+
+    Returns (dg_field, dg_display_names, pre_tourney_lookup).
+    """
+    pre_tourney_lookup: dict[str, object] = {}
+    for p in pre_tournament_players:
+        pre_tourney_lookup[_normalize_team_name(p.player_name)] = p
+
+    dg_field: dict[str, object] = {}
+    dg_display_names: dict[str, str] = {}
+    for player in players:
+        norm = _normalize_team_name(player.player_name)
+        dg_field[norm] = player
+        dg_display_names[norm] = player.player_name
+
+    # Validate pre-tournament overlap
+    if dg_field and pre_tourney_lookup:
+        matched = sum(1 for n in dg_field if n in pre_tourney_lookup)
+        overlap_pct = matched / len(dg_field) * 100 if dg_field else 0
+        if overlap_pct < 50:
+            logger.warning(
+                "Golf grid [%s]: pre-tournament only covers %d/%d (%.0f%%) "
+                "in-play golfers — likely a different event!",
+                tour, matched, len(dg_field), overlap_pct,
+            )
+            pre_tourney_lookup.clear()
+
+    return dg_field, dg_display_names, pre_tourney_lookup
+
+
+async def _lookup_datagolf_outcome_ids(
+    db: AsyncSession, tour: str, event_id: str,
+) -> dict[str, dict[str, int]]:
+    """Look up DataGolf FuturesOutcome IDs for trend charts and movers."""
+    dg_outcome_lookup: dict[str, dict[str, int]] = {}
+    dg_ext_prefix = f"datagolf:{tour}:{event_id}:"
+    dg_market_stmt = (
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.source == "datagolf",
+            FuturesMarket.external_id.like(f"{dg_ext_prefix}%"),
+        )
+        .options(selectinload(FuturesMarket.outcomes))
+    )
+    dg_result = await db.execute(dg_market_stmt)
+    for dg_market in dg_result.scalars().unique().all():
+        col_key = dg_market.external_id.rsplit(":", 1)[-1]
+        for out in dg_market.outcomes:
+            norm = _normalize_team_name(out.name)
+            if norm not in dg_outcome_lookup:
+                dg_outcome_lookup[norm] = {}
+            dg_outcome_lookup[norm][col_key] = out.id
+    return dg_outcome_lookup
+
+
+async def _query_tournament_db_markets(
+    db: AsyncSession, config: LeagueConfig, tournament_name: str, tour: str,
+) -> list:
+    """Query and filter DB markets (Kalshi/Polymarket/Odds API) for a golf tournament."""
+    _GOLF_STOPWORDS = {
+        "championship", "tournament", "invitational", "classic",
+        "presented", "by", "the", "at", "pga", "tour", "winner",
+        "top", "finish", "hosted", "sponsored", "powered", "open",
+    }
+    tourney_tokens = [
+        w for w in tournament_name.lower().split()
+        if w not in _GOLF_STOPWORDS and len(w) >= 3
+    ]
+    if not tourney_tokens and tournament_name:
+        tourney_tokens = [tournament_name.lower().strip()]
+
+    _KALSHI_GOLF_PREFIXES = (
+        "kxpgatour", "kxpgamakecut", "kxpgatop5", "kxpgatop10",
+        "kxpgatop20", "kxpgar1", "kxpgar2", "kxpgar3", "kxpgah2h",
+        "kxpgaholeinone", "kxpgawinningscore", "kxpgacutline",
+        "kxpgawinmargin", "kxlpgatour",
+    )
+    freshness_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    sport_conditions = [
+        FuturesMarket.external_id.ilike(f"{sk}%") for sk in config.sport_keys
+    ]
+    stmt = (
+        select(FuturesMarket)
+        .where(
+            or_(*sport_conditions, FuturesMarket.llm_sport_category == "golf"),
+            FuturesMarket.status != "resolved",
+            FuturesMarket.source != "datagolf",
+        )
+        .options(selectinload(FuturesMarket.outcomes))
+    )
+    result = await db.execute(stmt)
+    all_db_markets = result.scalars().unique().all()
+
+    def _market_matches(market) -> bool:
+        name_lower = (market.name or "").lower()
+        if tourney_tokens and all(tok in name_lower for tok in tourney_tokens):
+            return True
+        eid = (market.external_id or "").lower()
+        if eid and any(eid.startswith(p) for p in _KALSHI_GOLF_PREFIXES):
+            return bool(market.updated_at and market.updated_at > freshness_cutoff)
+        return not tourney_tokens
+
+    name_matched = [m for m in all_db_markets if _market_matches(m)]
+
+    # Filter garbage Polymarket binary aggregates
+    db_markets = []
+    for m in name_matched:
+        if (len(m.outcomes) > 10 and not m.mutually_exclusive
+                and m.source == "polymarket"):
+            prob_sum = sum(
+                float(o.current_probability) for o in m.outcomes if o.current_probability
+            )
+            if prob_sum > 2.0:
+                continue
+        db_markets.append(m)
+
+    logger.info(
+        "Golf grid [%s]: DB markets: %d raw -> %d name-matched -> %d after filter "
+        "(tournament='%s', tokens=%s)",
+        tour, len(all_db_markets), len(name_matched), len(db_markets),
+        tournament_name, tourney_tokens,
+    )
+    return db_markets
+
+
+def _match_outcomes_to_grid(
+    db_markets: list, config: LeagueConfig, dg_field: dict, tour: str,
+) -> tuple[dict, list[int], dict[int, str]]:
+    """Match DB market outcomes to DataGolf golfers, building grid_raw.
+
+    Returns (grid_raw, all_outcome_ids, outcome_id_to_name).
+    """
+    grid_raw: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    all_outcome_ids: list[int] = []
+    outcome_id_to_name: dict[int, str] = {}
+
+    for market in db_markets:
+        col_key = _match_market_to_column(market, config)
+        if not col_key:
+            continue
+
+        for outcome in market.outcomes:
+            if outcome.current_probability is not None:
+                prob = float(outcome.current_probability)
+            elif (outcome.current_yes_bid is not None
+                  and outcome.current_yes_ask is not None
+                  and float(outcome.current_yes_ask) > 0):
+                prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+            else:
+                continue
+            if prob <= 0:
+                continue
+
+            oname = outcome.name or ""
+            if _NON_PLAYOFF_MARKET_RE.search(oname):
+                continue
+            if oname.lower().strip() in ("yes", "no", "over", "under"):
+                continue
+            if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
+                has_real_activity = (
+                    outcome.current_yes_bid is not None
+                    and float(outcome.current_yes_bid) > 0
+                )
+                if not has_real_activity:
+                    continue
+
+            matched_norm = _match_golfer_to_field(_normalize_team_name(oname), dg_field)
+            if not matched_norm:
+                continue
+
+            grid_raw[col_key][matched_norm].append({
+                "source": market.source,
+                "probability": prob,
+                "market_id": market.id,
+                "outcome_id": outcome.id,
+                "market_name": market.name,
+                "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
+                "volume_24h": market.volume_24h,
+            })
+            all_outcome_ids.append(outcome.id)
+            outcome_id_to_name[outcome.id] = oname
+
+    return grid_raw, all_outcome_ids, outcome_id_to_name
+
+
+def _add_datagolf_model_probs(
+    grid_raw: dict, dg_field: dict, pre_tourney_lookup: dict,
+    dg_display_names: dict, dg_outcome_lookup: dict,
+    current_event, is_live: bool,
+    all_outcome_ids: list[int], outcome_id_to_name: dict[int, str],
+) -> None:
+    """Add DataGolf model probabilities into grid_raw (mutates in place)."""
+    col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
+                "top_20": "top_20", "make_cut": "make_cut"}
+
+    for norm_name in dg_field:
+        player = dg_field[norm_name]
+        pre_player = pre_tourney_lookup.get(norm_name)
+
+        for dg_key, col_key in col_map.items():
+            prob = getattr(player, dg_key, None)
+            if prob is None and pre_player:
+                prob = getattr(pre_player, dg_key, None)
+            if prob is None:
+                continue
+            if is_live and prob < 0.0:
+                continue
+            if not is_live and (prob <= 0.0 or prob >= 1.0):
+                continue
+
+            dg_oid = dg_outcome_lookup.get(norm_name, {}).get(col_key)
+            if dg_oid:
+                all_outcome_ids.append(dg_oid)
+                outcome_id_to_name[dg_oid] = dg_display_names.get(norm_name, norm_name)
+
+            col_label = col_key.replace("_", " ").title()
+            event_name = current_event.event_name or "Tournament"
+            mode = "In-Play" if is_live else "Pre-Tournament"
+
+            grid_raw[col_key][norm_name].append({
+                "source": "datagolf",
+                "probability": prob,
+                "market_id": None,
+                "outcome_id": dg_oid,
+                "market_name": f"{event_name}: To {col_label} ({mode} statistical model)",
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            })
+
+    # Deduplicate within same source per golfer+column
+    for col_key in grid_raw:
+        for norm_name in grid_raw[col_key]:
+            entries = grid_raw[col_key][norm_name]
+            if len(entries) <= 1:
+                continue
+            by_source: dict[str, list[dict]] = defaultdict(list)
+            for e in entries:
+                by_source[e["source"]].append(e)
+            grid_raw[col_key][norm_name] = [
+                min(se, key=lambda e: e["probability"]) for se in by_source.values()
+            ]
+
+
+def _build_golf_grid_team_rows(
+    dg_field: dict, dg_display_names: dict,
+    grid_raw: dict, config: LeagueConfig,
+    old_probs: dict[int, float], is_live: bool,
+) -> list[dict]:
+    """Build team rows for the golf grid from aggregated grid_raw data."""
+    teams = []
+    for norm_name in dg_field:
+        display_name = dg_display_names[norm_name]
+        player = dg_field[norm_name]
+        cells = {}
+
+        for col in config.columns:
+            entries = grid_raw.get(col.key, {}).get(norm_name, [])
+            if not entries:
+                continue
+
+            probs = [e["probability"] for e in entries]
+            vols = [e.get("volume_24h") for e in entries]
+            merged = min(_merge_probabilities(probs, vols), 1.0)
+
+            sources = []
+            for e in entries:
+                src = {"source": e["source"], "probability": round(e["probability"], 4)}
+                if e.get("market_name"):
+                    src["market_name"] = e["market_name"]
+                if e.get("last_updated"):
+                    src["last_updated"] = e["last_updated"]
+                if e.get("volume_24h") is not None:
+                    src["volume_24h"] = e["volume_24h"]
+                sources.append(src)
+
+            trend_24h = None
+            db_entries = [e for e in entries if e["outcome_id"]]
+            if db_entries:
+                old_p = old_probs.get(db_entries[0]["outcome_id"])
+                if old_p is not None:
+                    trend_24h = round(merged - old_p, 4)
+
+            cell_data = {
+                "merged_probability": round(merged, 4),
+                "sources": sources,
+                "trend_24h": trend_24h,
+            }
+            if (len(sources) == 1 and sources[0]["source"] == "kalshi"
+                    and abs(merged - 0.01) < 0.001):
+                cell_data["is_minimum_tick"] = True
+            cells[col.key] = cell_data
+
+        _filter_kalshi_placement_noise(cells)
+        if not cells:
+            continue
+
+        team_row = {
+            "name": display_name, "short_name": display_name,
+            "team_id": None, "logo_url": None,
+            "primary_color": None, "secondary_color": None,
+            "record": None, "conference": None, "division": None,
+            "seed": None, "cells": cells,
+        }
+        if is_live and player.position:
+            team_row["position"] = player.position
+            team_row["total_score"] = player.total_score
+            team_row["today_score"] = player.today_score
+            team_row["thru"] = player.thru
+            team_row["current_round"] = player.current_round
+
+        teams.append(team_row)
+
+    teams.sort(key=lambda t: -(t["cells"].get("win", {}).get("merged_probability", 0)))
+    return teams
+
+
 async def _build_golf_tour_grid(
     service,
     tour: str,
@@ -1133,523 +1486,96 @@ async def _build_golf_tour_grid(
     trend_hours: int,
     top: int,
 ) -> dict | None:
-    """Build a single tour's event grid from DataGolf data.
-
-    Returns a dict with tournament info, teams, movers, trend chart, etc.
-    Returns None if no current event or no players for this tour.
-    """
+    """Build a single tour's event grid from DataGolf data."""
     tour_label = _TOUR_LABELS.get(tour, tour.upper())
 
     try:
-        # 1. Get schedule → find current/upcoming tournament
+        # 1. Schedule + current event
         schedule = await service.get_schedule(tour=tour)
         if not schedule:
             logger.debug("Golf grid [%s]: no schedule", tour)
             return None
 
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        current_event = None
-        for t in schedule:
-            if t.status and t.status != "completed":
-                current_event = t
-                break
-            if t.end_date and t.end_date >= now_str:
-                current_event = t
-                break
-
+        current_event = _find_current_golf_tournament(schedule, tour)
         if not current_event:
-            logger.debug("Golf grid [%s]: no current event", tour)
             return None
 
-        logger.info(
-            "Golf grid [%s]: %s (id=%s, %s)",
-            tour, current_event.event_name, current_event.event_id,
-            current_event.start_date,
-        )
+        logger.info("Golf grid [%s]: %s (id=%s, %s)",
+                    tour, current_event.event_name, current_event.event_id,
+                    current_event.start_date)
 
-        # 2. Get DataGolf model predictions
+        # 2. Player data
         in_play_players, in_play_info = await service.get_in_play_with_info(tour=tour)
         pre_tournament_players = await service.get_pre_tournament(tour=tour)
 
-        # Detect stale in-play data: if in-play returns a DIFFERENT event
-        # than the schedule says is current, discard it. This happens when
-        # last week's event just finished and in-play hasn't cleared yet.
-        if in_play_players and in_play_info:
-            in_play_event = in_play_info.get("event_name", "")
-            schedule_event = current_event.event_name
-            if in_play_event and schedule_event:
-                # Simple containment check (names may not match exactly)
-                ip_lower = in_play_event.lower().strip()
-                sched_lower = schedule_event.lower().strip()
-                if ip_lower not in sched_lower and sched_lower not in ip_lower:
-                    logger.warning(
-                        "Golf grid [%s]: in-play event '%s' differs from schedule "
-                        "event '%s' — discarding stale in-play data",
-                        tour, in_play_event, schedule_event,
-                    )
-                    in_play_players = []
-
+        in_play_players = _validate_in_play_data(
+            in_play_players, in_play_info, current_event, tour,
+        )
         is_live = bool(in_play_players)
-
         players = in_play_players or pre_tournament_players
         if not players:
             logger.debug("Golf grid [%s]: no players", tour)
             return None
 
-        logger.info(
-            "Golf grid [%s]: %d golfers (in-play=%d, pre-tournament=%d)",
-            tour, len(players), len(in_play_players), len(pre_tournament_players),
+        logger.info("Golf grid [%s]: %d golfers (in-play=%d, pre-tournament=%d)",
+                    tour, len(players), len(in_play_players), len(pre_tournament_players))
+
+        dg_field, dg_display_names, pre_tourney_lookup = _build_player_lookups(
+            players, pre_tournament_players, tour,
         )
 
-        # Build pre-tournament probability lookup
-        pre_tourney_lookup: dict[str, object] = {}
-        for p in pre_tournament_players:
-            pre_tourney_lookup[_normalize_team_name(p.player_name)] = p
-
-        # Build canonical golfer lookup
-        dg_field: dict[str, object] = {}
-        dg_display_names: dict[str, str] = {}
-        for player in players:
-            norm = _normalize_team_name(player.player_name)
-            dg_field[norm] = player
-            dg_display_names[norm] = player.player_name
-
-        # Log pre-tournament lookup coverage for diagnostics
-        if dg_field and pre_tourney_lookup:
-            matched = sum(1 for n in dg_field if n in pre_tourney_lookup)
-            overlap_pct = matched / len(dg_field) * 100 if dg_field else 0
-
-            # Low overlap means pre-tournament is likely for a DIFFERENT event
-            if overlap_pct < 50:
-                logger.warning(
-                    "Golf grid [%s]: pre-tournament only covers %d/%d (%.0f%%) "
-                    "in-play golfers — likely a different event! "
-                    "Will use in-play values directly.",
-                    tour, matched, len(dg_field), overlap_pct,
-                )
-                # Clear the lookup — don't use mismatched pre-tournament data
-                pre_tourney_lookup.clear()
-            else:
-                logger.info(
-                    "Golf grid [%s]: pre-tournament lookup covers %d/%d (%.0f%%) "
-                    "in-play golfers",
-                    tour, matched, len(dg_field), overlap_pct,
-                )
-        elif dg_field and not pre_tourney_lookup:
-            logger.warning(
-                "Golf grid [%s]: pre-tournament endpoint returned 0 players — "
-                "all %d golfers will use in-play data only",
-                tour, len(dg_field),
-            )
-
-        # 3a. Look up DataGolf FuturesOutcome IDs for this event
-        # The DataGolf polling task creates FuturesMarket/Outcome/Snapshot
-        # records. We need the outcome IDs to enable trend charts and 24h movers.
-        dg_outcome_lookup: dict[str, dict[str, int]] = {}  # norm_name → {col_key → outcome_id}
-        dg_ext_prefix = f"datagolf:{tour}:{current_event.event_id}:"
-        dg_market_stmt = (
-            select(FuturesMarket)
-            .where(
-                FuturesMarket.source == "datagolf",
-                FuturesMarket.external_id.like(f"{dg_ext_prefix}%"),
-            )
-            .options(selectinload(FuturesMarket.outcomes))
+        # 3. DataGolf outcome IDs + DB markets
+        dg_outcome_lookup = await _lookup_datagolf_outcome_ids(
+            db, tour, current_event.event_id,
         )
-        dg_result = await db.execute(dg_market_stmt)
-        dg_markets = dg_result.scalars().unique().all()
-        for dg_market in dg_markets:
-            col_key = dg_market.external_id.rsplit(":", 1)[-1]  # "win", "top_5", etc.
-            for out in dg_market.outcomes:
-                norm = _normalize_team_name(out.name)
-                if norm not in dg_outcome_lookup:
-                    dg_outcome_lookup[norm] = {}
-                dg_outcome_lookup[norm][col_key] = out.id
+        logger.info("Golf grid [%s]: found %d DataGolf outcome IDs",
+                    tour, sum(len(v) for v in dg_outcome_lookup.values()))
 
-        logger.info(
-            "Golf grid [%s]: found %d DataGolf outcome IDs across %d markets",
-            tour, sum(len(v) for v in dg_outcome_lookup.values()), len(dg_markets),
+        db_markets = await _query_tournament_db_markets(
+            db, config, current_event.event_name or "", tour,
         )
 
-        # 3b. Query DB for Kalshi/Polymarket/Odds API golf markets
-        # IMPORTANT: Filter to only markets matching the CURRENT tournament.
-        # Without this, season-long major championship odds (Masters, PGA
-        # Championship, US Open, The Open) from Odds API contaminate every
-        # tournament grid — e.g., Bridgeman's 0.59% Open odds mix into Valspar.
-        sport_conditions = [
-            FuturesMarket.external_id.ilike(f"{sk}%")
-            for sk in config.sport_keys
-        ]
-        category_condition = FuturesMarket.llm_sport_category == "golf"
-        market_filter = or_(*sport_conditions, category_condition)
-
-        stmt = (
-            select(FuturesMarket)
-            .where(
-                market_filter,
-                FuturesMarket.status != "resolved",
-                # Exclude DataGolf's own markets — we use the API directly
-                FuturesMarket.source != "datagolf",
-            )
-            .options(selectinload(FuturesMarket.outcomes))
-        )
-        result = await db.execute(stmt)
-        all_db_markets = result.scalars().unique().all()
-
-        # Filter to only markets whose name matches the current tournament
-        tournament_name = current_event.event_name or ""
-        # Extract meaningful words from tournament name for matching
-        # "Valspar Championship" → ["valspar"]
-        # "Arnold Palmer Invitational" → ["arnold", "palmer"]
-        _GOLF_STOPWORDS = {
-            "championship", "tournament", "invitational", "classic",
-            "presented", "by", "the", "at", "pga", "tour", "winner",
-            "top", "finish", "hosted", "sponsored", "powered",
-            "open",  # Too generic — matches "US Open", "The Open"
-        }
-        tourney_tokens = [
-            w for w in tournament_name.lower().split()
-            if w not in _GOLF_STOPWORDS and len(w) >= 3
-        ]
-        # Handle ambiguous tournament names:
-        # "The Open" → all tokens filtered out → use full name phrase
-        if not tourney_tokens and tournament_name:
-            tourney_tokens = [tournament_name.lower().strip()]
-
-        # Kalshi golf ticker prefixes for placement markets. These markets
-        # don't include the tournament name, so we match by ticker prefix +
-        # date proximity to the current tournament window.
-        _KALSHI_GOLF_PREFIXES = (
-            "kxpgatour", "kxpgamakecut", "kxpgatop5", "kxpgatop10",
-            "kxpgatop20", "kxpgar1", "kxpgar2", "kxpgar3", "kxpgah2h",
-            "kxpgaholeinone", "kxpgawinningscore", "kxpgacutline",
-            "kxpgawinmargin", "kxlpgatour",
-        )
-        _freshness_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-
-        def _market_matches_tournament(market: object) -> bool:
-            """Check if a market belongs to the current tournament.
-
-            Two paths:
-            1. Tournament name tokens in market name (strict: all tokens)
-            2. Kalshi golf ticker prefix + recently updated (not stale from
-               a prior tournament week)
-            """
-            name_lower = (market.name or "").lower()
-            if tourney_tokens and all(tok in name_lower for tok in tourney_tokens):
-                return True
-            eid = (market.external_id or "").lower()
-            if eid and any(eid.startswith(p) for p in _KALSHI_GOLF_PREFIXES):
-                if market.updated_at and market.updated_at > _freshness_cutoff:
-                    return True
-                return False
-            if not tourney_tokens:
-                return True
-            return False
-
-        db_markets_name_matched = [
-            m for m in all_db_markets
-            if _market_matches_tournament(m)
-        ]
-
-        # Filter out garbage binary-market aggregates from Polymarket.
-        # Non-NegRisk events with many outcomes at ~50% each (prob_sum >> 1)
-        # are collections of independent binary markets with zero liquidity.
-        # E.g., "Valero Texas Open Top 10" has 100 outcomes all at 0.50.
-        db_markets = []
-        garbage_count = 0
-        for m in db_markets_name_matched:
-            if (
-                len(m.outcomes) > 10
-                and not m.mutually_exclusive
-                and m.source == "polymarket"
-            ):
-                prob_sum = sum(
-                    float(o.current_probability)
-                    for o in m.outcomes
-                    if o.current_probability
-                )
-                if prob_sum > 2.0:
-                    garbage_count += 1
-                    logger.info(
-                        "Golf grid [%s]: skipping garbage binary aggregate '%s' "
-                        "(outcomes=%d, prob_sum=%.1f)",
-                        tour, m.name, len(m.outcomes), prob_sum,
-                    )
-                    continue
-            db_markets.append(m)
-
-        logger.info(
-            "Golf grid [%s]: DB markets: %d raw → %d name-matched → %d after garbage filter "
-            "(tournament='%s', tokens=%s, garbage_binary=%d)",
-            tour, len(all_db_markets), len(db_markets_name_matched),
-            len(db_markets), tournament_name, tourney_tokens, garbage_count,
-        )
-        _source_counts = {}
-        for _m in db_markets:
-            _source_counts[_m.source] = _source_counts.get(_m.source, 0) + 1
-        logger.info(
-            "Golf grid [%s]: DB markets by source: %s",
-            tour, _source_counts,
-        )
-
-        # 4. Match DB market outcomes to DataGolf golfers
-        # column_key → norm_name → list of {source, probability, ...}
-        grid_raw: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
-        all_outcome_ids: list[int] = []
-        outcome_id_to_name: dict[int, str] = {}
-        _diag_col_matched = 0
-        _diag_golfer_matched = 0
-        _diag_by_source_col: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-
-        for market in db_markets:
-            col_key = _match_market_to_column(market, config)
-            if not col_key:
-                continue
-            _diag_col_matched += 1
-
-            for outcome in market.outcomes:
-                if outcome.current_probability is not None:
-                    prob = float(outcome.current_probability)
-                elif (outcome.current_yes_bid is not None
-                      and outcome.current_yes_ask is not None
-                      and float(outcome.current_yes_ask) > 0):
-                    prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
-                else:
-                    continue
-                if prob <= 0:
-                    continue
-
-                oname = outcome.name or ""
-                if _NON_PLAYOFF_MARKET_RE.search(oname):
-                    continue
-                if oname.lower().strip() in ("yes", "no", "over", "under"):
-                    continue
-                # Filter prediction market 0.5 noise, but allow outcomes
-                # with real trading activity (bid > 0).
-                if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
-                    has_real_activity = (
-                        outcome.current_yes_bid is not None
-                        and float(outcome.current_yes_bid) > 0
-                    )
-                    if not has_real_activity:
-                        continue
-
-                # Match outcome name to DataGolf field
-                outcome_norm = _normalize_team_name(oname)
-                matched_norm = _match_golfer_to_field(outcome_norm, dg_field)
-                if not matched_norm:
-                    continue  # Not in the DataGolf field → skip
-
-                _diag_golfer_matched += 1
-                _diag_by_source_col[market.source][col_key] += 1
-                grid_raw[col_key][matched_norm].append({
-                    "source": market.source,
-                    "probability": prob,
-                    "market_id": market.id,
-                    "outcome_id": outcome.id,
-                    "market_name": market.name,
-                    "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
-                    "volume_24h": market.volume_24h,
-                })
-                all_outcome_ids.append(outcome.id)
-                outcome_id_to_name[outcome.id] = oname
-
-        logger.info(
-            "Golf grid [%s]: outcome matching: %d markets matched columns, "
-            "%d outcomes matched golfers. By source×column: %s",
-            tour, _diag_col_matched, _diag_golfer_matched,
-            dict(_diag_by_source_col),
+        # 4. Match outcomes to grid
+        grid_raw, all_outcome_ids, outcome_id_to_name = _match_outcomes_to_grid(
+            db_markets, config, dg_field, tour,
         )
 
         # 5. Add DataGolf model probabilities
-        # The in-play endpoint returns LIVE updated probabilities during
-        # tournaments (not binary 0/1). Pre-tournament is only useful
-        # before the event starts or as a fallback when in-play is unavailable.
-        col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
-                    "top_20": "top_20", "make_cut": "make_cut"}
+        _add_datagolf_model_probs(
+            grid_raw, dg_field, pre_tourney_lookup, dg_display_names,
+            dg_outcome_lookup, current_event, is_live,
+            all_outcome_ids, outcome_id_to_name,
+        )
 
-        for norm_name in dg_field:
-            player = dg_field[norm_name]
-            pre_player = pre_tourney_lookup.get(norm_name)
-
-            for dg_key, col_key in col_map.items():
-                # Try in-play first, fall back to pre-tournament
-                prob = getattr(player, dg_key, None)
-                if prob is None and pre_player:
-                    prob = getattr(pre_player, dg_key, None)
-
-                if prob is None:
-                    continue
-
-                # During live tournaments, 0.0 = eliminated, 1.0 = clinched
-                # These are meaningful. During pre-tournament, values should
-                # be real probabilities (0 < p < 1), so 0.0/1.0 are noise.
-                if is_live:
-                    # Include 0.0 (eliminated) but skip negative
-                    if prob < 0.0:
-                        continue
-                else:
-                    # Pre-tournament: skip non-meaningful values
-                    if prob <= 0.0 or prob >= 1.0:
-                        continue
-
-                # Look up the DataGolf outcome ID from the polling task's
-                # FuturesOutcome records — this enables trend charts and 24h movers
-                dg_oid = dg_outcome_lookup.get(norm_name, {}).get(col_key)
-                if dg_oid:
-                    all_outcome_ids.append(dg_oid)
-                    outcome_id_to_name[dg_oid] = dg_display_names.get(norm_name, norm_name)
-
-                col_label = col_key.replace("_", " ").title()
-                event_name = current_event.event_name or "Tournament"
-                mode = "In-Play" if is_live else "Pre-Tournament"
-                dg_label = f"{event_name}: To {col_label} ({mode} statistical model)"
-
-                grid_raw[col_key][norm_name].append({
-                    "source": "datagolf",
-                    "probability": prob,
-                    "market_id": None,
-                    "outcome_id": dg_oid,
-                    "market_name": dg_label,
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                })
-
-        # Deduplicate within same source per golfer+column (keep lowest prob)
-        for col_key in grid_raw:
-            for norm_name in grid_raw[col_key]:
-                entries = grid_raw[col_key][norm_name]
-                if len(entries) <= 1:
-                    continue
-                by_source: dict[str, list[dict]] = defaultdict(list)
-                for e in entries:
-                    by_source[e["source"]].append(e)
-                deduped = []
-                for source, source_entries in by_source.items():
-                    best = min(source_entries, key=lambda e: e["probability"])
-                    deduped.append(best)
-                grid_raw[col_key][norm_name] = deduped
-
-        # 6. Build team rows — start from DataGolf field (canonical)
-        # Compute 24h movers
+        # 6. Build team rows
         old_probs = await _compute_movers(db, all_outcome_ids, hours=24)
-
-        championship_col = "win"
-        teams = []
-
-        for norm_name in dg_field:
-            display_name = dg_display_names[norm_name]
-            player = dg_field[norm_name]
-
-            cells = {}
-            for col in config.columns:
-                entries = grid_raw.get(col.key, {}).get(norm_name, [])
-                if not entries:
-                    continue
-
-                probs = [e["probability"] for e in entries]
-                vols = [e.get("volume_24h") for e in entries]
-                merged = min(_merge_probabilities(probs, vols), 1.0)
-
-                sources = []
-                for e in entries:
-                    src = {
-                        "source": e["source"],
-                        "probability": round(e["probability"], 4),
-                    }
-                    if e.get("market_name"):
-                        src["market_name"] = e["market_name"]
-                    if e.get("last_updated"):
-                        src["last_updated"] = e["last_updated"]
-                    if e.get("volume_24h") is not None:
-                        src["volume_24h"] = e["volume_24h"]
-                    sources.append(src)
-
-                # 24h trend
-                trend_24h = None
-                db_entries = [e for e in entries if e["outcome_id"]]
-                if db_entries:
-                    oid = db_entries[0]["outcome_id"]
-                    old_p = old_probs.get(oid)
-                    if old_p is not None:
-                        trend_24h = round(merged - old_p, 4)
-
-                cell_data = {
-                    "merged_probability": round(merged, 4),
-                    "sources": sources,
-                    "trend_24h": trend_24h,
-                }
-                if (len(sources) == 1
-                        and sources[0]["source"] == "kalshi"
-                        and abs(merged - 0.01) < 0.001):
-                    cell_data["is_minimum_tick"] = True
-                cells[col.key] = cell_data
-
-            # Filter Kalshi price floor/ceiling noise for placement columns.
-            # Kalshi binary golf markets often have illiquid prices stuck at
-            # 0.005 (floor) or 0.995 (ceiling). These aren't real probabilities.
-            _filter_kalshi_placement_noise(cells)
-
-            # Include golfer even if no cells (they're in the field)
-            # But skip if absolutely no data
-            if not cells:
-                continue
-
-            team_row = {
-                "name": display_name,
-                "short_name": display_name,
-                "team_id": None,
-                "logo_url": None,
-                "primary_color": None,
-                "secondary_color": None,
-                "record": None,
-                "conference": None,
-                "division": None,
-                "seed": None,
-                "cells": cells,
-            }
-
-            # Add leaderboard info if in-play
-            if is_live and player.position:
-                team_row["position"] = player.position
-                team_row["total_score"] = player.total_score
-                team_row["today_score"] = player.today_score
-                team_row["thru"] = player.thru
-                team_row["current_round"] = player.current_round
-
-            teams.append(team_row)
-
-        # Sort by win probability descending
-        teams.sort(key=lambda t: -(t["cells"].get("win", {}).get("merged_probability", 0)))
-
-        # Cap at max_teams
+        teams = _build_golf_grid_team_rows(
+            dg_field, dg_display_names, grid_raw, config, old_probs, is_live,
+        )
         teams = teams[:config.max_teams]
 
         # Movers
+        championship_col = "win"
         movers = []
         for team_row in teams:
             champ_cell = team_row["cells"].get(championship_col)
             if champ_cell and champ_cell.get("trend_24h") is not None:
                 movers.append({
-                    "name": team_row["name"],
-                    "short_name": team_row["short_name"],
-                    "team_id": None,
-                    "column": championship_col,
+                    "name": team_row["name"], "short_name": team_row["short_name"],
+                    "team_id": None, "column": championship_col,
                     "change_24h": champ_cell["trend_24h"],
                     "direction": "up" if champ_cell["trend_24h"] > 0 else "down",
-                    "logo_url": None,
-                    "primary_color": None,
+                    "logo_url": None, "primary_color": None,
                 })
         movers.sort(key=lambda m: abs(m["change_24h"]), reverse=True)
         movers = movers[:10]
 
-        # Trend chart for top N golfers — collect ALL outcome IDs per golfer
-        # (DataGolf + Kalshi + Polymarket) so we get the richest timeline
+        # Trend chart
         top_team_norms = [_normalize_team_name(t["name"]) for t in teams[:top]]
         trend_outcome_ids = []
         trend_outcome_names: dict[int, str] = {}
         for norm_name in top_team_norms:
-            entries = grid_raw.get(championship_col, {}).get(norm_name, [])
-            for e in entries:
+            for e in grid_raw.get(championship_col, {}).get(norm_name, []):
                 oid = e.get("outcome_id")
                 if oid and oid not in trend_outcome_names:
                     trend_outcome_ids.append(oid)
@@ -1662,18 +1588,15 @@ async def _build_golf_tour_grid(
         trend_chart["column"] = championship_col
         trend_chart["top"] = top
 
-        # Sources
+        # Sources + active columns
         sources_seen = {"datagolf"}
         for col_entries in grid_raw.values():
             for entries in col_entries.values():
                 for e in entries:
                     sources_seen.add(e["source"])
 
-        # Active columns — only include columns where ≥10% of shown golfers
-        # have data. Prevents showing "Make Cut" for LIV (alt tour) where
-        # only 1 stray Kalshi market exists.
         active_columns = []
-        min_fill = max(1, len(teams) // 10)  # At least 10% of golfers
+        min_fill = max(1, len(teams) // 10)
         for col in config.columns:
             if col.key not in grid_raw:
                 continue
@@ -1683,10 +1606,8 @@ async def _build_golf_tour_grid(
             )
             if filled >= min_fill:
                 active_columns.append({
-                    "key": col.key,
-                    "label": col.label,
-                    "order": col.order,
-                    "sequential": col.sequential,
+                    "key": col.key, "label": col.label,
+                    "order": col.order, "sequential": col.sequential,
                 })
 
         return {
