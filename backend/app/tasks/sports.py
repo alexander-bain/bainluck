@@ -593,9 +593,22 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                 JOIN events b ON (
                     a.sport_id = b.sport_id
                     AND a.id < b.id
-                    AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
-                    AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
                     AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+                    AND (
+                        -- Normal orientation
+                        (LOWER(a.home_team_name) = LOWER(b.home_team_name)
+                         AND LOWER(a.away_team_name) = LOWER(b.away_team_name))
+                        OR
+                        -- Swapped home/away
+                        (LOWER(a.home_team_name) = LOWER(b.away_team_name)
+                         AND LOWER(a.away_team_name) = LOWER(b.home_team_name))
+                        OR
+                        -- Normalized names (handles "NY Knicks" vs "New York Knicks")
+                        (LOWER(COALESCE(a.home_team_normalized, a.home_team_name)) =
+                         LOWER(COALESCE(b.home_team_normalized, b.home_team_name))
+                         AND LOWER(COALESCE(a.away_team_normalized, a.away_team_name)) =
+                             LOWER(COALESCE(b.away_team_normalized, b.away_team_name)))
+                    )
                 )
                 WHERE a.commence_time > NOW() - INTERVAL '30 days'
                   AND b.commence_time > NOW() - INTERVAL '30 days'
