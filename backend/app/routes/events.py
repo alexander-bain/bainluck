@@ -3151,6 +3151,15 @@ async def get_game_markets(
     market_map = {m.id: m for m in markets}
 
     # 5. Classify and group
+    #
+    # Period markets (half_spread, half_total, quarter_*, half_winner,
+    # quarter_winner) are all routed into period_markets[].  The frontend
+    # currently renders half_spread as margin maps and half_total as total
+    # maps for both 1H and 2H.  half_winner/quarter_winner entries are
+    # included in the response but the frontend does not yet have a
+    # dedicated visualization for binary period winner markets — they
+    # appear only when a frontend component iterates period_markets
+    # generically (a known display gap, not a data gap).
     totals_thresholds: list[dict] = []
     player_props: list[dict] = []
     spreads: list[dict] = []
@@ -3293,8 +3302,74 @@ async def get_game_markets(
                 })
 
         else:
+            # Rescue player-prop-shaped outcomes from "other" markets.
+            # Some markets land here because their name is a generic matchup
+            # ("Celtics at Warriors") with no stat keywords, yet their
+            # outcomes are player props ("Patrick Mahomes: 250+").  Route
+            # any outcome matching the player-name regex into player_props
+            # instead of other_markets.
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
+                if prob is None:
+                    continue
+                # Check if outcome looks like a player prop: "PlayerName: N+"
+                if _PLAYER_OUTCOME_RE.match(o.name):
+                    threshold = _extract_threshold(o.name)
+                    if threshold is not None:
+                        name_lower = o.name.lower().strip()
+                        is_over = (
+                            name_lower.startswith("over")
+                            or "yes" in name_lower
+                            or re.match(r'^\d+\+', name_lower)
+                            or re.match(r'^.+:\s*\d+\+', name_lower)
+                        )
+                        is_under = name_lower.startswith("under") or name_lower == "no"
+                        over_prob = prob if is_over or not is_under else 1.0 - prob
+                        opening_over = None
+                        if o.opening_probability is not None:
+                            op = float(o.opening_probability)
+                            opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                        player_props.append({
+                            "market_name": market.name,
+                            "outcome_name": o.name,
+                            "threshold": threshold,
+                            "over_probability": round(over_prob, 4),
+                            "opening_over_probability": opening_over,
+                            "source": market.source,
+                            "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
+                                if o.opening_probability is not None and o.current_probability is not None else None,
+                        })
+                        continue
+                # Also rescue if the market name itself has a player-stat
+                # pattern (e.g., "Patrick Mahomes Passing Yards") but wasn't
+                # caught by _classify_game_market because no "over/under" or
+                # "total" keyword was present.
+                if _PLAYER_PROP_RE.search(market.name) and not _is_team_stat_market(market.name):
+                    threshold = _extract_threshold(o.name)
+                    name_lower = o.name.lower().strip()
+                    is_over = (
+                        name_lower.startswith("over")
+                        or "yes" in name_lower
+                        or re.match(r'^\d+\+', name_lower)
+                        or re.match(r'^.+:\s*\d+\+', name_lower)
+                    )
+                    is_under = name_lower.startswith("under") or name_lower == "no"
+                    over_prob = prob if is_over or not is_under else 1.0 - prob
+                    opening_over = None
+                    if o.opening_probability is not None:
+                        op = float(o.opening_probability)
+                        opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                    player_props.append({
+                        "market_name": market.name,
+                        "outcome_name": o.name,
+                        "threshold": threshold,
+                        "over_probability": round(over_prob, 4),
+                        "opening_over_probability": opening_over,
+                        "source": market.source,
+                        "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
+                            if o.opening_probability is not None and o.current_probability is not None else None,
+                    })
+                    continue
                 other_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
