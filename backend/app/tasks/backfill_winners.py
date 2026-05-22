@@ -1815,7 +1815,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                             LIMIT 100000
                         )
                         UPDATE futures_outcomes fo
-                        SET opening_probability = fs.probability
+                        SET opening_probability = fs.probability,
+                            opening_source = 'first_snapshot'
                         FROM first_snaps fs
                         WHERE fo.id = fs.outcome_id
                     """)

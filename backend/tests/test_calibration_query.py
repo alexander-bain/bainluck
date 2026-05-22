@@ -95,6 +95,18 @@ async def test_public_calibration_uses_is_winner_for_resolution():
 
 
 @pytest.mark.asyncio
+async def test_public_calibration_excludes_guessed_resolutions():
+    calibration._cache = {"data": None, "timestamp": 0}
+    db = _FakeDB()
+
+    await calibration.public_calibration(db=db, bust=1)
+
+    futures_sql = str(db.statements[0])
+    assert "pass2_guess" in futures_sql
+    assert "pass3_threshold" in futures_sql
+
+
+@pytest.mark.asyncio
 async def test_public_calibration_classifies_only_non_null_changed_prices_as_closing_line():
     calibration._cache = {"data": None, "timestamp": 0}
     db = _FakeDB()

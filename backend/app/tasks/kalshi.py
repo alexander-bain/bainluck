@@ -579,6 +579,9 @@ async def _poll_kalshi_markets():
                             update_set["opening_captured_at"] = func.coalesce(
                                 FuturesOutcome.opening_captured_at, now
                             )
+                            update_set["opening_source"] = func.coalesce(
+                                FuturesOutcome.opening_source, "bid_ask_midpoint"
+                            )
 
                         outcome_stmt = pg_insert(FuturesOutcome).values(
                             market_id=futures_market_id,

@@ -890,6 +890,8 @@ async def public_calibration(
             JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
             WHERE fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND (fo.resolution_source IS NULL
+                   OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
         ),
         -- Detect default/placeholder pricing: if 50%+ of outcomes in a
         -- multi-outcome market share the exact same opening_probability,

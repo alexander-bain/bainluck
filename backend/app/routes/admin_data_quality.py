@@ -2718,7 +2718,10 @@ async def calibration_decomposition(
             COUNT(*) FILTER (WHERE fo.resolution_source = 'pass2_guess') AS res_guess,
             COUNT(*) FILTER (WHERE fo.resolution_source = 'pass3_threshold') AS res_threshold,
             COUNT(*) FILTER (WHERE fo.resolution_source = 'settlement_sync') AS res_sync,
-            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL AND fo.is_winner = true) AS res_untagged
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL AND fo.is_winner = true) AS res_untagged,
+            COUNT(*) FILTER (WHERE fo.opening_source = 'bid_ask_midpoint') AS open_bidask,
+            COUNT(*) FILTER (WHERE fo.opening_source = 'first_snapshot') AS open_snapshot,
+            COUNT(*) FILTER (WHERE fo.opening_source IS NULL AND fo.opening_probability IS NOT NULL) AS open_untagged
         FROM futures_outcomes fo
         JOIN futures_markets fm ON fm.id = fo.market_id
         LEFT JOIN events e ON e.id = fm.event_id
@@ -2754,6 +2757,11 @@ async def calibration_decomposition(
                 "pass3_threshold": r.res_threshold,
                 "settlement_sync": r.res_sync,
                 "untagged": r.res_untagged,
+            },
+            "opening": {
+                "bid_ask_midpoint": r.open_bidask,
+                "first_snapshot": r.open_snapshot,
+                "untagged": r.open_untagged,
             },
             "authoritative_pct": round(100 * authoritative / max(r.has_winner, 1), 1) if r.has_winner > 0 else 0,
             "guess_pct": guess_pct,

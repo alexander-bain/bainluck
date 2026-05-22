@@ -754,6 +754,9 @@ class FuturesOutcome(Base):
     rank: Mapped[Optional[int]] = mapped_column(Integer)
     rank_change_24h: Mapped[Optional[int]] = mapped_column(Integer)
 
+    # Opening price derivation
+    opening_source: Mapped[Optional[str]] = mapped_column(String(30))
+
     # Resolution
     is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
     resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
