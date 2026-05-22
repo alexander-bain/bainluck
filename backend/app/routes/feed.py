@@ -1954,6 +1954,22 @@ async def _discover_candidate_pool_trace(
     }
 
 
+def _get_cached_interestingness(market_id: int) -> dict | None:
+    """Read a single interestingness score from Redis for admin trace output."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        r = get_redis_client()
+        raw = r.get(f"interestingness:{market_id}")
+        if raw is not None:
+            return _json_module.loads(
+                raw.decode() if isinstance(raw, bytes) else raw
+            )
+    except Exception:
+        pass
+    return None
+
+
 def _score_market_trace(
     market: FuturesMarket,
     now: datetime,
@@ -2107,6 +2123,7 @@ def _score_market_trace(
             "has_image": bool(market.image_url),
             "headline_ok": bool(headline),
         },
+        "interestingness": _get_cached_interestingness(market.id),
         "top_outcomes": outcomes_data[:5],
     }
 
@@ -3476,6 +3493,13 @@ async def _score_futures(
     stale_no_movement_days = float(config.get("stale_no_movement_days", 2))
     no_resolution_stale_days = float(config.get("no_resolution_stale_days", 5))
 
+    # --- Precomputed interestingness cache ---
+    # Load all interestingness scores from Redis in one batch after candidate
+    # IDs are known (deferred below). The blend weight is controllable via a
+    # Redis key so it can be tuned or killed without redeployment.
+    _interestingness_cache: dict[int, dict] | None = None
+    _interestingness_blend_weight: float = 0.0
+
     def mark_timing(
         stage: str,
         *,
@@ -3790,6 +3814,43 @@ async def _score_futures(
     )
     mark_timing("canonical_counts")
 
+    # --- Load precomputed interestingness scores from Redis ---
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        _int_redis = get_async_redis_client()
+        # Read blend weight (default 0.2; set to 0 to disable)
+        raw_weight = await _int_redis.get("interestingness:blend_weight")
+        if raw_weight is not None:
+            _interestingness_blend_weight = float(
+                raw_weight.decode() if isinstance(raw_weight, bytes) else raw_weight
+            )
+        else:
+            _interestingness_blend_weight = 0.2  # default
+
+        if _interestingness_blend_weight > 0:
+            _int_keys = [f"interestingness:{mid}" for mid in market_ids]
+            if _int_keys:
+                _int_values = await _int_redis.mget(_int_keys)
+                _interestingness_cache = {}
+                for mid, raw_val in zip(market_ids, _int_values):
+                    if raw_val is not None:
+                        try:
+                            parsed = _json_module.loads(
+                                raw_val.decode()
+                                if isinstance(raw_val, bytes)
+                                else raw_val
+                            )
+                            _interestingness_cache[mid] = parsed
+                        except (ValueError, TypeError):
+                            pass
+        await _int_redis.aclose()
+    except Exception:
+        logger.debug("Interestingness cache load failed — skipping blend", exc_info=True)
+        _interestingness_cache = None
+        _interestingness_blend_weight = 0.0
+    mark_timing("interestingness_cache")
+
     scored_items = []
     for market in markets:
         if not my_teams_only:
@@ -4093,6 +4154,31 @@ async def _score_futures(
             highlight_result.reasons.append(
                 f"discover_llm_score:{llm_score_adjustment:+d}"
             )
+
+        # === INTERESTINGNESS BLEND ===
+        # Read precomputed interestingness from Redis and blend with base_score.
+        # Weight is controllable via Redis key (default 0.2, kill switch at 0).
+        if _interestingness_cache is not None:
+            cached_entry = _interestingness_cache.get(market.id)
+            if cached_entry is not None and _interestingness_blend_weight > 0:
+                i_score = cached_entry.get("score", 0)
+                pre_blend = base_score
+                blended = base_score * (1 - _interestingness_blend_weight) + (
+                    i_score * 100
+                ) * _interestingness_blend_weight
+                # Cap: interestingness can add at most 15 points over base
+                base_score = min(blended, pre_blend + 15)
+                base_score = max(0, min(100, base_score))
+                i_reasons = cached_entry.get("reasons") or []
+                if abs(base_score - pre_blend) >= 0.5:
+                    delta = base_score - pre_blend
+                    delta_label: int | float = (
+                        int(delta) if float(delta).is_integer() else round(delta, 1)
+                    )
+                    highlight_result.reasons.append(
+                        f"interestingness:{delta_label:+g}"
+                    )
+
         if quality.reasons:
             highlight_result.reasons.extend(f"quality:{r}" for r in quality.reasons)
 
@@ -4305,6 +4391,12 @@ async def _score_futures(
                 "junk_flags": discover_llm_metadata.get("junk_flags") or [],
                 "comparison_axes": discover_llm_metadata.get("comparison_axes") or [],
             }
+        # Attach interestingness metadata to feed item data
+        if _interestingness_cache is not None:
+            cached_entry = _interestingness_cache.get(market.id)
+            if cached_entry is not None:
+                futures_data["interestingness_score"] = cached_entry.get("score")
+                futures_data["interestingness_reasons"] = cached_entry.get("reasons")
 
         # Compute market_tags on-the-fly
         inline_market_tags = compute_market_tags(

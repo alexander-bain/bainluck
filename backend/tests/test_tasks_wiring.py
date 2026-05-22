@@ -207,6 +207,7 @@ class TestBeatScheduleCompleteness:
         "capture-featured-markets-daily",
         "enrich-market-images",
         "merge-duplicate-events",
+        "precompute-interestingness",
         "check-aggregation-quality",
         "check-tier1-coverage",
         "daily-digest",
