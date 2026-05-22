@@ -84,6 +84,8 @@ import ReviewPathNav from "@/components/admin/discover/ReviewPathNav";
 import ScoreBucketList from "@/components/admin/discover/ScoreBucketList";
 import LaunchHealthTrendPanel from "@/components/admin/discover/LaunchHealthTrendPanel";
 import EngagementReviewTab from "@/components/admin/discover/EngagementReviewTab";
+import ReviewTab from "@/components/admin/discover/ReviewTab";
+import DenominatorTooltip from "@/components/admin/DenominatorTooltip";
 import DiagnosticRunsPanel from "@/components/admin/discover/DiagnosticRunsPanel";
 import EngagementPanel from "@/components/admin/discover/EngagementPanel";
 import RuntimeActionButton from "@/components/admin/discover/RuntimeActionButton";
@@ -100,7 +102,7 @@ export default function DiscoverQualityPage() {
   useEngagementTime({ pageType: "admin_discover_quality" });
 
   const { secret: submittedSecret } = useAdminAuth();
-  const [activeTab, setActiveTab] = useState<"quality" | "engagement">("quality");
+  const [activeTab, setActiveTab] = useState<"quality" | "engagement" | "review">("quality");
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
@@ -520,7 +522,7 @@ export default function DiscoverQualityPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-4 border-b border-surface-border pb-px">
-        {(["quality", "engagement"] as const).map((tab) => (
+        {(["quality", "engagement", "review"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -530,12 +532,14 @@ export default function DiscoverQualityPage() {
                 : "text-text-muted hover:text-text-secondary"
             }`}
           >
-            {tab === "quality" ? "Quality" : "Engagement Review"}
+            {tab === "quality" ? "Quality" : tab === "engagement" ? "Engagement Review" : "Review"}
           </button>
         ))}
       </div>
 
-      {activeTab === "engagement" ? (
+      {activeTab === "review" ? (
+        <ReviewTab />
+      ) : activeTab === "engagement" ? (
         <EngagementReviewTab />
       ) : (
         <>
@@ -565,7 +569,7 @@ export default function DiscoverQualityPage() {
               ok={summary.positive_archetype_hits >= 5}
             />
             <StatCard label="Duplicate Families" value={`${summary.duplicate_family_count}/20`} ok={summary.duplicate_family_count === 0} />
-            <StatCard label="Ground Truth @50" value={`${summary.ground_truth_hit_count_50}/50`} />
+            <StatCard label="Ground Truth @50" value={`${summary.ground_truth_hit_count_50}/${data?.email_ground_truth?.total ?? 50}`} sub="GT items in our top 50" />
             {data.email_ground_truth?.configured && (
               <>
                 <StatCard

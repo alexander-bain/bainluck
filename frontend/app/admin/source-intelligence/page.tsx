@@ -1,6 +1,7 @@
 "use client";
 
 import PageHeader from "@/components/admin/PageHeader";
+import MetricSection from "@/components/admin/MetricSection";
 
 import { useState, useMemo } from "react";
 import Link from "next/link";

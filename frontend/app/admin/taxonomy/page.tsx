@@ -8,6 +8,7 @@ import {
   useEngagementTime,
 } from "@/hooks";
 import PageHeader from "@/components/admin/PageHeader";
+import MetricSection from "@/components/admin/MetricSection";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";

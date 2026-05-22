@@ -2,6 +2,7 @@
 
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
+import MetricSection from "@/components/admin/MetricSection";
 
 import { useState, useCallback } from "react";
 import useSWR, { mutate } from "swr";

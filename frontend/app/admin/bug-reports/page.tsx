@@ -7,6 +7,7 @@ import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
+import MetricSection from "@/components/admin/MetricSection";
 
 interface BugReport {
   id: number;

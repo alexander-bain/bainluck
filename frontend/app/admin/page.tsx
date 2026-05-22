@@ -11,6 +11,7 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
 import MetricSection from "@/components/admin/MetricSection";
 import DiagnosisCard from "@/components/admin/DiagnosisCard";
+import DenominatorTooltip from "@/components/admin/DenominatorTooltip";
 import {
   LineChart,
   Line,
@@ -713,9 +714,17 @@ function LinkRateCard({ secret }: { secret: string }) {
 
   return (
     <div className="bg-surface-card rounded-xl border border-surface-border p-4">
-      <h3 className="text-sm font-semibold text-text-primary mb-1">Game Market Link Rate</h3>
+      <h3 className="text-sm font-semibold text-text-primary mb-1">
+        Game Market Link Rate{" "}
+        <DenominatorTooltip
+          numerator="Open game-level markets with event_id set"
+          denominator="Open game-level markets from event-covered sports"
+          exclusions={["Season futures (MVP, champion, winner)", "Stale Kalshi settlements past game date", "Non-sport categories (politics, crypto, weather)"]}
+          note="Headline rate uses open markets only."
+        />
+      </h3>
       <p className="text-xs text-text-muted mb-3">
-        % of open sports game markets linked to events (excludes politics/crypto/weather)
+        % of open sports game markets linked to events
       </p>
       <div className="grid grid-cols-2 gap-3 mb-3">
         {(["kalshi", "polymarket"] as const).map((src) => {
