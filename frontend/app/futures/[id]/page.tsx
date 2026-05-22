@@ -118,6 +118,51 @@ function getCategoryEmoji(category: string | null): string {
   }
 }
 
+/**
+ * Detect whether an outcome name is a recognizable entity (person, team, place)
+ * vs a generic/date-like identifier that needs extra context in the hero display.
+ *
+ * Returns true for names like "May 18", "2026", "Q3", "Option A", "Before July",
+ * "Over 5.5", bare numbers, single short words, or Yes/No variants.
+ * Returns false for names that look like real entities: "Celtics", "Trump",
+ * "Kendrick Lamar", "Manchester City".
+ */
+function isGenericOutcomeName(name: string): boolean {
+  const trimmed = name.trim();
+
+  // Short single-token names (<=4 chars) are likely generic unless they look like
+  // known abbreviations that are still meaningful (e.g., "Yes", "No")
+  if (trimmed.length <= 3) return true;
+
+  // Bare numbers or numbers with units: "5", "42.5", "100+", "$50"
+  if (/^[$]?\d+([.,]\d+)?[+%]?$/.test(trimmed)) return true;
+
+  // Date patterns: "May 18", "June 2026", "Jan 1, 2027", "2025-06", "Q3 2026"
+  const datePatterns = [
+    /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i,
+    /^(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d/i,
+    /^\d{4}(-\d{2})?$/,
+    /^Q[1-4]\b/i,
+    /^(Before|After|By)\s+(January|February|March|April|May|June|July|August|September|October|November|December)/i,
+    /^(Before|After|By)\s+(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i,
+    /^(Before|After|By)\s+\d{4}/i,
+    /^Week\s+\d/i,
+  ];
+  if (datePatterns.some((p) => p.test(trimmed))) return true;
+
+  // Threshold/range patterns: "Over 5.5", "Under 100", ">=50", "250+"
+  if (/^(Over|Under|Above|Below|At least|At most|More than|Less than|Fewer than)\s/i.test(trimmed)) return true;
+  if (/^[<>=]+\s*\d/.test(trimmed)) return true;
+
+  // Yes/No variants
+  if (/^(Yes|No)(\s|$)/i.test(trimmed)) return true;
+
+  // Option/Choice labels: "Option A", "Choice 1"
+  if (/^(Option|Choice|Bucket)\s/i.test(trimmed)) return true;
+
+  return false;
+}
+
 type SortField = "probability" | "change" | "name";
 type SortDirection = "asc" | "desc";
 
@@ -1044,7 +1089,7 @@ function HeroSection({
                 )}
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-lg font-bold text-white/90 line-clamp-2">{leader.name}</span>
+                <span className="text-lg font-bold text-white/90 line-clamp-2">{isGenericOutcomeName(leader.name) ? `${leader.name} at ${formatProbability(leader.probability)}` : leader.name}</span>
                 {leader.is_winner && (
                   <span className="text-xs font-bold text-white bg-emerald-500/60 px-2 py-0.5 rounded-full">Won</span>
                 )}
