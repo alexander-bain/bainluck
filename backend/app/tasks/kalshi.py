@@ -102,6 +102,9 @@ _GENERIC_OUTCOME_PATTERNS = _re.compile(
     r"Ticker [A-Z]"           # "Ticker D", "Ticker H"
     r"|Option [A-Z0-9]+"      # "Option 1", "Option A"
     r"|Choice [A-Z0-9]+"      # "Choice 1"
+    r"|Person [A-Z0-9]+"       # "Person B", "Person G"
+    r"|Team [A-Z0-9]+"         # "Team 1", "Team A"
+    r"|Player [A-Z0-9]+"       # "Player 1"
     r"|Candidate [A-Z0-9]+"   # "Candidate 1"
     r"|[A-Z]$"                # Single letters only (not "Yes"/"No")
     r"|[0-9]+$"               # Pure numbers
