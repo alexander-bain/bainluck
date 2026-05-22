@@ -201,7 +201,7 @@ async def _find_by_structured_match(
                 commence_time - _MATCH_WINDOW,
                 commence_time + _MATCH_WINDOW,
             ),
-            Event.status.in_(["scheduled", "live"]),
+            Event.status.in_(["scheduled", "live", "completed", "closed"]),
         ).limit(30)
     )
     candidates = candidates_result.scalars().all()
