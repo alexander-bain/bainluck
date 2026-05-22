@@ -6,6 +6,16 @@ labels: needs-agent
 assignees: ''
 ---
 
+## Agent start protocol
+
+Before editing files, claim this issue:
+
+```bash
+python3 scripts/claim_issue.py ISSUE_NUMBER "In Progress" --owner "<thread/context>"
+```
+
+Check existing `In Progress` issues for overlapping files or pipeline ownership before starting.
+
 ## Outcome
 
 What should be true when this is done?

@@ -43,6 +43,7 @@ Use priority labels sparingly:
 Use routing labels to manage handoffs:
 
 - `needs-agent` ready for an agent thread
+- `in-progress` actively owned by a human/agent thread; avoid overlapping work
 - `needs-user` blocked on Alex input or credentials
 - `blocked` blocked by another issue or external dependency
 - `good-first-agent-task` intentionally small and low-risk
@@ -103,7 +104,12 @@ When working in this repo, keep these invariants true:
 - When closing a product issue, update `docs/backlog.md` in the same change if the backlog line is now shipped, obsolete, or materially changed.
 - Alert-generated issues can be closed without backlog edits when they are stale, superseded, or purely operational. Leave a closing comment explaining why.
 - Prefer moving project cards to `Ready` only after the issue has enough scope for an agent. Keep rough captures in `Inbox`.
-- Treat `In Progress` as an ownership lock. When a human, Codex thread, Claude thread, or subagent starts work, move the issue to `In Progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Do not assign another agent to overlapping files until the issue moves to `Review / Verify` or `Done`.
+- Treat `In Progress` as an ownership lock. When a human, Codex thread, Claude thread, or subagent starts work, move the issue to `In Progress`, add `in-progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Do not assign another agent to overlapping files until the issue moves to `Review / Verify` or `Done`.
+- Preferred claim command:
+  ```bash
+  python3 scripts/claim_issue.py 435 "In Progress" --owner "Codex Discover thread"
+  ```
+  The helper updates the GitHub Project status, labels, and ownership comment together.
 - Before spawning subagents, inspect `In Progress` and avoid splitting work across issues that touch the same files or ranking/matching pipeline unless write scopes are explicitly disjoint.
 
 Suggested weekly sweep:
@@ -122,5 +128,9 @@ Good prompts:
 - "Triage open `alert-intake` issues and fix the highest-priority one."
 - "Find `area:discover-ranking` + `type:quality` issues that are safe to parallelize."
 - "Promote the ready Discover backlog items into scoped GitHub issues."
+
+Good agent handoff prompt:
+
+- "Before editing files, claim the GitHub issue with `python3 scripts/claim_issue.py ISSUE_NUMBER \"In Progress\" --owner \"<thread name>\"`; check current `In Progress` issues for overlapping files; when done, move the issue to `Review / Verify` or `Done`."
 
 Before parallel agent work, make sure each issue has a narrow scope and distinct write set.

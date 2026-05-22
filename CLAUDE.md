@@ -214,7 +214,7 @@ Use this split consistently:
 - When closing a product issue, update `docs/backlog.md` in the same change if the corresponding backlog item shipped, changed, or became obsolete.
 - Do not duplicate full backlog prose into issues. Issues should contain outcome, scope, acceptance criteria, verification, and a link back to the backlog.
 - Alert-intake issues can be closed without backlog edits if they are stale/superseded CI failures or purely operational alerts; leave a closing comment with the reason.
-- Treat the Project `In Progress` column as a collision-avoidance lock. When a person, Codex thread, Claude thread, or subagent starts an issue, move it to `In Progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Before starting or delegating work, check `In Progress` for overlapping files or pipeline ownership.
+- Treat the Project `In Progress` column plus the `in-progress` label as a collision-avoidance lock. When a person, Codex thread, Claude thread, or subagent starts an issue, run `python3 scripts/claim_issue.py ISSUE_NUMBER "In Progress" --owner "<thread/context>"` before editing files. This moves the Project card, adds `in-progress`, removes `needs-agent`, and comments with the active owner/context. Before starting or delegating work, check `In Progress` for overlapping files or pipeline ownership.
 
 Canonical labels and project columns are documented in `docs/github-workflow.md`. If a user asks for "the next thing to work on," prefer open issues labeled `needs-agent`, especially `priority:p0`/`priority:p1`, before mining the whole backlog.
 

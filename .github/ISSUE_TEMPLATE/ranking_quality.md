@@ -6,6 +6,16 @@ labels: area:discover-ranking,type:quality
 assignees: ''
 ---
 
+## Agent start protocol
+
+Before editing files, claim this issue:
+
+```bash
+python3 scripts/claim_issue.py ISSUE_NUMBER "In Progress" --owner "<thread/context>"
+```
+
+Check existing `In Progress` Discover/ranking issues before touching `feed.py`, ranking utilities, or admin quality surfaces.
+
 ## What did the feed do?
 
 Describe the bad or missing feed behavior.
