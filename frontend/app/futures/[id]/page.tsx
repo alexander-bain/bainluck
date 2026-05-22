@@ -29,6 +29,8 @@ import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
+import { buildShareUrl, formatShareProbability } from "@/lib/share";
+import { trackEvent } from "@/lib/analytics";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -1007,8 +1009,56 @@ function HeroSection({
   isMaxReached: boolean;
   togglePin: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const hasImage = !!market.image_url;
   const gradientBg = CATEGORY_GRADIENTS[market.llm_sport_category?.toLowerCase() ?? ""] || DEFAULT_GRADIENT;
+
+  const shareUrl = buildShareUrl(`/futures/${market.id}`, {
+    utm_source: "share",
+    utm_medium: "detail",
+    utm_campaign: "hero",
+    content_type: "futures",
+    item_id: market.id,
+  });
+
+  const leaderProb = leader ? formatShareProbability(leader.probability ?? null) : null;
+  const shareText = leader && leaderProb
+    ? `${leader.name} at ${leaderProb} — ${market.name}`
+    : `${market.name} on Bain Luck`;
+
+  const handleShare = async () => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: market.name, text: shareText, url: shareUrl });
+        trackEvent("share", {
+          content_type: "futures",
+          item_id: market.id,
+          method: "native",
+          item_name: market.name,
+          source_section: "detail_hero",
+          url: shareUrl,
+        });
+        return;
+      } catch {
+        // User cancelled or API unavailable, fall through to clipboard
+      }
+    }
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      const text = `${shareText}\n${shareUrl}`;
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+      trackEvent("share", {
+        content_type: "futures",
+        item_id: market.id,
+        method: "clipboard",
+        item_name: market.name,
+        source_section: "detail_hero",
+        url: shareUrl,
+      });
+    }
+  };
 
   return (
     <div className="rounded-2xl overflow-hidden shadow-card">
@@ -1051,6 +1101,7 @@ function HeroSection({
               >
                 <PinIcon filled={marketIsPinned} className="w-4 h-4" />
               </button>
+              <ShareButton copied={copied} onClick={handleShare} />
             </div>
             <div className="flex items-center gap-2">
               {isResolved && (
@@ -1111,6 +1162,32 @@ function HeroSection({
           <p className="text-sm text-text-secondary leading-relaxed mb-4">{market.hook_description}</p>
         )}
 
+        <div className="flex items-center gap-3 mb-3">
+          <button
+            onClick={handleShare}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-brand text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+            aria-label={copied ? "Link copied" : "Share this market"}
+          >
+            {copied ? (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Copied!
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
+                  <polyline strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} points="16 6 12 2 8 6" />
+                  <line strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} x1="12" y1="2" x2="12" y2="15" />
+                </svg>
+                Share
+              </>
+            )}
+          </button>
+        </div>
+
         <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
           <span>
             {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
@@ -1156,6 +1233,32 @@ function HeroSection({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Share button for hero overlay
+ */
+function ShareButton({ copied, onClick }: { copied: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-1.5 rounded-full transition-all backdrop-blur-sm text-white/60 hover:text-white bg-black/20"
+      title={copied ? "Copied!" : "Share"}
+      aria-label={copied ? "Link copied" : "Share this market"}
+    >
+      {copied ? (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
+          <polyline strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} points="16 6 12 2 8 6" />
+          <line strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} x1="12" y1="2" x2="12" y2="15" />
+        </svg>
+      )}
+    </button>
   );
 }
 
