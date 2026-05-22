@@ -309,6 +309,7 @@ The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section 
 28. **Extracted Swift files need their own imports and visibility fixes**. Remove duplicate class definitions after extraction.
 29. **Bug reports must keep anonymous submission working** while using optional auth to capture `user_id` and storing `user_email` at submission time.
 30. **Codex command policy may reject literal `git push`**. Use `git -c push.default=simple push origin master` or the explicit HTTPS remote form.
+31. **Never use CREATE INDEX CONCURRENTLY in Alembic migrations** — Heroku's release phase has a timeout (~5 min). CONCURRENTLY on large tables hangs the release, causing a full outage. Create large indexes manually via psql, not in the migration chain. (Caused a May 22 outage on odds_snapshots index.)
 
 ---
 
