@@ -2672,3 +2672,110 @@ async def calibration_coverage_audit(
         },
     }
 
+
+@router.get("/calibration/decomposition")
+async def calibration_decomposition(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full quality funnel by source × league × market_type × age.
+
+    Shows N, opening derivation, resolution source breakdown, and
+    whether we're capturing forward for each cell.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(text("""
+        SELECT
+            fm.source,
+            COALESCE(fm.llm_sport_category, 'uncategorized') AS sport,
+            COALESCE(
+                CASE WHEN fm.llm_league IS NOT NULL THEN fm.llm_league
+                     WHEN s.key IS NOT NULL THEN s.key
+                     ELSE NULL END,
+                'unknown'
+            ) AS league,
+            CASE
+                WHEN fm.updated_at >= NOW() - INTERVAL '7 days' THEN '7d'
+                WHEN fm.updated_at >= NOW() - INTERVAL '30 days' THEN '30d'
+                WHEN fm.updated_at >= NOW() - INTERVAL '90 days' THEN '90d'
+                ELSE '91d+'
+            END AS age,
+            COUNT(*) AS total_outcomes,
+            COUNT(*) FILTER (
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+            ) AS has_opening,
+            COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NOT NULL) AS has_resolution_tag,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'api_settlement') AS res_api,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'game_score') AS res_score,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'box_score') AS res_boxscore,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'scoring_plays') AS res_plays,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'leaderboard') AS res_leaderboard,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'clean_resolution') AS res_clean,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'pass2_guess') AS res_guess,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'pass3_threshold') AS res_threshold,
+            COUNT(*) FILTER (WHERE fo.resolution_source = 'settlement_sync') AS res_sync,
+            COUNT(*) FILTER (WHERE fo.resolution_source IS NULL AND fo.is_winner = true) AS res_untagged
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        LEFT JOIN events e ON e.id = fm.event_id
+        LEFT JOIN sports s ON s.id = e.sport_id
+        WHERE fm.status = 'resolved'
+        GROUP BY fm.source, sport, league, age
+        HAVING COUNT(*) >= 20
+        ORDER BY total_outcomes DESC
+    """))
+
+    rows = result.all()
+    cells = []
+    for r in rows:
+        authoritative = r.res_api + r.res_score + r.res_boxscore + r.res_plays + r.res_leaderboard + r.res_clean
+        guess = r.res_guess + r.res_threshold
+        guess_pct = round(100 * guess / max(r.has_winner, 1), 1) if r.has_winner > 0 else 0
+        cells.append({
+            "source": r.source,
+            "sport": r.sport,
+            "league": r.league,
+            "age": r.age,
+            "total": r.total_outcomes,
+            "has_opening": r.has_opening,
+            "has_winner": r.has_winner,
+            "resolution": {
+                "api_settlement": r.res_api,
+                "game_score": r.res_score,
+                "box_score": r.res_boxscore,
+                "scoring_plays": r.res_plays,
+                "leaderboard": r.res_leaderboard,
+                "clean_resolution": r.res_clean,
+                "pass2_guess": r.res_guess,
+                "pass3_threshold": r.res_threshold,
+                "settlement_sync": r.res_sync,
+                "untagged": r.res_untagged,
+            },
+            "authoritative_pct": round(100 * authoritative / max(r.has_winner, 1), 1) if r.has_winner > 0 else 0,
+            "guess_pct": guess_pct,
+            "flag": guess_pct > 20,
+        })
+
+    # Summary stats
+    total = sum(c["total"] for c in cells)
+    total_winners = sum(c["has_winner"] for c in cells)
+    total_auth = sum(c["resolution"]["api_settlement"] + c["resolution"]["game_score"] + c["resolution"]["box_score"] + c["resolution"]["scoring_plays"] + c["resolution"]["leaderboard"] + c["resolution"]["clean_resolution"] for c in cells)
+    total_guess = sum(c["resolution"]["pass2_guess"] + c["resolution"]["pass3_threshold"] for c in cells)
+    flagged = [c for c in cells if c["flag"]]
+
+    return {
+        "summary": {
+            "total_outcomes": total,
+            "total_with_winner": total_winners,
+            "authoritative_resolutions": total_auth,
+            "guess_resolutions": total_guess,
+            "flagged_cells": len(flagged),
+        },
+        "cells": cells[:100],
+        "flagged": flagged[:20],
+    }
+
