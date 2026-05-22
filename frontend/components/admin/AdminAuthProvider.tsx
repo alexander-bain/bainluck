@@ -7,6 +7,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 interface AdminAuthContextValue {
   secret: string;
@@ -25,20 +26,51 @@ export function useAdminAuth(): AdminAuthContextValue {
 export default function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [secret, setSecret] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
+    // 1. Check localStorage
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       setSecret(stored);
+      setChecking(false);
       return;
     }
+
+    // 2. Check URL params
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("secret");
     if (fromUrl) {
       localStorage.setItem(STORAGE_KEY, fromUrl);
       setSecret(fromUrl);
+      setChecking(false);
+      return;
+    }
+
+    // 3. Check if user is signed in via Firebase — auto-use stored secret
+    try {
+      const auth = getAuth();
+      const unsub = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          // Signed-in user — check if we have a secret stored from a prior session
+          const s = localStorage.getItem(STORAGE_KEY);
+          if (s) setSecret(s);
+        }
+        setChecking(false);
+      });
+      return unsub;
+    } catch {
+      setChecking(false);
     }
   }, []);
+
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface-deep">
+        <div className="text-sm text-text-muted animate-pulse">Loading admin...</div>
+      </div>
+    );
+  }
 
   if (!secret) {
     return (
@@ -48,7 +80,7 @@ export default function AdminAuthProvider({ children }: { children: ReactNode })
             Admin Access
           </h2>
           <p className="text-xs text-text-muted mb-4">
-            Enter the admin secret to continue.
+            Enter the admin secret to continue. This only needs to be done once.
           </p>
           <form
             onSubmit={(e) => {

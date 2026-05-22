@@ -34,10 +34,16 @@ export default function DiagnosisCard() {
 
   const { data, mutate } = useSWR<DiagnosisResponse>(
     ["llm-diagnosis", secret],
-    () =>
-      fetch(`${API_URL}/api/admin/llm-diagnosis?secret=${encodeURIComponent(secret)}`)
-        .then((r) => r.json()),
-    { revalidateOnFocus: false, refreshInterval: 0 }
+    async () => {
+      try {
+        const r = await fetch(`${API_URL}/api/admin/llm-diagnosis?secret=${encodeURIComponent(secret)}`);
+        if (!r.ok) return null;
+        return await r.json();
+      } catch {
+        return null;
+      }
+    },
+    { revalidateOnFocus: false, refreshInterval: 0, shouldRetryOnError: false }
   );
 
   const handleRefresh = useCallback(async () => {
