@@ -4186,6 +4186,301 @@ async def trigger_ground_truth_capture(
 
 
 # ---------------------------------------------------------------------------
+# Pairwise Discover Card Preference Labeling
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pairwise/next")
+async def pairwise_next(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve a pair of Discover cards for pairwise preference labeling.
+
+    Picks two open FuturesMarket rows from different score tiers
+    (one from top third, one from bottom third of available markets)
+    to maximize information value of each comparison.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import DiscoverPairwiseLabel
+
+    # Query 50 random open markets with outcomes and enrichment data
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.hook_description.isnot(None),
+        )
+        .order_by(func.random())
+        .limit(50)
+    )
+    markets = list(result.scalars().all())
+
+    if len(markets) < 2:
+        # Fall back: try without hook_description requirement
+        result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.status == "open")
+            .order_by(func.random())
+            .limit(50)
+        )
+        markets = list(result.scalars().all())
+
+    if len(markets) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail="Not enough open markets for comparison",
+        )
+
+    # Score each market based on available signals
+    scored = []
+    for m in markets:
+        score = 0.0
+        # Volume signal
+        if m.volume_24h and m.volume_24h > 0:
+            score += min(m.volume_24h / 1000, 30)
+        # Movement signal
+        if m.max_movement_24h:
+            score += float(m.max_movement_24h) * 100
+        # Enrichment bonus
+        if m.hook_description:
+            score += 10
+        if m.image_url:
+            score += 5
+        # Outcome count bonus (multi-outcome markets are richer)
+        outcome_count = len(m.outcomes) if m.outcomes else 0
+        if outcome_count > 2:
+            score += 5
+        scored.append((m, score))
+
+    # Sort by score and pick from different tiers
+    scored.sort(key=lambda x: x[1], reverse=True)
+    third = max(1, len(scored) // 3)
+
+    import random as rng
+
+    card_a_market, card_a_score = rng.choice(scored[:third])
+    # Pick card_b from bottom third, ensuring it differs from card_a
+    bottom_pool = [(m, s) for m, s in scored[-third:] if m.id != card_a_market.id]
+    if not bottom_pool:
+        bottom_pool = [(m, s) for m, s in scored if m.id != card_a_market.id]
+    card_b_market, card_b_score = rng.choice(bottom_pool)
+
+    def _market_to_card(m: FuturesMarket, score: float) -> dict:
+        outcomes_list = []
+        if m.outcomes:
+            # Sort by probability descending, take top 3
+            sorted_outcomes = sorted(
+                m.outcomes,
+                key=lambda o: float(o.current_probability or 0),
+                reverse=True,
+            )
+            for o in sorted_outcomes[:3]:
+                outcomes_list.append(
+                    {
+                        "name": o.name,
+                        "probability": (
+                            float(o.current_probability)
+                            if o.current_probability is not None
+                            else None
+                        ),
+                    }
+                )
+        return {
+            "market_id": m.id,
+            "name": m.name,
+            "category": m.llm_sport_category or m.category,
+            "probability": (
+                float(m.outcomes[0].current_probability)
+                if m.outcomes and m.outcomes[0].current_probability is not None
+                else None
+            ),
+            "image_url": m.image_url,
+            "hook_description": m.hook_description,
+            "outcomes": outcomes_list,
+            "score": round(score, 2),
+        }
+
+    # Random pair_id for tracking
+    import uuid as _uuid
+
+    pair_id = str(_uuid.uuid4())[:12]
+
+    return {
+        "card_a": _market_to_card(card_a_market, card_a_score),
+        "card_b": _market_to_card(card_b_market, card_b_score),
+        "pair_id": pair_id,
+    }
+
+
+class PairwiseLabelBody(BaseModel):
+    card_a_market_id: int
+    card_b_market_id: int
+    card_a_score: Optional[float] = None
+    card_b_score: Optional[float] = None
+    choice: str = Field(..., pattern=r"^(a|b|both|neither|skip)$")
+    reviewer: str
+
+
+@router.post("/pairwise/label")
+async def pairwise_label(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    body: PairwiseLabelBody = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a pairwise preference label."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import DiscoverPairwiseLabel
+
+    label = DiscoverPairwiseLabel(
+        reviewer=body.reviewer,
+        card_a_market_id=body.card_a_market_id,
+        card_b_market_id=body.card_b_market_id,
+        card_a_score=body.card_a_score,
+        card_b_score=body.card_b_score,
+        choice=body.choice,
+    )
+    db.add(label)
+    await db.commit()
+
+    return {"status": "ok", "label_id": label.id}
+
+
+@router.get("/pairwise/stats")
+async def pairwise_stats(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show labeling statistics including agreement with current ranking."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import DiscoverPairwiseLabel
+
+    # Total labels
+    total_result = await db.execute(
+        select(func.count(DiscoverPairwiseLabel.id))
+    )
+    total_labels = total_result.scalar() or 0
+
+    # Labels by choice
+    choice_result = await db.execute(
+        select(
+            DiscoverPairwiseLabel.choice,
+            func.count(DiscoverPairwiseLabel.id),
+        ).group_by(DiscoverPairwiseLabel.choice)
+    )
+    labels_by_choice = {row[0]: row[1] for row in choice_result.all()}
+
+    # Agreement rate: among labels with choice 'a' or 'b' and both scores,
+    # what % picked the higher-scored card?
+    agree_result = await db.execute(
+        select(DiscoverPairwiseLabel).where(
+            DiscoverPairwiseLabel.choice.in_(["a", "b"]),
+            DiscoverPairwiseLabel.card_a_score.isnot(None),
+            DiscoverPairwiseLabel.card_b_score.isnot(None),
+        )
+    )
+    agree_labels = agree_result.scalars().all()
+    agree_count = 0
+    total_comparable = 0
+    for lbl in agree_labels:
+        total_comparable += 1
+        if lbl.choice == "a" and lbl.card_a_score >= lbl.card_b_score:
+            agree_count += 1
+        elif lbl.choice == "b" and lbl.card_b_score >= lbl.card_a_score:
+            agree_count += 1
+    agreement_rate = (
+        round(agree_count / total_comparable, 4) if total_comparable > 0 else None
+    )
+
+    # Per-category agreement (join with FuturesMarket to get category)
+    cat_query = await db.execute(
+        select(
+            FuturesMarket.llm_sport_category,
+            DiscoverPairwiseLabel.choice,
+            DiscoverPairwiseLabel.card_a_score,
+            DiscoverPairwiseLabel.card_b_score,
+        )
+        .join(
+            FuturesMarket,
+            FuturesMarket.id == DiscoverPairwiseLabel.card_a_market_id,
+        )
+        .where(
+            DiscoverPairwiseLabel.choice.in_(["a", "b"]),
+            DiscoverPairwiseLabel.card_a_score.isnot(None),
+            DiscoverPairwiseLabel.card_b_score.isnot(None),
+        )
+    )
+    cat_rows = cat_query.all()
+    cat_stats: dict[str, dict[str, int]] = {}
+    for cat, choice, a_score, b_score in cat_rows:
+        cat_key = cat or "unknown"
+        if cat_key not in cat_stats:
+            cat_stats[cat_key] = {"agree": 0, "total": 0}
+        cat_stats[cat_key]["total"] += 1
+        if choice == "a" and a_score >= b_score:
+            cat_stats[cat_key]["agree"] += 1
+        elif choice == "b" and b_score >= a_score:
+            cat_stats[cat_key]["agree"] += 1
+    per_category_agreement = {
+        cat: round(v["agree"] / v["total"], 4) if v["total"] > 0 else None
+        for cat, v in cat_stats.items()
+    }
+
+    # Recent labels (last 20)
+    recent_result = await db.execute(
+        select(DiscoverPairwiseLabel)
+        .order_by(DiscoverPairwiseLabel.created_at.desc())
+        .limit(20)
+    )
+    recent = recent_result.scalars().all()
+    # Fetch market names for recent labels
+    market_ids = set()
+    for lbl in recent:
+        market_ids.add(lbl.card_a_market_id)
+        market_ids.add(lbl.card_b_market_id)
+    market_names: dict[int, str] = {}
+    if market_ids:
+        names_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.name).where(
+                FuturesMarket.id.in_(market_ids)
+            )
+        )
+        for mid, mname in names_result.all():
+            market_names[mid] = mname
+
+    recent_labels = [
+        {
+            "id": lbl.id,
+            "reviewer": lbl.reviewer,
+            "card_a_name": market_names.get(lbl.card_a_market_id, f"#{lbl.card_a_market_id}"),
+            "card_b_name": market_names.get(lbl.card_b_market_id, f"#{lbl.card_b_market_id}"),
+            "card_a_score": lbl.card_a_score,
+            "card_b_score": lbl.card_b_score,
+            "choice": lbl.choice,
+            "created_at": lbl.created_at.isoformat() if lbl.created_at else None,
+        }
+        for lbl in recent
+    ]
+
+    return {
+        "total_labels": total_labels,
+        "labels_by_choice": labels_by_choice,
+        "agreement_rate": agreement_rate,
+        "total_comparable": total_comparable,
+        "per_category_agreement": per_category_agreement,
+        "recent_labels": recent_labels,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Include sub-routers (at bottom to avoid circular imports)
 # ---------------------------------------------------------------------------
 from app.routes.admin_celery import router as celery_router  # noqa: E402

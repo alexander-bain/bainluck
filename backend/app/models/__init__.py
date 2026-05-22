@@ -24,6 +24,7 @@ from app.models.models import (
     OscarsPoolPick,
     MatchingOverride,
     GolfLeaderboardSnapshot,
+    DiscoverPairwiseLabel,
 )
 
 __all__ = [
@@ -51,4 +52,5 @@ __all__ = [
     "OscarsPoolPick",
     "MatchingOverride",
     "GolfLeaderboardSnapshot",
+    "DiscoverPairwiseLabel",
 ]

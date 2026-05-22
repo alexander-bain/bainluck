@@ -8,6 +8,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -1378,4 +1379,40 @@ class FeaturedMarketCapture(Base):
             "source",
             "captured_date",
         ),
+    )
+
+
+class DiscoverPairwiseLabel(Base):
+    """Pairwise preference label for Discover card ranking calibration.
+
+    An admin reviewer sees two Discover cards side by side and picks which
+    is more interesting. These explicit editorial preferences can later
+    be used to calibrate feed ranking scores.
+    """
+
+    __tablename__ = "discover_pairwise_labels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reviewer: Mapped[str] = mapped_column(String(100), nullable=False)
+    card_a_market_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_markets.id"), nullable=False
+    )
+    card_b_market_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_markets.id"), nullable=False
+    )
+    card_a_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    card_b_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    choice: Mapped[str] = mapped_column(
+        String(10), nullable=False
+    )  # 'a', 'b', 'both', 'neither', 'skip'
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    card_a_market: Mapped["FuturesMarket"] = relationship(
+        foreign_keys=[card_a_market_id]
+    )
+    card_b_market: Mapped["FuturesMarket"] = relationship(
+        foreign_keys=[card_b_market_id]
     )
