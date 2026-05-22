@@ -1,7 +1,6 @@
 """Snapshot sparsity audit and historical odds backfill endpoints."""
 
 import logging
-import os
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, Query
@@ -19,116 +18,77 @@ logger = logging.getLogger(__name__)
 async def snapshot_sparsity_audit(
     db: AsyncSession = Depends(get_db),
     secret: str = Query(...),
-    months_back: int = Query(3),
+    days_back: int = Query(30),
+    sport: str = Query("baseball_mlb"),
+    threshold: int = Query(20),
 ):
-    """Audit snapshot sparsity across completed events."""
+    """Audit snapshot sparsity for a single sport over a time window.
+
+    Call per-sport to avoid query timeouts on shared Postgres.
+    """
     if not _check_admin_secret(secret):
         return {"error": "unauthorized"}
 
-    await db.execute(text("SET LOCAL statement_timeout = '25s'"))
+    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=months_back * 30)
-
-    # Monthly summary - simple query without sport filtering
-    monthly_q = await db.execute(text("""
-        WITH event_snaps AS (
-            SELECT
-                e.id,
-                s.key AS sport_key,
-                DATE_TRUNC('month', e.commence_time) AS month,
-                COUNT(os.id) AS snaps
-            FROM events e
-            JOIN sports s ON e.sport_id = s.id
-            LEFT JOIN odds_snapshots os ON os.event_id = e.id
-            WHERE e.status IN ('completed', 'closed')
-              AND e.commence_time >= :cutoff
-              AND s.key IN (
-                'basketball_nba', 'icehockey_nhl', 'baseball_mlb',
-                'americanfootball_nfl', 'basketball_ncaab',
-                'basketball_wnba', 'soccer_epl', 'soccer_usa_mls',
-                'mma_mixed_martial_arts'
-              )
-            GROUP BY e.id, s.key, e.commence_time
-        )
-        SELECT
-            TO_CHAR(month, 'YYYY-MM') AS month,
-            sport_key,
-            COUNT(*) AS total_events,
-            COUNT(CASE WHEN snaps < 5 THEN 1 END) AS sparse_lt5,
-            COUNT(CASE WHEN snaps < 20 THEN 1 END) AS sparse_lt20,
-            COUNT(CASE WHEN snaps = 0 THEN 1 END) AS zero_snaps,
-            ROUND(AVG(snaps)) AS avg_snaps
-        FROM event_snaps
-        GROUP BY month, sport_key
-        ORDER BY month DESC, sport_key
-    """), {"cutoff": cutoff})
-
-    monthly = [
-        {
-            "month": r.month,
-            "sport": r.sport_key,
-            "total_events": r.total_events,
-            "sparse_lt5": r.sparse_lt5,
-            "sparse_lt20": r.sparse_lt20,
-            "zero_snaps": r.zero_snaps,
-            "avg_snaps": int(r.avg_snaps) if r.avg_snaps else 0,
-        }
-        for r in monthly_q.all()
-    ]
-
-    # Sparse events for backfill
-    sparse_q = await db.execute(text("""
+    q = await db.execute(text("""
         SELECT
             e.id,
-            s.key AS sport_key,
             e.home_team,
             e.away_team,
             e.commence_time,
             e.external_id,
+            e.status,
             COUNT(os.id) AS snapshot_count
         FROM events e
         JOIN sports s ON e.sport_id = s.id
         LEFT JOIN odds_snapshots os ON os.event_id = e.id
         WHERE e.status IN ('completed', 'closed')
           AND e.commence_time >= :cutoff
-          AND e.external_id IS NOT NULL
-          AND s.key IN (
-            'basketball_nba', 'icehockey_nhl', 'baseball_mlb',
-            'americanfootball_nfl', 'basketball_ncaab'
-          )
-        GROUP BY e.id, s.key, e.home_team, e.away_team, e.commence_time, e.external_id
-        HAVING COUNT(os.id) < 20
-        ORDER BY e.commence_time DESC
-        LIMIT 100
-    """), {"cutoff": cutoff})
+          AND s.key = :sport
+        GROUP BY e.id, e.home_team, e.away_team, e.commence_time, e.external_id, e.status
+        ORDER BY snapshot_count ASC
+        LIMIT 200
+    """), {"cutoff": cutoff, "sport": sport})
 
-    sparse_events = [
-        {
+    events = []
+    sparse_count = 0
+    zero_count = 0
+    total = 0
+    for r in q.all():
+        total += 1
+        is_sparse = r.snapshot_count < threshold
+        if is_sparse:
+            sparse_count += 1
+        if r.snapshot_count == 0:
+            zero_count += 1
+
+        events.append({
             "event_id": r.id,
-            "sport": r.sport_key,
             "home_team": r.home_team,
             "away_team": r.away_team,
             "commence_time": r.commence_time.isoformat() if r.commence_time else None,
             "external_id": r.external_id,
+            "status": r.status,
             "snapshot_count": r.snapshot_count,
-        }
-        for r in sparse_q.all()
-    ]
+            "sparse": is_sparse,
+        })
 
-    total_sparse = sum(m["sparse_lt20"] for m in monthly)
-    total_events = sum(m["total_events"] for m in monthly)
+    sparse_events = [e for e in events if e["sparse"]]
 
     return {
+        "sport": sport,
+        "days_back": days_back,
+        "threshold": threshold,
         "summary": {
-            "total_events": total_events,
-            "sparse_lt5": sum(m["sparse_lt5"] for m in monthly),
-            "sparse_lt20": total_sparse,
-            "zero_snapshots": sum(m["zero_snaps"] for m in monthly),
-            "sparse_pct": round(100 * total_sparse / max(total_events, 1), 1),
-            "backfill_eligible": len(sparse_events),
-            "estimated_backfill_cost": len(sparse_events) * 360,
-            "estimated_backfill_cost_pct_of_monthly": round(100 * len(sparse_events) * 360 / 5_000_000, 2),
+            "total_events": total,
+            "sparse": sparse_count,
+            "zero_snapshots": zero_count,
+            "sparse_pct": round(100 * sparse_count / max(total, 1), 1),
+            "backfill_eligible": len([e for e in sparse_events if e["external_id"]]),
+            "estimated_backfill_cost": len([e for e in sparse_events if e["external_id"]]) * 360,
         },
-        "monthly": monthly,
-        "sparse_events": sparse_events,
+        "sparse_events": sparse_events[:50],
+        "all_events_by_snapshots": events[:20],
     }
