@@ -635,7 +635,7 @@ export default function MatchingReviewPage() {
 <PageHeader
           question="Do sources agree on team probabilities?"
           status={isLoading ? "loading" : data && data.divergences.length > 0 ? "warning" : "good"}
-          summary={isLoading ? "Loading..." : data ? `${data.divergences.length} divergences across ${data.stats.team_count} teams` : "No data"}
+          summary={isLoading ? "Loading..." : data ? `${data.divergences.length} divergences across ${data.total_teams ?? 0} teams` : "No data"}
           ideal="Zero cross-source divergences above 15pp."
         />
         <p style={{ color: "#64748b", fontSize: 13, margin: "4px 0 0" }}>
