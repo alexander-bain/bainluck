@@ -1622,6 +1622,12 @@ def _market_runtime_filter_trace(
     sport_category: str | None = None,
 ) -> dict:
     blockers: list[str] = []
+
+    # Past resolution date — market should have resolved already
+    resolution_date = _utc(getattr(market, "resolution_date", None))
+    if resolution_date and resolution_date < now:
+        blockers.append("past_resolution_date")
+
     probs_available = [
         o["probability"] for o in outcomes_data if o["probability"] is not None
     ]
@@ -3905,6 +3911,14 @@ async def _score_futures(
                 ctx=ctx,
                 my_teams_only=my_teams_only,
             ):
+                continue
+
+        # Skip markets past their resolution date (belt-and-suspenders;
+        # base_filters should exclude these at the SQL level, but naive
+        # datetime timezone mismatches can let them through — issue #486).
+        if market.resolution_date:
+            res_dt = _utc(market.resolution_date)
+            if res_dt and res_dt < now:
                 continue
 
         # Prepare outcome data for scoring
