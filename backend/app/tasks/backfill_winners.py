@@ -1888,7 +1888,36 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Only handles markets not already resolved by API settlement above.
     prob_stats = await _backfill_from_current_probability()
 
+    # Retroactive tagging: infer resolution_source on outcomes that were
+    # resolved before tagging was deployed. Uses heuristics:
+    # - current_prob >= 0.95 or <= 0.05 with all outcomes at extremes → clean_resolution
+    # - Kalshi source with event_id linked → likely api_settlement or game_score
+    # - Polymarket with extreme current_prob → clean_resolution
+    retro_stats = {"tagged": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            # Tag untagged outcomes where current_prob is at extremes as clean_resolution
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'clean_resolution'
+                    FROM futures_markets fm
+                    WHERE fo.market_id = fm.id
+                      AND fm.status = 'resolved'
+                      AND fo.is_winner IS NOT NULL
+                      AND fo.resolution_source IS NULL
+                      AND fo.current_probability IS NOT NULL
+                      AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
+                    LIMIT 100000
+                """)
+            )
+            retro_stats["tagged"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        retro_stats["errors"].append(str(e))
+
     return {
+        "retro_tagging": retro_stats,
         "commence_time_fixes": commence_stats,
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
