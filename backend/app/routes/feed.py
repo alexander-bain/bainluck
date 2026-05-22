@@ -38,7 +38,7 @@ from app.models.models import (
     UserPin,
     Team,
 )
-from app.services import get_db
+from app.services import get_db, get_db_rw
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
     compute_aggregate_probability as _compute_aggregate_probability,
@@ -242,7 +242,7 @@ async def record_discover_interactions(
     body: DiscoverInteractionBatch,
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Record web/native Discover engagement events for ranking diagnostics."""
     user_id = user.id if user else None

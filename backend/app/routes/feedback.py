@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_optional_user
 from app.models.models import BugReport, User
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class BugReportSubmission(BaseModel):
 async def submit_bug_report(
     body: BugReportSubmission,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     user: User | None = Depends(get_optional_user),
 ):
     session_id = request.headers.get("x-session-id")

@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket
 
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -243,7 +243,7 @@ async def enrich_events_metadata(
     limit: int = Query(50, description="Max events to process per batch"),
     dry_run: bool = Query(False, description="Preview enrichment without saving"),
     force: bool = Query(False, description="Re-enrich events that already have metadata (for team normalization)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Enrich events with LLM-generated metadata (gender, level, league, importance).
@@ -411,7 +411,7 @@ async def enrich_futures_metadata(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(50, description="Max markets to process per batch"),
     dry_run: bool = Query(False, description="Preview enrichment without saving"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Enrich futures markets with LLM-generated metadata (gender, level, league).
@@ -573,7 +573,7 @@ async def backfill_taxonomy(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(500, description="Max items to process"),
     sync: bool = Query(False, description="Run synchronously instead of via Celery"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Trigger taxonomy tag computation for events and futures markets."""
     if not _check_admin_secret(secret):

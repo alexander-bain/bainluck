@@ -18,7 +18,7 @@ from app.models.models import (
     User, UserPin, UserFavorite, UserPreference, Team, Sport,
     FuturesMarket, FuturesOutcome,
 )
-from app.services.database import get_db
+from app.services.database import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ async def get_pins(
 async def bulk_upsert_pins(
     body: BulkPinsRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Bulk upsert pins. Used for migrating localStorage pins to the database.
@@ -335,7 +335,7 @@ async def bulk_upsert_pins(
 async def add_pin(
     body: AddPinRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Add a single pin."""
     if body.pin_type not in ("event", "future"):
@@ -378,7 +378,7 @@ async def remove_pin(
     pin_type: str,
     target_id: int,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Remove a pin."""
     if pin_type not in ("event", "future"):
@@ -405,7 +405,7 @@ async def remove_pin(
 async def submit_onboarding(
     body: OnboardingRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Save complete onboarding data. Replaces any existing onboarding-sourced
@@ -885,7 +885,7 @@ class AddFavoriteRequest(BaseModel):
 async def add_favorite(
     body: AddFavoriteRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Add a single team favorite. Used for inline editing on the preferences page."""
     valid_types = {"follow", "local", "alma_mater", "rival"}
@@ -929,7 +929,7 @@ async def remove_favorite(
     team_id: int,
     relation_type: str,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Remove a specific team favorite by team_id and relation_type."""
     valid_types = {"follow", "local", "alma_mater", "rival"}
@@ -962,7 +962,7 @@ class UpdateSportAffinitiesRequest(BaseModel):
 async def update_sport_affinities(
     body: UpdateSportAffinitiesRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Update sport affinities. Accepts user-friendly keys, expands to backend format."""
     expanded = _expand_sport_affinities(body.sport_affinities)

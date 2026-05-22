@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport
-from app.services import get_db, OddsAPIService
+from app.services import get_db, get_db_rw, OddsAPIService
 from app.utils.sport_keys import SPORT_HIERARCHY, get_sport_hierarchy
 
 
@@ -78,7 +78,7 @@ async def list_available_sports(secret: str = Query(..., description="Admin secr
 @router.post("/sync")
 async def sync_sports_from_api(
     secret: str = Query(..., description="Admin secret"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Sync all sports from The Odds API to the database. Requires admin auth."""
     if not _check_admin_secret(secret):

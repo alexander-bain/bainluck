@@ -15,7 +15,7 @@ from sqlalchemy import text, func, delete, and_
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
 from app.models.models import BugReport, DiscoverInteraction, DiscoverReviewDecision, WinProbSnapshot
-from app.services import get_db
+from app.services import get_db, get_db_rw
 from app.utils import probability_to_american
 from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
 
@@ -30,7 +30,7 @@ async def recalculate_ei(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process per batch"),
     force: bool = Query(False, description="Force recalculation even if EI already exists"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Trigger EI (Excitement Index) recalculation for completed events.
@@ -843,7 +843,7 @@ async def sync_espn_teams(
     secret: str = Query(..., description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key to sync (e.g., basketball_nba)"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Sync team data from ESPN (colors, logos, abbreviations).
@@ -1066,7 +1066,7 @@ async def sync_espn_live_events(
     sport_key: str = Query(..., description="Sport key to sync"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
     skip_llm: bool = Query(False, description="Skip LLM matching (faster, avoids timeout)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Sync live event data from ESPN (scores, clock, period, venue, broadcast).
@@ -1309,7 +1309,7 @@ async def match_espn_teams(
     secret: str = Query(..., description="Admin secret for authorization"),
     our_team_name: str = Query(..., description="Our team name"),
     sport_key: str = Query(..., description="Sport key"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Debug endpoint: Try to match a team name using ESPN + LLM.
@@ -1357,7 +1357,7 @@ async def match_espn_teams(
 async def normalize_futures_probabilities(
     secret: str = Query(..., description="Admin secret for authorization"),
     dry_run: bool = Query(False, description="Preview changes without saving"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Normalize historical Odds API futures probabilities to remove vig/overround.
@@ -1632,7 +1632,7 @@ async def backfill_box_scores(
 async def clear_espn_unavailable(
     secret: str = Query(...),
     sport: str = Query(..., description="Sport key prefix to clear (e.g., 'icehockey')"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Clear 'not_available' box_score_data on events so they get retried."""
     if not _check_admin_secret(secret):
@@ -1966,7 +1966,7 @@ async def merge_duplicate_team(
     secret: str = Query(...),
     source_id: int = Query(..., description="Team ID to merge FROM (duplicate, will be deleted)"),
     target_id: int = Query(..., description="Team ID to merge INTO (canonical, will be kept)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge a duplicate team into the canonical one. Reassigns all FKs then deletes the duplicate."""
     if not _check_admin_secret(secret):
@@ -2275,7 +2275,7 @@ async def get_canonical_key_status(
 async def delete_duplicate_events(
     secret: str = Query(...),
     event_ids: str = Query(..., description="Comma-separated event IDs to delete"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete specific duplicate events with FK cleanup."""
     if not _check_admin_secret(secret):
@@ -2310,7 +2310,7 @@ async def add_team_alias(
     secret: str = Query(...),
     team_id: int = Query(...),
     alias: str = Query(..., description="Alias to add to alternate_names"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Add an alias to a team's alternate_names list."""
     if not _check_admin_secret(secret):
@@ -2334,7 +2334,7 @@ async def add_team_alias(
 async def retier_futures_markets(
     secret: str = Query(...),
     limit: int = Query(1000),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Re-compute market_tier for all futures markets using current patterns."""
     if not _check_admin_secret(secret):
@@ -2366,7 +2366,7 @@ async def backfill_espn_ids(
     days: int = Query(7, description="How many days back to scan"),
     sport: Optional[str] = Query(None, description="Sport key filter (e.g., basketball_nba)"),
     dry_run: bool = Query(True, description="If true, report matches without updating"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Retroactively match events to ESPN schedules and set espn_id.
 
@@ -2634,7 +2634,7 @@ async def create_event_manually(
     sport_name: Optional[str] = Query(None, description="Sport display name (auto-generated if omitted)"),
     commence_time: Optional[str] = Query(None, description="ISO 8601 timestamp (defaults to now)"),
     status: str = Query("live", description="Event status: scheduled, live, completed, closed"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Manually create an Event for sports that The Odds API doesn't cover.
@@ -2721,7 +2721,7 @@ async def patch_event(
     home_team: Optional[str] = Query(None, description="New home team name"),
     away_team: Optional[str] = Query(None, description="New away team name"),
     status: Optional[str] = Query(None, description="New status"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Patch an event's fields (admin only)."""
     if not _check_admin_secret(secret):
@@ -2751,7 +2751,7 @@ async def patch_event(
 async def fix_live_statuses(
     secret: str = Query(..., description="Admin secret for authorization"),
     dry_run: bool = Query(False, description="Preview without making changes"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Fix events incorrectly stuck in 'live' status.
 
@@ -3451,7 +3451,7 @@ async def team_identity_unmapped(
 async def clear_line_movement_cache(
     event_id: int,
     secret: str = Query(..., description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete cached line movement explanations for an event so they regenerate."""
     if not _check_admin_secret(secret):
@@ -3621,7 +3621,7 @@ async def merge_duplicate_events(
 async def merge_duplicate_events_sql(
     secret: str = Query(...),
     dry_run: bool = Query(True, description="Preview without making changes"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Merge duplicate events: find orphans, clear FK refs, then delete."""
     if not _check_admin_secret(secret):
@@ -4055,7 +4055,7 @@ async def operations_dashboard(
 @router.post("/merge-events")
 async def merge_events_admin(
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Manually trigger the duplicate event merger (runs in non-dry-run mode)."""
     if not _check_admin_secret(secret):
@@ -4174,7 +4174,7 @@ async def get_ground_truth_status(
 @router.post("/ground-truth/capture")
 async def trigger_ground_truth_capture(
     secret: str = Query(..., description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Manually trigger a featured-market capture for today."""
     if not _check_admin_secret(secret):
@@ -4330,7 +4330,7 @@ class PairwiseLabelBody(BaseModel):
 async def pairwise_label(
     secret: str = Query(..., description="Admin secret for authorization"),
     body: PairwiseLabelBody = Body(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Record a pairwise preference label."""
     if not _check_admin_secret(secret):

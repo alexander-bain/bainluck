@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import User, UserPreference
-from app.services.database import get_db
+from app.services.database import get_db_rw
 from app.services.firebase_auth import verify_id_token
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def _resolve_user(
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ) -> User:
     """Require authentication. Returns the User or raises 401."""
     user = await _resolve_user(credentials, db)
@@ -111,7 +111,7 @@ async def get_current_user(
 
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ) -> Optional[User]:
     """Optional authentication. Returns User if authenticated, None otherwise."""
     return await _resolve_user(credentials, db)

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import DeviceToken
 from app.routes.admin_utils import _check_admin_secret
-from app.services.database import get_db
+from app.services.database import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class TestNotificationRequest(BaseModel):
 async def register_device_token(
     body: DeviceTokenRegistration,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Register a device token for push notifications.
 

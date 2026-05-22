@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import OscarsPool, OscarsPoolMember, OscarsPoolPick
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ def _compute_boldness(picks: list[dict]) -> float:
 @router.post("/pool")
 async def create_pool(
     request: CreatePoolRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Create a new Oscars pool and join as the first member."""
     code = _generate_pool_code()
@@ -250,7 +250,7 @@ async def create_pool(
 async def join_pool(
     code: str,
     request: JoinPoolRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Join an existing Oscars pool."""
     pool = await _get_pool(db, code)
@@ -395,7 +395,7 @@ async def get_pool(
 async def submit_picks(
     code: str,
     request: SubmitPicksRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     x_member_token: str = Header(...),
 ):
     """Submit or update category picks. Max 3 confidence picks."""
@@ -445,7 +445,7 @@ async def submit_picks(
 async def submit_bonus_picks(
     code: str,
     request: SubmitBonusPicksRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     x_member_token: str = Header(...),
 ):
     """Submit bonus market picks."""
@@ -493,7 +493,7 @@ async def submit_bonus_picks(
 @router.post("/pool/{code}/lock")
 async def lock_picks(
     code: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     x_member_token: str = Header(...),
 ):
     """Lock picks (only pool creator can do this). Reveals everyone's picks."""
@@ -513,7 +513,7 @@ async def lock_picks(
 async def reveal_winner(
     code: str,
     request: RevealWinnerRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     x_member_token: str = Header(...),
 ):
     """Reveal a category winner and score all picks. Only pool creator."""
@@ -572,7 +572,7 @@ async def reveal_winner(
 async def reveal_bonus(
     code: str,
     request: RevealBonusRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     x_member_token: str = Header(...),
 ):
     """Reveal a bonus market answer and score picks. Only pool creator."""

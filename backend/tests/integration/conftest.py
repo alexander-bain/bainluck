@@ -10,7 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.dependencies.auth import get_optional_user
-from app.services.database import get_db
+from app.services.database import get_db, get_db_rw
 
 
 def _make_mock_result():
@@ -48,6 +48,7 @@ async def client(mock_db, monkeypatch):
         return None
 
     app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
     app.dependency_overrides[get_optional_user] = _mock_get_optional_user
 
     with patch("app.main.init_db", new_callable=AsyncMock):

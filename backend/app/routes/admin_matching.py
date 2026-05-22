@@ -16,7 +16,7 @@ from app.models import Event, FuturesMarket, FuturesOutcome, MatchingOverride
 
 from app.models.models import WinProbSnapshot
 
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 from app.utils.league_classification import is_valid_sport_league_pair
 
@@ -350,7 +350,7 @@ async def prediction_market_status(
 @router.post("/prediction-markets/fix-sport-categories")
 async def fix_sport_categories(
     secret: str = Query(..., description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Bulk-fix llm_sport_category for Kalshi markets based on ticker prefix."""
     if not _check_admin_secret(secret):
@@ -1528,7 +1528,7 @@ async def backfill_link_run(
 async def prediction_market_force_link(
     secret: str = Query(..., description="Admin secret for authorization"),
     external_id: str = Query(..., description="Market external_id to link"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Force-link a single unlinked market by running the full matching pipeline."""
     if not _check_admin_secret(secret):
@@ -1881,7 +1881,7 @@ async def prediction_market_event_debug(
 async def unlink_prediction_market(
     secret: str = Query(..., description="Admin secret for authorization"),
     market_id: int = Query(..., description="FuturesMarket.id to unlink"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Unlink a prediction market from its event. Sets event_id to NULL so the
@@ -1930,7 +1930,7 @@ async def fix_inverted_prediction_market_snapshots(
     secret: str = Query(..., description="Admin secret for authorization"),
     event_id: int = Query(..., description="Event.id to fix inversions for"),
     source: Optional[str] = Query(None, description="Source to fix (kalshi/polymarket). If omitted, fixes both."),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Fix inverted win_prob_snapshots for a specific event.
@@ -2042,7 +2042,7 @@ async def manual_link_prediction_market(
     secret: str = Query(..., description="Admin secret for authorization"),
     market_id: int = Query(..., description="FuturesMarket.id to link"),
     event_id: int = Query(..., description="Event.id to link to"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Manually link a prediction market to an event.
@@ -2635,7 +2635,7 @@ async def add_matching_override(
     decision: str = Query(default="approved", description="approved or rejected"),
     reason: Optional[str] = Query(default=None, description="Why this decision was made"),
     secret: str = Query(default=""),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Add or update a matching override. Accepts JSON body or query params.
 
@@ -2704,7 +2704,7 @@ async def delete_matching_override(
     league_slug: str,
     override_id: int,
     secret: str = Query(default=""),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete a matching override."""
     if not _check_admin_secret(secret):
@@ -2767,7 +2767,7 @@ async def save_eval_decision(
     category: str = Query(default="grid", description="grid or futures"),
     reason: Optional[str] = Query(default=None, description="Context about the decision"),
     secret: str = Query(default=""),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Save an eval decision to the database. Replaces localStorage persistence."""
     if not _check_admin_secret(secret):
@@ -2855,7 +2855,7 @@ async def get_playoffstatus_comparison(
 async def scrape_playoffstatus(
     league_slug: str,
     secret: str = Query(default=""),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Scrape playoffstatus.com for reference team list and probabilities."""
     if not _check_admin_secret(secret):
@@ -3355,7 +3355,7 @@ async def sawtooth_fix(
     dry_run: bool = Query(True, description="Preview changes without applying"),
     jump_threshold: float = Query(0.03, description="Min |delta| to count as big jump"),
     rate_threshold: float = Query(0.30, description="Min jump_rate to flag"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Fix sawtooth oscillation by unlinking wrong markets and deleting bad snapshots.
 

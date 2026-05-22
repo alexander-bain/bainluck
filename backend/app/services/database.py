@@ -66,11 +66,33 @@ async def init_db():
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency for getting database sessions.
-    
+    Read-only database session — closes without committing.
+
+    Use for GET endpoints that only read data.  No COMMIT is issued,
+    so accidental writes are silently discarded rather than persisted.
+
     Usage in FastAPI:
         @app.get("/items")
         async def get_items(db: AsyncSession = Depends(get_db)):
+            ...
+    """
+    async with async_session_maker() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
+async def get_db_rw() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Read-write database session — commits on success, rolls back on error.
+
+    Use for POST/PATCH/PUT/DELETE endpoints and any handler that writes
+    data (session.add, execute(update/insert), etc.).
+
+    Usage in FastAPI:
+        @app.post("/items")
+        async def create_item(db: AsyncSession = Depends(get_db_rw)):
             ...
     """
     async with async_session_maker() as session:

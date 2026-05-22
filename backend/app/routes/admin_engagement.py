@@ -24,7 +24,7 @@ from app.models.models import (
     ExternalCuratorGroundTruthItem,
 )
 
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 from app.routes.admin_utils import _check_admin_secret, _check_admin_auth
 from app.utils.external_curator_ground_truth import (
@@ -338,7 +338,7 @@ async def update_discover_runtime_config(
 async def create_discover_review_decision(
     payload: DiscoverReviewDecisionIn,
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -715,7 +715,7 @@ async def trigger_discover_external_curator_ground_truth_import(
 async def import_discover_external_curator_ground_truth_rows(
     payload: ExternalCuratorGroundTruthImportRequest,
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Import reviewed external-curator/social rows from an admin-uploaded payload."""
     if not _check_admin_secret(secret):
@@ -1668,7 +1668,7 @@ async def list_bug_reports(
     secret: str = Query(None),
     status: str = Query(None),
     limit: int = Query(50),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     if not await _check_admin_auth(secret, request, db):
         raise HTTPException(status_code=403, detail="Unauthorized")
@@ -1737,7 +1737,7 @@ async def update_bug_report(
     resolution_summary: str = Query(None),
     backlog_ref: str = Query(None),
     user_email: str = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     if not await _check_admin_auth(secret, request, db):
         raise HTTPException(status_code=403, detail="Unauthorized")
@@ -1833,7 +1833,7 @@ async def test_daily_digest(
     request: Request,
     secret: str = Query(None),
     email: str = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Send a test daily digest email."""
     if not await _check_admin_auth(secret, request, db):

@@ -12,7 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.dependencies.auth import get_optional_user
-from app.services.database import get_db
+from app.services.database import get_db, get_db_rw
 
 
 def _make_event_row(
@@ -139,6 +139,7 @@ def _make_client(events=None, futures=None):
             return None
 
         app.dependency_overrides[get_db] = _mock_get_db
+        app.dependency_overrides[get_db_rw] = _mock_get_db
         app.dependency_overrides[get_optional_user] = _mock_get_optional_user
 
         return app, mock_session
