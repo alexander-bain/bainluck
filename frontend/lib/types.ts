@@ -815,6 +815,7 @@ export interface FeedEventData {
   };
   event_tags?: string[];
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
+  sport_label?: string | null;
   /** ESPN live game data */
   espn?: {
     game_clock?: string;

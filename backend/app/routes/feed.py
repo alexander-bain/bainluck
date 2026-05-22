@@ -1440,6 +1440,27 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+_SPORT_LABEL_MAP: dict[str, str] = {
+    "americanfootball_nfl": "NFL", "americanfootball_ncaaf": "NCAAF",
+    "basketball_nba": "NBA", "basketball_wnba": "WNBA", "basketball_ncaab": "NCAAB",
+    "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
+    "soccer_epl": "EPL", "soccer_usa_mls": "MLS", "soccer_uefa_champs_league": "UCL",
+    "golf_pga": "PGA", "tennis_atp": "ATP", "tennis_wta": "WTA",
+    "mma_mixed_martial_arts": "MMA",
+}
+
+
+def _get_sport_label(sport_key: str | None) -> str | None:
+    if not sport_key:
+        return None
+    if sport_key in _SPORT_LABEL_MAP:
+        return _SPORT_LABEL_MAP[sport_key]
+    parts = sport_key.split("_")
+    if len(parts) >= 2:
+        return parts[-1].upper()
+    return sport_key.upper()
+
+
 def _compute_temporal_badge(
     *,
     status: str | None = None,
@@ -3476,6 +3497,7 @@ async def _score_events(
             status=event.status,
             now=now,
         )
+        event_data["sport_label"] = _get_sport_label(sport_key)
 
         sort_time = event.commence_time.timestamp()
         if event.status == "live":
