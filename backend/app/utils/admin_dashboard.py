@@ -11,6 +11,22 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
+
+def _expected_sources_for_sport(sport_key: str) -> dict[str, bool]:
+    """Which data sources are expected to have coverage for this sport?"""
+    from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING
+
+    return {
+        "odds_api": True,
+        "espn": sport_key in ESPN_SPORT_MAPPING,
+        "statpal": sport_key in STATPAL_SPORT_MAPPING,
+        "espn_wp": sport_key in ESPN_SPORT_MAPPING,
+        "model": sport_key in ESPN_SPORT_MAPPING,
+        "mlb": sport_key.startswith("baseball_mlb"),
+        "kalshi": True,
+        "polymarket": True,
+    }
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -171,6 +187,7 @@ async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]
             "mlb": r.has_mlb,
             "kalshi": max(r.has_kalshi_wp, r.has_kalshi_pm),
             "polymarket": max(r.has_polymarket_wp, r.has_polymarket_pm),
+            "expected_sources": _expected_sources_for_sport(r.sport_key),
         }
         for r in coverage_q.all()
     ]

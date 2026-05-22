@@ -76,6 +76,7 @@ interface SourceCoverage {
   kalshi: number;
   polymarket: number;
   snapshots_24h: number;
+  expected_sources?: Record<string, boolean>;
 }
 
 interface CoverageTrendEntry {
@@ -241,7 +242,7 @@ function timeAgo(isoStr: string): string {
   return Math.floor(hrs / 24) + "d ago";
 }
 
-function CoverageCell({ val, total }: { val: number; total: number }) {
+function CoverageCell({ val, total, expected = true }: { val: number; total: number; expected?: boolean }) {
   const pctVal = total > 0 ? Math.round((val / total) * 100) : 0;
   if (val === 0) return <td className="text-right py-1.5 px-1"><span className="text-text-muted/30">-</span></td>;
   return (
@@ -1084,7 +1085,7 @@ function SourceCoverageTable({ data }: { data: SourceCoverage[] }) {
                   {row.snapshots_24h > 0 ? formatNum(row.snapshots_24h) : "-"}
                 </td>
                 {sources.map((s) => (
-                  <CoverageCell key={s.key} val={row[s.key]} total={row.total} />
+                  <CoverageCell key={s.key} val={row[s.key]} total={row.total} expected={row.expected_sources?.[s.key] ?? true} />
                 ))}
               </tr>
             ))}
