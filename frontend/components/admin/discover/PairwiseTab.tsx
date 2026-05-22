@@ -76,7 +76,7 @@ const CHOICE_COLORS: Record<string, string> = {
 
 export default function PairwiseTab() {
   const { secret: submittedSecret } = useAdminAuth();
-  const [reviewer, setReviewer] = useState("");
+  const [reviewer] = useState("alex");
   const [pair, setPair] = useState<PairResponse | null>(null);
   const [stats, setStats] = useState<LabelStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -173,17 +173,7 @@ export default function PairwiseTab() {
 
   return (
     <div>
-        {/* Reviewer name input */}
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-text-muted mb-1">Reviewer Name</label>
-          <input
-            type="text"
-            value={reviewer}
-            onChange={(e) => setReviewer(e.target.value)}
-            className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40 w-48"
-            placeholder="Your name"
-          />
-        </div>
+
 
         {/* Session counter */}
         {labelCount > 0 && (
@@ -344,7 +334,7 @@ export default function PairwiseTab() {
                 <button
                   key={c}
                   onClick={() => submitLabel(c)}
-                  disabled={submitting || !reviewer.trim()}
+                  disabled={submitting}
                   className={`rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${CHOICE_COLORS[c]}`}
                 >
                   {CHOICE_LABELS[c]}

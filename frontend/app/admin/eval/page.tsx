@@ -583,64 +583,27 @@ className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-
         )}
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: "flex", gap: 10 }}>
+      <div className="flex gap-2">
         <button
           onClick={() => handle("correct")}
           disabled={acting}
-          style={{
-            flex: 1,
-            padding: "14px 0",
-            borderRadius: 10,
-            border: "none",
-            background: "var(--accent-live, #22C55E)",
-            color: "var(--accent-live, #22C55E)",
-            fontSize: 16,
-            fontWeight: 700,
-            cursor: "pointer",
-            minHeight: 50,
-            opacity: acting ? 0.5 : 1,
-          }}
+          className="flex-1 py-3 rounded-xl bg-accent-live text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           Merge OK
         </button>
         <button
           onClick={() => handle("wrong")}
           disabled={acting}
-          style={{
-            flex: 1,
-            padding: "14px 0",
-            borderRadius: 10,
-            border: "none",
-            background: "var(--accent-danger, #EF4444)",
-            color: "var(--accent-danger, #EF4444)",
-            fontSize: 16,
-            fontWeight: 700,
-            cursor: "pointer",
-            minHeight: 50,
-            opacity: acting ? 0.5 : 1,
-          }}
+          className="flex-1 py-3 rounded-xl bg-accent-danger text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           Bad Match
         </button>
         <button
           onClick={() => handle("skip")}
           disabled={acting}
-          style={{
-            width: 50,
-            padding: "14px 0",
-            borderRadius: 10,
-            border: "1px solid var(--surface-border, #E5E7EB)",
-            background: "transparent",
-            color: "var(--text-muted, #9CA3AF)",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            minHeight: 50,
-            opacity: acting ? 0.5 : 1,
-          }}
+          className="w-14 py-3 rounded-xl border border-surface-border text-text-muted text-sm font-semibold hover:bg-surface-elevated disabled:opacity-50 transition-colors"
         >
-          →
+          Skip
         </button>
       </div>
     </div>
@@ -652,13 +615,15 @@ function FuturesEvalCard({
   onDecision,
 }: {
   market: FuturesMarket;
-  onDecision: (decision: "interesting" | "skip" | "never") => void;
+  onDecision: (decision: "interesting" | "skip" | "never", notes?: string) => void;
 }) {
   const [acting, setActing] = useState(false);
+  const [notes, setNotes] = useState("");
 
   const handle = (d: "interesting" | "skip" | "never") => {
     setActing(true);
-    onDecision(d);
+    onDecision(d, notes.trim() || undefined);
+    setNotes("");
     setTimeout(() => setActing(false), 300);
   };
 
@@ -1406,10 +1371,10 @@ function FuturesInterestingTab() {
     loadMarkets(page);
   }, [page, loadMarkets]);
 
-  const handleDecision = async (decision: "interesting" | "skip" | "never") => {
+  const handleDecision = async (decision: "interesting" | "skip" | "never", notes?: string) => {
     const market = markets[currentIndex];
     if (!market) return;
-    const reason = `${market.source}: "${market.name}" (${market.llm_sport_category || "uncategorized"})`;
+    const reason = `${market.source}: "${market.name}" (${market.llm_sport_category || "uncategorized"})${notes ? ` — ${notes}` : ""}`;
     await saveEvalDecision(`futures:${market.id}`, decision, "futures", reason);
     setCurrentIndex((i) => i + 1);
   };
