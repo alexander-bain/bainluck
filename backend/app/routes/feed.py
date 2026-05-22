@@ -1413,22 +1413,17 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
-def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float, float]:
-    """Return leader/current and opening thresholds for stale-feed suppression."""
+def _is_sports_market_category(sport_category: str | None) -> bool:
     category = (sport_category or "").lower()
-    sports_category = category in {
+    return category in DISCOVER_SPORTS_CATEGORIES or category in {
         "sports",
-        "football",
-        "basketball",
-        "baseball",
-        "hockey",
-        "soccer",
-        "golf",
-        "tennis",
-        "mma",
         "racing",
     }
-    if sports_category:
+
+
+def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float, float]:
+    """Return leader/current and opening thresholds for stale-feed suppression."""
+    if _is_sports_market_category(sport_category):
         return 0.90, 0.70
     return 0.95, 0.85
 
@@ -1586,21 +1581,18 @@ def _market_runtime_filter_trace(
                 leader_opening = outcome.get("opening_probability")
                 break
 
-    resolved_threshold, opening_threshold = _effective_resolution_thresholds(
-        sport_category
-    )
-    is_effectively_resolved = (
-        leader_prob is not None and leader_prob >= resolved_threshold
-    )
-    if is_effectively_resolved and (
-        leader_opening is None or leader_opening >= opening_threshold
-    ):
-        blockers.append("effectively_resolved")
-
     has_any_movement = any(
         outcome["probability_change_24h"] is not None
         and abs(outcome["probability_change_24h"]) > 0.001
         for outcome in outcomes_data
+    )
+    max_recent_movement = max(
+        (
+            abs(o["probability_change_24h"])
+            for o in outcomes_data
+            if o["probability_change_24h"] is not None
+        ),
+        default=0.0,
     )
 
     days_stale = None
@@ -1610,48 +1602,48 @@ def _market_runtime_filter_trace(
         if days_stale > 2 and not has_any_movement:
             blockers.append("stale_no_movement")
 
+    resolved_threshold, opening_threshold = _effective_resolution_thresholds(
+        sport_category
+    )
+    is_effectively_resolved = (
+        leader_prob is not None and leader_prob >= resolved_threshold
+    )
+    is_sports_category = _is_sports_market_category(sport_category)
+    sports_effectively_settled = (
+        is_sports_category
+        and is_effectively_resolved
+        and leader_opening is not None
+        and leader_opening < opening_threshold
+        and any(o["probability_change_24h"] is not None for o in outcomes_data)
+        and max_recent_movement < 0.01
+    )
+    if sports_effectively_settled:
+        blockers.append("sports_effectively_settled")
+    elif is_effectively_resolved and (
+        leader_opening is None or leader_opening >= opening_threshold
+    ):
+        blockers.append("effectively_resolved")
+
     # Soft-settled binary market: leader >=60% with negligible movement.
     # Catches elimination/advancement markets stuck below the 90% threshold.
     # Only applied to sports categories where elimination makes a market
     # de facto resolved even when the exchange hasn't formally settled it.
     soft_settled = False
-    max_recent_movement = 0.0
-    sport_cat = (sport_category or "").lower()
-    is_sports_category = sport_cat in {
-        "sports",
-        "football",
-        "basketball",
-        "baseball",
-        "hockey",
-        "soccer",
-        "golf",
-        "tennis",
-        "mma",
-        "racing",
-    }
     if (
         is_sports_category
+        and not sports_effectively_settled
         and leader_prob is not None
         and leader_prob >= 0.60
         and len(probs_available) == 2
     ):
-        max_recent_movement = max(
-            (
-                abs(o["probability_change_24h"])
-                for o in outcomes_data
-                if o["probability_change_24h"] is not None
-            ),
-            default=0.0,
-        )
         if max_recent_movement < 0.02:
             if leader_opening is None or leader_opening >= 0.50:
                 soft_settled = True
                 blockers.append("soft_settled_binary")
 
     commence_time = _utc(market.commence_time)
-    sport_cat = (sport_category or "").lower()
     golf_started_too_long_ago = (
-        sport_cat == "golf"
+        (sport_category or "").lower() == "golf"
         and commence_time is not None
         and commence_time < now - timedelta(days=6)
     )
@@ -1667,6 +1659,7 @@ def _market_runtime_filter_trace(
             "leader_opening_probability": leader_opening,
             "effective_resolution_threshold": resolved_threshold,
             "effective_resolution_opening_threshold": opening_threshold,
+            "sports_effectively_settled": sports_effectively_settled,
             "has_any_movement": has_any_movement,
             "max_recent_movement": round(max_recent_movement, 4),
             "soft_settled_binary": soft_settled,
@@ -3730,28 +3723,19 @@ async def _score_futures(
         ):
             continue
 
-        # 2) Leader near settled with no interesting journey. Sports futures
-        # stale fastest after elimination/advancement, so use a lower threshold.
-        resolved_threshold, opening_threshold = _effective_resolution_thresholds(
-            market.llm_sport_category
-        )
-        is_effectively_resolved = (
-            leader_prob is not None and leader_prob >= resolved_threshold
-        )
-        if is_effectively_resolved:
-            leader_opening = None
-            for o in outcomes_data:
-                if o["name"] == leader_name:
-                    leader_opening = o.get("opening_probability")
-                    break
-            if leader_opening is None or leader_opening >= opening_threshold:
-                continue
-
-        # 3) Stale market: no price updates for 7+ days and zero movement
+        # 2) Stale market: no price updates for 7+ days and zero movement
         has_any_movement = any(
             o["probability_change_24h"] is not None
             and abs(o["probability_change_24h"]) > 0.001
             for o in outcomes_data
+        )
+        max_recent_movement = max(
+            (
+                abs(o["probability_change_24h"])
+                for o in outcomes_data
+                if o["probability_change_24h"] is not None
+            ),
+            default=0.0,
         )
         if market.updated_at:
             days_stale = (
@@ -3773,6 +3757,35 @@ async def _score_futures(
             ):
                 continue
 
+        # 3) Leader near settled with no interesting journey. Sports futures
+        # stale fastest after elimination/advancement, so use a lower threshold.
+        # If a sports market has moved to 90%+ and is flat over the last 24h,
+        # suppress it even when it originally opened as an underdog journey.
+        resolved_threshold, opening_threshold = _effective_resolution_thresholds(
+            market.llm_sport_category
+        )
+        is_effectively_resolved = (
+            leader_prob is not None and leader_prob >= resolved_threshold
+        )
+        sports_effectively_settled = False
+        if is_effectively_resolved:
+            leader_opening = None
+            for o in outcomes_data:
+                if o["name"] == leader_name:
+                    leader_opening = o.get("opening_probability")
+                    break
+            sports_effectively_settled = (
+                _is_sports_market_category(market.llm_sport_category)
+                and leader_opening is not None
+                and leader_opening < opening_threshold
+                and any(o["probability_change_24h"] is not None for o in outcomes_data)
+                and max_recent_movement < 0.01
+            )
+            if sports_effectively_settled or (
+                leader_opening is None or leader_opening >= opening_threshold
+            ):
+                continue
+
         if (market.llm_sport_category or "").lower() == "golf" and market.commence_time:
             commence_time = _utc(market.commence_time)
             if commence_time and commence_time < now - timedelta(days=6):
@@ -3785,33 +3798,13 @@ async def _score_futures(
         #    60-90% have daily price swings >=2pp; dead markets don't.
         #    Only applied to sports categories where elimination definitively
         #    settles a market even when the exchange hasn't resolved it.
-        market_sport_category = (market.llm_sport_category or "").lower()
-        is_sports_for_soft_settle = market_sport_category in {
-            "sports",
-            "football",
-            "basketball",
-            "baseball",
-            "hockey",
-            "soccer",
-            "golf",
-            "tennis",
-            "mma",
-            "racing",
-        }
         if (
-            is_sports_for_soft_settle
+            _is_sports_market_category(market.llm_sport_category)
+            and not sports_effectively_settled
             and leader_prob is not None
             and leader_prob >= 0.60
             and len(probs_available) == 2
         ):
-            max_recent_movement = max(
-                (
-                    abs(o["probability_change_24h"])
-                    for o in outcomes_data
-                    if o["probability_change_24h"] is not None
-                ),
-                default=0.0,
-            )
             if max_recent_movement < 0.02:
                 # Check if leader has been flat since opening (within 10pp)
                 leader_opening_prob = None

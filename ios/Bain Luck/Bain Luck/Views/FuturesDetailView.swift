@@ -394,16 +394,40 @@ struct FuturesDetailView: View {
 
     private func sortedOutcomes(_ outcomes: [FuturesOutcome]) -> [FuturesOutcome] {
         outcomes.sorted { a, b in
-            let cmp: Bool
+            let comparison: ComparisonResult
             switch sortField {
             case .probability:
-                cmp = (a.probability ?? 0) > (b.probability ?? 0)
+                comparison = compareOptionalDoubles(a.probability, b.probability)
             case .change:
-                cmp = (a.probabilityChange24h ?? 0) > (b.probabilityChange24h ?? 0)
+                comparison = compareOptionalDoubles(a.probabilityChange24h, b.probabilityChange24h)
             case .name:
-                cmp = a.name.localizedCompare(b.name) == .orderedAscending
+                comparison = a.name.localizedCompare(b.name)
             }
-            return sortAscending ? !cmp : cmp
+
+            if comparison != .orderedSame {
+                return sortAscending ? comparison == .orderedAscending : comparison == .orderedDescending
+            }
+
+            let nameComparison = a.name.localizedCompare(b.name)
+            if nameComparison != .orderedSame {
+                return nameComparison == .orderedAscending
+            }
+            return a.id < b.id
+        }
+    }
+
+    private func compareOptionalDoubles(_ lhs: Double?, _ rhs: Double?) -> ComparisonResult {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            if lhs < rhs { return .orderedAscending }
+            if lhs > rhs { return .orderedDescending }
+            return .orderedSame
+        case (.some, .none):
+            return .orderedDescending
+        case (.none, .some):
+            return .orderedAscending
+        case (.none, .none):
+            return .orderedSame
         }
     }
 

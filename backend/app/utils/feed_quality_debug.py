@@ -90,6 +90,11 @@ _STALE_ROOT_CAUSES = {
         "label": "Leader probability is effectively resolved",
         "recommended_action": "Keep suppressed unless there is fresh reversal movement.",
     },
+    "sports_effectively_settled": {
+        "code": "sports_effectively_settled",
+        "label": "Sports market appears effectively settled",
+        "recommended_action": "Keep suppressed unless there is fresh movement or a recap surface needs it.",
+    },
     "soft_settled_binary": {
         "code": "soft_settled_binary",
         "label": "Binary sports market appears decided",

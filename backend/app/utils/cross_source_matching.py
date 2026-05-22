@@ -18,6 +18,49 @@ from app.models import FuturesMarket
 GARBAGE_OUTCOME_RE = re.compile(
     r"^(?:player|person|candidate|option|party)\s+[A-Z]{1,3}$", re.I
 )
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "be",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "shall",
+    "that",
+    "the",
+    "this",
+    "to",
+    "will",
+    "would",
+}
+_TOKEN_ALIASES = {
+    "above": "over",
+    "below": "under",
+    "exceed": "over",
+    "exceeds": "over",
+    "exceeding": "over",
+    "greater": "over",
+    "less": "under",
+    "presidency": "president",
+    "presidential": "president",
+    "wins": "win",
+    "winner": "win",
+    "winning": "win",
+}
+_DIRECTION_TOKENS = {"over", "under"}
 
 
 def source(market: FuturesMarket) -> str:
@@ -46,9 +89,50 @@ def normalize_question(q: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", "", q.lower()).strip()
 
 
+def _near_match_tokens(q: str) -> set[str]:
+    tokens = []
+    for token in _TOKEN_RE.findall(q.lower()):
+        canonical = _TOKEN_ALIASES.get(token, token)
+        if canonical not in _STOPWORDS:
+            tokens.append(canonical)
+    return set(tokens)
+
+
+def _numeric_tokens(tokens: set[str]) -> set[str]:
+    return {token for token in tokens if token.isdigit()}
+
+
+def _direction_tokens(tokens: set[str]) -> set[str]:
+    return tokens & _DIRECTION_TOKENS
+
+
+def _is_conservative_near_match(left: str, right: str) -> bool:
+    """Return True for obvious paraphrases, with guards against false matches."""
+    left_tokens = _near_match_tokens(left)
+    right_tokens = _near_match_tokens(right)
+    if len(left_tokens) < 3 or len(right_tokens) < 3:
+        return False
+    if _numeric_tokens(left_tokens) != _numeric_tokens(right_tokens):
+        return False
+    left_directions = _direction_tokens(left_tokens)
+    right_directions = _direction_tokens(right_tokens)
+    if left_directions or right_directions:
+        if left_directions != right_directions:
+            return False
+
+    overlap = len(left_tokens & right_tokens)
+    union = len(left_tokens | right_tokens)
+    if union == 0:
+        return False
+    jaccard = overlap / union
+    containment = overlap / min(len(left_tokens), len(right_tokens))
+    return jaccard >= 0.72 and containment >= 0.85
+
+
 # ---------------------------------------------------------------------------
 # Core cross-source matching algorithm
 # ---------------------------------------------------------------------------
+
 
 def find_cross_source_markets(
     markets: Sequence[FuturesMarket],
@@ -77,6 +161,10 @@ def find_cross_source_markets(
         ``kalshi_market_id``, ``poly_market_id``.
     """
     by_norm: dict[str, dict[str, dict]] = defaultdict(dict)
+    rows_by_source: dict[str, list[tuple[str, dict]]] = {
+        "kalshi": [],
+        "polymarket": [],
+    }
 
     for m in markets:
         if is_resolved(m):
@@ -90,23 +178,62 @@ def find_cross_source_markets(
         norm = normalize_question(row["q"])
         if norm and src not in by_norm[norm]:
             by_norm[norm][src] = row
+            rows_by_source[src].append((norm, row))
 
     matches = []
+    matched_market_ids = set()
     for _norm, sources in by_norm.items():
         if "kalshi" not in sources or "polymarket" not in sources:
             continue
         k = sources["kalshi"]
         p = sources["polymarket"]
         delta = round(abs(k["prob"] - p["prob"]), 1)
-        matches.append({
-            "q": k["q"],
-            "kalshi": k["prob"],
-            "poly": p["prob"],
-            "delta": delta,
-            "category": k.get("theme", ""),
-            "kalshi_market_id": k["market_id"],
-            "poly_market_id": p["market_id"],
-        })
+        matches.append(
+            {
+                "q": k["q"],
+                "kalshi": k["prob"],
+                "poly": p["prob"],
+                "delta": delta,
+                "category": k.get("theme", ""),
+                "kalshi_market_id": k["market_id"],
+                "poly_market_id": p["market_id"],
+            }
+        )
+        matched_market_ids.add(k["market_id"])
+        matched_market_ids.add(p["market_id"])
+
+    for k_norm, k in rows_by_source["kalshi"]:
+        if k["market_id"] in matched_market_ids:
+            continue
+        best_poly = None
+        best_score = 0.0
+        for p_norm, p in rows_by_source["polymarket"]:
+            if p["market_id"] in matched_market_ids or k_norm == p_norm:
+                continue
+            if not _is_conservative_near_match(k["q"], p["q"]):
+                continue
+            k_tokens = _near_match_tokens(k["q"])
+            p_tokens = _near_match_tokens(p["q"])
+            score = len(k_tokens & p_tokens) / len(k_tokens | p_tokens)
+            if score > best_score:
+                best_poly = p
+                best_score = score
+        if not best_poly:
+            continue
+        delta = round(abs(k["prob"] - best_poly["prob"]), 1)
+        matches.append(
+            {
+                "q": k["q"],
+                "kalshi": k["prob"],
+                "poly": best_poly["prob"],
+                "delta": delta,
+                "category": k.get("theme", ""),
+                "kalshi_market_id": k["market_id"],
+                "poly_market_id": best_poly["market_id"],
+            }
+        )
+        matched_market_ids.add(k["market_id"])
+        matched_market_ids.add(best_poly["market_id"])
 
     matches.sort(key=lambda x: -x["delta"])
     return matches[:max_results]

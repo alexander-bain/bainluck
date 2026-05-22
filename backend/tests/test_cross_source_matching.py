@@ -17,7 +17,6 @@ from app.utils.cross_source_matching import (
     source,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
@@ -157,10 +156,18 @@ class TestFindCrossSourceMarkets:
     def test_matching_identical_names_different_sources(self):
         """Two markets with identical normalized names but different sources should match."""
         markets = [
-            _market(market_id=1, name="Will GDP grow?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)]),
-            _market(market_id=2, name="Will GDP grow?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will GDP grow?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Will GDP grow?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 1
@@ -174,10 +181,58 @@ class TestFindCrossSourceMarkets:
     def test_slightly_different_names_not_matched(self):
         """Two markets with slightly different names should NOT be matched."""
         markets = [
-            _market(market_id=1, name="Will GDP grow in 2026?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)]),
-            _market(market_id=2, name="Will GDP grow in 2027?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will GDP grow in 2026?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Will GDP grow in 2027?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
+        ]
+        result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
+        assert len(result) == 0
+
+    def test_paraphrased_names_matched(self):
+        """Obvious wording differences should match when entity/year align."""
+        markets = [
+            _market(
+                market_id=1,
+                name="Will Donald Trump win the 2028 US presidential election?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Donald Trump to win the 2028 US presidency?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
+        ]
+        result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
+        assert len(result) == 1
+        assert result[0]["kalshi_market_id"] == 1
+        assert result[0]["poly_market_id"] == 2
+
+    def test_near_miss_entity_mismatch_not_matched(self):
+        """Similar structure should not match when the main entity differs."""
+        markets = [
+            _market(
+                market_id=1,
+                name="Will Donald Trump win the 2028 US presidential election?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Ron DeSantis to win the 2028 US presidency?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 0
@@ -185,10 +240,18 @@ class TestFindCrossSourceMarkets:
     def test_resolved_market_excluded(self):
         """A resolved market (outcome >= 99%) should be excluded."""
         markets = [
-            _market(market_id=1, name="Will it happen?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.99), _outcome("No", 0.01)]),
-            _market(market_id=2, name="Will it happen?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will it happen?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.99), _outcome("No", 0.01)],
+            ),
+            _market(
+                market_id=2,
+                name="Will it happen?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 0
@@ -197,12 +260,24 @@ class TestFindCrossSourceMarkets:
         """When two markets from the same source have the same normalized name,
         only the first encountered should be kept."""
         markets = [
-            _market(market_id=1, name="Will it rain?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.8), _outcome("No", 0.2)]),
-            _market(market_id=2, name="Will it rain?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)]),
-            _market(market_id=3, name="Will it rain?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will it rain?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.8), _outcome("No", 0.2)],
+            ),
+            _market(
+                market_id=2,
+                name="Will it rain?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)],
+            ),
+            _market(
+                market_id=3,
+                name="Will it rain?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 1
@@ -213,10 +288,18 @@ class TestFindCrossSourceMarkets:
     def test_delta_computed_correctly(self):
         """Delta should be abs(kalshi_prob - poly_prob), rounded to 1 decimal."""
         markets = [
-            _market(market_id=1, name="Test question?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.75), _outcome("No", 0.25)]),
-            _market(market_id=2, name="Test question?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.55), _outcome("No", 0.45)]),
+            _market(
+                market_id=1,
+                name="Test question?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.75), _outcome("No", 0.25)],
+            ),
+            _market(
+                market_id=2,
+                name="Test question?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.55), _outcome("No", 0.45)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 1
@@ -228,12 +311,23 @@ class TestFindCrossSourceMarkets:
         markets = []
         for i in range(20):
             markets.append(
-                _market(market_id=i * 2, name=f"Question {i}?", src="kalshi",
-                        outcomes=[_outcome("Yes", 0.5 + i * 0.01), _outcome("No", 0.5 - i * 0.01)])
+                _market(
+                    market_id=i * 2,
+                    name=f"Question {i}?",
+                    src="kalshi",
+                    outcomes=[
+                        _outcome("Yes", 0.5 + i * 0.01),
+                        _outcome("No", 0.5 - i * 0.01),
+                    ],
+                )
             )
             markets.append(
-                _market(market_id=i * 2 + 1, name=f"Question {i}?", src="polymarket",
-                        outcomes=[_outcome("Yes", 0.4), _outcome("No", 0.6)])
+                _market(
+                    market_id=i * 2 + 1,
+                    name=f"Question {i}?",
+                    src="polymarket",
+                    outcomes=[_outcome("Yes", 0.4), _outcome("No", 0.6)],
+                )
             )
         result = find_cross_source_markets(
             markets, market_row_fn=_simple_row_fn, max_results=3
@@ -243,14 +337,30 @@ class TestFindCrossSourceMarkets:
     def test_sorted_by_delta_descending(self):
         """Results should be sorted by delta in descending order."""
         markets = [
-            _market(market_id=1, name="Small delta?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.51), _outcome("No", 0.49)]),
-            _market(market_id=2, name="Small delta?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.50), _outcome("No", 0.50)]),
-            _market(market_id=3, name="Big delta?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.90), _outcome("No", 0.10)]),
-            _market(market_id=4, name="Big delta?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.40), _outcome("No", 0.60)]),
+            _market(
+                market_id=1,
+                name="Small delta?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.51), _outcome("No", 0.49)],
+            ),
+            _market(
+                market_id=2,
+                name="Small delta?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.50), _outcome("No", 0.50)],
+            ),
+            _market(
+                market_id=3,
+                name="Big delta?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.90), _outcome("No", 0.10)],
+            ),
+            _market(
+                market_id=4,
+                name="Big delta?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.40), _outcome("No", 0.60)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 2
@@ -260,10 +370,18 @@ class TestFindCrossSourceMarkets:
     def test_non_kalshi_polymarket_sources_excluded(self):
         """Markets from sources other than kalshi/polymarket should be ignored."""
         markets = [
-            _market(market_id=1, name="Will it happen?", src="oddapi",
-                    outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)]),
-            _market(market_id=2, name="Will it happen?", src="espn",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will it happen?",
+                src="oddapi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Will it happen?",
+                src="espn",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
         result = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
         assert len(result) == 0
@@ -271,10 +389,18 @@ class TestFindCrossSourceMarkets:
     def test_row_fn_returning_none_skips_market(self):
         """If market_row_fn returns None, the market should be skipped."""
         markets = [
-            _market(market_id=1, name="Will it happen?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)]),
-            _market(market_id=2, name="Will it happen?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)]),
+            _market(
+                market_id=1,
+                name="Will it happen?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Will it happen?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.6), _outcome("No", 0.4)],
+            ),
         ]
 
         def skip_all(m):
@@ -291,10 +417,18 @@ class TestFindCrossSourceMarkets:
     def test_extra_fields_from_row_fn_propagated(self):
         """Extra fields like 'theme' from the row function should appear in category."""
         markets = [
-            _market(market_id=1, name="Will it rain?", src="kalshi",
-                    outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)]),
-            _market(market_id=2, name="Will it rain?", src="polymarket",
-                    outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)]),
+            _market(
+                market_id=1,
+                name="Will it rain?",
+                src="kalshi",
+                outcomes=[_outcome("Yes", 0.7), _outcome("No", 0.3)],
+            ),
+            _market(
+                market_id=2,
+                name="Will it rain?",
+                src="polymarket",
+                outcomes=[_outcome("Yes", 0.5), _outcome("No", 0.5)],
+            ),
         ]
 
         def row_fn_with_theme(m):
@@ -303,8 +437,6 @@ class TestFindCrossSourceMarkets:
                 row["theme"] = "weather"
             return row
 
-        result = find_cross_source_markets(
-            markets, market_row_fn=row_fn_with_theme
-        )
+        result = find_cross_source_markets(markets, market_row_fn=row_fn_with_theme)
         assert len(result) == 1
         assert result[0]["category"] == "weather"

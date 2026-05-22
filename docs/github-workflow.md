@@ -120,6 +120,14 @@ Suggested weekly sweep:
 4. Remove shipped/obsolete items from `Active GitHub Execution Queue`.
 5. Keep `docs/completed-features.md` for meaningful shipped product work, not every ops cleanup.
 
+Run the advisory backlog/GitHub sync audit before making those edits:
+
+```bash
+python3 scripts/audit_backlog_github_sync.py --dry-run
+```
+
+The audit is read-only. It compares `docs/backlog.md` issue references against fetched GitHub issue state, labels, and Project status, then prints drift to review manually. `.github/workflows/backlog-sync-audit.yml` runs the same advisory audit weekly and writes findings to the job summary. Use `--issue-fixture path/to/issues.json` for fixture-based checks and `--fail-on-warn` only in contexts where warning-level drift should fail the command.
+
 ## Agent Usage
 
 Good prompts:

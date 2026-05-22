@@ -29,6 +29,7 @@ from app.utils.feed_market_quality import (
 from app.utils.feed_quality_debug import apply_db_trace_missing_ground_truth_triage
 from app.utils.feed_quality_debug import build_feed_quality_debug
 from app.utils.feed_quality_debug import diagnose_stale_card_root_cause
+from app.utils.feed_quality_debug import stale_root_cause_for_reason
 from app.utils.feed_quality_debug import summarize_missing_ground_truth_db_trace
 from app.utils.futures_highlights import compute_futures_highlight
 
@@ -1146,6 +1147,46 @@ class TestFeedQualityDebug:
 
         assert trace["eligible"] is True
         assert "effectively_resolved" not in trace["blockers"]
+
+    def test_sports_futures_flat_at_high_probability_are_effectively_settled(self):
+        """A stale underdog journey at 90%+ should not keep resurfacing."""
+        now = datetime.now(timezone.utc)
+        trace = _market_runtime_filter_trace(
+            SimpleNamespace(
+                updated_at=now,
+                commence_time=None,
+            ),
+            [
+                {
+                    "name": "Yes",
+                    "probability": 0.91,
+                    "probability_change_24h": 0.004,
+                    "opening_probability": 0.18,
+                },
+                {
+                    "name": "No",
+                    "probability": 0.09,
+                    "probability_change_24h": -0.004,
+                    "opening_probability": 0.82,
+                },
+            ],
+            "Yes",
+            0.91,
+            now,
+            sport_category="hockey",
+        )
+
+        assert trace["eligible"] is False
+        assert "sports_effectively_settled" in trace["blockers"]
+        assert "effectively_resolved" not in trace["blockers"]
+        assert trace["checks"]["sports_effectively_settled"] is True
+        assert trace["checks"]["max_recent_movement"] == 0.004
+
+    def test_sports_effectively_settled_has_admin_root_cause(self):
+        cause = stale_root_cause_for_reason("sports_effectively_settled")
+
+        assert cause["code"] == "sports_effectively_settled"
+        assert cause["label"] == "Sports market appears effectively settled"
 
     def test_soft_settled_binary_suppresses_stale_sports_elimination(self):
         """A basketball binary market at 69% No with no movement = soft settled."""

@@ -12,12 +12,13 @@ GitHub Issues are the execution queue for scoped work packets. This document rem
 - [ready] Wire calibrated market interestingness into Discover ranking. Issue: [#440](https://github.com/alexander-bain/bainluck/issues/440)
 - [ready] Schedule engagement-calibrated Discover ranking review. Issue: [#441](https://github.com/alexander-bain/bainluck/issues/441)
 - [ready] Expand calibration sample with sportsbook spreads and totals. Issue: [#442](https://github.com/alexander-bain/bainluck/issues/442)
-- [ready] Improve cross-source matching for paraphrased category markets. Issue: [#443](https://github.com/alexander-bain/bainluck/issues/443)
+- [shipped] Improve cross-source matching for paraphrased category markets. Issue: [#443](https://github.com/alexander-bain/bainluck/issues/443)
 - [ready] Finish native Futures browser before re-exposing navigation. Issue: [#444](https://github.com/alexander-bain/bainluck/issues/444)
 - [blocked] Finish App Store submission checklist. Issue: [#445](https://github.com/alexander-bain/bainluck/issues/445)
 - [ready] Finish event-detail parity gaps for half maps and player props. Issue: [#446](https://github.com/alexander-bain/bainluck/issues/446)
 - [idea] Add stored full-text search vectors only if production traces justify it. Issue: [#447](https://github.com/alexander-bain/bainluck/issues/447)
-- [ready] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
+- [shipped] Automate weekly backlog/GitHub sync audit. Issue: [#448](https://github.com/alexander-bain/bainluck/issues/448)
+- [shipped] Rage Shake BR31: harden sports futures effective-settlement staleness. Issue: [#456](https://github.com/alexander-bain/bainluck/issues/456)
 
 ## Current Priority: Calibration & Data Quality
 
@@ -133,11 +134,11 @@ All 4 layers at 100% (April 24): Event Existence, Market→Event Linking, Future
 
 **Problem:** Non-sport markets (politics, entertainment, economics, weather) from Kalshi and Polymarket show as separate cards even when they're the same question.
 
-**Current state (May 18):** All 4 category pages (politics, entertainment, economics, weather) have cross-source matching. Shared utility extracted to `utils/cross_source_matching.py` (May 18) — 26 unit tests, ~200 lines of copy-paste removed from route files. Matching is exact-string only via `normalize_question()` (strip punctuation, lowercase, trim).
+**Current state (May 21):** All 4 category pages (politics, entertainment, economics, weather) have cross-source matching. Shared utility extracted to `utils/cross_source_matching.py` (May 18) — 26 unit tests, ~200 lines of copy-paste removed from route files. Conservative paraphrase matching now catches obvious Kalshi/Polymarket wording differences when entity, year/number, and direction tokens align, while exact-string matching remains intact.
 
 **Remaining:** Canonical market key coverage incomplete. Exact-string matching misses paraphrased questions (e.g., "Will the US enter a recession in 2026?" vs "US recession in 2026?"). Next steps:
 1. Audit match rate: what % of Kalshi/Polymarket pairs on category pages actually pair up?
-2. If low, add fuzzy matching (token overlap / Jaccard similarity) to `find_cross_source_markets()`
+2. Audit the conservative paraphrase pass against production category pages and tune thresholds only with false-positive review
 3. Backfill NULL `canonical_market_key` values
 
 **Target:** <10% unmatched duplicates across all category pages.
@@ -439,10 +440,10 @@ Not a normalization bug — probabilities are genuinely flat in the database. Th
 
 **Fix options (ordered by complexity):**
 1. ~~**Lower staleness threshold further** — drop from 95% to 90% leader probability for sports futures. Risk: some interesting markets between 90-95% get hidden.~~ ✅ Shipped May 14 with an opening-probability guard so real underdog/surprise journeys can still surface.
-2. **Add an "effectively settled" heuristic** — for sports futures, if the leader has been ≥90% for >24h with no movement, treat as settled regardless of exact probability.
+2. ~~**Add an "effectively settled" heuristic** — for sports futures, if the leader has been ≥90% with no meaningful 24h movement, treat as settled regardless of original underdog journey.~~ ✅ Shipped May 21 with admin/debug reason `sports_effectively_settled`.
 3. **Cross-reference game results** — when a team is eliminated (completed playoff series), mark all their "will they advance" markets as stale. Most robust but requires connecting futures markets to series outcomes.
 
-**Current status:** Initial hardening shipped via option 1 plus underdog-journey guard. Next best improvement remains option 2, then option 3 for playoff-series truth.
+**Current status:** Probability-based hardening has shipped via options 1 and 2. The remaining deeper fix is option 3: playoff-series truth for explicit team-elimination cross-reference.
 
 **Files:** `backend/app/routes/feed.py` (staleness filters ~line 2131), `backend/app/utils/feed_market_quality.py`
 **Parallel Safety:** Yellow
