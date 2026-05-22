@@ -2673,6 +2673,47 @@ async def calibration_coverage_audit(
     }
 
 
+@router.post("/calibration/tag-guesses")
+async def tag_guesses(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tag midrange untagged outcomes as pass2_guess."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    count = await db.execute(text("""
+        SELECT COUNT(*) FROM futures_outcomes fo
+        JOIN futures_markets fm ON fo.market_id = fm.id
+        WHERE fm.status = 'resolved'
+          AND fo.resolution_source IS NULL
+          AND fo.is_winner = true
+          AND (fo.current_probability IS NULL
+               OR (fo.current_probability > 0.05 AND fo.current_probability < 0.95))
+    """))
+    should_match = count.scalar()
+
+    try:
+        r = await db.execute(text("""
+            UPDATE futures_outcomes fo
+            SET resolution_source = 'pass2_guess'
+            WHERE fo.id IN (
+                SELECT fo2.id FROM futures_outcomes fo2
+                JOIN futures_markets fm ON fo2.market_id = fm.id
+                WHERE fm.status = 'resolved'
+                  AND fo2.resolution_source IS NULL
+                  AND fo2.is_winner = true
+                  AND (fo2.current_probability IS NULL
+                       OR (fo2.current_probability > 0.05 AND fo2.current_probability < 0.95))
+                LIMIT 50000
+            )
+        """))
+        await db.commit()
+        return {"should_match": should_match, "updated": r.rowcount, "error": None}
+    except Exception as e:
+        return {"should_match": should_match, "updated": 0, "error": str(e)}
+
+
 @router.post("/calibration/test-retrotag")
 async def test_retrotag(
     secret: str = Query(...),
