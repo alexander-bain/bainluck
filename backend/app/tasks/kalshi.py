@@ -95,6 +95,32 @@ def _parse_kalshi_ticker_name(ticker: str) -> str:
     return ticker
 
 
+import re as _re
+
+_GENERIC_OUTCOME_PATTERNS = _re.compile(
+    r"^(?:"
+    r"Ticker [A-Z]"           # "Ticker D", "Ticker H"
+    r"|Option [A-Z0-9]+"      # "Option 1", "Option A"
+    r"|Choice [A-Z0-9]+"      # "Choice 1"
+    r"|Candidate [A-Z0-9]+"   # "Candidate 1"
+    r"|[A-Z]$"                # Single letters only (not "Yes"/"No")
+    r"|[0-9]+$"               # Pure numbers
+    r")$",
+    _re.IGNORECASE,
+)
+
+
+def _is_generic_outcome_name(name: str) -> bool:
+    """Check if an outcome name is generic/obfuscated and should be skipped.
+
+    Returns True for names like "Ticker D", "Option 1", single letters, etc.
+    These indicate Kalshi hasn't provided a real outcome label.
+    """
+    if not name:
+        return True
+    return bool(_GENERIC_OUTCOME_PATTERNS.match(name.strip()))
+
+
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     """Map Kalshi category to internal category."""
     if not kalshi_category:
@@ -478,18 +504,19 @@ async def _poll_kalshi_markets():
                         # For single-market events, use "Yes" as outcome name
                         # For multi-market events, prefer yes_sub_title (player/team name),
                         # then subtitle, then title if it differs from event title,
-                        # then parsed ticker as last resort
+                        # then parsed ticker as last resort.
+                        # Skip yes_sub_title if it looks generic/obfuscated.
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            if market.yes_sub_title:
-                                outcome_name = market.yes_sub_title
-                            elif market.subtitle:
+                            sub = market.yes_sub_title
+                            if sub and not _is_generic_outcome_name(sub):
+                                outcome_name = sub
+                            elif market.subtitle and not _is_generic_outcome_name(market.subtitle):
                                 outcome_name = market.subtitle
                             elif market.title and market.title != event.title:
                                 outcome_name = market.title
                             else:
-                                # Extract name from ticker (e.g. "COTY-24-BELICHICK" -> "Belichick")
                                 outcome_name = _parse_kalshi_ticker_name(market.ticker)
 
                         outcome_data.append({
