@@ -22,6 +22,7 @@ from app.services import get_db
 from app.utils.cross_source_matching import (
     clean_outcomes as _clean_outcomes,
     find_cross_source_markets,
+    group_markets_by_group_id,
     is_resolved as _is_resolved,
     source as _source,
 )
@@ -495,7 +496,11 @@ async def get_politics(db: AsyncSession = Depends(get_db)):
             FuturesMarket.status == "open",
         )
     )
-    all_markets = result.scalars().unique().all()
+    all_markets = list(result.scalars().unique().all())
+
+    # Collapse Polymarket sub-markets sharing a group_id into a single
+    # representative market with merged outcomes (BR62 / #487).
+    all_markets = group_markets_by_group_id(all_markets)
 
     themed: dict[str, list] = defaultdict(list)
     for m in all_markets:
