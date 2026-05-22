@@ -143,20 +143,21 @@ interface DeadTupleInfo {
 }
 
 interface DatabaseHealth {
-  active_events: number;
-  live_events: number;
-  snapshots_last_hour: number;
-  winprob_last_hour: number;
-  db_size_mb: number;
+  active_events?: number;
+  live_events?: number;
+  snapshots_last_hour?: number;
+  winprob_last_hour?: number;
+  db_size_mb?: number;
   growth_rate_mb_per_day: number | null;
   days_until_full: number | null;
-  plan: DatabasePlan;
+  plan?: DatabasePlan;
   table_sizes?: TableSize[];
   dead_tuples?: DeadTupleInfo[];
   total_dead_tuples?: number;
   total_live_tuples?: number;
   dead_tuple_pct?: number;
   size_trend?: DbSizeTrendEntry[];
+  error?: string;
 }
 
 interface MatchingMetricsEntry {
@@ -232,6 +233,14 @@ function formatNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(0) + "K";
   return n.toLocaleString();
+}
+
+function safeNumber(n: number | null | undefined, fallback = 0): number {
+  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
+}
+
+function formatMaybeNum(n: number | null | undefined): string {
+  return safeNumber(n).toLocaleString();
 }
 
 function timeAgo(isoStr: string): string {
@@ -818,13 +827,21 @@ function LinkRateCard({ secret }: { secret: string }) {
 function DatabaseCard({ db }: { db: DatabaseHealth }) {
   const pct = db.plan?.storage_pct || 0;
   const health = pct >= 95 ? "critical" : pct >= 80 ? "warning" : "healthy";
+  const dbSizeMb = safeNumber(db.db_size_mb);
+  const snapshotsLastHour = safeNumber(db.snapshots_last_hour);
+  const winprobLastHour = safeNumber(db.winprob_last_hour);
 
   return (
     <div className={"rounded-xl border p-4 " + healthBg(health)}>
       <h3 className="text-sm font-semibold text-text-primary mb-2">Database Storage</h3>
+      {db.error && (
+        <div className="mb-3 rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-500">
+          Database health query failed: {db.error}
+        </div>
+      )}
       <div className="flex items-end gap-2 mb-2">
         <span className={"text-3xl font-bold " + healthColor(health)}>
-          {db.plan?.storage_used_gb || (db.db_size_mb / 1024).toFixed(1)} GB
+          {db.plan?.storage_used_gb || (dbSizeMb / 1024).toFixed(1)} GB
         </span>
         <span className="text-sm text-text-muted mb-1">/ {db.plan?.storage_limit_gb || 10} GB</span>
       </div>
@@ -874,19 +891,19 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-surface-border/50 pt-2">
         <div>
           <span className="text-text-muted">Odds snapshots/hr: </span>
-          <span className="text-text-secondary font-medium">{db.snapshots_last_hour.toLocaleString()}</span>
+          <span className="text-text-secondary font-medium">{snapshotsLastHour.toLocaleString()}</span>
         </div>
         <div>
           <span className="text-text-muted">WinProb snapshots/hr: </span>
-          <span className="text-text-secondary font-medium">{db.winprob_last_hour.toLocaleString()}</span>
+          <span className="text-text-secondary font-medium">{winprobLastHour.toLocaleString()}</span>
         </div>
         <div>
           <span className="text-text-muted">Live events: </span>
-          <span className="text-green-400 font-medium">{db.live_events}</span>
+          <span className="text-green-400 font-medium">{formatMaybeNum(db.live_events)}</span>
         </div>
         <div>
           <span className="text-text-muted">Active events: </span>
-          <span className="text-text-secondary font-medium">{db.active_events.toLocaleString()}</span>
+          <span className="text-text-secondary font-medium">{formatMaybeNum(db.active_events)}</span>
         </div>
       </div>
       {/* Table sizes breakdown */}
@@ -895,7 +912,7 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
           <div className="text-micro text-text-muted uppercase tracking-wider mb-2">Storage by Table</div>
           <div className="space-y-1">
             {db.table_sizes.filter((t: TableSize) => t.size_mb > 10).map((t: TableSize) => {
-              const pctOfTotal = Math.round(t.size_mb / db.db_size_mb * 100);
+              const pctOfTotal = dbSizeMb > 0 ? Math.round(t.size_mb / dbSizeMb * 100) : 0;
               return (
                 <div key={t.table} className="flex items-center gap-2 text-xs">
                   <span className="font-mono text-text-secondary w-40 truncate">{t.table}</span>
@@ -1388,13 +1405,13 @@ export default function AdminDashboard() {
             <div className="space-y-4">
               <StatCard
                 label="Snapshots/hr"
-                value={data.database.snapshots_last_hour.toLocaleString()}
+                value={formatMaybeNum(data.database?.snapshots_last_hour)}
                 sub="Odds readings written to DB per hour"
-                detail={"At ~500 bytes/row, this adds roughly " + Math.round(data.database.snapshots_last_hour * 500 / 1024 / 1024 * 24) + " MB/day to the database."}
+                detail={"At ~500 bytes/row, this adds roughly " + Math.round(safeNumber(data.database?.snapshots_last_hour) * 500 / 1024 / 1024 * 24) + " MB/day to the database."}
               />
               <StatCard
                 label="WinProb/hr"
-                value={data.database.winprob_last_hour.toLocaleString()}
+                value={formatMaybeNum(data.database?.winprob_last_hour)}
                 sub="Win probability snapshots per hour"
                 detail="From ESPN, stat model, Kalshi, Polymarket, and MLB sources during live games."
               />
