@@ -1720,7 +1720,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 FuturesOutcome.market_id == row.id,
                                 FuturesOutcome.external_id == yes_ext,
                             )
-                            .values(is_winner=yes_won)
+                            .values(is_winner=yes_won, resolution_source="api_settlement")
                         )
                         r2 = await session.execute(
                             update(FuturesOutcome)
@@ -1728,7 +1728,7 @@ async def _backfill_polymarket_winners_from_api(limit: int = 500):
                                 FuturesOutcome.market_id == row.id,
                                 FuturesOutcome.external_id == no_ext,
                             )
-                            .values(is_winner=(not yes_won))
+                            .values(is_winner=(not yes_won), resolution_source="api_settlement")
                         )
 
                         updated = r1.rowcount + r2.rowcount

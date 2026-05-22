@@ -585,9 +585,13 @@ class ESPNAPIService:
         "H": "hits", "HR": "home runs", "RBI": "rbis",
         "SO": "strikeouts", "R": "runs", "BB": "walks",
         "AB": "at bats", "AVG": "batting average",
-        # Hockey
-        "G": "goals", "A": "assists", "S": "saves",
-        "SA": "shots against", "SV%": "save percentage",
+        # Hockey (skaters)
+        "G": "goals", "A": "assists",
+        "BS": "blocked shots", "HT": "hits", "TK": "takeaways",
+        "PIM": "penalty minutes",
+        # Hockey (goalies)
+        "SV": "saves", "GA": "goals against",
+        "S": "saves", "SA": "shots against", "SV%": "save percentage",
         # Soccer
         "SH": "shots", "SOG": "shots on goal",
     }
@@ -609,7 +613,7 @@ class ESPNAPIService:
 
         for team_group in boxscore.get("players", []):
             for stat_group in team_group.get("statistics", []):
-                stat_names = stat_group.get("names", [])
+                stat_names = stat_group.get("names", []) or stat_group.get("labels", [])
                 if not stat_names:
                     continue
 
