@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -77,7 +77,14 @@ def _market_source(market: FuturesMarket) -> str:
 # ---------------------------------------------------------------------------
 
 def _open_weather_query():
-    """Return a base select for open weather markets with outcomes eagerly loaded."""
+    """Return a base select for open weather markets with outcomes eagerly loaded.
+
+    Excludes:
+    - Non-open markets (resolved, suspended, closed)
+    - Markets whose resolution_date is in the past (zombie markets)
+    - Markets not updated in the last 7 days (stale)
+    - Health/pandemic markets misclassified as weather by the LLM
+    """
     now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(days=7)
     return (
@@ -88,9 +95,18 @@ def _open_weather_query():
             FuturesMarket.status == "open",
             or_(
                 FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= now - timedelta(hours=6),
+                FuturesMarket.resolution_date > now,
             ),
             FuturesMarket.updated_at >= stale_cutoff,
+            # Exclude health/pandemic markets misclassified as weather
+            not_(FuturesMarket.name.ilike("%pandemic%")),
+            not_(FuturesMarket.name.ilike("%bird flu%")),
+            not_(FuturesMarket.name.ilike("%h5n1%")),
+            not_(FuturesMarket.name.ilike("%virus outbreak%")),
+            not_(FuturesMarket.name.ilike("%epidemic%")),
+            not_(FuturesMarket.name.ilike("%monkeypox%")),
+            not_(FuturesMarket.name.ilike("%mpox%")),
+            not_(FuturesMarket.name.ilike("%ebola%")),
         )
     )
 
@@ -258,6 +274,15 @@ _CLIMATE_RE = re.compile(
 # Wildcard keywords
 _WILDCARD_RE = re.compile(
     r"\b(?:volcano|supervolcano|arctic|solar)\b", re.I,
+)
+
+# Health/pandemic keywords — these are NOT weather/climate markets even if
+# the LLM tagged them as llm_sport_category="weather"
+_HEALTH_EXCLUDE_RE = re.compile(
+    r"\b(?:pandemic|virus|outbreak|bird\s*flu|h5n1|disease|epidemic"
+    r"|infection|covid|monkeypox|ebola|cholera|plague|influenza"
+    r"|mpox|tuberculosis|malaria|dengue|zika)\b",
+    re.I,
 )
 
 
@@ -734,7 +759,10 @@ async def get_climate(db: AsyncSession = Depends(get_db)):
     markets: list[FuturesMarket] = list(result.scalars().all())
 
     _EXCLUDE_RE = re.compile(
-        r"\b(?:Ifo|temperature|rain |snow |daily)\b",
+        r"\b(?:Ifo|temperature|rain |snow |daily"
+        r"|pandemic|virus|outbreak|bird\s*flu|h5n1|disease|epidemic"
+        r"|infection|covid|monkeypox|ebola|cholera|plague|influenza"
+        r"|mpox|tuberculosis|malaria|dengue|zika)\b",
         re.I,
     )
 

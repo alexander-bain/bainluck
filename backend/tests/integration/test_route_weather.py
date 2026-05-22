@@ -856,6 +856,198 @@ class TestWeatherCrossSource:
 
 
 # ============================================================================
+# 8. Zombie market / health exclusion tests
+# ============================================================================
+
+
+class TestWeatherZombieMarketExclusion:
+    """Verify that resolved/past-resolution markets are excluded."""
+
+    async def test_past_resolution_market_excluded_from_featured(self, client, mock_db):
+        """A market whose resolution_date is in the past should not appear."""
+        now = datetime.now(timezone.utc)
+        # Both markets pass through mock_db (no SQL filter in mock),
+        # but the featured endpoint skips markets with days < 0.5
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3001,
+                name="Will it rain in NYC yesterday?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("Yes", 0.60, outcome_id=30010),
+                    _outcome("No", 0.40, outcome_id=30011),
+                ],
+                resolution_date=now - timedelta(days=2),
+            ),
+            _market(
+                market_id=3002,
+                name="Will it rain in NYC next week?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("Yes", 0.55, outcome_id=30020),
+                    _outcome("No", 0.45, outcome_id=30021),
+                ],
+                resolution_date=now + timedelta(days=7),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/featured")
+        body = resp.json()
+        # The past-resolution market should be filtered by the
+        # featured scoring (days < 0.5 → skipped). Only the future one remains.
+        names = [item["q"] for item in body]
+        assert "Will it rain in NYC yesterday?" not in names
+        assert "Will it rain in NYC next week?" in names
+
+    async def test_open_future_market_passes_through(self, client, mock_db):
+        """An open market with a future resolution_date should appear."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3003,
+                name="Will a hurricane hit Florida in 2026?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("Yes", 0.45, outcome_id=30030),
+                    _outcome("No", 0.55, outcome_id=30031),
+                ],
+                resolution_date=now + timedelta(days=60),
+                status="open",
+            ),
+        ])
+
+        resp = await client.get("/api/weather/featured")
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["q"] == "Will a hurricane hit Florida in 2026?"
+
+
+class TestWeatherHealthExclusion:
+    """Verify that health/pandemic markets are excluded from climate section."""
+
+    async def test_pandemic_market_excluded_from_climate(self, client, mock_db):
+        """Markets about pandemics should not appear in climate results."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3101,
+                name="Will a pandemic be declared by 2030?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("Yes", 0.20, outcome_id=31010),
+                    _outcome("No", 0.80, outcome_id=31011),
+                ],
+                resolution_date=now + timedelta(days=365 * 4),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert body == []
+
+    async def test_bird_flu_market_excluded_from_climate(self, client, mock_db):
+        """Bird flu markets should not appear in climate results."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3102,
+                name="Will bird flu reach 1000 US cases by 2030?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("Yes", 0.15, outcome_id=31020),
+                    _outcome("No", 0.85, outcome_id=31021),
+                ],
+                resolution_date=now + timedelta(days=365 * 4),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert body == []
+
+    async def test_virus_outbreak_excluded_from_climate(self, client, mock_db):
+        """Virus outbreak markets should not appear in climate results."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3103,
+                name="Will a major virus outbreak occur by 2050?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("Yes", 0.30, outcome_id=31030),
+                    _outcome("No", 0.70, outcome_id=31031),
+                ],
+                resolution_date=now + timedelta(days=365 * 24),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert body == []
+
+    async def test_h5n1_excluded_from_climate(self, client, mock_db):
+        """H5N1 markets should not appear in climate results."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3104,
+                name="Will H5N1 become a global emergency by 2030?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("Yes", 0.10, outcome_id=31040),
+                    _outcome("No", 0.90, outcome_id=31041),
+                ],
+                resolution_date=now + timedelta(days=365 * 4),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert body == []
+
+    async def test_legitimate_climate_market_passes_through(self, client, mock_db):
+        """A real climate market should still appear."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3105,
+                name="Will 2026 be the hottest year on record?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("Yes", 0.62, outcome_id=31050),
+                    _outcome("No", 0.38, outcome_id=31051),
+                ],
+                resolution_date=now + timedelta(days=200),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["q"] == "Will 2026 be the hottest year on record?"
+
+    async def test_disease_excluded_from_climate(self, client, mock_db):
+        """Disease markets should not appear in climate results."""
+        now = datetime.now(timezone.utc)
+        mock_db.execute.return_value = _query_result([
+            _market(
+                market_id=3106,
+                name="Will a new disease emerge by 2030?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("Yes", 0.25, outcome_id=31060),
+                    _outcome("No", 0.75, outcome_id=31061),
+                ],
+                resolution_date=now + timedelta(days=365 * 4),
+            ),
+        ])
+
+        resp = await client.get("/api/weather/climate")
+        body = resp.json()
+        assert body == []
+
+
+# ============================================================================
 # Error handling and edge cases
 # ============================================================================
 
