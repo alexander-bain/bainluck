@@ -58,6 +58,15 @@ struct FuturesDetailView: View {
         _viewModel = StateObject(wrappedValue: FuturesDetailViewModel(marketId: marketId))
     }
 
+    private var shareMessage: String {
+        guard let market = viewModel.market else { return "Check this out on Bain Luck" }
+        let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+        if let leader, let prob = leader.probability {
+            return "\(leader.name) at \(Int((prob * 100).rounded()))% — \(market.name) on Bain Luck"
+        }
+        return "\(market.name) on Bain Luck"
+    }
+
     var body: some View {
         Group {
             if viewModel.loading {
@@ -116,7 +125,11 @@ struct FuturesDetailView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 HStack(spacing: 4) {
-                    ShareLink(item: URL(string: futuresShareURL(marketId)) ?? bainLuckFallbackURL) {
+                    ShareLink(
+                        item: URL(string: futuresShareURL(marketId, style: .nativeCard)) ?? bainLuckFallbackURL,
+                        subject: Text(viewModel.market?.name ?? "Bain Luck"),
+                        message: Text(shareMessage)
+                    ) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 14))
                     }
@@ -221,6 +234,21 @@ struct FuturesDetailView: View {
                     .foregroundStyle(.white)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // Share button
+                ShareLink(
+                    item: URL(string: futuresShareURL(marketId, style: .nativeCard)) ?? bainLuckFallbackURL,
+                    subject: Text(market.name),
+                    message: Text(shareMessage)
+                ) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.20), in: Capsule())
+                }
+                .padding(.top, 2)
             }
             .padding(14)
         }
