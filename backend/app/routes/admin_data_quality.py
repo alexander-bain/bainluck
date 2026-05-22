@@ -2865,6 +2865,56 @@ async def calibration_decomposition(
     total_guess = sum(c["resolution"]["pass2_guess"] + c["resolution"]["pass3_threshold"] for c in cells)
     flagged = [c for c in cells if c["flag"]]
 
+    # MCE per source × sport (for outcomes actually in calibration)
+    mce_result = await db.execute(text("""
+        SELECT
+            fm.source,
+            COALESCE(fm.llm_sport_category, 'uncategorized') AS sport,
+            LEAST(FLOOR(COALESCE(fo.calibration_probability, fo.opening_probability) * 10)::int, 9) AS bucket,
+            COUNT(*) AS n,
+            SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS winners,
+            AVG(COALESCE(fo.calibration_probability, fo.opening_probability)) AS avg_prob
+        FROM futures_outcomes fo
+        JOIN futures_markets fm ON fm.id = fo.market_id
+        WHERE fm.status = 'resolved'
+          AND fo.opening_probability IS NOT NULL
+          AND fo.opening_probability > 0 AND fo.opening_probability < 1
+          AND (fo.resolution_source IS NULL
+               OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
+        GROUP BY fm.source, sport, bucket
+        HAVING COUNT(*) >= 10
+    """))
+    mce_rows = mce_result.all()
+
+    # Compute MCE per source × sport
+    mce_cells: dict = {}
+    for r in mce_rows:
+        key = f"{r.source}|{r.sport}"
+        if key not in mce_cells:
+            mce_cells[key] = {"source": r.source, "sport": r.sport, "buckets": {}, "total_n": 0}
+        mce_cells[key]["buckets"][r.bucket] = {
+            "n": r.n, "winners": r.winners, "avg_prob": float(r.avg_prob),
+        }
+        mce_cells[key]["total_n"] += r.n
+
+    mce_by_cell = []
+    for key, cell in sorted(mce_cells.items(), key=lambda x: -x[1]["total_n"]):
+        ae = 0; nb = 0
+        for b in cell["buckets"].values():
+            if b["n"] < 5:
+                continue
+            actual = b["winners"] / b["n"]
+            ae += abs(actual - b["avg_prob"])
+            nb += 1
+        if nb > 0:
+            mce_by_cell.append({
+                "source": cell["source"],
+                "sport": cell["sport"],
+                "mce_pp": round(ae / nb * 100, 1),
+                "n": cell["total_n"],
+                "buckets_used": nb,
+            })
+
     return {
         "summary": {
             "total_outcomes": total,
@@ -2875,5 +2925,6 @@ async def calibration_decomposition(
         },
         "cells": cells[:100],
         "flagged": flagged[:20],
+        "mce_by_source_sport": mce_by_cell[:30],
     }
 
