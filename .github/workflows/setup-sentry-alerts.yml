@@ -1,0 +1,21 @@
+name: Setup Sentry Alerts
+
+on:
+  workflow_dispatch:  # Manual trigger only — one-shot setup
+
+permissions:
+  contents: read
+
+jobs:
+  setup-alerts:
+    name: Create Sentry alert rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create alert rules
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: python3 scripts/setup_sentry_alerts.py
