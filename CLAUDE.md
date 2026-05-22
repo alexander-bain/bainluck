@@ -37,10 +37,10 @@ Plus **Grid Accuracy** (`scripts/audit_grid_accuracy.py`): 51/51 (100%).
 
 | Doc | Purpose | When to update |
 |-----|---------|---------------|
-| `docs/backlog.md` | All outstanding work items (SINGLE SOURCE OF TRUTH) | When items ship, are added, or reprioritized |
+| `docs/backlog.md` | Strategic backlog: priorities, rationale, and long-term context | When items ship, are added, or reprioritized |
 | `docs/github-workflow.md` | GitHub Issues/Project operating model and backlog sync rules | When issue labels, templates, project columns, or agent handoff rules change |
 | `docs/architecture-reference.md` | Core system design: aggregation, resilience, charts, tasks, admin | When architecture changes |
-| `docs/gotchas-reference.md` | Extended gotchas (items 16-75) | When new gotchas discovered |
+| `docs/gotchas-reference.md` | Full gotcha catalog and incident learnings | When new gotchas discovered |
 | `docs/quality-audit.md` | Audit script usage, check catalog | When checks added/removed |
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` | Detailed feature documentation | When features ship |
@@ -198,11 +198,11 @@ Device-token registration, token listing, and admin send-test are covered with F
 5. **Team/league-level odds** — Championship grids + league market sections (series, awards, props)
 6. **Multi-platform** — Full parity between web, iOS, and macOS (shared SwiftUI codebase)
 
-**All outstanding work items live in `docs/backlog.md`** (SINGLE SOURCE OF TRUTH).
+**Work tracking split**: `docs/backlog.md` is the strategic backlog; GitHub Issues are the execution queue for scoped work.
 
 ## GitHub Issues + Project Workflow
 
-`docs/backlog.md` is the strategic source of truth: priorities, rationale, and workstream context. GitHub Issues are the execution queue for scoped work packets. The GitHub Project board is only status tracking.
+`docs/backlog.md` is the strategic source of truth for priorities, rationale, and workstream context. GitHub Issues are the execution queue for scoped work packets. The GitHub Project board is status and ownership tracking.
 
 Use this split consistently:
 
@@ -275,73 +275,40 @@ users               — Firebase Auth users (Google + Apple Sign-In)
 
 ---
 
-## Gotchas (full list in `docs/gotchas-reference.md`)
+## Gotchas Hot List
 
-1. **Alembic revision IDs must be <=32 characters**
-2. **Alembic uses psycopg2, not asyncpg** (intentional for Heroku release phase)
-3. **Admin endpoints require mounting** in both `main.py` AND `routes/__init__.py`
-4. **`sport_keys.py` imports nothing** — pure data module, zero circular-import risk
-5. **`Event.external_id` is nullable** — StatPal creates events without Odds API ID
-6. **The Odds API bills per `events * market_types * regions`**, NOT per HTTP call
-7. **`Event.sport_id` is an integer FK** to `sports.id`, NOT a string
-8. **ORM attribute assignment for JSONB silently fails** — always use SQLAlchemy `update()`
-9. **Kalshi `commence_time` is the market RESOLUTION date**, not the game date — use `extract_game_date_from_ticker()`
-10. **`llm_sport_category` from Kalshi polling is often wrong** — derive from ticker prefix instead
-11. **Phase 2 deadlocks with live polling** — per-market commit + rollback on deadlock detection
-12. **iOS models must be `Decodable` not `Codable`** and prefixed with `nonisolated`
-13. **iOS ViewModels: NO `@MainActor` on class** — only on individual async methods
-14. **Python 3.12+ redundant imports cause UnboundLocalError** — check task files
-15. **Safari breaks Firebase Google Auth** — use GIS + backend custom token fallback
-16. **`compute_market_tier()` must check name patterns BEFORE `game_prop` category** — Kalshi labels some season markets (division winners, playoff qualifiers) as `category="game_prop"`. Name patterns ("Division Winner", "Make Playoffs") are more reliable than the category field.
-17. **Kalshi market backfill must use `status=None`** — live game markets have `status="active"` on Kalshi, not `"open"`. The backfill query for events with 0 nested markets must omit the status filter to pick up active markets.
-18. **Kalshi threshold outcomes ("2+", "Aaron Judge: 1+") are OVER probabilities** — don't invert them. Only invert outcomes that explicitly start with "Under" or equal "No".
-19. **Don't time-window linked markets** — if the matching task set `event_id`, trust it. Kalshi's `commence_time` is the resolution date (gotcha #9), so a time window on the linked query filters out game totals/spreads. Time windows belong on the FALLBACK query only (unlinked markets matched by team name).
-20. **Polymarket midpoint unreliable during blowouts** — when bid/ask spread >15pp, use `lastTradePrice` instead. Skip entirely if `lastTradePrice` is null and no bids exist (zero trading activity = completely stale).
-21. **Polymarket game events have nested sub-markets** — A single event ("Magic vs Pistons") contains ~40 sub-markets (moneyline + spread + O/U + player props). Each has its own `condition_id`. The polling task decomposes into separate FuturesMarket rows (not outcomes). NegRisk events (championships) are different — each sub-market IS one candidate.
-22. **ORM attribute assignment lost when mixed with Core SQL updates** — Setting `event.field = value` via ORM, then `session.execute(update(Event).where(...).values(...))` via Core SQL can cause the ORM change to silently not persist. Use Core SQL for both. Same class as gotcha #8 but for non-JSONB columns.
-23. **Async SQLAlchemy rollback expires ORM objects** — `expire_on_commit=False` does not prevent `session.rollback()` from expiring ORM instances. In async Celery tasks, reading an expired attribute later can raise `MissingGreenlet`. Long loops that commit/rollback per item should copy ORM rows into scalar refs before the loop and use Core `update()` after rollback boundaries.
-24. **`completed_at` is a backend processing timestamp, NOT game-end time** — Can be 30-45 minutes after the last actual game data. For chart domains, use last ESPN data point instead. Don't use for any time-sensitive display.
-25. **Kalshi dual markets cause probability oscillation** — Kalshi creates separate "Team A win?" and "Team B win?" markets for the same game. Both get linked to the same Event. Deduplicate by `(event_id, source)` before writing snapshots — one market per event per source.
-26. **`CurrentOdds.spread` is unsigned** — The API's `spread` field is just a number (e.g., 8.4) without direction. Use `home_spread` (signed from home team perspective) when available. Fall back to `closestToEvenMargin()` from spreads data, NOT to the unsigned `spread`.
-27. **Pexels rate limit is 200 req/hr** — Enrichment script hits this on large batches. Target feed-visible markets first via `enrich_feed_markets.py`, not random `updated_at` ordering.
-28. **Never delete a migration file that has already run on Heroku** — The `alembic_version` table stores the current revision ID. If you delete the `.py` file, `alembic upgrade heads` fails with "Can't locate revision," blocking ALL subsequent migrations. The Procfile's `|| echo` makes this silent. Caused a full site outage May 1-2, 2026. CI test `test_alembic.py` guards against this.
-29. **Vercel builds run ESLint, not just TypeScript** — `tsc --noEmit` passing does NOT mean the frontend will deploy. Vercel runs `next build` which includes ESLint rules-of-hooks checks. Always run `npm run build` locally before pushing frontend changes. Hooks called after early returns will pass `tsc` but fail `next build`. CI now catches this.
-30. **Kalshi market names use abbreviations that fail ILIKE matching** — "A's" doesn't match "Athletics", "Chicago WS" doesn't match "Chicago White Sox". The matching task now prefers ticker-derived team names (mascots) over market name-derived abbreviations. Missing ticker abbreviations (`ATH`, `WSH_MLB`) caused 67 unlinked MLB game markets.
-31. **Admin write endpoints need `_check_admin_secret`** — Several admin endpoints (matching override POST/DELETE, eval decision POST, playoffstatus scrape) were shipping without auth. Always add the check for any endpoint that mutates data or burns API quota.
-32. **`_is_headline_market` must filter non-US elections** — Polymarket has French, UK, Canadian presidential markets that contain "2028" and "presidential." Without `_NON_US_RE` filtering, the politics hero shows Jean-Luc Mélenchon instead of US candidates. Always require US-specific keywords AND exclude known non-US patterns.
-33. **Entertainment `kind` classification: avoid greedy ticker prefixes** — `kxrt` matched any ticker starting with those letters, causing political markets to be classified as Rotten Tomatoes. Use full prefixes (`kxrottentomatoes`) or name-based regex for ambiguous cases.
-34. **iPad Stage Manager breaks `connectedScenes.first`** — On iPad with Stage Manager, `UIApplication.shared.connectedScenes.first` can return a background scene. Always filter with `.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive })` and prefer `isKeyWindow`. Applies to Google Sign-In presentation, Apple Sign-In anchor, and any UIKit window access.
-35. **Bug report admin status mismatch** — Frontend uses `actioned`/`dismissed` statuses; backend `_VALID_STATUSES` must include them. The PATCH endpoint silently returns 400 if a status isn't in the set, and the frontend doesn't check `res.ok`.
-36. **`NWPathMonitor.currentPath` is unsatisfied until started** — Creating `NWPathMonitor()` and immediately reading `.currentPath` always returns `.unsatisfied` (offline). Must call `monitor.start(queue:)` and use `pathUpdateHandler` or `withCheckedContinuation` to get the real network state. All iOS bug reports were showing `network: offline` because of this.
-37. **StatPal `season-schedule` puts playoffs in `tournament.week`, not `tournament.match`** — Regular season games are in `tournament.match` (the array our parser originally read). Playoff/postseason games are in `tournament.week` as `[{"stage": "Play Offs", "match": [...]}]`. Both arrays must be parsed in `_extract_match_items()`. Missing this caused ALL playoff games to be silently dropped for months.
-38. **StatPal livescores normalizes period to "live"** — StatPal returns game period as the `status` field (e.g., "Q3", "1H", "HT"). The `_normalize_status()` function converts all of these to "live", discarding the period information. Use `raw_status` on `StatPalFixture` to preserve the original value for period markers.
-39. **Event merge task must reassign ALL FK tables before delete** — Eight tables have FK references to `events.id`. Only two use `ON DELETE CASCADE` (`espn_snapshots`, `win_prob_snapshots`). The other six (`odds_snapshots`, `score_snapshots`, `scoring_plays`, `odds_aggregated`, `line_movement_analyses`, `futures_markets`) require explicit `UPDATE SET event_id` before the orphan event can be deleted.
-58. **Feed probability normalization for independent binary markets** — Kalshi creates separate "Will X win?" binary markets for each candidate. Probabilities can sum well over 100%. Must normalize: `if sum > 1.05: divide each by sum`. Applied in `feed.py` after building `top_outcomes_data`.
-59. **Sports futures staleness threshold is 90%+ with journey guard** — Discover treats sports futures with a 90%+ leader as effectively resolved unless the leader had a real underdog/surprise journey. This catches eliminated-team markets that remain open for settlement.
-60. **Web pin hooks were localStorage-only** — `usePinnedEvents.ts` and `usePinnedFutures.ts` never synced to the server. Pins made on web were invisible on iOS. Fixed: hooks now call server API on every pin/unpin when authenticated.
-61. **Celery beat schedule test has an allowlist** — `tests/test_tasks_wiring.py` has `EXPECTED_ENTRIES` set that must include every entry in `celery_app.conf.beat_schedule`. Adding a new scheduled task without updating this set causes CI failure.
-62. **Gmail API OAuth refresh tokens via Google Workspace** — Using OAuth2 refresh token (not service account) to send email as `bugs@bainluck.com`. The OAuth Playground redirect URI must NOT have a trailing slash. Config vars: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_EMAIL`.
-63. **Apple Sign-In audience differs between web and iOS** — Web uses `APPLE_SERVICES_ID` (`com.bainluck.web`) as JWT audience; iOS native uses the app bundle ID (`com.bainluck.Bain-Luck`). The `verify_apple_id_token()` call must accept BOTH as valid audiences. PyJWT's `audience` parameter natively accepts a list. This caused iOS Apple Sign-In to silently 401 for months.
-64. **Independent binary market probabilities must be normalized everywhere** — Kalshi creates separate "Will X win?" markets for each candidate. Raw probabilities sum well over 100%. Normalization (`if sum > 1.05: divide each by sum`) is applied in `feed.py`, AND must also be applied in `politics.py` nominee lists and any other ranked display of independent binary markets. Missing this on the Politics page caused Fujimori to show at 98.8%.
-65. **Game-markets `period` field must come from the backend** — Kalshi's `_build_game_market_name()` strips period indicators from market names ("2nd Half Total: X at Y" becomes "X at Y"). Frontend/iOS cannot reliably derive 1H vs 2H from the name. Backend must set `period` from the ticker prefix via `_extract_period_from_ticker()`. Without this, 2nd half maps silently disappear.
-66. **Polymarket placeholder outcomes have `outcomePrices=["1","0"]`** — Polymarket creates reserved-slot sub-markets ("Player B", "Player S") before real candidates are announced. These have 100% probability and zero trading activity. Filter with `_is_placeholder_outcome()`: name matches "Player [A-Z]" single letter, OR price ≥0.995 with no bestBid and no lastTradePrice.
-67. **iOS Decodable models must use `Double` for probability fields** — Backend `round(prob * 100, 1)` returns floats like `72.5`, not integers. Using `Int` in the iOS Decodable model causes the entire response to fail to decode. Always use `Double` (or `Double?` for nullable fields) for any probability, percentage, or numeric score from the API.
-68. **PKCanvasView annotation coordinates require explicit frame sizing** — Using `.frame(maxHeight: 300)` without width constraint makes the canvas wider than the rendered image. Touch coordinates then include dead space, and flattening uses wrong scale factors. Always size the canvas to match the image's aspect ratio exactly, disable scroll, and use independent scaleX/scaleY with `UIScreen.main.scale` for retina.
-69. **Rapid direct Heroku deploys can crash the dyno** — The old flow let rapid pushes trigger overlapping Heroku release phases, exhausting resources and causing a 30-minute outage May 15. Current CI deploys are serialized with Heroku deploy-job concurrency; avoid bypassing that with manual overlapping Heroku pushes.
-70. **Swift file extraction changes visibility/import boundaries** — Moving native view models or helpers out of view files can expose hidden dependencies. Add required imports (`Foundation` for `localizedDescription`, string splitting/trimming, `Date`, etc.) and make shared helpers module-visible when extracted view models need them. Do not leave duplicated class definitions in both `Views/` and `ViewModels/`.
-71. **Polymarket API `group_id` scan takes 10+ minutes** — `_backfill_polymarket_group_ids_from_api` paginates through ~200K Polymarket events. Short-circuit before the API scan when no `group_id IS NULL` rows remain.
-72. **CI deploy job cannot use `secrets.*` in step-level `if`** — GitHub Actions rejects the workflow YAML before running it. Put secret-dependent checks inside the shell `run` block instead.
-73. **Cross-game Polymarket market contamination** — Game-market grouped sub-market queries need the same commence-time window as unlinked fallbacks; otherwise playoff series with the same teams leak Game 1 props into Game 2.
-74. **Bug report submissions need optional auth dependency** — Anonymous reports must stay allowed, but authenticated submissions need `get_optional_user` so `user_id` is populated for follow-up emails.
-75. **Extracted Swift files need their own imports and module-visible helpers** — Moving view models/helpers out of views changes visibility. Add imports such as `Foundation`, `Combine`, and `os` as needed, and remove duplicated class definitions from the original view file.
-76. **Bug fixed emails require captured submission email** — Store `user_email` when the bug report is created. Do not rely on joining to the current user row later; anonymous reports, deleted users, and changed emails make that unreliable.
-77. **Search weighted FTS is query-time only** — Current search ranking uses `websearch_to_tsquery` and weighted vectors in SQL expressions, not a persisted `ts_vector`. Add stored indexes only with a migration plan and regression traces.
-78. **Link-rate denominators must exclude impossible pairs** — Prediction-market health should exclude unsupported event coverage, obvious season/non-game markets, and impossible sport/league combinations. A 100% link rate must be structurally achievable.
-79. **Discover event demotion bypass must be gated on league tier** — Headline keywords like "upset"/"comeback"/"historic" only count as exceptional for Tier 1/2 leagues. EI >= 70 only exceptional for Tier 1/2. Only EI >= 85 is unconditionally exceptional. Without this gate, the headline generator labels every game "Recent upset" and Tier 4 soccer crowds out entertainment.
-80. **Election allowlist is inverted — default is penalty** — `_MAJOR_ELECTION_RE` is an allowlist. Elections not matching it get `-30`. Add new countries to the allowlist, not the obscure blocklist. Obscure blocklist gives separate `-20` for content that's worse (by-elections, UK boroughs).
-81. **Dismiss story-key propagation affects all markets sharing the key** — Dismissing one market suppresses all futures sharing its `story_key` for 14 days. New story keys widen the blast radius of a single dismiss.
-82. **Semantic dismiss must ignore generic tokens**
-83. **Never reset is_winner on resolved markets without a confirmed alternative data source** — Kalshi purges market tickers ~2-3 months after settlement. A bulk reset of is_winner on resolved markets is destructive: the API can't re-resolve purged markets, and Pass 2 picks arbitrary winners from stale probabilities. The May 19 reset caused golf calibration to regress from 4.8pp to 33.3pp MCE. Only reset is_winner on specific markets where you have confirmed the alternative resolution source (DataGolf leaderboard, Event scores, etc.) can immediately re-resolve them. — Semantic dismiss propagation compares candidate tokens against the 50 most recent dismiss/unlike token sets and applies only a soft `semantic_dismiss:-0.30` multiplier penalty above 0.60 Jaccard similarity. Do not include `category:`, `type:`, `archetype:`, or `format:` tokens in the similarity set; use topic/region/team/term tokens from `_discover_semantic_tokens()` and keep the 50-item cap.
+The full gotcha catalog lives in `docs/gotchas-reference.md`. Keep this section short: only include rules that frequently prevent production incidents or wasted agent time.
+
+1. **Alembic revision IDs must be <=32 characters** and Alembic uses psycopg2, not asyncpg.
+2. **Admin endpoints require mounting** in both `main.py` and `routes/__init__.py`; admin write endpoints also need `_check_admin_secret`.
+3. **`sport_keys.py` imports nothing** — it is pure shared data and must stay circular-import safe.
+4. **JSONB ORM assignment can silently fail** — use SQLAlchemy Core `update()` for `Event.win_probability_sources` and similar JSONB writes.
+5. **Do not mix ORM field assignment with Core SQL updates** in the same session unless you understand the flush ordering. Prefer Core SQL for both writes in task code.
+6. **Async SQLAlchemy rollback expires ORM objects** — `expire_on_commit=False` does not prevent this. In async Celery loops that commit/rollback per item, copy ORM rows into scalar refs before the loop and use Core `update()` after rollback boundaries.
+7. **Python 3.12+ redundant imports can cause `UnboundLocalError`** when a local import shadows a module-level name.
+8. **Never delete a migration file that has already run on Heroku**; missing migration files can block every later release.
+9. **GitHub Actions cannot use `secrets.*` in step-level `if`**. Put secret checks inside the shell `run` block.
+10. **Vercel runs `next build`, not just TypeScript**. Always run `npm run build` for frontend changes because ESLint/rules-of-hooks failures deploy-block.
+11. **The Odds API bills per `events * market_types * regions`**, not per HTTP request. Check quota behavior before widening markets or regions.
+12. **Celery beat schedule test has an allowlist**. When adding scheduled tasks, update `tests/test_tasks_wiring.py`.
+13. **Phase 2 prediction-market matching commits per market** to avoid deadlocks with live polling. After rollback boundaries, do not keep using live ORM objects.
+14. **Kalshi `commence_time` is often resolution/close time, not game start**. Use ticker-derived dates for game matching and DataGolf/start-date fixes for golf.
+15. **Do not time-window already linked prediction markets**. If `event_id` is set, trust it; time windows belong only on fallback/unlinked queries.
+16. **Kalshi ticker abbreviations need explicit mapping**. Prefer ticker-derived team names over market-name abbreviations for game matching.
+17. **Kalshi threshold outcomes are OVER probabilities** unless the outcome explicitly starts with "Under" or equals "No".
+18. **Polymarket game events contain nested sub-markets**, not one market with many outcomes. Decompose each sub-market by `condition_id`.
+19. **Polymarket midpoint can be stale in blowouts**. If spread is wide, use `lastTradePrice`; if there is no trade and no bid, skip.
+20. **Polymarket API `group_id` scan is expensive**. Short-circuit when there are no null `group_id` rows before scanning the API.
+21. **Calibration resolution data is fragile**. Never bulk-reset `is_winner` on resolved markets unless a confirmed alternative source can immediately re-resolve them.
+22. **Completed/closed event times are not game-end times**. Use the last real source snapshot for chart domains, not backend processing timestamps.
+23. **Discover independent binary markets need normalization** when displaying multi-candidate probabilities; Kalshi candidate binaries can sum well over 100%.
+24. **Discover event demotion exceptions must be tier-gated**. Generic "upset"/"comeback" headlines only count as exceptional for major leagues.
+25. **Dismiss propagation has blast radius**. Story keys suppress all matching markets for 14 days; semantic dismiss must ignore generic category/type/format tokens.
+26. **iOS models should be `Decodable`, `nonisolated`, and use `Double` for probability fields**. Avoid class-wide `@MainActor` on view models unless necessary.
+27. **iPad Stage Manager can return a background scene**. Filter for foreground-active `UIWindowScene` and key window.
+28. **Extracted Swift files need their own imports and visibility fixes**. Remove duplicate class definitions after extraction.
+29. **Bug reports must keep anonymous submission working** while using optional auth to capture `user_id` and storing `user_email` at submission time.
+30. **Codex command policy may reject literal `git push`**. Use `git -c push.default=simple push origin master` or the explicit HTTPS remote form.
 
 ---
 
