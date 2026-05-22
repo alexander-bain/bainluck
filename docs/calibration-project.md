@@ -115,7 +115,9 @@
 | May 20 | Ask-price-as-probability | Golf longshots stored at 98% instead of 2% | Polling fallback used yes_ask when yes_bid=0 | Fixed: ask fallback capped at ≤0.50 |
 | May 18 | Spreads cover check inverted | 28.6pp MCE on spreads | (margin > spread) wrong for signed home_spread | Fixed: (margin + spread > 0) |
 | Pre-session | Odds API moneylines not in calibration | Entire source missing from calibration for months | Nobody checked | Coverage audit endpoint now exists |
-| May 21 | Aggressive opening threshold nuked hockey | Hockey regressed 5pp | 70% cap for 20+ outcome markets caught legitimate player props | Pulled back to 50% for 50+ outcomes only, repair step restores from snapshots |
+| May 21 | Aggressive opening threshold nuked hockey | Hockey regressed 5pp | 70% cap for 20+ outcome markets caught legitimate player props | Pulled back; now uses snapshot count instead of market size |
+| May 22 | CREATE INDEX CONCURRENTLY in migration | Full production outage (~15 min) | Index on odds_snapshots took too long for Heroku release timeout | **Gotcha #31**: Never use CONCURRENTLY in migrations. Create large indexes manually. |
+| May 22 | Claimed "higher MCE = more markets" without proof | Misleading session summary | Stated confidently without checking per-source MCE breakdown | Always verify claims with per-source × sport MCE data |
 
 ---
 
