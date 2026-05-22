@@ -1434,40 +1434,54 @@ async def _null_untradeable_openings():
             )
             stats["nulled_no_movement"] = result3.rowcount
 
-            # Pass 4: outcomes with implausibly high opening probability
-            # in tournament WINNER markets (50+ outcomes, mutually exclusive).
-            # No player should open at 50%+ to WIN a 100-player tournament.
-            # Does NOT apply to make-cut/top-N markets where high probs are
-            # legitimate (Scheffler at 95% to make the cut is real).
-            # Also catches any market with 10+ outcomes where opening > 0.90.
-            result4 = await session.execute(
+            # Pass 4a: outcomes in tournament WINNER markets (50+) with high opening
+            result4a = await session.execute(
                 text("""
-                    WITH market_sizes AS (
-                        SELECT fm.id AS market_id, fm.name,
-                               COUNT(*) AS n_outcomes
+                    WITH big_winner_markets AS (
+                        SELECT fm.id AS market_id
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
-                        GROUP BY fm.id, fm.name
-                        HAVING COUNT(*) >= 10
+                          AND LOWER(fm.name) NOT LIKE '%cut%'
+                          AND LOWER(fm.name) NOT LIKE '%top 5%'
+                          AND LOWER(fm.name) NOT LIKE '%top 10%'
+                          AND LOWER(fm.name) NOT LIKE '%top 20%'
+                        GROUP BY fm.id
+                        HAVING COUNT(*) >= 50
                     )
                     UPDATE futures_outcomes fo
                     SET opening_probability = NULL,
                         calibration_probability = NULL
-                    FROM market_sizes ms
-                    WHERE fo.market_id = ms.market_id
-                      AND fo.opening_probability > CASE
-                          WHEN ms.n_outcomes >= 50
-                               AND LOWER(ms.name) NOT LIKE '%cut%'
-                               AND LOWER(ms.name) NOT LIKE '%top 5%'
-                               AND LOWER(ms.name) NOT LIKE '%top 10%'
-                               AND LOWER(ms.name) NOT LIKE '%top 20%'
-                          THEN 0.50
-                          ELSE 0.90
-                      END
+                    FROM big_winner_markets bm
+                    WHERE fo.market_id = bm.market_id
+                      AND fo.opening_probability > 0.50
                 """)
             )
-            stats["nulled_ask_price"] = result4.rowcount
+
+            # Pass 4b: outcomes with very few snapshots AND high opening.
+            # These are ask-price corruptions: yes_ask=0.99 stored as opening
+            # on illiquid markets. Real predictions have multiple snapshots
+            # from repeated polling. "LeBron: 8+ points" at 95% with 20
+            # snapshots is legitimate; "Dort: 6+ assists" at 99% with 1
+            # snapshot is the ask price.
+            result4b = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET opening_probability = NULL,
+                        calibration_probability = NULL
+                    WHERE fo.id IN (
+                        SELECT fo2.id
+                        FROM futures_outcomes fo2
+                        JOIN futures_markets fm ON fm.id = fo2.market_id
+                        WHERE fm.status = 'resolved'
+                          AND fo2.opening_probability >= 0.90
+                          AND (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                               WHERE fos.outcome_id = fo2.id) <= 2
+                        LIMIT 100000
+                    )
+                """)
+            )
+            stats["nulled_ask_price"] = (result4a.rowcount or 0) + (result4b.rowcount or 0)
 
             await session.commit()
 
