@@ -123,7 +123,7 @@ bainluck/
 
 ## Core Architecture
 
-**Event Registry** (`services/event_registry.py`): Unified `find_or_create_event()` with 4-step cascade: exact source ID → cross-source ID → structured match (sport + time ± 4h + teams, including completed/closed events) → create. All 5 source tasks wired up. ESPN is a first-class source. The structured match MUST include completed/closed events — omitting them caused 98% of Tier 1 events to lose Odds API linkage (May 2026 incident).
+**Event Registry** (`services/event_registry.py`): Unified `find_or_create_event()` with 4-step cascade: exact source ID → cross-source ID → structured match (sport + time ± 28h + teams, including completed/closed events, closest-by-time tiebreaker for doubleheaders) → create. All 5 source tasks wired up. ESPN is a first-class source. The structured match MUST include completed/closed events — omitting them caused 98% of Tier 1 events to lose Odds API linkage (May 2026 incident).
 
 **Probability Aggregation** (`utils/aggregation.py`): `compute_aggregate_probability()` reads from `Event.win_probability_sources` JSONB. Source weights: betting 3.0, ESPN 1.5, stat_model 1.0, Kalshi/Polymarket/MLB 0.8. All sources write via `select+update` pattern (NOT ORM attribute assignment — silently fails due to session caching).
 
