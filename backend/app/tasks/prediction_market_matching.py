@@ -11,9 +11,10 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, or_, and_, func, delete, case
+from sqlalchemy import select, or_, and_, func, delete, case, update
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
@@ -39,6 +40,25 @@ from app.utils.prediction_market_matching import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _LinkedMarketRef:
+    """Scalar copy of a linked market/event row.
+
+    Phase 2 commits and rolls back per market. SQLAlchemy expires ORM instances
+    on rollback, and reading an expired async ORM attribute can raise
+    MissingGreenlet. Keep only scalar values in the long-running Phase 2 loop.
+    """
+
+    market_id: int
+    source: str
+    external_id: str | None
+    name: str
+    event_id: int
+    event_commence_time: datetime | None
+    home_team_name: str | None
+    away_team_name: str | None
 
 
 def _derive_sport_category(external_id: str | None) -> str | None:
@@ -847,12 +867,26 @@ async def _match_prediction_markets(limit: int = 500):
         # home probabilities to cancel out vig. Pick a primary market for
         # processing (matchup extraction, ticker validation), and store all
         # sibling markets for probability averaging.
-        all_per_event_source: dict[tuple[int, str], list[tuple]] = {}
-        for market, event in linked_rows:
-            key = (event.id, market.source)
+        linked_refs = [
+            _LinkedMarketRef(
+                market_id=market.id,
+                source=market.source,
+                external_id=market.external_id,
+                name=market.name,
+                event_id=event.id,
+                event_commence_time=event.commence_time,
+                home_team_name=event.home_team_name,
+                away_team_name=event.away_team_name,
+            )
+            for market, event in linked_rows
+        ]
+
+        all_per_event_source: dict[tuple[int, str], list[_LinkedMarketRef]] = {}
+        for market_ref in linked_refs:
+            key = (market_ref.event_id, market_ref.source)
             if key not in all_per_event_source:
                 all_per_event_source[key] = []
-            all_per_event_source[key].append((market, event))
+            all_per_event_source[key].append(market_ref)
 
         # ── Wrong-game detection: unlink Kalshi game markets whose ticker
         # date is far from the event's commence_time. Only for traditional
@@ -867,12 +901,12 @@ async def _match_prediction_markets(limit: int = 500):
             if key[1] != "kalshi" or not group:
                 continue
 
-            ev_ref = group[0][1]
-            if not ev_ref.commence_time:
+            ev_ref = group[0]
+            if not ev_ref.event_commence_time:
                 continue
-            ec = ev_ref.commence_time if ev_ref.commence_time.tzinfo else ev_ref.commence_time.replace(tzinfo=timezone.utc)
+            ec = ev_ref.event_commence_time if ev_ref.event_commence_time.tzinfo else ev_ref.event_commence_time.replace(tzinfo=timezone.utc)
 
-            for m, ev in list(group):
+            for m in list(group):
                 ext = (m.external_id or "").lower()
                 prefix = ext.split("-")[0] if "-" in ext else ext
                 if prefix not in _WRONG_GAME_PREFIXES:
@@ -885,24 +919,27 @@ async def _match_prediction_markets(limit: int = 500):
                 if diff_hours > 30:
                     logger.warning(
                         "Phase 2 wrong-game unlink: %s (date=%s) is %.0fh from event %d (date=%s) — unlinking",
-                        m.external_id, d.date(), diff_hours, ev_ref.id, ec.date(),
+                        m.external_id, d.date(), diff_hours, ev_ref.event_id, ec.date(),
                     )
-                    m.event_id = None
+                    await session.execute(
+                        update(FuturesMarket)
+                        .where(FuturesMarket.id == m.market_id)
+                        .values(event_id=None)
+                    )
                     stats["funnel"]["phase2_multi_game_unlinked"] += 1
-                    group[:] = [(gm, ge) for gm, ge in group if gm.id != m.id]
+                    group[:] = [gm for gm in group if gm.market_id != m.market_id]
 
             await session.commit()
 
         # Pick the primary market per group: prefer more outcomes, then lowest id
-        best_per_event_source: dict[tuple[int, str], tuple] = {}
+        best_per_event_source: dict[tuple[int, str], _LinkedMarketRef] = {}
         for key, group in all_per_event_source.items():
             if not group:
                 continue  # Group emptied by multi-game unlink
             primary = group[0]
-            for market, event in group[1:]:
-                pm = primary[0]
-                if market.id < pm.id:
-                    primary = (market, event)
+            for market_ref in group[1:]:
+                if market_ref.market_id < primary.market_id:
+                    primary = market_ref
             best_per_event_source[key] = primary
 
         stats["phase2_markets_raw"] = len(linked_rows)
@@ -910,7 +947,7 @@ async def _match_prediction_markets(limit: int = 500):
 
         phase2_processed = 0
         phase2_skipped_not_ml = 0
-        for market, event in best_per_event_source.values():
+        for market in best_per_event_source.values():
             if _time_remaining() < 60:
                 logger.info("Phase 2 time budget exhausted after %d/%d markets", phase2_processed, len(linked_rows))
                 break
@@ -933,9 +970,9 @@ async def _match_prediction_markets(limit: int = 500):
                     # event's commence_time, this market is linked to the wrong
                     # event. Unlink it rather than writing bad data.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
-                    if ticker_date and event.commence_time:
+                    if ticker_date and market.event_commence_time:
                         _td = ticker_date if ticker_date.tzinfo else ticker_date.replace(tzinfo=timezone.utc)
-                        _ec = event.commence_time if event.commence_time.tzinfo else event.commence_time.replace(tzinfo=timezone.utc)
+                        _ec = market.event_commence_time if market.event_commence_time.tzinfo else market.event_commence_time.replace(tzinfo=timezone.utc)
                         # Use tight threshold when HHMM was parsed (non-midnight),
                         # loose threshold for date-only tickers.
                         # ±3h separates double-headers (~5h apart); ±18h for date-only.
@@ -946,7 +983,11 @@ async def _match_prediction_markets(limit: int = 500):
                                 market.external_id, _td.date(), _ec.date(),
                                 abs((_td - _ec).total_seconds()) / 3600,
                             )
-                            market.event_id = None
+                            await session.execute(
+                                update(FuturesMarket)
+                                .where(FuturesMarket.id == market.market_id)
+                                .values(event_id=None)
+                            )
                             await session.commit()
                             stats["funnel"].setdefault("phase2_date_unlinked", 0)
                             stats["funnel"]["phase2_date_unlinked"] += 1
@@ -960,7 +1001,7 @@ async def _match_prediction_markets(limit: int = 500):
 
                 outcome_result = await session.execute(
                     select(FuturesOutcome)
-                    .where(FuturesOutcome.market_id == market.id)
+                    .where(FuturesOutcome.market_id == market.market_id)
                     .order_by(FuturesOutcome.rank)
                 )
                 all_outcomes = outcome_result.scalars().all()
@@ -969,7 +1010,7 @@ async def _match_prediction_markets(limit: int = 500):
 
                 ml_result = find_moneyline_outcome(
                     all_outcomes, matchup,
-                    event.home_team_name, event.away_team_name,
+                    market.home_team_name, market.away_team_name,
                 )
                 if not ml_result:
                     continue
@@ -984,23 +1025,23 @@ async def _match_prediction_markets(limit: int = 500):
 
                 # Devig: if dual markets exist (e.g., "Celtics win?" +
                 # "76ers win?"), average both sides to cancel vig.
-                es_key = (event.id, market.source)
+                es_key = (market.event_id, market.source)
                 siblings = all_per_event_source.get(es_key, [])
                 if len(siblings) == 2:
                     home_probs = [home_prob]
-                    for sib_market, sib_event in siblings:
-                        if sib_market.id == market.id:
+                    for sib_market in siblings:
+                        if sib_market.market_id == market.market_id:
                             continue
                         sib_outcomes_result = await session.execute(
                             select(FuturesOutcome)
-                            .where(FuturesOutcome.market_id == sib_market.id)
+                            .where(FuturesOutcome.market_id == sib_market.market_id)
                             .order_by(FuturesOutcome.rank)
                         )
                         sib_outcomes = sib_outcomes_result.scalars().all()
                         if sib_outcomes:
                             sib_ml = find_moneyline_outcome(
                                 sib_outcomes, matchup,
-                                event.home_team_name, event.away_team_name,
+                                market.home_team_name, market.away_team_name,
                             )
                             if sib_ml:
                                 sib_outcome, sib_yes_is_home = sib_ml
@@ -1024,7 +1065,7 @@ async def _match_prediction_markets(limit: int = 500):
                     away_win_probability=round(away_prob, 4),
                     game_state={
                         "market_name": market.name,
-                        "market_id": market.id,
+                        "market_id": market.market_id,
                         "outcome_name": outcome.name,
                         "yes_probability": yes_prob,
                         "yes_bid": float(outcome.current_yes_bid) if outcome.current_yes_bid else None,
@@ -1060,7 +1101,8 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["funnel"].setdefault("phase2_deadlocks", 0)
                     stats["funnel"]["phase2_deadlocks"] += 1
                 else:
-                    stats["errors"].append(f"market {market.id}: {err_str[:100]}")
+                    await session.rollback()
+                    stats["errors"].append(f"market {market.market_id}: {err_str[:100]}")
                 continue
 
     stats["phase2_skipped_not_moneyline"] = phase2_skipped_not_ml
