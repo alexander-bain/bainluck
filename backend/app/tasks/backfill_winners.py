@@ -1828,6 +1828,31 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     except Exception as e:
         repair_stats["errors"].append(str(e))
 
+    # Phase 0c-retrotag: Tag resolution_source on pre-existing outcomes.
+    # Moved early so it runs before heavy API phases that might time out.
+    retro_stats = {"tagged": 0, "errors": []}
+    try:
+        async with get_task_session() as session:
+            r = await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET resolution_source = 'clean_resolution'
+                    WHERE fo.id IN (
+                        SELECT fo2.id FROM futures_outcomes fo2
+                        JOIN futures_markets fm ON fo2.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo2.resolution_source IS NULL
+                          AND fo2.current_probability IS NOT NULL
+                          AND (fo2.current_probability >= 0.95 OR fo2.current_probability <= 0.05)
+                        LIMIT 200000
+                    )
+                """)
+            )
+            retro_stats["tagged"] = r.rowcount
+            await session.commit()
+    except Exception as e:
+        retro_stats["errors"].append(str(e))
+
     # Phase 0d: Pre-compute closing lines on events (no API, uses odds_snapshots)
     closing_stats = await _backfill_closing_lines()
 
@@ -1887,36 +1912,6 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # Phase 2: Set is_winner from current_probability (all sources, fast)
     # Only handles markets not already resolved by API settlement above.
     prob_stats = await _backfill_from_current_probability()
-
-    # Retroactive tagging: infer resolution_source on outcomes that were
-    # resolved before tagging was deployed. Uses heuristics:
-    # - current_prob >= 0.95 or <= 0.05 with all outcomes at extremes → clean_resolution
-    # - Kalshi source with event_id linked → likely api_settlement or game_score
-    # - Polymarket with extreme current_prob → clean_resolution
-    retro_stats = {"tagged": 0, "errors": []}
-    try:
-        async with get_task_session() as session:
-            # Tag untagged outcomes where current_prob is at extremes as clean_resolution
-            r = await session.execute(
-                text("""
-                    UPDATE futures_outcomes fo
-                    SET resolution_source = 'clean_resolution'
-                    WHERE fo.id IN (
-                        SELECT fo2.id FROM futures_outcomes fo2
-                        JOIN futures_markets fm ON fo2.market_id = fm.id
-                        WHERE fm.status = 'resolved'
-                          AND fo2.is_winner IS NOT NULL
-                          AND fo2.resolution_source IS NULL
-                          AND fo2.current_probability IS NOT NULL
-                          AND (fo2.current_probability >= 0.95 OR fo2.current_probability <= 0.05)
-                        LIMIT 100000
-                    )
-                """)
-            )
-            retro_stats["tagged"] = r.rowcount
-            await session.commit()
-    except Exception as e:
-        retro_stats["errors"].append(str(e))
 
     return {
         "retro_tagging": retro_stats,
