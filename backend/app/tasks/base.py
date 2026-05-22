@@ -25,7 +25,7 @@ def _get_task_engine():
         DATABASE_URL,
         pool_pre_ping=True,
         pool_size=3,
-        max_overflow=5,
+        max_overflow=2,
         pool_recycle=1800,
         connect_args=connect_args,
     )
