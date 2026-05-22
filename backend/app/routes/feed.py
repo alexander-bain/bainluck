@@ -690,6 +690,32 @@ def _should_skip_futures_for_recent_dismissal(
     )
 
 
+def _dedupe_futures_by_group_id(futures_items: list[dict]) -> list[dict]:
+    """Deduplicate futures by group_id, keeping the highest-scoring per group.
+
+    Polymarket sub-markets sharing a group_id (e.g., 10 nominee markets for
+    "Who wins Best Picture?") should appear as one card, not 10.  Markets
+    without a group_id pass through unchanged.
+    """
+    sorted_items = sorted(
+        futures_items,
+        key=lambda x: (x.get("score", 0), x.get("_sort_time", 0)),
+        reverse=True,
+    )
+    seen_groups: set[str] = set()
+    kept: list[dict] = []
+    for item in sorted_items:
+        data = item.get("data") or {}
+        group_id = data.get("group_id")
+        if group_id is not None:
+            gid_str = str(group_id)
+            if gid_str in seen_groups:
+                continue
+            seen_groups.add(gid_str)
+        kept.append(item)
+    return kept
+
+
 def _dedupe_futures_by_canonical(futures_items: list[dict]) -> list[dict]:
     """Deduplicate futures by canonical key using the feed's existing rules."""
     seen_canonical: dict[str, dict] = {}
@@ -1569,10 +1595,13 @@ def _market_runtime_filter_trace(
     )
     if all_settled:
         blockers.append("all_outcomes_settled")
-    if leader_prob is not None and leader_prob >= 0.98:
+    if leader_prob is not None and leader_prob >= 0.97:
         blockers.append("locked_market")
-    if leader_prob is not None and leader_prob <= 0.02 and len(probs_available) <= 2:
+    if leader_prob is not None and leader_prob <= 0.03 and len(probs_available) <= 2:
         blockers.append("near_zero_binary")
+    # Dead market: all outcomes at zero probability
+    if probs_available and all(p < 0.001 for p in probs_available):
+        blockers.append("all_outcomes_zero")
 
     leader_opening = None
     if leader_name:
@@ -1663,11 +1692,14 @@ def _market_runtime_filter_trace(
             "has_any_movement": has_any_movement,
             "max_recent_movement": round(max_recent_movement, 4),
             "soft_settled_binary": soft_settled,
-            "locked_market": bool(leader_prob is not None and leader_prob >= 0.98),
+            "locked_market": bool(leader_prob is not None and leader_prob >= 0.97),
             "near_zero_binary": bool(
                 leader_prob is not None
-                and leader_prob <= 0.02
+                and leader_prob <= 0.03
                 and len(probs_available) <= 2
+            ),
+            "all_outcomes_zero": bool(
+                probs_available and all(p < 0.001 for p in probs_available)
             ),
             "days_stale": round(days_stale, 2) if days_stale is not None else None,
             "commence_time": commence_time.isoformat() if commence_time else None,
@@ -2508,6 +2540,32 @@ async def _load_personalization_context(
                     recent_seen_event_ids.add(item_id)
                 elif item_type == "futures":
                     recent_seen_futures_ids.add(item_id)
+
+    # Supplement seen IDs from user_seen_markets table (written by the
+    # predictions/Higher-Lower flow). This table tracks markets the user
+    # has already been shown as guess cards, so re-showing them in
+    # Discover is redundant.
+    if interaction_suppression_enabled:
+        from app.models.models import UserSeenMarket
+
+        usm_identity_filters = []
+        if user:
+            usm_identity_filters.append(UserSeenMarket.user_id == user.id)
+        if session_id:
+            usm_identity_filters.append(UserSeenMarket.session_id == session_id)
+        if usm_identity_filters:
+            usm_result = await db.execute(
+                select(UserSeenMarket.item_type, UserSeenMarket.item_id)
+                .where(
+                    or_(*usm_identity_filters),
+                    UserSeenMarket.seen_at >= seen_cutoff,
+                )
+            )
+            for item_type_usm, item_id_usm in usm_result.all():
+                if item_type_usm == "event":
+                    recent_seen_event_ids.add(item_id_usm)
+                elif item_type_usm == "futures":
+                    recent_seen_futures_ids.add(item_id_usm)
 
     if recent_dismissed_futures_ids:
         gid_result = await db.execute(
@@ -3791,13 +3849,20 @@ async def _score_futures(
         )
         if all_settled:
             continue
-        if leader_prob is not None and leader_prob >= 0.98:
+        # 1b) Leader at extreme probability — market is effectively decided
+        if leader_prob is not None and leader_prob >= 0.97:
             continue
         if (
             leader_prob is not None
-            and leader_prob <= 0.02
+            and leader_prob <= 0.03
             and len(probs_available) <= 2
         ):
+            continue
+        # 1c) Dead market: all outcomes at zero or no probability data at all
+        if probs_available and all(p < 0.001 for p in probs_available):
+            continue
+        if not probs_available and market.outcomes:
+            # Market has outcomes but none have probability data — dead
             continue
 
         # 2) Stale market: no price updates for 7+ days and zero movement
@@ -4289,6 +4354,11 @@ async def _score_futures(
 
         scored_items.append(item)
     mark_timing("scoring_loop")
+
+    # Dedup by group_id: keep only the highest-scoring market per group.
+    # Polymarket sub-markets sharing a group_id represent the same real-world
+    # question (e.g., "Who wins Best Picture?" x 10 nominee markets).
+    scored_items = _dedupe_futures_by_group_id(scored_items)
 
     scored_items = cap_low_quality_families(scored_items, cap=1)
     scored_items = diversify_quality_families(
