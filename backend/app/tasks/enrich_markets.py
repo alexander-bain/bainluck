@@ -283,17 +283,40 @@ def _load_polymarket_blurbs() -> list[dict]:
         return []
 
 
-def _needs_regeneration(market, current_leader_name: str, now: datetime) -> bool:
-    """Check if an existing hook should be regenerated."""
+def _needs_regeneration(
+    market, current_leader_name: str, current_leader_prob: float | None, now: datetime
+) -> bool:
+    """Check if an existing hook should be regenerated.
+
+    Re-generates when:
+    - No hook yet
+    - Leader changed
+    - Hook older than 24h
+    - Leader probability moved >= 15pp from generation-time snapshot
+    """
+    from app.utils.hook_staleness import (
+        HOOK_PROB_METADATA_KEY,
+        STALE_PROBABILITY_DELTA,
+    )
+
     if not market.hook_description:
         return True
     if not market.hook_generated_at:
         return True
     age_hours = (now - market.hook_generated_at).total_seconds() / 3600
-    if age_hours < 24 and market.hook_leader_at_generation == current_leader_name:
-        return False
     if market.hook_leader_at_generation and market.hook_leader_at_generation != current_leader_name:
         return True
+    # Check probability delta against generation-time snapshot
+    if current_leader_prob is not None and isinstance(market.market_metadata, dict):
+        gen_prob = market.market_metadata.get(HOOK_PROB_METADATA_KEY)
+        if gen_prob is not None:
+            try:
+                if abs(float(current_leader_prob) - float(gen_prob)) >= STALE_PROBABILITY_DELTA:
+                    return True
+            except (TypeError, ValueError):
+                pass
+    if age_hours < 24 and market.hook_leader_at_generation == current_leader_name:
+        return False
     if age_hours >= 24:
         return True
     return False
@@ -394,8 +417,13 @@ async def enrich_market_hooks(limit: int = 50):
 
             leader = outcomes[0]
             leader_name = leader.name
+            leader_prob = (
+                float(leader.current_probability)
+                if leader.current_probability is not None
+                else None
+            )
 
-            if not _needs_regeneration(market, leader_name, now):
+            if not _needs_regeneration(market, leader_name, leader_prob, now):
                 stats["skipped"] += 1
                 continue
 
@@ -462,6 +490,17 @@ async def enrich_market_hooks(limit: int = 50):
                 if len(hook) > 500:
                     hook = hook[:497] + "..."
 
+                # Store generation-time probability in market_metadata
+                # so serve-time staleness check can detect big probability
+                # swings without a schema migration.
+                from app.utils.hook_staleness import HOOK_PROB_METADATA_KEY
+
+                next_metadata = dict(market.market_metadata or {})
+                if leader_prob is not None:
+                    next_metadata[HOOK_PROB_METADATA_KEY] = round(leader_prob, 4)
+                elif HOOK_PROB_METADATA_KEY in next_metadata:
+                    del next_metadata[HOOK_PROB_METADATA_KEY]
+
                 await session.execute(
                     update(FuturesMarket)
                     .where(FuturesMarket.id == market.id)
@@ -469,6 +508,7 @@ async def enrich_market_hooks(limit: int = 50):
                         hook_description=hook,
                         hook_generated_at=now,
                         hook_leader_at_generation=leader_name,
+                        market_metadata=next_metadata,
                     )
                 )
                 stats["generated"] += 1

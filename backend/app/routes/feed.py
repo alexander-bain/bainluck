@@ -99,6 +99,7 @@ from app.tasks.enrich_markets import (
     _discover_llm_score_adjustment,
     _get_discover_llm_metadata,
 )
+from app.utils.hook_staleness import is_hook_stale
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.personalization import (
     PersonalizationContext,
@@ -3464,6 +3465,8 @@ async def _score_futures(
             FuturesMarket.group_type,
             FuturesMarket.image_url,
             FuturesMarket.hook_description,
+            FuturesMarket.hook_generated_at,
+            FuturesMarket.hook_leader_at_generation,
             FuturesMarket.market_metadata,
             FuturesMarket.volume_24h,
             FuturesMarket.updated_at,
@@ -3992,10 +3995,24 @@ async def _score_futures(
         ):
             continue
 
+        # Detect stale hooks early so explanation scoring uses the
+        # effective (possibly suppressed) hook, not the raw DB value.
+        effective_hook = market.hook_description
+        if effective_hook and is_hook_stale(
+            hook_description=effective_hook,
+            hook_generated_at=market.hook_generated_at,
+            hook_leader_at_generation=market.hook_leader_at_generation,
+            current_leader_name=leader_name,
+            current_leader_probability=leader_prob,
+            market_metadata=market.market_metadata,
+            now=now,
+        ):
+            effective_hook = None
+
         base_score = apply_quality_score(highlight_result.score, quality)
         base_score = apply_explanation_quality_score(
             base_score,
-            hook_description=market.hook_description,
+            hook_description=effective_hook,
             headline=headline,
             quality=quality,
         )
@@ -4211,7 +4228,7 @@ async def _score_futures(
             "group_id": market.group_id,
             "group_type": market.group_type,
             "image_url": market.image_url,
-            "hook_description": market.hook_description,
+            "hook_description": effective_hook,
         }
         if discover_llm_metadata:
             futures_data["discover_llm"] = {
