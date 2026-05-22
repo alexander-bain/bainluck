@@ -21,8 +21,8 @@ MEDIUM_POLL_INTERVAL = 300    # 5 minutes after unchanged polls
 SLOW_POLL_INTERVAL = 600      # 10 minutes after many unchanged polls
 
 # Thresholds for slowing down
-MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
-SLOW_THRESHOLD = 6     # Slow to slow after this many unchanged polls
+MEDIUM_THRESHOLD = 5   # Slow to medium after this many unchanged polls (softened from 3)
+SLOW_THRESHOLD = 10    # Slow to slow after this many unchanged polls (softened from 6)
 
 # Sport-specific max durations (in hours) for staleness detection
 # Used to infer when a match has likely ended if odds go stale
@@ -50,10 +50,10 @@ MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has 
 # Tier 1 (NBA, NFL, etc.) gets polled most frequently; tier 4 (minor leagues) least.
 # The beat schedule fires discover_events every 15 min, but per-sport Redis gating
 # inside the task skips sports that were polled too recently for their tier.
-DISCOVER_TIER1_INTERVAL = 1800   # 30 min — doubled from 15min to save quota
-DISCOVER_TIER2_INTERVAL = 3600   # 1 hour — doubled from 30min
-DISCOVER_TIER3_INTERVAL = 14400  # 4 hours — doubled from 2h
-DISCOVER_TIER4_INTERVAL = 28800  # 8 hours — doubled from 4h
+DISCOVER_TIER1_INTERVAL = 900    # 15 min — reverted from 1800 (March emergency conservation)
+DISCOVER_TIER2_INTERVAL = 1800   # 30 min — reverted from 3600 (March emergency conservation)
+DISCOVER_TIER3_INTERVAL = 7200   # 2 hours — reverted from 14400 (March emergency conservation)
+DISCOVER_TIER4_INTERVAL = 14400  # 4 hours — reverted from 28800 (March emergency conservation)
 
 # Futures poll less frequently since they change slowly
 FUTURES_POLL_INTERVAL = 3600  # 1 hour default
@@ -82,9 +82,7 @@ SPORT_POLLING_TIERS: dict[str, int] = {
 
 # Per-sport region overrides (temporary or permanent).
 # When set, overrides the default tier-based region selection for live/soon polls.
-SPORT_REGION_OVERRIDES: dict[str, str] = {
-    "baseball_mlb": "us",
-}
+SPORT_REGION_OVERRIDES: dict[str, str] = {}  # Cleared — MLB restored to us+us2 (was demoted March-May 2026)
 
 # Per-sport minimum poll intervals (seconds). Applied as a floor AFTER tier
 # multipliers and adaptive slowdown. Useful for high-event-count sports where

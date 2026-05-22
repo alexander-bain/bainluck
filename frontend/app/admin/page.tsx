@@ -304,6 +304,43 @@ function KeyTakeaways({ data }: { data: DashboardData }) {
     items.push({ icon: "✓", text: "Odds API quota on track. " + formatNum(surplus) + " under budget at current pace.", severity: "ok" });
   }
 
+  // Quota polling anomaly alerts
+  const dailyUsage = data.quota?.daily_usage || [];
+  if (dailyUsage.length >= 2) {
+    const recentDays = dailyUsage.slice(-2);
+    const avgRecent = recentDays.reduce((s: number, d: { daily_requests: number }) => s + d.daily_requests, 0) / recentDays.length;
+    const latestDay = dailyUsage[dailyUsage.length - 1];
+
+    if (avgRecent < 20000) {
+      items.push({
+        icon: "!",
+        text: "Polling critically low: averaging " + formatNum(Math.round(avgRecent)) + "/day over last 2 days. Expected 60-80K/day. Check worker health and sport 404 caches.",
+        severity: "crit",
+      });
+    } else if (avgRecent < 50000) {
+      items.push({
+        icon: "!",
+        text: "Polling below expected: averaging " + formatNum(Math.round(avgRecent)) + "/day over last 2 days. Expected 60-80K/day.",
+        severity: "warn",
+      });
+    }
+
+    if (latestDay && latestDay.daily_requests > 350000) {
+      items.push({
+        icon: "!",
+        text: "Polling spike: " + formatNum(latestDay.daily_requests) + " requests today (" + latestDay.date + "). Budget is " + formatNum(data.quota.budget.linear_daily_budget) + "/day. Risk of triggering conservation mode.",
+        severity: "crit",
+      });
+    } else if (latestDay && latestDay.daily_requests > 200000) {
+      items.push({
+        icon: "!",
+        text: "Elevated polling: " + formatNum(latestDay.daily_requests) + " requests today. Monitor for runaway loop.",
+        severity: "warn",
+      });
+    }
+  }
+
+
   // Database
   if (data.database.plan) {
     const pct = data.database.plan.storage_pct;

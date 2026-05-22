@@ -2139,3 +2139,72 @@ async def datagolf_status(
         "live_tours": live_tours,
         "latest_markets": latest_markets,
     }
+
+
+@router.get("/odds-api/sport-polling-status")
+async def sport_polling_status(
+    secret: str = Query(...),
+):
+    """Live polling status for each sport — shows 404 caches, adaptive slowdown, and skip reasons."""
+    if not _check_admin_secret(secret):
+        return {"error": "unauthorized"}
+
+    from datetime import datetime, timezone
+    from app.tasks.redis_state import get_redis_client
+    from app.tasks.config import (
+        SPORT_POLLING_TIERS, SPORT_POLLING_DEFAULT_TIER,
+        SPORT_TIER_MULTIPLIERS, SPORT_REGION_OVERRIDES,
+    )
+    from app.utils.sport_keys import SPORT_LEAGUE_MAP
+
+    r = get_redis_client()
+    if not r:
+        return {"error": "redis_unavailable"}
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+    sports = []
+    for sport_key in sorted(SPORT_LEAGUE_MAP.keys()):
+        tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
+        multiplier = SPORT_TIER_MULTIPLIERS.get(tier, 4)
+
+        is_404 = bool(r.get(f"bainluck:sport_404:{sport_key}"))
+
+        last_poll_raw = r.get(f"bainluck:last_poll:{sport_key}")
+        last_poll_ago = round(now_ts - float(last_poll_raw.decode())) if last_poll_raw else None
+
+        unchanged_raw = r.get(f"bainluck:unchanged_count:{sport_key}")
+        unchanged_count = int(unchanged_raw.decode()) if unchanged_raw else 0
+
+        region_override = SPORT_REGION_OVERRIDES.get(sport_key)
+
+        status = "active"
+        if is_404:
+            status = "404_cached"
+        elif last_poll_ago is None:
+            status = "never_polled"
+        elif last_poll_ago > 7200:
+            status = "stale"
+
+        sports.append({
+            "sport": sport_key,
+            "tier": tier,
+            "multiplier": f"{multiplier}x",
+            "status": status,
+            "is_404_cached": is_404,
+            "last_poll_seconds_ago": last_poll_ago,
+            "unchanged_count": unchanged_count,
+            "region_override": region_override,
+            "effective_live_interval_s": 32 * multiplier,
+        })
+
+    cached_404 = [s for s in sports if s["is_404_cached"]]
+
+    return {
+        "total_sports": len(sports),
+        "active": len([s for s in sports if s["status"] == "active"]),
+        "cached_404": len(cached_404),
+        "stale": len([s for s in sports if s["status"] == "stale"]),
+        "never_polled": len([s for s in sports if s["status"] == "never_polled"]),
+        "cached_404_sports": [s["sport"] for s in cached_404],
+        "sports": sports,
+    }
