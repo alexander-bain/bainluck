@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, cast, Integer, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.services import get_db
+from app.services import get_db, get_db_rw
 from app.models.models import UserPrediction, FuturesMarket, FuturesOutcome, User
 from app.dependencies.auth import get_optional_user
 
@@ -110,7 +110,7 @@ async def submit_prediction(
     body: PredictionSubmission,
     request: Request,
     user: Optional[User] = Depends(get_optional_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     user_id = user.id if user else None
     session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")

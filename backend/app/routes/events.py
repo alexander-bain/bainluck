@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team
-from app.services import get_db, OddsAPIService, fetch_current_odds
+from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils import (
     moneyline_to_probability,
@@ -213,7 +213,7 @@ async def discover_all_events(
         None,
         description="Comma-separated category prefixes to discover (e.g., 'rugby,cricket,aussierules'). If not specified, discovers ALL sports."
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Discover and create events for all sports from The Odds API.
@@ -5240,7 +5240,7 @@ async def get_event_odds_history(
 @router.get("/{event_id}/line-movement")
 async def get_line_movement_analysis(
     event_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Get line movement analysis and AI-generated explanations for an event.

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 logger = logging.getLogger(__name__)
 
@@ -799,7 +799,7 @@ async def date_mismatch_audit(db: AsyncSession = Depends(get_db)):
 async def fix_date_mismatches(
     secret: str = "",
     dry_run: bool = True,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Unlink Kalshi markets whose ticker date doesn't match the event date.
 
@@ -881,7 +881,7 @@ async def fix_date_mismatches(
 async def cleanup_orphaned_snapshots(
     secret: str = "",
     dry_run: bool = True,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete win_prob_snapshots written by markets that are no longer linked.
 
@@ -1133,7 +1133,7 @@ async def oscillation_audit(db: AsyncSession = Depends(get_db)):
 async def cleanup_oscillation(
     secret: str = "",
     dry_run: bool = True,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete contaminated stat_model/espn snapshots and fix ESPN ID collisions.
 

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import PredictionChallenge, FuturesMarket, FuturesOutcome
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ def _generate_code() -> str:
 # ---------- Routes ----------
 
 @router.post("")
-async def create_challenge(body: CreateChallengeRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def create_challenge(body: CreateChallengeRequest, request: Request, db: AsyncSession = Depends(get_db_rw)):
     """Create a new friend challenge and return a shareable URL."""
     if body.guess not in ("higher", "lower"):
         raise HTTPException(status_code=400, detail="guess must be 'higher' or 'lower'")
@@ -127,7 +127,7 @@ async def get_challenge(code: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{code}/accept")
-async def accept_challenge(code: str, body: AcceptChallengeRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def accept_challenge(code: str, body: AcceptChallengeRequest, request: Request, db: AsyncSession = Depends(get_db_rw)):
     """Friend submits their guess on a challenge."""
     if body.guess not in ("higher", "lower"):
         raise HTTPException(status_code=400, detail="guess must be 'higher' or 'lower'")

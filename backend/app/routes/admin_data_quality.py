@@ -18,7 +18,7 @@ from app.models import Event, FuturesMarket, FuturesOddsSnapshot
 
 from app.models.models import WinProbSnapshot
 
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 from app.routes.admin_utils import _check_admin_secret
 
@@ -154,7 +154,7 @@ async def discover_market_groups(
     limit: int = Query(500, ge=1, le=5000),
     source: Optional[str] = Query(None, description="Filter by source (polymarket, kalshi, odds_api)"),
     dry_run: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Discover and set group_id on existing markets that don't have one.
@@ -346,7 +346,7 @@ async def turbo_collapse(
 async def reclassify_misclassified_events(
     secret: str = Query(...),
     dry_run: bool = Query(True),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Reclassify events whose sport_key doesn't match their Kalshi ticker.
 
@@ -440,7 +440,7 @@ async def merge_duplicate_events(
     dry_run: bool = Query(True),
     limit: int = Query(200, description="Max pm_ events to process per call"),
     sport: Optional[str] = Query(None, description="Filter to specific sport_id"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Find and merge duplicate events created by prediction market matching.
 
@@ -568,7 +568,7 @@ async def purge_orphan_pm_events(
     dry_run: bool = Query(True),
     limit: int = Query(500, description="Max events to process per call"),
     sport: Optional[str] = Query(None, description="Filter to specific sport key"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete pm_ events that have no matching real event and no useful data.
 
@@ -679,7 +679,7 @@ async def purge_orphan_pm_events(
 async def db_storage_analysis(
     secret: str = Query("", description="Admin secret"),
     detail: str = Query("sizes", description="What to analyze: sizes, age, status, orphans, all"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Analyze DB storage. Split into sections to avoid Heroku 30s timeout.
@@ -1041,7 +1041,7 @@ async def delete_orphan_futures_snapshots(
     secret: str = Query("", description="Admin secret"),
     batch_size: int = Query(50000, description="Delete in batches"),
     dry_run: bool = Query(True, description="Preview without deleting"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete futures_odds_snapshots with no matching outcome."""
     if not _check_admin_secret(secret):
@@ -1081,7 +1081,7 @@ async def vacuum_table(
     secret: str = Query("", description="Admin secret"),
     table: str = Query("futures_odds_snapshots", description="Table to vacuum"),
     full: bool = Query(False, description="VACUUM FULL (rewrites table, reclaims disk)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Run VACUUM on a table. VACUUM (regular) marks dead tuples as reusable.
@@ -1135,7 +1135,7 @@ async def vacuum_table(
 async def drop_duplicate_index(
     secret: str = Query("", description="Admin secret"),
     index_name: str = Query(..., description="Index name to drop"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Drop a duplicate index by name. Only allows dropping known-safe duplicates."""
     if not _check_admin_secret(secret):
@@ -1421,7 +1421,7 @@ async def debug_golf_markets(
 async def backfill_completed_at(
     secret: str = Query(...),
     limit: int = Query(5000),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Backfill completed_at for historical events using authoritative sources.
 
@@ -1747,7 +1747,7 @@ async def trigger_backfill_winners(
 @router.post("/backfill-winners/probability-only")
 async def trigger_probability_backfill(
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Run the probability-based is_winner passes using the request DB session."""
     if not _check_admin_secret(secret):
@@ -2676,7 +2676,7 @@ async def calibration_coverage_audit(
 @router.post("/calibration/tag-guesses")
 async def tag_guesses(
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Tag midrange untagged outcomes as pass2_guess."""
     if not _check_admin_secret(secret):
@@ -2717,7 +2717,7 @@ async def tag_guesses(
 @router.post("/calibration/test-retrotag")
 async def test_retrotag(
     secret: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Test the retroactive tagging query directly."""
     if not _check_admin_secret(secret):

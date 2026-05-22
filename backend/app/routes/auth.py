@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
 from app.models.models import User, UserPreference
-from app.services.database import get_db
+from app.services.database import get_db, get_db_rw
 from app.services.firebase_auth import verify_id_token, is_configured, get_or_create_firebase_user, create_custom_token, verify_apple_id_token
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ async def auth_health():
 @router.post("/google", response_model=UserProfileResponse)
 async def google_sign_in(
     body: GoogleAuthRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Verify a Firebase ID token from Google Sign-In and return the user profile.
@@ -183,7 +183,7 @@ async def google_sign_in(
 @router.post("/google-access-token")
 async def google_access_token_sign_in(
     body: GoogleAccessTokenRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Exchange a Google access token for a Firebase custom token.
@@ -304,7 +304,7 @@ async def google_access_token_sign_in(
 @router.post("/apple")
 async def apple_sign_in(
     body: AppleAuthRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """
     Verify an Apple id_token and exchange for Firebase credentials.
@@ -458,7 +458,7 @@ async def get_profile(
 async def update_profile(
     body: UpdateProfileRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Update the current user's profile."""
     if body.display_name is not None:
@@ -489,7 +489,7 @@ async def update_profile(
 @router.delete("/me")
 async def delete_account(
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
 ):
     """Delete the current user's account and all associated data."""
     await db.delete(user)

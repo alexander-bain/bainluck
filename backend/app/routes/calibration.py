@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func
 
 from app.models import FuturesMarket
-from app.services import get_db
+from app.services import get_db, get_db_rw
 
 
 def wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, float]:
@@ -758,7 +758,7 @@ async def calibration_events_funnel(
 
 @router.post("/calibration/rescue")
 async def calibration_rescue(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_rw),
     secret: str = Query(""),
     limit: int = Query(50000),
 ):
