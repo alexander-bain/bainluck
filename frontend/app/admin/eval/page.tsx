@@ -247,18 +247,7 @@ function TabBar({
         <button
           key={t.key}
           onClick={() => onTab(t.key)}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 10,
-            border: tab === t.key ? "2px solid #3b82f6" : "2px solid #333",
-            background: tab === t.key ? "#1e3a5f" : "#1a1a2e",
-            color: tab === t.key ? "#93c5fd" : "#888",
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-            minHeight: 44,
-          }}
+className={`px-4 py-2.5 rounded-xl border-2 font-semibold text-sm cursor-pointer whitespace-nowrap min-h-[44px] transition-colors ${tab === t.key ? "border-accent-brand bg-accent-brand/10 text-accent-brand" : "border-surface-border bg-surface-card text-text-muted hover:text-text-secondary"}`}
         >
           {t.label}
           {t.count !== null && (
@@ -326,19 +315,13 @@ function GridMatchCard({
 
   return (
     <div
-      style={{
-        background: "#161b22",
-        borderRadius: 14,
-        padding: 20,
-        marginBottom: 12,
-        border: spread > 0.3 ? "1px solid #dc2626" : spread > 0.15 ? "1px solid #d97706" : "1px solid #30363d",
-      }}
+className={`bg-surface-card rounded-xl p-5 mb-3 border ${spread > 0.3 ? "border-accent-danger" : spread > 0.15 ? "border-accent-warning" : "border-surface-border"}`}
     >
       {/* Header */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary, #111827)", marginBottom: 4 }}>
               {team}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -348,13 +331,13 @@ function GridMatchCard({
                   borderRadius: 6,
                   fontSize: 12,
                   fontWeight: 600,
-                  background: "#1e3a5f",
-                  color: "#93c5fd",
+                  background: "var(--accent-brand-bg, #10B98120)",
+                  color: "var(--accent-brand, #10B981)",
                 }}
               >
                 {columnLabel.toUpperCase()}
               </span>
-              <span style={{ fontSize: 12, color: "#64748b" }}>
+              <span style={{ fontSize: 12, color: "var(--text-muted, #9CA3AF)" }}>
                 {gridName || league.toUpperCase()}
               </span>
               {tournamentStatus === "live" && (
@@ -364,7 +347,7 @@ function GridMatchCard({
                   fontSize: 10,
                   fontWeight: 700,
                   background: "#14532d",
-                  color: "#4ade80",
+                  color: "var(--accent-live, #22C55E)",
                   textTransform: "uppercase",
                   letterSpacing: 0.5,
                 }}>
@@ -374,7 +357,7 @@ function GridMatchCard({
             </div>
             {/* Leaderboard position context (golf) */}
             {position && (
-              <div style={{ fontSize: 12, color: "#93c5fd", marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "var(--accent-brand, #10B981)", marginTop: 4 }}>
                 Currently {position}
                 {totalScore != null && ` (${totalScore > 0 ? "+" : ""}${totalScore})`}
                 {thru && ` thru ${thru}`}
@@ -408,16 +391,16 @@ function GridMatchCard({
             style={{
               marginBottom: 10,
               padding: "8px 10px",
-              background: "#0d1117",
+              background: "var(--bg-surface, #F5F5F7)",
               borderRadius: 8,
               borderLeft: `3px solid ${s === highSource && spread > 0.15 ? "#3b82f6" : s === lowSource && spread > 0.15 ? "#ef4444" : "#3b82f6"}`,
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", textTransform: "capitalize" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary, #111827)", textTransform: "capitalize" }}>
                 {s.source}
               </span>
-              <span style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary, #111827)" }}>
                 {(s.probability * 100).toFixed(1)}%
               </span>
             </div>
@@ -425,7 +408,7 @@ function GridMatchCard({
             {s.market_name && (
               <div style={{
                 fontSize: 11,
-                color: "#64748b",
+                color: "var(--text-muted, #9CA3AF)",
                 lineHeight: 1.3,
                 marginTop: 2,
                 display: "flex",
@@ -450,7 +433,7 @@ function GridMatchCard({
               </div>
             )}
             {/* Probability bar */}
-            <div style={{ height: 4, borderRadius: 2, background: "#21262d", overflow: "hidden", marginTop: 4 }}>
+            <div style={{ height: 4, borderRadius: 2, background: "var(--surface-border, #E5E7EB)", overflow: "hidden", marginTop: 4 }}>
               <div
                 style={{
                   height: "100%",
@@ -468,12 +451,12 @@ function GridMatchCard({
             display: "flex",
             justifyContent: "space-between",
             padding: "8px 0 0",
-            borderTop: "1px solid #21262d",
+            borderTop: "1px solid var(--surface-border, #E5E7EB)",
             marginTop: 4,
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#93c5fd" }}>Merged</span>
-          <span style={{ fontSize: 17, fontWeight: 700, color: "#93c5fd" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-brand, #10B981)" }}>Merged</span>
+          <span style={{ fontSize: 17, fontWeight: 700, color: "var(--accent-brand, #10B981)" }}>
             {(cell.merged_probability * 100).toFixed(1)}%
           </span>
         </div>
@@ -486,7 +469,7 @@ function GridMatchCard({
           {Object.keys(diagnostics.crossColumns).length > 0 && (
             <div style={{
               padding: "8px 10px",
-              background: "#0d1117",
+              background: "var(--bg-surface, #F5F5F7)",
               borderRadius: 8,
               marginBottom: 8,
               borderLeft: "3px solid #8b5cf6",
@@ -499,7 +482,7 @@ function GridMatchCard({
                 if (!otherCols || otherCols.length === 0) return null;
                 return (
                   <div key={s.source} style={{ marginBottom: 4 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "capitalize" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary, #6B7280)", textTransform: "capitalize" }}>
                       {s.source}:
                     </span>{" "}
                     {otherCols.map((oc, i) => {
@@ -531,7 +514,7 @@ function GridMatchCard({
           {Object.keys(diagnostics.peers).length > 0 && (
             <div style={{
               padding: "8px 10px",
-              background: "#0d1117",
+              background: "var(--bg-surface, #F5F5F7)",
               borderRadius: 8,
               borderLeft: "3px solid #6366f1",
             }}>
@@ -543,7 +526,7 @@ function GridMatchCard({
                 if (!peers || peers.length === 0) return null;
                 return (
                   <div key={s.source} style={{ marginBottom: 4 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "capitalize" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary, #6B7280)", textTransform: "capitalize" }}>
                       {s.source}:
                     </span>{" "}
                     {peers.slice(0, 4).map((p, i) => (
@@ -568,33 +551,33 @@ function GridMatchCard({
         color: "#8b949e",
         marginBottom: 12,
         padding: "10px 12px",
-        background: "#0d1117",
+        background: "var(--bg-surface, #F5F5F7)",
         borderRadius: 8,
         lineHeight: 1.5,
       }}>
         {spread > 0.3 ? (
           <>
-            <span style={{ color: "#fca5a5", fontWeight: 600 }}>Big disagreement: </span>
+            <span style={{ color: "var(--accent-danger, #EF4444)", fontWeight: 600 }}>Big disagreement: </span>
             <span style={{ textTransform: "capitalize" }}>{highSource.source}</span> says{" "}
-            <strong style={{ color: "#e2e8f0" }}>{(highSource.probability * 100).toFixed(0)}%</strong> but{" "}
+            <strong style={{ color: "var(--text-primary, #111827)" }}>{(highSource.probability * 100).toFixed(0)}%</strong> but{" "}
             <span style={{ textTransform: "capitalize" }}>{lowSource.source}</span> says{" "}
-            <strong style={{ color: "#e2e8f0" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
-            {" "}Are both about <strong style={{ color: "#e2e8f0" }}>{team}</strong> to <strong style={{ color: "#93c5fd" }}>{columnLabel}</strong> at the same event?
+            <strong style={{ color: "var(--text-primary, #111827)" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
+            {" "}Are both about <strong style={{ color: "var(--text-primary, #111827)" }}>{team}</strong> to <strong style={{ color: "var(--accent-brand, #10B981)" }}>{columnLabel}</strong> at the same event?
           </>
         ) : spread > 0.15 ? (
           <>
-            <span style={{ color: "#fcd34d", fontWeight: 600 }}>Notable gap: </span>
+            <span style={{ color: "var(--accent-warning, #F59E0B)", fontWeight: 600 }}>Notable gap: </span>
             <span style={{ textTransform: "capitalize" }}>{highSource.source}</span>{" "}
-            <strong style={{ color: "#e2e8f0" }}>{(highSource.probability * 100).toFixed(0)}%</strong> vs{" "}
+            <strong style={{ color: "var(--text-primary, #111827)" }}>{(highSource.probability * 100).toFixed(0)}%</strong> vs{" "}
             <span style={{ textTransform: "capitalize" }}>{lowSource.source}</span>{" "}
-            <strong style={{ color: "#e2e8f0" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
-            {" "}Should these be merged for <strong style={{ color: "#e2e8f0" }}>{team}</strong>?
+            <strong style={{ color: "var(--text-primary, #111827)" }}>{(lowSource.probability * 100).toFixed(0)}%</strong>.
+            {" "}Should these be merged for <strong style={{ color: "var(--text-primary, #111827)" }}>{team}</strong>?
           </>
         ) : (
           <>
             Sources agree within {spreadPct}pp for{" "}
-            <strong style={{ color: "#e2e8f0" }}>{team}</strong> to{" "}
-            <strong style={{ color: "#93c5fd" }}>{columnLabel}</strong>.
+            <strong style={{ color: "var(--text-primary, #111827)" }}>{team}</strong> to{" "}
+            <strong style={{ color: "var(--accent-brand, #10B981)" }}>{columnLabel}</strong>.
             {" "}Look right?
           </>
         )}
@@ -610,8 +593,8 @@ function GridMatchCard({
             padding: "14px 0",
             borderRadius: 10,
             border: "none",
-            background: "#166534",
-            color: "#4ade80",
+            background: "var(--accent-live, #22C55E)",
+            color: "var(--accent-live, #22C55E)",
             fontSize: 16,
             fontWeight: 700,
             cursor: "pointer",
@@ -629,8 +612,8 @@ function GridMatchCard({
             padding: "14px 0",
             borderRadius: 10,
             border: "none",
-            background: "#7f1d1d",
-            color: "#fca5a5",
+            background: "var(--accent-danger, #EF4444)",
+            color: "var(--accent-danger, #EF4444)",
             fontSize: 16,
             fontWeight: 700,
             cursor: "pointer",
@@ -647,9 +630,9 @@ function GridMatchCard({
             width: 50,
             padding: "14px 0",
             borderRadius: 10,
-            border: "1px solid #333",
+            border: "1px solid var(--surface-border, #E5E7EB)",
             background: "transparent",
-            color: "#64748b",
+            color: "var(--text-muted, #9CA3AF)",
             fontSize: 14,
             fontWeight: 600,
             cursor: "pointer",
@@ -689,17 +672,11 @@ function FuturesEvalCard({
 
   return (
     <div
-      style={{
-        background: "#161b22",
-        borderRadius: 14,
-        padding: 20,
-        marginBottom: 12,
-        border: "1px solid #30363d",
-      }}
+className="bg-surface-card rounded-xl p-5 mb-3 border border-surface-border"
     >
       {/* Header */}
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: "#e2e8f0", marginBottom: 6, lineHeight: 1.3 }}>
+        <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-primary, #111827)", marginBottom: 6, lineHeight: 1.3 }}>
           {market.name}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -709,8 +686,8 @@ function FuturesEvalCard({
               borderRadius: 6,
               fontSize: 11,
               fontWeight: 600,
-              background: "#2d2d4e",
-              color: "#c084fc",
+              background: "var(--accent-futures-bg, #8B5CF620)",
+              color: "var(--accent-futures, #8B5CF6)",
               textTransform: "capitalize",
             }}
           >
@@ -722,15 +699,15 @@ function FuturesEvalCard({
               borderRadius: 6,
               fontSize: 11,
               fontWeight: 600,
-              background: "#1a1a2e",
-              color: "#64748b",
+              background: "var(--surface-elevated, #F0F0F2)",
+              color: "var(--text-muted, #9CA3AF)",
               textTransform: "capitalize",
             }}
           >
             {market.source}
           </span>
           {resDate && (
-            <span style={{ fontSize: 11, color: "#64748b" }}>Resolves {resDate}</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted, #9CA3AF)" }}>Resolves {resDate}</span>
           )}
         </div>
       </div>
@@ -746,13 +723,13 @@ function FuturesEvalCard({
                 justifyContent: "space-between",
                 alignItems: "center",
                 padding: "6px 0",
-                borderBottom: "1px solid #21262d",
+                borderBottom: "1px solid var(--surface-border, #E5E7EB)",
               }}
             >
-              <span style={{ fontSize: 14, color: "#e2e8f0", flex: 1 }}>{o.name}</span>
+              <span style={{ fontSize: 14, color: "var(--text-primary, #111827)", flex: 1 }}>{o.name}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {o.probability !== null && (
-                  <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary, #111827)" }}>
                     {(o.probability * 100).toFixed(0)}%
                   </span>
                 )}
@@ -772,7 +749,7 @@ function FuturesEvalCard({
             </div>
           ))}
           {market.outcome_count > 3 && (
-            <div style={{ fontSize: 11, color: "#64748b", padding: "4px 0" }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted, #9CA3AF)", padding: "4px 0" }}>
               +{market.outcome_count - 3} more outcomes
             </div>
           )}
@@ -794,8 +771,8 @@ function FuturesEvalCard({
             padding: "14px 0",
             borderRadius: 10,
             border: "none",
-            background: "#1e3a5f",
-            color: "#60a5fa",
+            background: "var(--accent-brand-bg, #10B98120)",
+            color: "var(--accent-brand, #10B981)",
             fontSize: 16,
             fontWeight: 700,
             cursor: "pointer",
@@ -812,9 +789,9 @@ function FuturesEvalCard({
             flex: 1,
             padding: "14px 0",
             borderRadius: 10,
-            border: "1px solid #333",
+            border: "1px solid var(--surface-border, #E5E7EB)",
             background: "transparent",
-            color: "#94a3b8",
+            color: "var(--text-secondary, #6B7280)",
             fontSize: 16,
             fontWeight: 700,
             cursor: "pointer",
@@ -833,7 +810,7 @@ function FuturesEvalCard({
             borderRadius: 10,
             border: "1px solid #7f1d1d",
             background: "transparent",
-            color: "#f87171",
+            color: "var(--accent-danger, #EF4444)",
             fontSize: 14,
             fontWeight: 600,
             cursor: "pointer",
@@ -897,15 +874,15 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
       {/* Stats */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {[
-          { label: "Merge OK", value: stats.correct, color: "#4ade80" },
-          { label: "Bad Match", value: stats.wrong, color: "#f87171" },
-          { label: "Feature", value: stats.interesting, color: "#60a5fa" },
-          { label: "Skip", value: stats.skip, color: "#94a3b8" },
+          { label: "Merge OK", value: stats.correct, color: "var(--accent-live, #22C55E)" },
+          { label: "Bad Match", value: stats.wrong, color: "var(--accent-danger, #EF4444)" },
+          { label: "Feature", value: stats.interesting, color: "var(--accent-brand, #10B981)" },
+          { label: "Skip", value: stats.skip, color: "var(--text-secondary, #6B7280)" },
         ].map((s) => (
           <div
             key={s.label}
             style={{
-              background: "#1a1a2e",
+              background: "var(--surface-elevated, #F0F0F2)",
               borderRadius: 8,
               padding: "10px 14px",
               textAlign: "center",
@@ -914,14 +891,14 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
             }}
           >
             <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{s.label}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted, #9CA3AF)" }}>{s.label}</div>
           </div>
         ))}
       </div>
 
       {/* Active Overrides from DB */}
       <div style={{ marginBottom: 24 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#93c5fd", marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--accent-brand, #10B981)", marginBottom: 10 }}>
           Active Overrides ({totalOverrides})
         </h3>
         <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
@@ -942,15 +919,15 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
                   cursor: "pointer",
                 }}
               >
-                {l.emoji} {l.label} {count > 0 && <span style={{ color: "#64748b" }}>({count})</span>}
+                {l.emoji} {l.label} {count > 0 && <span style={{ color: "var(--text-muted, #9CA3AF)" }}>({count})</span>}
               </button>
             );
           })}
         </div>
         {overridesLoading ? (
-          <div style={{ color: "#64748b", fontSize: 13, padding: 10 }}>Loading overrides...</div>
+          <div style={{ color: "var(--text-muted, #9CA3AF)", fontSize: 13, padding: 10 }}>Loading overrides...</div>
         ) : leagueOverrides.length === 0 ? (
-          <div style={{ color: "#64748b", fontSize: 13, padding: 10 }}>
+          <div style={{ color: "var(--text-muted, #9CA3AF)", fontSize: 13, padding: 10 }}>
             No overrides for {selectedLeague.toUpperCase()}.
           </div>
         ) : (
@@ -963,16 +940,16 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "8px 12px",
-                  background: "#161b22",
+                  background: "var(--surface-card, #FFFFFF)",
                   borderRadius: 8,
                   borderLeft: `3px solid ${o.decision === "approved" ? "#4ade80" : o.decision === "rejected" ? "#f87171" : "#64748b"}`,
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
+                  <div style={{ fontSize: 13, color: "var(--text-primary, #111827)", fontWeight: 600 }}>
                     {o.source_name}
                   </div>
-                  <div style={{ display: "flex", gap: 6, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 6, fontSize: 11, color: "var(--text-muted, #9CA3AF)", flexWrap: "wrap" }}>
                     <span style={{
                       fontWeight: 600,
                       color: o.decision === "approved" ? "#4ade80" : "#fca5a5",
@@ -994,7 +971,7 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
                     borderRadius: 6,
                     border: "1px solid #475569",
                     background: "transparent",
-                    color: "#94a3b8",
+                    color: "var(--text-secondary, #6B7280)",
                     fontSize: 12,
                     cursor: "pointer",
                     marginLeft: 8,
@@ -1023,9 +1000,9 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
         style={{
           padding: "10px 20px",
           borderRadius: 8,
-          border: "1px solid #333",
-          background: "#1a1a2e",
-          color: "#93c5fd",
+          border: "1px solid var(--surface-border, #E5E7EB)",
+          background: "var(--surface-elevated, #F0F0F2)",
+          color: "var(--accent-brand, #10B981)",
           fontSize: 13,
           fontWeight: 600,
           cursor: "pointer",
@@ -1043,7 +1020,7 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
           key={i}
           style={{
             padding: "10px 14px",
-            background: "#161b22",
+            background: "var(--surface-card, #FFFFFF)",
             borderRadius: 8,
             marginBottom: 6,
             borderLeft: `3px solid ${
@@ -1059,10 +1036,10 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
             }`,
           }}
         >
-          <div style={{ fontSize: 13, color: "#e2e8f0", marginBottom: 2 }}>
+          <div style={{ fontSize: 13, color: "var(--text-primary, #111827)", marginBottom: 2 }}>
             {d.market_name}
           </div>
-          <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#64748b" }}>
+          <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--text-muted, #9CA3AF)" }}>
             <span
               style={{
                 fontWeight: 600,
@@ -1085,7 +1062,7 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
       ))}
 
       {sorted.length === 0 && (
-        <div style={{ textAlign: "center", padding: 40, color: "#64748b" }}>
+        <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted, #9CA3AF)" }}>
           No decisions yet. Start evaluating!
         </div>
       )}
@@ -1269,7 +1246,7 @@ function GridMatchingTab() {
             style={{
               padding: "10px 14px",
               borderRadius: 10,
-              border: league === l.slug ? "2px solid #3b82f6" : "2px solid #333",
+              border: league === l.slug ? "2px solid #3b82f6" : "2px solid var(--surface-border, #E5E7EB)",
               background: league === l.slug ? "#1e3a5f" : "#1a1a2e",
               color: league === l.slug ? "#93c5fd" : "#888",
               fontWeight: 600,
@@ -1284,7 +1261,7 @@ function GridMatchingTab() {
       </div>
 
       {loading && (
-        <div style={{ textAlign: "center", padding: 40, color: "#64748b" }}>
+        <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted, #9CA3AF)" }}>
           Loading {league.toUpperCase()} grid...
         </div>
       )}
@@ -1307,7 +1284,7 @@ function GridMatchingTab() {
 
       {!loading && current && (
         <>
-          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8, textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted, #9CA3AF)", marginBottom: 8, textAlign: "center" }}>
             {remaining} remaining · {candidates.length - remaining} reviewed
           </div>
           <GridMatchCard
@@ -1332,13 +1309,13 @@ function GridMatchingTab() {
           style={{
             textAlign: "center",
             padding: 40,
-            background: "#161b22",
+            background: "var(--surface-card, #FFFFFF)",
             borderRadius: 14,
-            color: "#4ade80",
+            color: "var(--accent-live, #22C55E)",
           }}
         >
           <div style={{ fontSize: 28, marginBottom: 8 }}>All reviewed!</div>
-          <div style={{ color: "#64748b", fontSize: 14 }}>
+          <div style={{ color: "var(--text-muted, #9CA3AF)", fontSize: 14 }}>
             {candidates.length} {league.toUpperCase()} grid matches evaluated
           </div>
         </div>
@@ -1349,9 +1326,9 @@ function GridMatchingTab() {
           style={{
             textAlign: "center",
             padding: 40,
-            background: "#161b22",
+            background: "var(--surface-card, #FFFFFF)",
             borderRadius: 14,
-            color: "#64748b",
+            color: "var(--text-muted, #9CA3AF)",
           }}
         >
           No multi-source matches to evaluate for {league.toUpperCase()}.
@@ -1443,14 +1420,14 @@ function FuturesInterestingTab() {
   return (
     <div>
       {loading && (
-        <div style={{ textAlign: "center", padding: 40, color: "#64748b" }}>
+        <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted, #9CA3AF)" }}>
           Loading non-sports futures...
         </div>
       )}
 
       {!loading && current && (
         <>
-          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8, textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted, #9CA3AF)", marginBottom: 8, textAlign: "center" }}>
             {remaining} remaining · Page {page}
           </div>
           <FuturesEvalCard market={current} onDecision={handleDecision} />
@@ -1462,11 +1439,11 @@ function FuturesInterestingTab() {
           style={{
             textAlign: "center",
             padding: 40,
-            background: "#161b22",
+            background: "var(--surface-card, #FFFFFF)",
             borderRadius: 14,
           }}
         >
-          <div style={{ fontSize: 24, color: "#4ade80", marginBottom: 8 }}>
+          <div style={{ fontSize: 24, color: "var(--accent-live, #22C55E)", marginBottom: 8 }}>
             Page {page} done!
           </div>
           <button
@@ -1475,7 +1452,7 @@ function FuturesInterestingTab() {
               padding: "12px 24px",
               borderRadius: 10,
               border: "none",
-              background: "#3b82f6",
+              background: "var(--accent-brand, #10B981)",
               color: "#fff",
               fontSize: 15,
               fontWeight: 600,
@@ -1493,9 +1470,9 @@ function FuturesInterestingTab() {
           style={{
             textAlign: "center",
             padding: 40,
-            background: "#161b22",
+            background: "var(--surface-card, #FFFFFF)",
             borderRadius: 14,
-            color: "#64748b",
+            color: "var(--text-muted, #9CA3AF)",
           }}
         >
           No non-sports futures found. Check back later.
@@ -1532,15 +1509,7 @@ export default function EvalPage() {
 
   return (
     <div
-      style={{
-        maxWidth: 500,
-        margin: "0 auto",
-        padding: "24px 16px",
-        fontFamily: "system-ui, -apple-system, sans-serif",
-        color: "#e2e8f0",
-        minHeight: "100vh",
-        background: "#09090b",
-      }}
+className="max-w-lg mx-auto py-6 px-4"
     >
       <div style={{ marginBottom: 20 }}>
 <PageHeader
