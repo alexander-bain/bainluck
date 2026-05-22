@@ -46,6 +46,17 @@ struct NativeEventDiscoverCard: View {
         return nil
     }
 
+    private var shareURL: URL {
+        URL(string: eventShareURL(event.id, style: .nativeCard)) ?? bainLuckFallbackURL
+    }
+
+    private var shareMessage: String {
+        if let prob = event.currentOdds?.homeProbability {
+            return "\(event.awayTeam) vs \(event.homeTeam) — \(Int((prob * 100).rounded()))% on Bain Luck"
+        }
+        return "\(event.awayTeam) vs \(event.homeTeam) on Bain Luck"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -106,6 +117,23 @@ struct NativeEventDiscoverCard: View {
                     onExpand: onContextExpand,
                     onCollapse: onContextCollapse
                 )
+            }
+
+            HStack {
+                Spacer()
+
+                ShareLink(
+                    item: shareURL,
+                    subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
+                    message: Text(shareMessage)
+                ) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .background(Color.secondary.opacity(0.10), in: Circle())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(14)

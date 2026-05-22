@@ -49,6 +49,17 @@ struct NativeFuturesDiscoverCard: View {
         leader?.probability ?? 0
     }
 
+    private var shareURL: URL {
+        URL(string: futuresShareURL(data.id, style: .nativeCard)) ?? bainLuckFallbackURL
+    }
+
+    private var shareMessage: String {
+        if let leader, let prob = leader.probability {
+            return "\(leader.name) at \(Int((prob * 100).rounded()))% — \(data.name) on Bain Luck"
+        }
+        return "\(data.name) on Bain Luck"
+    }
+
     private var contextText: String? {
         if let feedContext, !feedContext.isEmpty { return feedContext }
         if let hook = data.hookDescription, !hook.isEmpty { return hook }
@@ -152,6 +163,19 @@ struct NativeFuturesDiscoverCard: View {
                     }
 
                     Spacer()
+
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text(data.name),
+                        message: Text(shareMessage)
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                            .background(Color.secondary.opacity(0.10), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(14)
