@@ -2237,7 +2237,8 @@ async def get_probability_timeline(
     plus a "Field" entry that sums all remaining outcomes' probabilities.
 
     Designed for multi-participant charts (golf tournaments, championship
-    markets with many contestants).
+    markets with many contestants). Auto-extends the time window for sparse
+    markets (common for non-sports futures).
     """
     # Verify market exists and load outcomes + team enrichment
     result = await db.execute(
@@ -2253,6 +2254,8 @@ async def get_probability_timeline(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    requested_hours = hours
+    actual_hours = hours
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Get ALL outcome IDs (we need them all to compute Field)
@@ -2263,6 +2266,7 @@ async def get_probability_timeline(
             "market_id": market_id,
             "market_name": market.name,
             "hours": hours,
+            "actual_hours": hours,
             "top": top,
             "timeline": [],
             "outcomes": [],
@@ -2279,13 +2283,36 @@ async def get_probability_timeline(
     )
 
     result = await db.execute(snapshot_query)
-    snapshots = result.scalars().all()
+    snapshots = list(result.scalars().all())
+
+    # Auto-extend for sparse markets (same logic as /history endpoint)
+    _TIMELINE_EXTEND_TIERS = [
+        (20, 720),   # <20 snapshots -> try 30 days
+        (10, 2160),  # <10 snapshots -> try 90 days
+    ]
+    for threshold, extended_hours in _TIMELINE_EXTEND_TIERS:
+        if len(snapshots) < threshold and extended_hours > actual_hours:
+            extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
+            ext_query = (
+                select(FuturesOddsSnapshot)
+                .where(
+                    FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+                    FuturesOddsSnapshot.captured_at >= extended_cutoff,
+                )
+                .order_by(FuturesOddsSnapshot.captured_at)
+            )
+            ext_result = await db.execute(ext_query)
+            extended_snapshots = list(ext_result.scalars().all())
+            if len(extended_snapshots) > len(snapshots):
+                snapshots = extended_snapshots
+                actual_hours = extended_hours
 
     if not snapshots:
         return {
             "market_id": market_id,
             "market_name": market.name,
-            "hours": hours,
+            "hours": requested_hours,
+            "actual_hours": actual_hours,
             "top": top,
             "timeline": [],
             "outcomes": [],
@@ -2398,7 +2425,8 @@ async def get_probability_timeline(
         "market_name": market.name,
         "sport_category": market.llm_sport_category,
         "source": market.source,
-        "hours": hours,
+        "hours": requested_hours,
+        "actual_hours": actual_hours,
         "top": top,
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
@@ -2662,6 +2690,9 @@ async def get_futures_history(
     Get historical odds movement for a futures market.
 
     Returns time-series data for charting probability changes.
+    Auto-extends the time window for sparse markets (common for non-sports
+    futures like politics, economics, entertainment) to ensure meaningful
+    chart data density.
     """
     # Verify market exists
     result = await db.execute(
@@ -2673,8 +2704,6 @@ async def get_futures_history(
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Get outcome IDs to fetch history for
     if outcome_id:
@@ -2689,7 +2718,21 @@ async def get_futures_history(
         )[:capped_n]
         outcome_ids = [o.id for o in sorted_outcomes]
 
-    # Fetch snapshots for these outcomes
+    # --- Auto-extend for sparse markets ---
+    # Try the requested window first. If too few snapshots, widen to 30d then 90d.
+    # This is critical for non-sports futures (polled every 1-2h) whose 7-day
+    # window may contain only a handful of data points.
+    requested_hours = hours
+    actual_hours = hours
+    auto_extended = False
+    _EXTEND_TIERS = [
+        (20, 720),   # <20 snapshots → try 30 days
+        (10, 2160),  # <10 snapshots → try 90 days
+    ]
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Fetch snapshots for the initial window
     snapshot_query = (
         select(FuturesOddsSnapshot)
         .where(
@@ -2698,9 +2741,27 @@ async def get_futures_history(
         )
         .order_by(FuturesOddsSnapshot.captured_at)
     )
-
     result = await db.execute(snapshot_query)
-    snapshots = result.scalars().all()
+    snapshots = list(result.scalars().all())
+
+    # Auto-extend if sparse
+    for threshold, extended_hours in _EXTEND_TIERS:
+        if len(snapshots) < threshold and extended_hours > actual_hours:
+            extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
+            ext_query = (
+                select(FuturesOddsSnapshot)
+                .where(
+                    FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                    FuturesOddsSnapshot.captured_at >= extended_cutoff,
+                )
+                .order_by(FuturesOddsSnapshot.captured_at)
+            )
+            ext_result = await db.execute(ext_query)
+            extended_snapshots = list(ext_result.scalars().all())
+            if len(extended_snapshots) > len(snapshots):
+                snapshots = extended_snapshots
+                actual_hours = extended_hours
+                auto_extended = True
 
     # Group snapshots by outcome, then aggregate per-bookmaker snapshots
     # at the same timestamp into a single consensus value.
@@ -2718,6 +2779,9 @@ async def get_futures_history(
             outcome_time_groups[snapshot.outcome_id][snapshot.captured_at].append(
                 float(snapshot.probability)
             )
+
+    # Count total unique data points across all outcomes
+    total_data_points = sum(len(tg) for tg in outcome_time_groups.values())
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
@@ -2748,14 +2812,24 @@ async def get_futures_history(
         outcome_history, explicit_boundaries
     )
 
-    return {
+    response: dict = {
         "market_id": market_id,
         "market_name": market.name,
-        "hours": hours,
+        "hours": requested_hours,
+        "actual_hours": actual_hours,
         "outcomes": list(outcome_history.values()),
         "round_boundaries": round_boundaries,
         "leaderboard": (market.market_metadata or {}).get("leaderboard"),
+        "total_data_points": total_data_points,
     }
+
+    # Signal to the frontend when data is sparse so it can show appropriate UI
+    if auto_extended:
+        response["auto_extended"] = True
+    if total_data_points < 10:
+        response["sparse"] = True
+
+    return response
 
 
 def _format_market_summary(market: FuturesMarket, source_count_map: dict = None) -> dict:
