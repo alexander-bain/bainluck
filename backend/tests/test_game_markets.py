@@ -464,6 +464,106 @@ class TestGetGameMarketsFormatting:
         ]
 
     @pytest.mark.asyncio
+    async def test_other_market_with_player_outcome_rescued_to_player_props(self):
+        """Markets classified as 'other' should be rescued to player_props
+        when outcomes match the player-name pattern (e.g., 'Joel Embiid: 1+')."""
+        event = _make_event()
+        # Generic matchup name with no keywords -> classifies as "other"
+        market = _make_market(
+            id=110,
+            name="Celtics at Knicks",
+            external_id=None,
+        )
+        outcome = _make_outcome(
+            id=210,
+            market_id=110,
+            name="Jaylen Brown: 25+",
+            probability=0.38,
+            opening_probability=0.42,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        # Should be rescued from 'other' into player_props
+        assert len(response["player_props"]) == 1
+        assert response["other"] == []
+        prop = response["player_props"][0]
+        assert prop["outcome_name"] == "Jaylen Brown: 25+"
+        assert prop["threshold"] == 25.0
+        assert prop["source"] == "kalshi"
+
+    @pytest.mark.asyncio
+    async def test_other_market_with_player_stat_name_rescued_to_player_props(self):
+        """Markets classified as 'other' should be rescued to player_props
+        when the market name contains a player-stat pattern."""
+        event = _make_event()
+        # Market name has player stat pattern but no over/under/total keyword
+        # so _classify_game_market returns "other"
+        market = _make_market(
+            id=111,
+            name="Jaylen Brown First Basket",
+            external_id=None,
+        )
+        outcome = _make_outcome(
+            id=211,
+            market_id=111,
+            name="Yes",
+            probability=0.15,
+            opening_probability=0.12,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert len(response["player_props"]) == 1
+        assert response["other"] == []
+
+    @pytest.mark.asyncio
+    async def test_truly_generic_other_market_stays_in_other(self):
+        """Markets with no player pattern in name or outcomes stay in 'other'."""
+        event = _make_event()
+        market = _make_market(
+            id=112,
+            name="Celtics at Knicks",
+            external_id=None,
+        )
+        outcome = _make_outcome(
+            id=212,
+            market_id=112,
+            name="Yes",
+            probability=0.60,
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=[market]),
+            _make_result(all_rows=[]),
+            _make_result(rows=[]),
+            _make_result(rows=[outcome]),
+        ])
+
+        response = await get_game_markets(event.id, db)
+
+        assert response["player_props"] == []
+        assert len(response["other"]) == 1
+        assert response["other"][0]["outcome_name"] == "Yes"
+
+    @pytest.mark.asyncio
     async def test_unlinked_fallback_game_prop_uses_name_period_when_ticker_missing(self):
         event = _make_event()
         market = _make_market(
