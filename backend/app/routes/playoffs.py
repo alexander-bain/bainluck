@@ -407,6 +407,78 @@ def _is_playoff_relevant_market(market_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Season filtering — reject next-season markets
+# ---------------------------------------------------------------------------
+
+# Matches 4-digit years (2024–2030) in market names
+_YEAR_RE = re.compile(r"\b(202[4-9]|2030)\b")
+
+# Matches hyphenated season suffixes like "2026-27" → extracts both 2026 and 27
+_SEASON_HYPHEN_RE = re.compile(r"\b(202[4-9])-(2[4-9]|30)\b")
+
+
+def _extract_season_max_year(season_pattern: str) -> int | None:
+    """Extract the maximum year from a season pattern like '2025-26' or '2026'.
+
+    Returns the latest year referenced by the pattern:
+      '2025-26' → 2026
+      '2026'    → 2026
+      '2026-27' → 2027
+    Returns None if the pattern can't be parsed.
+    """
+    if not season_pattern:
+        return None
+    parts = season_pattern.split("-")
+    try:
+        if len(parts) == 2:
+            base = int(parts[0])
+            suffix = parts[1]
+            if len(suffix) == 2:
+                return base // 100 * 100 + int(suffix)
+            return int(suffix)
+        return int(parts[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _extract_years_from_name(market_name: str) -> list[int]:
+    """Extract all year references from a market name.
+
+    Handles both standalone years ("2027") and hyphenated season formats
+    ("2026-27" → [2026, 2027]).
+    """
+    years: set[int] = set()
+    # First pass: find hyphenated season references like "2026-27"
+    for match in _SEASON_HYPHEN_RE.finditer(market_name):
+        base = int(match.group(1))
+        suffix = int(match.group(2))
+        years.add(base)
+        years.add(base // 100 * 100 + suffix)
+    # Second pass: find standalone 4-digit years
+    for match in _YEAR_RE.finditer(market_name):
+        years.add(int(match.group(1)))
+    return sorted(years)
+
+
+def _is_future_season_market(market_name: str, max_year: int) -> bool:
+    """Check if a market name references a season beyond the current one.
+
+    A market is considered future-season if it contains a year strictly
+    greater than max_year.  Markets without any year reference pass through.
+
+    Examples with max_year=2026:
+      'NBA: 2027 Champion'        → True  (future)
+      '2026 NBA Champion'         → False (current)
+      'NBA Championship Winner'   → False (no year)
+      'NBA 2026-27 Champion'      → True  (contains 2027)
+    """
+    years = _extract_years_from_name(market_name)
+    if not years:
+        return False
+    return any(y > max_year for y in years)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -2301,6 +2373,29 @@ async def get_playoff_grid(
         elif not league_patterns:
             markets.append(market)
 
+    # -----------------------------------------------------------------------
+    # 1b. Filter out next-season markets
+    # -----------------------------------------------------------------------
+    # Markets like "NBA: 2027 Champion" belong to the 2026-27 season, not the
+    # current 2025-26 season.  When next-season and current-season markets
+    # both feed the same grid column, the per-source dedup (keep lowest prob)
+    # picks the wrong one because next-season probabilities are systematically
+    # lower.  Extract the max year from the season_pattern and reject markets
+    # whose name references a later year.
+    _season_max_year = _extract_season_max_year(config.season_pattern)
+    if _season_max_year:
+        before_filter = len(markets)
+        markets = [
+            m for m in markets
+            if not _is_future_season_market(m.name or "", _season_max_year)
+        ]
+        filtered_season = before_filter - len(markets)
+        if filtered_season:
+            logger.info(
+                "Playoff grid %s: filtered %d future-season markets (max_year=%d)",
+                league_slug, filtered_season, _season_max_year,
+            )
+
     logger.info(
         "Playoff grid %s: found %d markets for sport_keys=%s, category=%s",
         league_slug,
@@ -3176,6 +3271,14 @@ async def get_team_progression_for_event(
                 markets.append(market)
         elif not league_patterns:
             markets.append(market)
+
+    # Filter out next-season markets (same logic as main grid endpoint)
+    _prog_season_max = _extract_season_max_year(config.season_pattern)
+    if _prog_season_max:
+        markets = [
+            m for m in markets
+            if not _is_future_season_market(m.name or "", _prog_season_max)
+        ]
 
     # Match markets to columns and extract outcomes
     column_data: dict[str, list[tuple]] = defaultdict(list)
