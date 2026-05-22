@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,8 @@ from app.services import get_db
 from app.services.odds_api import OddsAPIService
 
 router = APIRouter()
+
+_PROCESS_START = time.time()
 
 # Get git commit at startup (cached)
 def _get_git_commit():
@@ -50,13 +53,38 @@ async def health_check():
 
 @router.get("/api/health")
 async def api_health_check():
-    """Health check at /api/health path for convenience."""
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "commit": GIT_COMMIT,
-        "features": ["sync_sports", "discover_events", "get_support"],
-    }
+    """Lightweight liveness check for uptime monitors. No auth required."""
+    db_ok = True
+    redis_ok = True
+
+    try:
+        from app.services.database import engine
+        from sqlalchemy import text as _text
+        async with engine.connect() as conn:
+            await conn.execute(_text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+        get_redis_client().ping()
+    except Exception:
+        redis_ok = False
+
+    status = "ok" if (db_ok and redis_ok) else "degraded"
+    code = 200 if (db_ok or redis_ok) else 503
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=code,
+        content={
+            "status": status,
+            "db": db_ok,
+            "redis": redis_ok,
+            "commit": GIT_COMMIT,
+            "uptime_seconds": int(time.time() - _PROCESS_START),
+        },
+    )
 
 
 @router.get("/health/ready")
@@ -130,8 +158,20 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
         checks["odds_api"] = f"error: {e}"
         all_ok = False
 
+    # Check queue lengths
+    try:
+        from app.tasks.redis_state import get_redis_client
+        _r = get_redis_client()
+        checks["queue_lengths"] = {
+            "background": _r.llen("background") or 0,
+            "realtime": _r.llen("realtime") or 0,
+        }
+    except Exception:
+        checks["queue_lengths"] = "unavailable"
+
     return {
         "status": "ready" if all_ok else "degraded",
+        "uptime_seconds": int(time.time() - _PROCESS_START),
         "checks": checks,
     }
 
