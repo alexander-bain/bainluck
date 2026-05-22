@@ -1070,15 +1070,19 @@ async def public_calibration(
     # Per-bookmaker moneyline calibration from odds_snapshots.
     # Each bookmaker's closing line (last snapshot before game start) is
     # an independent prediction. Devigged via home/(home+away) normalization.
-    # Per-bookmaker closing lines: uses the already-devigged consensus
-    # closing probability from the events table, broken out per bookmaker.
-    # Instead of scanning all odds_snapshots (millions of rows), we use
-    # the consensus closing line × number of bookmakers that contributed.
-    # This gives us the AGGREGATE per-bookmaker calibration without the
-    # expensive per-bookmaker DISTINCT ON scan.
-    # TODO: for true per-bookmaker calibration, precompute in a backfill
-    # task and store per-bookmaker closing lines on the events table.
+    # Per-bookmaker closing lines: precomputed in backfill task every 6h,
+    # cached in Redis. Read instantly without scanning odds_snapshots.
     bookmaker_rows = []
+    try:
+        from types import SimpleNamespace as _NS
+        from app.tasks.redis_state import get_redis_client
+        import json as _json
+        _rc = get_redis_client()
+        _cached = _rc.get("bainluck:bookmaker_calibration")
+        if _cached:
+            bookmaker_rows = [_NS(**row) for row in _json.loads(_cached)]
+    except Exception:
+        pass
 
     all_rows = list(rows) + list(events_rows) + list(spreads_rows) + list(totals_rows) + list(bookmaker_rows)
     total_outcomes = sum(r.n for r in all_rows)

@@ -1906,7 +1906,99 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         "from_probability": prob_stats,
         "kalshi_api": kalshi_stats,
         "polymarket_api": poly_api_stats,
+        "bookmaker_calibration": await _precompute_bookmaker_calibration(),
     }
+
+
+async def _precompute_bookmaker_calibration():
+    """Precompute per-bookmaker moneyline calibration and cache in Redis.
+
+    Each bookmaker's closing moneyline (last pre-game snapshot) paired with
+    the game outcome. Resolution is free (home_score > away_score). Devigged
+    via home_prob / (home_prob + away_prob). Results stored as aggregated
+    calibration buckets in Redis for the calibration endpoint to read.
+    """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {"bookmakers": 0, "data_points": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+                        category,
+                        COUNT(*) AS n,
+                        SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+                        AVG(prob) AS avg_prob,
+                        SUM(prob::float) AS sum_prob,
+                        SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+                    FROM (
+                        SELECT DISTINCT ON (os.event_id, os.bookmaker)
+                            os.home_win_probability::float
+                            / NULLIF(os.home_win_probability::float + os.away_win_probability::float, 0)
+                            AS prob,
+                            (e.home_score > e.away_score) AS won,
+                            s.key AS category
+                        FROM odds_snapshots os
+                        JOIN events e ON e.id = os.event_id
+                        JOIN sports s ON s.id = e.sport_id
+                        WHERE e.status IN ('completed', 'closed')
+                          AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+                          AND e.home_score != e.away_score
+                          AND os.home_win_probability IS NOT NULL
+                          AND os.away_win_probability IS NOT NULL
+                          AND os.home_win_probability > 0
+                          AND os.away_win_probability > 0
+                          AND e.commence_time IS NOT NULL
+                          AND os.captured_at < e.commence_time
+                        ORDER BY os.event_id, os.bookmaker, os.captured_at DESC
+                    ) outcomes
+                    WHERE prob > 0.01 AND prob < 0.99
+                    GROUP BY bucket_idx, category
+                    ORDER BY bucket_idx, category
+                """)
+            )
+            rows = result.all()
+
+            buckets = []
+            for r in rows:
+                buckets.append({
+                    "bucket_idx": r.bucket_idx,
+                    "source": "odds_api_bookmaker",
+                    "category": r.category,
+                    "price_moved": None,
+                    "n": r.n,
+                    "winners": r.winners,
+                    "avg_prob": float(r.avg_prob),
+                    "sum_prob": float(r.sum_prob),
+                    "sum_sq_err": float(r.sum_sq_err),
+                })
+                stats["data_points"] += r.n
+
+            # Store in Redis (expires in 24h, refreshed every 6h)
+            try:
+                redis_client = get_redis_client()
+                redis_client.setex(
+                    "bainluck:bookmaker_calibration",
+                    86400,
+                    _json.dumps(buckets),
+                )
+                stats["bookmakers"] = len(set(r.category for r in rows))
+            except Exception as e:
+                stats["errors"].append(f"Redis: {e}")
+
+    except Exception as e:
+        stats["errors"].append(str(e))
+        logger.error("Bookmaker calibration precomputation error: %s", e)
+
+    logger.info(
+        "Bookmaker calibration: %d data points across %d sports, %d errors",
+        stats["data_points"], stats["bookmakers"], len(stats["errors"]),
+    )
+    return stats
 
 
 async def _compute_calibration_prices():
