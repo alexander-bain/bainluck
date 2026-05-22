@@ -278,6 +278,7 @@ export default function LeagueShowcasePage() {
           key: c.key,
           label: c.label,
           marketId: c.market_id!,
+          marketIds: c.market_ids,
         }));
       if (options.length > 0) {
         // Default to the last column (championship) — it's the most interesting

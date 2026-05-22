@@ -2943,12 +2943,15 @@ async def get_playoff_grid(
             # Find the most common market_id for this column
             col_market_ids = [m.id for m, _ in column_data[col.key]]
             col_market_id = Counter(col_market_ids).most_common(1)[0][0] if col_market_ids else None
+            # Deduplicated list of all market IDs for cross-source aggregation
+            col_market_ids_unique = sorted(set(col_market_ids))
             active_columns.append({
                 "key": col.key,
                 "label": col.label,
                 "order": col.order,
                 "sequential": col.sequential,
                 "market_id": col_market_id,
+                "market_ids": col_market_ids_unique,
             })
 
     # Group teams by conference if configured

@@ -286,7 +286,12 @@ export default function GolfTournamentPage() {
     for (const { type, key, label } of typeMap) {
       const group = data.markets.find((g) => g.type === type);
       if (group && group.market_ids.length > 0) {
-        opts.push({ key, label, marketId: group.market_ids[0] });
+        opts.push({
+          key,
+          label,
+          marketId: group.market_ids[0],
+          marketIds: group.market_ids,
+        });
       }
     }
     return opts;
