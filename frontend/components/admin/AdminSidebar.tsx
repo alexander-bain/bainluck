@@ -13,6 +13,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Play,
 } from "lucide-react";
 
 interface NavItem {
@@ -225,6 +226,15 @@ export default function AdminSidebar() {
             </div>
           );
         })}
+        <div className="mt-4 pt-3 border-t border-surface-border">
+          <Link
+            href="/admin/story"
+            className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-accent-brand hover:bg-accent-brand/5 transition-colors"
+          >
+            <Play className="w-4 h-4" />
+            Pipeline Walkthrough
+          </Link>
+        </div>
       </nav>
     </aside>
   );
