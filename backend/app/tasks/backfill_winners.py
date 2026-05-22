@@ -1901,14 +1901,16 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 text("""
                     UPDATE futures_outcomes fo
                     SET resolution_source = 'clean_resolution'
-                    FROM futures_markets fm
-                    WHERE fo.market_id = fm.id
-                      AND fm.status = 'resolved'
-                      AND fo.is_winner IS NOT NULL
-                      AND fo.resolution_source IS NULL
-                      AND fo.current_probability IS NOT NULL
-                      AND (fo.current_probability >= 0.95 OR fo.current_probability <= 0.05)
-                    LIMIT 100000
+                    WHERE fo.id IN (
+                        SELECT fo2.id FROM futures_outcomes fo2
+                        JOIN futures_markets fm ON fo2.market_id = fm.id
+                        WHERE fm.status = 'resolved'
+                          AND fo2.is_winner IS NOT NULL
+                          AND fo2.resolution_source IS NULL
+                          AND fo2.current_probability IS NOT NULL
+                          AND (fo2.current_probability >= 0.95 OR fo2.current_probability <= 0.05)
+                        LIMIT 100000
+                    )
                 """)
             )
             retro_stats["tagged"] = r.rowcount
