@@ -384,8 +384,8 @@ class TestCrossSourceEventMatching:
         assert event is existing
 
     @pytest.mark.asyncio
-    async def test_structured_match_respects_timezone_aware_four_hour_window(self):
-        """The ±4h window includes the boundary across timezone offsets."""
+    async def test_structured_match_respects_timezone_aware_window(self):
+        """The ±28h window includes the boundary across timezone offsets."""
         incoming_pacific = datetime(
             2026, 4, 15, 19, 0, tzinfo=timezone(timedelta(hours=-7))
         )
@@ -394,7 +394,7 @@ class TestCrossSourceEventMatching:
             sport_id=1,
             home_team_name="Boston Celtics",
             away_team_name="New York Knicks",
-            commence_time=datetime(2026, 4, 16, 6, 0, tzinfo=timezone.utc),
+            commence_time=datetime(2026, 4, 17, 5, 0, tzinfo=timezone.utc),
             status="scheduled",
         )
         just_outside = Event(
@@ -402,7 +402,7 @@ class TestCrossSourceEventMatching:
             sport_id=1,
             home_team_name="Boston Celtics",
             away_team_name="New York Knicks",
-            commence_time=datetime(2026, 4, 16, 6, 0, 1, tzinfo=timezone.utc),
+            commence_time=datetime(2026, 4, 17, 7, 0, 1, tzinfo=timezone.utc),
             status="scheduled",
         )
 
@@ -415,8 +415,8 @@ class TestCrossSourceEventMatching:
             incoming_pacific,
         )
         assert event is boundary_match
-        assert session.structured_params["commence_time_1"] == incoming_pacific - timedelta(hours=4)
-        assert session.structured_params["commence_time_2"] == incoming_pacific + timedelta(hours=4)
+        assert session.structured_params["commence_time_1"] == incoming_pacific - timedelta(hours=28)
+        assert session.structured_params["commence_time_2"] == incoming_pacific + timedelta(hours=28)
 
         outside_session = _FakeRegistrySession(structured_candidates=[just_outside])
         event = await _find_by_structured_match(
