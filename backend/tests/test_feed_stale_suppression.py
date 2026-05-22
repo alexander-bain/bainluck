@@ -421,3 +421,79 @@ class TestSettledMarketEdgeCases:
         )
         assert not trace["eligible"]
         assert "soft_settled_binary" in trace["blockers"]
+
+
+# ---------------------------------------------------------------------------
+# Past resolution date filtering (issue #486)
+# ---------------------------------------------------------------------------
+
+
+class TestPastResolutionDateFiltering:
+    """Verify that markets past their resolution_date are blocked."""
+
+    def test_resolution_date_6_days_ago_blocked(self):
+        """Market with resolution_date 6 days in the past should be blocked (BR77)."""
+        outcomes = [
+            _make_outcome("Yes", probability=0.65, probability_change_24h=0.01),
+            _make_outcome("No", probability=0.35, probability_change_24h=-0.01),
+        ]
+        market = _make_market(
+            updated_at=NOW - timedelta(hours=6),
+            resolution_date=NOW - timedelta(days=6),
+            name="Will it rain in NYC on May 16?",
+        )
+        trace = _market_runtime_filter_trace(
+            market, outcomes, "Yes", 0.65, NOW,
+            sport_category="weather",
+        )
+        assert not trace["eligible"]
+        assert "past_resolution_date" in trace["blockers"]
+
+    def test_resolution_date_1_hour_ago_blocked(self):
+        """Market with resolution_date just barely in the past should be blocked."""
+        outcomes = [
+            _make_outcome("Yes", probability=0.50, probability_change_24h=0.02),
+            _make_outcome("No", probability=0.50, probability_change_24h=-0.02),
+        ]
+        market = _make_market(
+            updated_at=NOW - timedelta(hours=2),
+            resolution_date=NOW - timedelta(hours=1),
+            name="Will S&P close above 5000 today?",
+        )
+        trace = _market_runtime_filter_trace(
+            market, outcomes, "Yes", 0.50, NOW,
+        )
+        assert not trace["eligible"]
+        assert "past_resolution_date" in trace["blockers"]
+
+    def test_resolution_date_tomorrow_passes(self):
+        """Market with resolution_date tomorrow should pass this filter."""
+        outcomes = [
+            _make_outcome("Yes", probability=0.65, probability_change_24h=0.05),
+            _make_outcome("No", probability=0.35, probability_change_24h=-0.05),
+        ]
+        market = _make_market(
+            updated_at=NOW - timedelta(hours=6),
+            resolution_date=NOW + timedelta(days=1),
+            name="Will it rain in NYC tomorrow?",
+        )
+        trace = _market_runtime_filter_trace(
+            market, outcomes, "Yes", 0.65, NOW,
+        )
+        assert "past_resolution_date" not in trace["blockers"]
+
+    def test_no_resolution_date_passes(self):
+        """Market with no resolution_date should pass this filter (many futures have none)."""
+        outcomes = [
+            _make_outcome("Yes", probability=0.65, probability_change_24h=0.05),
+            _make_outcome("No", probability=0.35, probability_change_24h=-0.05),
+        ]
+        market = _make_market(
+            updated_at=NOW - timedelta(hours=6),
+            resolution_date=None,
+            name="Will aliens be confirmed?",
+        )
+        trace = _market_runtime_filter_trace(
+            market, outcomes, "Yes", 0.65, NOW,
+        )
+        assert "past_resolution_date" not in trace["blockers"]
