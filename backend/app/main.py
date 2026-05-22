@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges
+from app.routes import events, sports, health, futures, admin, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -162,6 +162,7 @@ app.include_router(sports.router, prefix="/api/sports", tags=["Sports"])
 app.include_router(events.router, prefix="/api/events", tags=["Events"])
 app.include_router(futures.router, prefix="/api/futures", tags=["Futures"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(admin_backfill_linkage.router, prefix="/api", tags=["Admin Linkage"])
 app.include_router(admin_backfill_odds.router, prefix="/api", tags=["Admin Sparsity"])
 app.include_router(admin_judgments.router, prefix="/api", tags=["Admin Judgments"])
 app.include_router(admin_llm_diagnosis.router, prefix="/api", tags=["Admin LLM"])
