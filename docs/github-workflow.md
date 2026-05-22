@@ -98,10 +98,13 @@ When working in this repo, keep these invariants true:
 - Create a GitHub issue when a backlog item has a clear outcome, likely scope, acceptance criteria, and owner/agent path.
 - Do not bulk-port vague backlog sections into GitHub. Split only the next actionable slice.
 - Every issue created from the backlog should include a `Backlog source` section and an `area:*`, `type:*`, and `priority:*` label when possible.
+- GitHub `created` date means the date the item was promoted into the execution queue, not the date the underlying bug/idea was discovered. When porting older backlog items, include the original source date or backlog section date in the issue body.
 - Every active product issue should be linked from `docs/backlog.md`, usually under `Active GitHub Execution Queue` or the relevant workstream.
 - When closing a product issue, update `docs/backlog.md` in the same change if the backlog line is now shipped, obsolete, or materially changed.
 - Alert-generated issues can be closed without backlog edits when they are stale, superseded, or purely operational. Leave a closing comment explaining why.
 - Prefer moving project cards to `Ready` only after the issue has enough scope for an agent. Keep rough captures in `Inbox`.
+- Treat `In Progress` as an ownership lock. When a human, Codex thread, Claude thread, or subagent starts work, move the issue to `In Progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Do not assign another agent to overlapping files until the issue moves to `Review / Verify` or `Done`.
+- Before spawning subagents, inspect `In Progress` and avoid splitting work across issues that touch the same files or ranking/matching pipeline unless write scopes are explicitly disjoint.
 
 Suggested weekly sweep:
 

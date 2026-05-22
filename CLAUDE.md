@@ -210,9 +210,11 @@ Use this split consistently:
 - Create/update GitHub Issues only for work that is scoped enough to execute or delegate.
 - Label issues with one or more `area:*` labels, one or more `type:*` labels, a `priority:*` label when useful, and routing labels such as `needs-agent`, `needs-user`, `blocked`, or `alert-intake`.
 - When promoting a backlog item to an issue, link the issue from the backlog and include a `Backlog source` section in the issue body.
+- GitHub issue `created` date is the promotion date, not necessarily the original discovery date. When porting older backlog items, preserve the original source date or backlog section date in the issue body.
 - When closing a product issue, update `docs/backlog.md` in the same change if the corresponding backlog item shipped, changed, or became obsolete.
 - Do not duplicate full backlog prose into issues. Issues should contain outcome, scope, acceptance criteria, verification, and a link back to the backlog.
 - Alert-intake issues can be closed without backlog edits if they are stale/superseded CI failures or purely operational alerts; leave a closing comment with the reason.
+- Treat the Project `In Progress` column as a collision-avoidance lock. When a person, Codex thread, Claude thread, or subagent starts an issue, move it to `In Progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Before starting or delegating work, check `In Progress` for overlapping files or pipeline ownership.
 
 Canonical labels and project columns are documented in `docs/github-workflow.md`. If a user asks for "the next thing to work on," prefer open issues labeled `needs-agent`, especially `priority:p0`/`priority:p1`, before mining the whole backlog.
 
