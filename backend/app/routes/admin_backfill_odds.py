@@ -236,3 +236,34 @@ async def snapshot_inventory(
     except Exception as exc:
         import traceback
         return {"error": str(exc), "trace": traceback.format_exc()[:500]}
+
+
+
+@router.post("/lookup-and-backfill")
+async def lookup_and_backfill(
+    secret: str = Query(...),
+    sport: str = Query("baseball_mlb"),
+    days_back: int = Query(30),
+    max_events: int = Query(50),
+):
+    """Find events without external_id, look them up in historical API, link and backfill.
+
+    For events created by ESPN/StatPal that never got matched to the Odds API.
+    Queries the historical API at game time to find the matching event ID by
+    team name fuzzy matching, then backfills full snapshot history.
+    """
+    if not _check_admin_secret(secret):
+        return {"error": "unauthorized"}
+
+    from app.tasks import lookup_and_backfill_extids_task
+    task = lookup_and_backfill_extids_task.delay(
+        sport=sport, days_back=days_back, max_events=max_events
+    )
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "sport": sport,
+        "days_back": days_back,
+        "max_events": max_events,
+        "message": "Lookup + backfill running in background.",
+    }

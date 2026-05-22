@@ -325,3 +325,196 @@ async def _backfill_historical_for_sport(sport: str, days_back: int = 30, max_ev
             "quota_remaining": service.last_requests_remaining,
             "events": results,
         }
+
+
+
+async def _lookup_and_backfill_missing_extids(sport: str, days_back: int = 30, max_events: int = 50):
+    """Find events without external_id, look them up in historical API, link and backfill.
+
+    For events that were created by ESPN/StatPal but never matched to the Odds API,
+    query the historical API at game time to find the matching Odds API event ID,
+    then backfill snapshots.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import text
+    from app.services.odds_api import OddsAPIService
+    from app.models.models import OddsSnapshot
+    from app.utils.odds_math import moneyline_to_probability
+    from app.utils.name_normalization import names_match
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+
+    async with get_task_session() as session:
+        # Find completed events WITHOUT external_id
+        q = await session.execute(text("""
+            SELECT e.id, e.home_team_name, e.away_team_name, e.commence_time,
+                   e.external_id, e.status,
+                   COUNT(os.id) AS snap_count
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            LEFT JOIN odds_snapshots os ON os.event_id = e.id
+            WHERE e.commence_time >= :cutoff
+              AND s.key = :sport
+              AND e.external_id IS NULL
+              AND e.status IN ('completed', 'closed')
+            GROUP BY e.id, e.home_team_name, e.away_team_name, e.commence_time,
+                     e.external_id, e.status
+            HAVING COUNT(os.id) < 20
+            ORDER BY e.commence_time DESC
+            LIMIT :max_events
+        """), {"cutoff": cutoff, "sport": sport, "max_events": max_events})
+
+        events = q.all()
+        if not events:
+            return {"sport": sport, "events_checked": 0, "linked": 0, "backfilled": 0}
+
+        logger.info("lookup_extids: %d %s events without external_id", len(events), sport)
+
+        service = OddsAPIService()
+        linked = 0
+        backfilled_snaps = 0
+        results = []
+
+        for event in events:
+            commence = event.commence_time
+            if commence.tzinfo is None:
+                commence = commence.replace(tzinfo=timezone.utc)
+
+            # Query historical API at game time to find the Odds API event
+            date_param = commence.strftime("%Y-%m-%dT%H:%M:%SZ")
+            found_ext_id = None
+
+            try:
+                url = f"{service.BASE_URL}/historical/sports/{sport}/odds"
+                response = await service.client.get(url, params={
+                    "apiKey": service.api_key,
+                    "regions": "us",
+                    "markets": "h2h",
+                    "date": date_param,
+                })
+                service._capture_quota(response)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    for ev_data in data.get("data", []):
+                        api_home = ev_data.get("home_team", "")
+                        api_away = ev_data.get("away_team", "")
+                        api_time = datetime.fromisoformat(
+                            ev_data["commence_time"].replace("Z", "+00:00")
+                        )
+
+                        # Time must be within 6 hours
+                        if abs((api_time - commence).total_seconds()) > 21600:
+                            continue
+
+                        # Fuzzy name match (handles "NY Knicks" vs "New York Knicks")
+                        if ((names_match(event.home_team_name, api_home) and
+                             names_match(event.away_team_name, api_away)) or
+                            (names_match(event.home_team_name, api_away) and
+                             names_match(event.away_team_name, api_home))):
+                            found_ext_id = ev_data["id"]
+                            break
+
+            except Exception as e:
+                logger.warning("Historical lookup failed for event %d: %s", event.id, e)
+
+            if found_ext_id:
+                # Link the external_id
+                await session.execute(text("""
+                    UPDATE events SET external_id = :ext_id WHERE id = :event_id
+                """), {"ext_id": found_ext_id, "event_id": event.id})
+                await session.commit()
+                linked += 1
+
+                # Now backfill snapshots using the found external_id
+                start = commence - timedelta(hours=1)
+                end = commence + timedelta(hours=4)
+                current = start
+                event_snaps = 0
+
+                while current <= end:
+                    dp = current.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    try:
+                        resp = await service.client.get(
+                            f"{service.BASE_URL}/historical/sports/{sport}/odds",
+                            params={
+                                "apiKey": service.api_key,
+                                "regions": "us",
+                                "markets": "h2h",
+                                "date": dp,
+                            }
+                        )
+                        service._capture_quota(resp)
+
+                        if resp.status_code == 200:
+                            hist = resp.json()
+                            for ed in hist.get("data", []):
+                                if ed.get("id") != found_ext_id:
+                                    continue
+                                for bm in ed.get("bookmakers", []):
+                                    for mkt in bm.get("markets", []):
+                                        if mkt["key"] != "h2h":
+                                            continue
+                                        outcomes = mkt.get("outcomes", [])
+                                        if len(outcomes) < 2:
+                                            continue
+                                        home_prob, away_prob = None, None
+                                        for o in outcomes:
+                                            prob = moneyline_to_probability(o["price"]) if isinstance(o["price"], (int, float)) else None
+                                            if o["name"] == ed.get("home_team"):
+                                                home_prob = prob
+                                            elif o["name"] == ed.get("away_team"):
+                                                away_prob = prob
+                                        ts = hist.get("timestamp", dp)
+                                        cap_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                                        stmt = pg_insert(OddsSnapshot).values(
+                                            event_id=event.id,
+                                            bookmaker=bm["key"],
+                                            home_odds=outcomes[0].get("price"),
+                                            away_odds=outcomes[1].get("price") if len(outcomes) > 1 else None,
+                                            home_probability=home_prob,
+                                            away_probability=away_prob,
+                                            captured_at=cap_at,
+                                        ).on_conflict_do_nothing()
+                                        await session.execute(stmt)
+                                        event_snaps += 1
+
+                            next_ts = hist.get("next_timestamp")
+                            if next_ts:
+                                current = datetime.fromisoformat(next_ts.replace("Z", "+00:00"))
+                            else:
+                                current += timedelta(minutes=10)
+                        else:
+                            current += timedelta(minutes=10)
+                    except Exception:
+                        current += timedelta(minutes=10)
+
+                await session.commit()
+                backfilled_snaps += event_snaps
+
+                results.append({
+                    "event_id": event.id,
+                    "teams": f"{event.away_team_name} @ {event.home_team_name}",
+                    "found_ext_id": found_ext_id,
+                    "new_snaps": event_snaps,
+                })
+                logger.info("Linked+backfilled event %d: %s @ %s → ext=%s, %d snaps",
+                           event.id, event.away_team_name, event.home_team_name,
+                           found_ext_id[:12], event_snaps)
+            else:
+                results.append({
+                    "event_id": event.id,
+                    "teams": f"{event.away_team_name} @ {event.home_team_name}",
+                    "found_ext_id": None,
+                    "new_snaps": 0,
+                })
+
+        return {
+            "sport": sport,
+            "events_checked": len(events),
+            "linked": linked,
+            "backfilled_snaps": backfilled_snaps,
+            "quota_remaining": service.last_requests_remaining,
+            "results": results,
+        }

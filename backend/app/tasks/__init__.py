@@ -388,6 +388,22 @@ def backfill_historical_odds_task(self, sport: str = "baseball_mlb", days_back: 
         raise self.retry(exc=exc, countdown=60, max_retries=1)
 
 
+@celery_app.task(bind=True, name="app.tasks.lookup_and_backfill_extids", soft_time_limit=1800, time_limit=1860)
+def lookup_and_backfill_extids_task(self, sport: str = "baseball_mlb", days_back: int = 30, max_events: int = 50):
+    """Find events without external_id, look them up in historical API, link and backfill."""
+    from app.tasks.snapshot_sparsity import _lookup_and_backfill_missing_extids
+    try:
+        result = _tracked_run(
+            "lookup_and_backfill_extids",
+            _lookup_and_backfill_missing_extids(sport=sport, days_back=days_back, max_events=max_events),
+        )
+        return result
+    except Exception as exc:
+        logger.exception("lookup_and_backfill_extids failed for %s", sport)
+        raise self.retry(exc=exc, countdown=60, max_retries=1)
+
+
+
 
 
 
