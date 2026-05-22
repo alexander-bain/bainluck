@@ -57,6 +57,7 @@ struct EvolutionChartView: View {
     @State private var data: ProbabilityTimelineResponse?
     @State private var loading = true
     @State private var error: String?
+    @State private var errorIsRetryable = false
     @State private var topFilter: Int = 10
     @State private var selectedNames: Set<String> = []
     @State private var highlightedName: String?
@@ -145,7 +146,7 @@ struct EvolutionChartView: View {
                 ProgressView()
                     .frame(height: height)
             } else if let error {
-                emptyState(error)
+                emptyState(error, retryable: errorIsRetryable)
             } else if let _ = data, chartEntries.count < 2 {
                 emptyState("Limited price history available")
             } else if let _ = data, chartEntries.count >= 2 {
@@ -171,17 +172,31 @@ struct EvolutionChartView: View {
 
     // MARK: - Empty State
 
-    private func emptyState(_ message: String) -> some View {
+    private func emptyState(_ message: String, retryable: Bool = false) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: "doc.text")
+            Image(systemName: retryable ? "exclamationmark.triangle" : "doc.text")
                 .font(.system(size: 16))
                 .foregroundStyle(.tertiary)
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("Prices update every 1-2 hours for this market")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+            if !retryable {
+                Text("Prices update every 1-2 hours for this market")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if retryable {
+                Button {
+                    Task { await loadData() }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.top, 4)
+            }
         }
         .frame(height: height * 0.5)
         .frame(maxWidth: .infinity)
@@ -191,6 +206,7 @@ struct EvolutionChartView: View {
 
     private func loadData() async {
         loading = data == nil
+        errorIsRetryable = false
         do {
             let fetchHours: Int
             switch selectedRange {
@@ -218,8 +234,35 @@ struct EvolutionChartView: View {
             }
             error = nil
             loading = false
+        } catch let apiError as APIError {
+            if apiError.isCancellation {
+                // Task cancelled (e.g. view disappeared) — don't show error
+                return
+            }
+            switch apiError {
+            case .networkError:
+                self.error = "Connection failed. Check your network."
+                errorIsRetryable = true
+            case .httpError(let code, _) where code == 404:
+                self.error = "Market history not available"
+                errorIsRetryable = false
+            case .httpError(let code, _) where code >= 500:
+                self.error = "Server error. Try again in a moment."
+                errorIsRetryable = true
+            case .httpError:
+                self.error = "Failed to load timeline"
+                errorIsRetryable = true
+            case .decodingError:
+                self.error = "Failed to load timeline"
+                errorIsRetryable = true
+            case .invalidURL:
+                self.error = "Failed to load timeline"
+                errorIsRetryable = false
+            }
+            loading = false
         } catch {
-            self.error = "Limited price history available"
+            self.error = "Failed to load timeline"
+            errorIsRetryable = true
             loading = false
         }
     }
