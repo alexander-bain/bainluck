@@ -28,6 +28,24 @@ struct FuturesListView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .searchable(text: $viewModel.searchText, prompt: "Search markets")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Menu {
+                    Picker("Sort", selection: $viewModel.sortOption) {
+                        ForEach(FuturesBrowseSortOption.allCases) { option in
+                            Label(option.label, systemImage: option.icon)
+                                .tag(option)
+                        }
+                    }
+                } label: {
+                    Label(viewModel.sortOption.label, systemImage: viewModel.sortOption.icon)
+                        .font(.subheadline)
+                }
+            }
+        }
+        .onChange(of: viewModel.sortOption) { _ in
+            viewModel.onSortChange()
+        }
         .task {
             await viewModel.load()
             await viewModel.loadMovers()

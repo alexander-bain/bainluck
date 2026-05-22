@@ -456,8 +456,8 @@ actor APIClient {
         return try await fetch("/api/events/faceted", query: q, cacheTTL: 30)
     }
 
-    /// Fetches browseable futures results filtered by tags.
-    func fetchFacetedFutures(tags: [String] = [], page: Int = 1, search: String? = nil) async throws -> FacetedFuturesResponse {
+    /// Fetches browseable futures results filtered by tags, with optional sort order.
+    func fetchFacetedFutures(tags: [String] = [], page: Int = 1, search: String? = nil, sort: String? = nil) async throws -> FacetedFuturesResponse {
         var q: [String: String] = [
             "page": "\(page)",
             "per_page": "20",
@@ -468,6 +468,9 @@ actor APIClient {
         }
         if let search, !search.isEmpty {
             q["q"] = search
+        }
+        if let sort, !sort.isEmpty {
+            q["sort"] = sort
         }
         return try await fetch("/api/futures/faceted", query: q, cacheTTL: 30)
     }

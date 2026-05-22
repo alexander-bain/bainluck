@@ -121,6 +121,7 @@ nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
     let topOutcomes: [FacetedFuturesOutcome]?
     let outcomeCount: Int?
     let imageUrl: String?
+    let hookDescription: String?
 }
 
 /// Outcome row embedded in a faceted futures market.
