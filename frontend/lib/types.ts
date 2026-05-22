@@ -576,11 +576,19 @@ export interface FuturesHistoryResponse {
   market_id: number;
   market_name: string;
   hours: number;
+  /** Actual time window used (may be wider than `hours` if auto-extended for sparse data) */
+  actual_hours?: number;
   outcomes: FuturesOutcomeHistory[];
   /** Round/phase boundaries for chart reference lines (from DataGolf round_history) */
   round_boundaries?: { timestamp: string; label: string }[] | null;
   /** Live leaderboard data (from DataGolf metadata) */
   leaderboard?: DataGolfLeaderboardEntry[] | null;
+  /** Total data points across all outcomes (for sparse data detection) */
+  total_data_points?: number;
+  /** True if the backend auto-extended the time window beyond the requested hours */
+  auto_extended?: boolean;
+  /** True if fewer than 10 total data points (very sparse) */
+  sparse?: boolean;
 }
 
 /** DataGolf leaderboard entry stored in FuturesMarket.metadata.leaderboard */

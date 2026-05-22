@@ -47,6 +47,8 @@ interface FuturesChartProps {
   goldTheme?: boolean;
   greenTheme?: boolean;
   className?: string;
+  /** Use step interpolation (hold value until next point) for sparse data */
+  stepInterpolation?: boolean;
 }
 
 export function FuturesChart({
@@ -60,6 +62,7 @@ export function FuturesChart({
   goldTheme = false,
   greenTheme = false,
   className,
+  stepInterpolation = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -301,9 +304,17 @@ export function FuturesChart({
 
             if (points.length < 2) return null;
 
-            const pathD = points
-              .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-              .join(" ");
+            const pathD = stepInterpolation
+              ? points
+                  .map((p, i) =>
+                    i === 0
+                      ? `M ${p.x} ${p.y}`
+                      : `H ${p.x} V ${p.y}`
+                  )
+                  .join(" ")
+              : points
+                  .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+                  .join(" ");
 
             return (
               <path

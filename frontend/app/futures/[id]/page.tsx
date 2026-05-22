@@ -494,10 +494,26 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {historyData && historyData.outcomes.length > 0 && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
-              <span>📈</span>
-              Probability Trends
-            </h2>
+            <div>
+              <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
+                <span>📈</span>
+                Probability Trends
+              </h2>
+              {historyData.sparse && (
+                <p className="text-xs text-text-muted mt-1">
+                  Showing all available data
+                  {historyData.auto_extended && historyData.actual_hours
+                    ? ` (${Math.round(historyData.actual_hours / 24)}d window)`
+                    : ""}
+                  {" · "}Prices update every 1{"-"}2 hours
+                </p>
+              )}
+              {!historyData.sparse && historyData.auto_extended && historyData.actual_hours && (
+                <p className="text-xs text-text-muted mt-1">
+                  Extended to {Math.round(historyData.actual_hours / 24)} days for more data
+                </p>
+              )}
+            </div>
             {/* Tab toggle: Over Time / By Stage */}
             {hasProgression && (
               <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
@@ -541,6 +557,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               historyData={historyData.outcomes}
               selectedOutcomes={selectedOutcomes}
               onToggleOutcome={toggleOutcomeSelection}
+              stepInterpolation={historyData.sparse}
             />
           )}
         </div>
