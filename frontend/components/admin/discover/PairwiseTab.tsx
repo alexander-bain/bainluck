@@ -1,11 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  usePageTracking,
-  useScrollDepth,
-  useEngagementTime,
-} from "@/hooks";
+import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -78,17 +74,8 @@ const CHOICE_COLORS: Record<string, string> = {
 
 // --- Page ---
 
-export default function PairwiseLabelingPage() {
-  // GA4 hooks (mandatory)
-  usePageTracking({
-    pageType: "admin_pairwise",
-    pageTitle: "Admin: Pairwise Labeling",
-  });
-  useScrollDepth({ pageType: "admin_pairwise" });
-  useEngagementTime({ pageType: "admin_pairwise" });
-
-  const [secret, setSecret] = useState("");
-  const [submittedSecret, setSubmittedSecret] = useState<string | null>(null);
+export default function PairwiseTab() {
+  const { secret: submittedSecret } = useAdminAuth();
   const [reviewer, setReviewer] = useState("");
   const [pair, setPair] = useState<PairResponse | null>(null);
   const [stats, setStats] = useState<LabelStats | null>(null);
@@ -97,15 +84,6 @@ export default function PairwiseLabelingPage() {
   const [error, setError] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
   const [lastChoice, setLastChoice] = useState<string | null>(null);
-
-  // Read secret from URL params on mount
-  useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("secret");
-    if (fromUrl) {
-      setSecret(fromUrl);
-      setSubmittedSecret(fromUrl);
-    }
-  }, []);
 
   // Fetch next pair
   const fetchPair = useCallback(async () => {
@@ -194,52 +172,17 @@ export default function PairwiseLabelingPage() {
   // --- Render ---
 
   return (
-    <div className="min-h-screen bg-surface-deep">
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-text-primary">
-            Pairwise Card Labeling
-          </h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            Compare two Discover cards side by side. Pick which is more
-            interesting to calibrate ranking quality.
-          </p>
-        </div>
-
-        {/* Auth bar */}
-        <div className="mb-6 flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-medium text-text-muted mb-1">
-              Admin Secret
-            </label>
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              className="w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
-              placeholder="Enter admin secret"
-            />
-          </div>
-          <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs font-medium text-text-muted mb-1">
-              Reviewer Name
-            </label>
-            <input
-              type="text"
-              value={reviewer}
-              onChange={(e) => setReviewer(e.target.value)}
-              className="w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
-              placeholder="Your name"
-            />
-          </div>
-          <button
-            onClick={() => setSubmittedSecret(secret)}
-            disabled={!secret.trim() || !reviewer.trim()}
-            className="rounded-lg bg-accent-brand px-5 py-2 text-sm font-medium text-white hover:bg-accent-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Start
-          </button>
+    <div>
+        {/* Reviewer name input */}
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-text-muted mb-1">Reviewer Name</label>
+          <input
+            type="text"
+            value={reviewer}
+            onChange={(e) => setReviewer(e.target.value)}
+            className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40 w-48"
+            placeholder="Your name"
+          />
         </div>
 
         {/* Session counter */}
@@ -563,7 +506,6 @@ export default function PairwiseLabelingPage() {
             )}
           </div>
         )}
-      </div>
     </div>
   );
 }

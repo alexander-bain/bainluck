@@ -2,6 +2,7 @@
 
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import PageHeader from "@/components/admin/PageHeader";
+import PairwiseTab from "@/components/admin/discover/PairwiseTab";
 
 import { useState, useEffect, useCallback } from "react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -229,7 +230,7 @@ function TabBar({
   gridCount,
   futuresCount,
 }: {
-  tab: "grid" | "futures" | "history";
+  tab: "grid" | "futures" | "pairwise" | "history";
   onTab: (t: "grid" | "futures" | "history") => void;
   gridCount: number;
   futuresCount: number;
@@ -237,6 +238,7 @@ function TabBar({
   const tabs = [
     { key: "grid" as const, label: "Grid Matching", count: gridCount },
     { key: "futures" as const, label: "Interesting?", count: futuresCount },
+    { key: "pairwise" as const, label: "Pairwise", count: null },
     { key: "history" as const, label: "History", count: null },
   ];
   return (
@@ -1511,7 +1513,7 @@ export default function EvalPage() {
   useEngagementTime({ pageType: "admin_eval" });
 
   const { secret } = useAdminAuth();
-  const [tab, setTab] = useState<"grid" | "futures" | "history">("grid");
+  const [tab, setTab] = useState<"grid" | "futures" | "pairwise" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
 
   useEffect(() => {
@@ -1554,6 +1556,7 @@ export default function EvalPage() {
 
       {tab === "grid" && <GridMatchingTab />}
       {tab === "futures" && <FuturesInterestingTab />}
+      {tab === "pairwise" && <PairwiseTab />}
       {tab === "history" && <HistoryView decisions={decisions} />}
     </div>
   );

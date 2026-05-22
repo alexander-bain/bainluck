@@ -83,6 +83,7 @@ import TracePanel from "@/components/admin/discover/TracePanel";
 import ReviewPathNav from "@/components/admin/discover/ReviewPathNav";
 import ScoreBucketList from "@/components/admin/discover/ScoreBucketList";
 import LaunchHealthTrendPanel from "@/components/admin/discover/LaunchHealthTrendPanel";
+import EngagementReviewTab from "@/components/admin/discover/EngagementReviewTab";
 import DiagnosticRunsPanel from "@/components/admin/discover/DiagnosticRunsPanel";
 import EngagementPanel from "@/components/admin/discover/EngagementPanel";
 import RuntimeActionButton from "@/components/admin/discover/RuntimeActionButton";
@@ -99,6 +100,7 @@ export default function DiscoverQualityPage() {
   useEngagementTime({ pageType: "admin_discover_quality" });
 
   const { secret: submittedSecret } = useAdminAuth();
+  const [activeTab, setActiveTab] = useState<"quality" | "engagement">("quality");
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
@@ -515,6 +517,28 @@ export default function DiscoverQualityPage() {
           subtitle="Ground truth, engagement, personalization, and card-level traces"
         />
 
+
+      {/* Tab bar */}
+      <div className="flex gap-1 mb-4 border-b border-surface-border pb-px">
+        {(["quality", "engagement"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              activeTab === tab
+                ? "text-accent-brand border-b-2 border-accent-brand bg-accent-brand/5"
+                : "text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            {tab === "quality" ? "Quality" : "Engagement Review"}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "engagement" ? (
+        <EngagementReviewTab />
+      ) : (
+        <>
       <ReviewPathNav
             groundTruthHits={summary.ground_truth_hit_count_50}
             missingCount={data.missing_ground_truth?.length || 0}
@@ -1371,6 +1395,8 @@ export default function DiscoverQualityPage() {
             </div>
           </div>
         </>
+      )}
+    </>
       )}
     </div>
   );
