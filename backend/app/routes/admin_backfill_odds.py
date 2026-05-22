@@ -173,7 +173,7 @@ async def snapshot_inventory(
                 ORDER BY e.commence_time DESC
             """), {"cutoff": cutoff, "sport": sport})
 
-            events = []
+            all_events = []
             by_date = {}
             total = 0
             sparse = 0
@@ -197,7 +197,7 @@ async def snapshot_inventory(
                     by_date[day]["sparse"] += 1
                 if is_completed and r.snap_count == 0:
                     by_date[day]["zero"] += 1
-                by_date[day]["events"].append({
+                event_entry = {
                     "id": r.id,
                     "teams": f"{r.away_team_name} @ {r.home_team_name}",
                     "time": str(r.commence_time)[:16],
@@ -206,13 +206,25 @@ async def snapshot_inventory(
                     "has_espn": r.espn_id is not None,
                     "status": r.status,
                     "sparse": is_sparse,
-                })
+                }
+                by_date[day]["events"].append(event_entry)
+                all_events.append(event_entry)
 
+            snaps_list = [e["snaps"] for e in all_events if e.get("status") in ("completed", "closed")]
+            covered_snaps = [s for s in snaps_list if s >= threshold]
+            
             inventory[sport] = {
                 "total": total,
                 "sparse": sparse,
                 "zero": zero,
                 "coverage_pct": round(100 * (total - sparse) / max(total, 1), 1),
+                "snapshot_stats": {
+                    "avg_per_covered_event": round(sum(covered_snaps) / max(len(covered_snaps), 1)),
+                    "min_covered": min(covered_snaps) if covered_snaps else 0,
+                    "max_covered": max(covered_snaps) if covered_snaps else 0,
+                    "median_covered": sorted(covered_snaps)[len(covered_snaps)//2] if covered_snaps else 0,
+                    "total_snapshots": sum(snaps_list),
+                },
                 "by_date": dict(sorted(by_date.items(), reverse=True)),
             }
 
