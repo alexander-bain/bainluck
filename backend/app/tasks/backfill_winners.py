@@ -1859,6 +1859,38 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
         retro_stats["errors"].append(str(e))
         logger.error("Retro-tagging error: %s", e)
 
+    # Phase 0c-retrotag2: Tag remaining untagged outcomes with midrange
+    # current_probability as pass2_guess (they were resolved by Pass 2's
+    # arbitrary pick from stale probabilities, not from authoritative data).
+    retro2_stats = {"tagged": 0, "errors": []}
+    try:
+        for _ in range(3):
+            async with get_task_session() as session:
+                r = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET resolution_source = 'pass2_guess'
+                        WHERE fo.id IN (
+                            SELECT fo2.id FROM futures_outcomes fo2
+                            JOIN futures_markets fm ON fo2.market_id = fm.id
+                            WHERE fm.status = 'resolved'
+                              AND fo2.resolution_source IS NULL
+                              AND fo2.is_winner = true
+                              AND (fo2.current_probability IS NULL
+                                   OR (fo2.current_probability > 0.05
+                                       AND fo2.current_probability < 0.95))
+                            LIMIT 50000
+                        )
+                    """)
+                )
+                await session.commit()
+                if r.rowcount == 0:
+                    break
+                retro2_stats["tagged"] += r.rowcount
+                logger.info("Retro-tagging pass2_guess: %d tagged", r.rowcount)
+    except Exception as e:
+        retro2_stats["errors"].append(str(e))
+
     # Phase 0c-bookmaker: Precompute per-bookmaker calibration into Redis.
     # Moved early because it's a one-shot DB query + Redis write.
     bookmaker_stats = await _precompute_bookmaker_calibration()
@@ -1925,6 +1957,7 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
 
     return {
         "retro_tagging": retro_stats,
+        "retro_guess_tagging": retro2_stats,
         "commence_time_fixes": commence_stats,
         "polymarket_group_id": group_stats,
         "kalshi_group_id": kalshi_group_stats,
