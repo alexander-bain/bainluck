@@ -1845,3 +1845,39 @@ async def test_daily_digest(
     from app.tasks.daily_digest import send_daily_digest
     success = await send_daily_digest(db, to_email=email)
     return {"status": "sent" if success else "no_content", "to": email}
+
+
+@router.get("/engagement/review")
+async def engagement_review(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Return the latest nightly engagement-calibrated ranking review.
+
+    Reads a pre-aggregated JSON summary from Redis (written by the
+    ``export-engagement-nightly`` Celery task).  The review highlights
+    per-category engagement rates, score-bucket correlation, and
+    under/over-ranked market opportunities.
+
+    This is REPORTING only — it never auto-tunes production weights.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import json as _json
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        r = get_redis_client()
+        raw = r.get("engagement_review:latest")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {exc}") from exc
+
+    if not raw:
+        return {
+            "status": "no_data",
+            "message": "No engagement review data yet. The nightly export task has not run.",
+        }
+
+    data = _json.loads(raw)
+    return data

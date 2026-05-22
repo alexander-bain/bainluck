@@ -219,6 +219,7 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-ids",
         "backfill-historical-links",
         "update-max-movement",
+        "export-engagement-nightly",
     }
 
     def test_no_missing_entries(self):
