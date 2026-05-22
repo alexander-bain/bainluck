@@ -649,6 +649,13 @@ def check_ground_truth_health(self):
     return _tracked_run("ground_truth_health", _result())
 
 
+@celery_app.task(bind=True, name="app.tasks.precompute_interestingness")
+def precompute_interestingness(self):
+    """Precompute market interestingness scores and cache in Redis (every 2h)."""
+    from app.tasks.precompute_interestingness import _precompute_interestingness
+    return _tracked_run("precompute_interestingness", _precompute_interestingness())
+
+
 @celery_app.task(bind=True, name="app.tasks.check_aggregation_quality")
 def check_aggregation_quality(self):
     """Daily: sample events, measure source diversity, alert on single-source spikes."""
@@ -1164,6 +1171,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.enrich_market_images",
         "schedule": crontab(minute=50, hour="*/4"),  # 6x daily — fetch Pexels images
         "kwargs": {"limit": 200},
+    },
+    "precompute-interestingness": {
+        "task": "app.tasks.precompute_interestingness",
+        "schedule": crontab(minute=20, hour="*/2"),  # Every 2 hours at :20
+        "options": {"queue": "background"},
     },
     "check-aggregation-quality": {
         "task": "app.tasks.check_aggregation_quality",
