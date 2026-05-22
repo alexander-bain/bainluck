@@ -941,6 +941,13 @@ def track_statpal_usage():
 
 # --- Heartbeat ---
 
+@celery_app.task(bind=True, name="app.tasks.export_engagement")
+def export_engagement(self):
+    """Nightly export of Discover engagement data for ranking review."""
+    from app.tasks.export_engagement import _export_engagement_impl
+    return _tracked_run("export_engagement", _export_engagement_impl())
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -1298,6 +1305,11 @@ celery_app.conf.beat_schedule = {
     "daily-digest": {
         "task": "app.tasks.send_daily_digest",
         "schedule": crontab(hour=13, minute=0),  # 8am ET (UTC-5) / 6am PT
+        "options": {"queue": "background"},
+    },
+    "export-engagement-nightly": {
+        "task": "app.tasks.export_engagement",
+        "schedule": crontab(hour=2, minute=0),  # 2:00 AM UTC
         "options": {"queue": "background"},
     },
 }
