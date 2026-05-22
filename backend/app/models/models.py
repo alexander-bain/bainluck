@@ -1329,3 +1329,53 @@ class DeviceToken(Base):
 
     # Relationships
     user: Mapped[Optional["User"]] = relationship()
+
+
+class FeaturedMarketCapture(Base):
+    """Daily capture of Kalshi/Polymarket front-page/featured markets.
+
+    Used as advisory ground truth for Discover ranking review.
+    Captures are based on top-volume markets since neither API
+    exposes a dedicated "featured" endpoint.
+    """
+
+    __tablename__ = "featured_market_captures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(
+        String(40), nullable=False, index=True
+    )  # kalshi_featured, polymarket_featured, manual
+    captured_date: Mapped[str] = mapped_column(
+        String(10), nullable=False, index=True
+    )  # YYYY-MM-DD
+    market_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(
+        String(200), index=True
+    )  # Kalshi ticker or Polymarket condition_id
+    matched_market_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("futures_markets.id"), index=True
+    )
+    category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    url: Mapped[Optional[str]] = mapped_column(Text)
+    rank: Mapped[Optional[int]] = mapped_column(Integer)  # 1-based rank by volume
+    volume_24h: Mapped[Optional[float]] = mapped_column(Numeric)
+    probability: Mapped[Optional[float]] = mapped_column(Numeric)
+    extra: Mapped[Optional[dict]] = mapped_column(JSONB)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    # Relationships
+    matched_market: Mapped[Optional["FuturesMarket"]] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source", "captured_date", "external_id",
+            name="uq_featured_capture_source_date_ext",
+        ),
+        Index(
+            "ix_featured_capture_source_date",
+            "source",
+            "captured_date",
+        ),
+    )

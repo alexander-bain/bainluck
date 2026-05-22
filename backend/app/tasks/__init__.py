@@ -601,6 +601,19 @@ def import_external_curator_ground_truth(self):
     return _tracked_run("external_curator_gt_import", _persist())
 
 
+@celery_app.task(bind=True, name="app.tasks.capture_featured_markets")
+def capture_featured_markets(self):
+    """Daily capture of top-volume Kalshi/Polymarket markets as featured proxy."""
+    from app.tasks.base import get_task_session
+    from app.utils.featured_market_capture import capture_all_featured
+
+    async def _capture():
+        async with get_task_session() as session:
+            return await capture_all_featured(session)
+
+    return _tracked_run("capture_featured_markets", _capture())
+
+
 @celery_app.task(bind=True, name="app.tasks.check_ground_truth_health")
 def check_ground_truth_health(self):
     """Record daily health for advisory Discover ground-truth sources."""
@@ -1140,6 +1153,11 @@ celery_app.conf.beat_schedule = {
     "check-ground-truth-health-daily": {
         "task": "app.tasks.check_ground_truth_health",
         "schedule": crontab(minute=40, hour=9),
+        "options": {"queue": "background"},
+    },
+    "capture-featured-markets-daily": {
+        "task": "app.tasks.capture_featured_markets",
+        "schedule": crontab(minute=0, hour=6),  # Daily at 6:00 AM UTC
         "options": {"queue": "background"},
     },
     "enrich-market-images": {

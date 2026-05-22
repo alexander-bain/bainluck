@@ -204,6 +204,7 @@ class TestBeatScheduleCompleteness:
         "snapshot-discover-ground-truth-diagnostics-daily",
         "import-external-curator-ground-truth-daily",
         "check-ground-truth-health-daily",
+        "capture-featured-markets-daily",
         "enrich-market-images",
         "merge-duplicate-events",
         "check-aggregation-quality",

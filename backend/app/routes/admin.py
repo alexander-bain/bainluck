@@ -4148,6 +4148,44 @@ async def get_latency_stats(
 
 
 # ---------------------------------------------------------------------------
+# Featured market capture ground-truth status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/ground-truth/status")
+async def get_ground_truth_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    days: int = Query(7, description="Number of days to look back"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show featured-market ground-truth capture health.
+
+    Returns rows per source per day, match rate, and recent captures.
+    Advisory signal for Discover ranking review — does not auto-promote.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.featured_market_capture import get_featured_capture_status
+
+    return await get_featured_capture_status(db, days=days)
+
+
+@router.post("/ground-truth/capture")
+async def trigger_ground_truth_capture(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger a featured-market capture for today."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.featured_market_capture import capture_all_featured
+
+    return await capture_all_featured(db)
+
+
+# ---------------------------------------------------------------------------
 # Include sub-routers (at bottom to avoid circular imports)
 # ---------------------------------------------------------------------------
 from app.routes.admin_celery import router as celery_router  # noqa: E402
