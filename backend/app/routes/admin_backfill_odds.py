@@ -29,7 +29,8 @@ async def snapshot_sparsity_audit(
     if not _check_admin_secret(secret):
         return {"error": "unauthorized"}
 
-    await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '15s'"))
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
     q = await db.execute(text("""
@@ -76,6 +77,10 @@ async def snapshot_sparsity_audit(
         })
 
     sparse_events = [e for e in events if e["sparse"]]
+
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()[:500]}
 
     return {
         "sport": sport,
