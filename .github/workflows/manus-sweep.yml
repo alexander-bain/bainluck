@@ -1,0 +1,91 @@
+name: Manus Sweep
+
+on:
+  schedule:
+    - cron: "0 14 */3 * *"  # Every 3 days at 7am PT
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sweep:
+    name: Manus 10-module health sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Run Manus sweep
+        env:
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+        run: |
+          if [ -z "$MANUS_API_KEY" ]; then
+            echo "MANUS_API_KEY not set — skipping"
+            exit 0
+          fi
+          python3 backend/scripts/manus_health_suite.py
+        timeout-minutes: 45
+
+      - name: Update latest symlink
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          if [ -d "Manus/audit_results/$TODAY" ]; then
+            ln -sfn "$TODAY" Manus/audit_results/latest
+          fi
+
+      - name: Post summary
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          REPORT="Manus/audit_results/$TODAY/combined_report.md"
+          MANIFEST="Manus/audit_results/$TODAY/manifest.json"
+          if [ -f "$MANIFEST" ]; then
+            {
+              echo "## Manus Sweep — $TODAY"
+              echo
+              python3 -c "
+          import json
+          m = json.load(open('$MANIFEST'))
+          tasks = m.get('tasks', {})
+          total = len(tasks)
+          done = sum(1 for t in tasks.values() if t.get('status') == 'complete')
+          credits = sum(t.get('credits', 0) for t in tasks.values())
+          print(f'**{done}/{total} modules completed** ({credits:,} credits)')
+          print()
+          print('| Module | Status | Credits |')
+          print('|--------|--------|---------|')
+          for name, t in tasks.items():
+              s = t.get('status', '?')
+              c = t.get('credits', 0)
+              icon = '✅' if s == 'complete' else '❌'
+              print(f'| {name} | {icon} {s} | {c:,} |')
+          "
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$REPORT" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "<details><summary>Full report</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            head -200 "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Commit results
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          if [ -d "Manus/audit_results/$TODAY" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "Manus/audit_results/$TODAY/" "Manus/audit_results/latest"
+            git commit -m "Manus sweep $TODAY — automated" || echo "No changes to commit"
+            git push || echo "Push failed — results saved in workflow artifacts"
+          fi

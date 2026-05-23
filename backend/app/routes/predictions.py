@@ -200,15 +200,16 @@ async def get_detailed_stats(
     correct = totals.correct or 0
     accuracy = correct / total if total > 0 else 0
 
+    cat_col = func.coalesce(FuturesMarket.llm_sport_category, "other")
     cat_result = await db.execute(
         select(
-            func.coalesce(FuturesMarket.llm_sport_category, "other").label("cat"),
+            cat_col.label("cat"),
             func.count(UserPrediction.id).label("total"),
             func.count(case((UserPrediction.correct == True, 1))).label("correct"),
         )
         .outerjoin(FuturesMarket, UserPrediction.market_id == FuturesMarket.id)
         .where(identity)
-        .group_by(func.coalesce(FuturesMarket.llm_sport_category, "other"))
+        .group_by(cat_col)
     )
     by_category = {}
     for r in cat_result.all():
