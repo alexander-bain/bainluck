@@ -554,15 +554,22 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
-                } else if let error = vm.error, vm.items.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "wifi.slash")
-                            .font(.largeTitle)
+                } else if vm.error != nil, vm.items.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title2)
                             .foregroundStyle(.secondary)
-                        Text(error)
-                            .font(.subheadline)
+                        Text("Couldn't load feed")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                        Text("Pull down to retry")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task { await vm.load() }
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.blue)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)

@@ -15,7 +15,7 @@ struct MenuBarView: View {
                     Image(systemName: "sportscourt")
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                    Text("No live games from your teams")
+                    Text("No upcoming games from your teams")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -113,8 +113,9 @@ struct MenuBarView: View {
         do {
             let feed = try await APIClient.shared.fetchFeed(limit: 10, myTeamsOnly: true, includeFutures: false)
             liveGames = feed.items.compactMap { item -> MenuBarGame? in
-                guard let event = item.event, event.status == "live",
-                      let homeProbability = event.currentOdds?.homeProbability else { return nil }
+                guard let event = item.event,
+                      (event.status == "live" || event.status == "scheduled"),
+                      let homeProbability = event.currentOdds?.homeProbability ?? event.openingOdds?.homeProbability else { return nil }
                 let awayProbability = 1.0 - homeProbability
                 return MenuBarGame(
                     id: event.id,

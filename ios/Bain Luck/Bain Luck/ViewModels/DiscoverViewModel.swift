@@ -18,22 +18,30 @@ final class DiscoverViewModel: ObservableObject {
 
     @MainActor
     func load() async {
-        loading = true
+        loading = items.isEmpty
         error = nil
-        do {
-            let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
-            items = Self.interleave(response.items)
-            hasMore = response.hasMore
-            nextOffset = response.offset + response.items.count
-            error = nil
-        } catch is CancellationError {
-            return
-        } catch let urlError as URLError where urlError.code == .cancelled {
-            return
-        } catch {
-            print("DiscoverView load error: \(error)")
-            if items.isEmpty {
-                self.error = error.localizedDescription
+        for attempt in 1...2 {
+            do {
+                let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
+                items = Self.interleave(response.items)
+                hasMore = response.hasMore
+                nextOffset = response.offset + response.items.count
+                error = nil
+                loading = false
+                return
+            } catch is CancellationError {
+                loading = false
+                return
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                loading = false
+                return
+            } catch {
+                print("DiscoverView load error (attempt \(attempt)): \(error)")
+                if attempt < 2 {
+                    try? await Task.sleep(for: .seconds(1))
+                } else if items.isEmpty {
+                    self.error = "Couldn't load feed"
+                }
             }
         }
         loading = false
