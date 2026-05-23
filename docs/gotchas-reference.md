@@ -141,3 +141,5 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
    5. **Create sub-issues**: For any work that takes more than one commit or spans multiple files.
    6. **Never batch board updates**: Update the board AS you go, not in a cleanup pass later.
    If the board doesn't reflect reality, the user can't trust it and work gets lost.
+
+92. **Uncommitted Alembic migrations break the entire deploy chain** — When multiple threads/sessions create migrations in parallel, each chains from the previous via `down_revision`. If any migration in the chain is created locally but not committed, Heroku's release phase fails with `KeyError` on the missing revision. This blocks ALL endpoints (503), not just the new ones. Always commit migration files immediately after creation, and check `git status` for untracked `.py` files in `alembic/versions/` before pushing.
