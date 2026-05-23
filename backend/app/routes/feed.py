@@ -861,6 +861,13 @@ async def get_feed(
     debug: bool = Query(
         False, description="Include admin-only feed quality diagnostics"
     ),
+    debug_ground_truth: bool = Query(
+        True,
+        description=(
+            "When debug=true, include slower ground-truth recall diagnostics. "
+            "Disable for fast admin labeling/debug-card loads."
+        ),
+    ),
     secret: Optional[str] = Query(
         None, description="Admin secret for debug diagnostics"
     ),
@@ -1148,94 +1155,119 @@ async def get_feed(
 
     debug_payload = None
     if debug:
-        email_ground_truth_report = await asyncio.to_thread(
-            load_polymarket_email_ground_truth_report_from_env,
-            now=now,
-        )
-        external_curator_report = await asyncio.to_thread(
-            load_external_curator_ground_truth_report_from_env,
-            now=now,
-        )
-        persisted_external_curator_report = (
-            await load_persisted_external_curator_ground_truth_report(db, now=now)
-        )
-        external_curator_report = merge_external_curator_ground_truth_reports(
-            [external_curator_report, persisted_external_curator_report],
-            now=now,
-        )
-        email_ground_truth_items = email_ground_truth_report["items"]
-        external_curator_items = external_curator_report["items"]
-        ground_truth_items = (
-            load_default_ground_truth_items()
-            + email_ground_truth_items
-            + external_curator_items
-        )
+        email_ground_truth_items: list[dict] = []
+        external_curator_items: list[dict] = []
+        ground_truth_items = load_default_ground_truth_items()
+        if debug_ground_truth:
+            email_ground_truth_report = await asyncio.to_thread(
+                load_polymarket_email_ground_truth_report_from_env,
+                now=now,
+            )
+            external_curator_report = await asyncio.to_thread(
+                load_external_curator_ground_truth_report_from_env,
+                now=now,
+            )
+            persisted_external_curator_report = (
+                await load_persisted_external_curator_ground_truth_report(db, now=now)
+            )
+            external_curator_report = merge_external_curator_ground_truth_reports(
+                [external_curator_report, persisted_external_curator_report],
+                now=now,
+            )
+            email_ground_truth_items = email_ground_truth_report["items"]
+            external_curator_items = external_curator_report["items"]
+            ground_truth_items = (
+                ground_truth_items
+                + email_ground_truth_items
+                + external_curator_items
+            )
         debug_payload = build_feed_quality_debug(
             paginated,
             ground_truth_items=ground_truth_items,
             top_n=min(20, len(paginated)),
         )
-        await _attach_missing_ground_truth_traces(
-            db, debug_payload["missing_ground_truth"], now
-        )
-        debug_payload["missing_ground_truth_summary"] = (
-            apply_db_trace_missing_ground_truth_triage(
-                debug_payload["missing_ground_truth"]
+        if debug_ground_truth:
+            await _attach_missing_ground_truth_traces(
+                db, debug_payload["missing_ground_truth"], now
             )
-        )
-        email_missing_ground_truth = find_missing_ground_truth_items(
-            debug_payload["items"],
-            email_ground_truth_items,
-            limit=80,
-        )
-        await _attach_missing_ground_truth_traces(db, email_missing_ground_truth, now)
-        email_missing_ground_truth_summary = apply_db_trace_missing_ground_truth_triage(
-            email_missing_ground_truth
-        )
-        email_metadata = email_ground_truth_report["metadata"]
-        email_summary = summarize_polymarket_email_ground_truth(
-            debug_payload["items"],
-            email_ground_truth_items,
-        )
-        debug_payload["email_ground_truth"] = {
-            **email_metadata,
-            "total": email_summary["total"],
-            "top20_hits": email_summary["top20_hits"],
-            "top50_hits": email_summary["top50_hits"],
-            "missing": email_summary["missing"],
-            "hit_rate_50": email_summary["hit_rate_50"],
-            "hits": email_summary["hits"][:20],
-            "missing_items": email_summary["missing_items"][:50],
-            "db_trace_bucket_counts": email_missing_ground_truth_summary[
-                "bucket_counts"
-            ],
-        }
-        debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
-        external_curator_missing = find_missing_ground_truth_items(
-            debug_payload["items"],
-            external_curator_items,
-            limit=80,
-        )
-        await _attach_missing_ground_truth_traces(db, external_curator_missing, now)
-        external_curator_missing_summary = apply_db_trace_missing_ground_truth_triage(
-            external_curator_missing
-        )
-        external_summary = summarize_polymarket_email_ground_truth(
-            debug_payload["items"],
-            external_curator_items,
-        )
-        debug_payload["external_curator_ground_truth"] = {
-            **external_curator_report["metadata"],
-            "total": external_summary["total"],
-            "top20_hits": external_summary["top20_hits"],
-            "top50_hits": external_summary["top50_hits"],
-            "missing": external_summary["missing"],
-            "hit_rate_50": external_summary["hit_rate_50"],
-            "hits": external_summary["hits"][:20],
-            "missing_items": external_summary["missing_items"][:50],
-            "db_trace_bucket_counts": external_curator_missing_summary["bucket_counts"],
-        }
-        debug_payload["external_curator_ground_truth_misses"] = external_curator_missing
+            debug_payload["missing_ground_truth_summary"] = (
+                apply_db_trace_missing_ground_truth_triage(
+                    debug_payload["missing_ground_truth"]
+                )
+            )
+            email_missing_ground_truth = find_missing_ground_truth_items(
+                debug_payload["items"],
+                email_ground_truth_items,
+                limit=80,
+            )
+            await _attach_missing_ground_truth_traces(db, email_missing_ground_truth, now)
+            email_missing_ground_truth_summary = apply_db_trace_missing_ground_truth_triage(
+                email_missing_ground_truth
+            )
+            email_metadata = email_ground_truth_report["metadata"]
+            email_summary = summarize_polymarket_email_ground_truth(
+                debug_payload["items"],
+                email_ground_truth_items,
+            )
+            debug_payload["email_ground_truth"] = {
+                **email_metadata,
+                "total": email_summary["total"],
+                "top20_hits": email_summary["top20_hits"],
+                "top50_hits": email_summary["top50_hits"],
+                "missing": email_summary["missing"],
+                "hit_rate_50": email_summary["hit_rate_50"],
+                "hits": email_summary["hits"][:20],
+                "missing_items": email_summary["missing_items"][:50],
+                "db_trace_bucket_counts": email_missing_ground_truth_summary[
+                    "bucket_counts"
+                ],
+            }
+            debug_payload["email_ground_truth_misses"] = email_missing_ground_truth
+            external_curator_missing = find_missing_ground_truth_items(
+                debug_payload["items"],
+                external_curator_items,
+                limit=80,
+            )
+            await _attach_missing_ground_truth_traces(db, external_curator_missing, now)
+            external_curator_missing_summary = apply_db_trace_missing_ground_truth_triage(
+                external_curator_missing
+            )
+            external_summary = summarize_polymarket_email_ground_truth(
+                debug_payload["items"],
+                external_curator_items,
+            )
+            debug_payload["external_curator_ground_truth"] = {
+                **external_curator_report["metadata"],
+                "total": external_summary["total"],
+                "top20_hits": external_summary["top20_hits"],
+                "top50_hits": external_summary["top50_hits"],
+                "missing": external_summary["missing"],
+                "hit_rate_50": external_summary["hit_rate_50"],
+                "hits": external_summary["hits"][:20],
+                "missing_items": external_summary["missing_items"][:50],
+                "db_trace_bucket_counts": external_curator_missing_summary[
+                    "bucket_counts"
+                ],
+            }
+            debug_payload["external_curator_ground_truth_misses"] = (
+                external_curator_missing
+            )
+        else:
+            empty_ground_truth = {
+                "total": 0,
+                "top20_hits": 0,
+                "top50_hits": 0,
+                "missing": 0,
+                "hit_rate_50": 0,
+                "hits": [],
+                "missing_items": [],
+                "db_trace_bucket_counts": {},
+                "skipped": True,
+            }
+            debug_payload["email_ground_truth"] = empty_ground_truth
+            debug_payload["email_ground_truth_misses"] = []
+            debug_payload["external_curator_ground_truth"] = empty_ground_truth
+            debug_payload["external_curator_ground_truth_misses"] = []
     _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
     # Remove internal sort/debug keys

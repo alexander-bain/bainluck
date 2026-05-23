@@ -26,6 +26,7 @@ export async function fetchDiscoverDebug(secret: string): Promise<FeedDebugRespo
     include_futures: "true",
     event_pct: "0.15",
     debug: "true",
+    debug_ground_truth: "false",
     secret,
   });
   const token = await getIdToken();

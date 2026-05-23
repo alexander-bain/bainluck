@@ -135,17 +135,17 @@ export default function DiscoverQualityPage() {
   const [traceError, setTraceError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
-  const debugKey = ["discover-quality", submittedSecret];
-  const hookKey = ["hook-coverage", submittedSecret];
-  const engagementKey = ["discover-engagement", submittedSecret, engagementDays];
-  const launchHealthTrendsKey = ["discover-launch-health-trends", submittedSecret];
-  const diagnosticRunsKey = ["discover-diagnostic-runs", submittedSecret];
-  const diagnosticTrendsKey = ["discover-diagnostic-trends", submittedSecret];
-  const labelEvalTrendsKey = ["discover-label-eval-trends", submittedSecret];
-  const fixableInterestKey = ["discover-fixable-interest", submittedSecret];
-  const externalCuratorStatusKey = ["external-curator-ground-truth-status", submittedSecret];
-  const groundTruthHealthKey = ["ground-truth-health", submittedSecret];
-  const diagnosticRowsKey = selectedDiagnosticRunId
+  const debugKey = submittedSecret ? ["discover-quality", submittedSecret] : null;
+  const hookKey = submittedSecret ? ["hook-coverage", submittedSecret] : null;
+  const engagementKey = submittedSecret ? ["discover-engagement", submittedSecret, engagementDays] : null;
+  const launchHealthTrendsKey = submittedSecret ? ["discover-launch-health-trends", submittedSecret] : null;
+  const diagnosticRunsKey = submittedSecret ? ["discover-diagnostic-runs", submittedSecret] : null;
+  const diagnosticTrendsKey = submittedSecret ? ["discover-diagnostic-trends", submittedSecret] : null;
+  const labelEvalTrendsKey = submittedSecret ? ["discover-label-eval-trends", submittedSecret] : null;
+  const fixableInterestKey = submittedSecret ? ["discover-fixable-interest", submittedSecret] : null;
+  const externalCuratorStatusKey = submittedSecret ? ["external-curator-ground-truth-status", submittedSecret] : null;
+  const groundTruthHealthKey = submittedSecret ? ["ground-truth-health", submittedSecret] : null;
+  const diagnosticRowsKey = selectedDiagnosticRunId && submittedSecret
     ? [
         "discover-diagnostic-rows",
         submittedSecret,
@@ -159,49 +159,49 @@ export default function DiscoverQualityPage() {
 
   const { data, error, isLoading } = useSWR(
     debugKey,
-    () => fetchDiscoverDebug(submittedSecret!),
+    ([, secret]) => fetchDiscoverDebug(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: hookCoverage } = useSWR(
     hookKey,
-    () => fetchHookCoverage(submittedSecret!),
+    ([, secret]) => fetchHookCoverage(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: engagementData } = useSWR(
     engagementKey,
-    () => fetchDiscoverEngagement(submittedSecret!, engagementDays),
+    ([, secret, days]) => fetchDiscoverEngagement(secret, days),
     { refreshInterval: 60000 }
   );
 
   const { data: launchHealthTrendsData } = useSWR(
     launchHealthTrendsKey,
-    () => fetchDiscoverLaunchHealthTrends(submittedSecret!),
+    ([, secret]) => fetchDiscoverLaunchHealthTrends(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: diagnosticRunsData } = useSWR(
     diagnosticRunsKey,
-    () => fetchDiscoverDiagnosticRuns(submittedSecret!),
+    ([, secret]) => fetchDiscoverDiagnosticRuns(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: diagnosticTrendsData } = useSWR(
     diagnosticTrendsKey,
-    () => fetchDiscoverDiagnosticTrends(submittedSecret!),
+    ([, secret]) => fetchDiscoverDiagnosticTrends(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: labelEvalTrendsData } = useSWR(
     labelEvalTrendsKey,
-    () => fetchDiscoverLabelEvalTrends(submittedSecret!),
+    ([, secret]) => fetchDiscoverLabelEvalTrends(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: fixableInterestData } = useSWR(
     fixableInterestKey,
-    () => fetchDiscoverFixableInterestClusters(submittedSecret!, "open"),
+    ([, secret]) => fetchDiscoverFixableInterestClusters(secret, "open"),
     { refreshInterval: 60000 }
   );
 
@@ -222,13 +222,13 @@ export default function DiscoverQualityPage() {
 
   const { data: externalCuratorStatus } = useSWR(
     externalCuratorStatusKey,
-    () => fetchExternalCuratorGroundTruthStatus(submittedSecret!),
+    ([, secret]) => fetchExternalCuratorGroundTruthStatus(secret),
     { refreshInterval: 60000 }
   );
 
   const { data: groundTruthHealth } = useSWR(
     groundTruthHealthKey,
-    () => fetchGroundTruthHealth(submittedSecret!),
+    ([, secret]) => fetchGroundTruthHealth(secret),
     { refreshInterval: 60000 }
   );
 
