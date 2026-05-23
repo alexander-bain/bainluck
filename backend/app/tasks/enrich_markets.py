@@ -200,13 +200,19 @@ def _extract_image_keywords(name: str, category: str | None) -> str:
 
 
 async def _fetch_pexels_image(query: str) -> str | None:
+    """Fetch best image from Pexels. Gets 5 candidates and picks the highest resolution landscape."""
     if not PEXELS_API_KEY:
         return None
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 "https://api.pexels.com/v1/search",
-                params={"query": query, "per_page": 1, "orientation": "landscape"},
+                params={
+                    "query": query,
+                    "per_page": 5,
+                    "orientation": "landscape",
+                    "size": "medium",
+                },
                 headers={"Authorization": PEXELS_API_KEY},
             )
             if resp.status_code != 200:
@@ -216,7 +222,30 @@ async def _fetch_pexels_image(query: str) -> str | None:
             photos = data.get("photos", [])
             if not photos:
                 return None
-            return photos[0]["src"]["medium"]
+
+            # Score candidates: prefer wider images (better for cards),
+            # reject tiny images, prefer photos with alt text (better indexed)
+            best = None
+            best_score = -1
+            for photo in photos:
+                w = photo.get("width", 0)
+                h = photo.get("height", 0)
+                if w < 400 or h < 250:
+                    continue
+                ratio = w / max(h, 1)
+                score = w
+                if 1.3 <= ratio <= 2.0:
+                    score += 200
+                if photo.get("alt"):
+                    score += 100
+                if score > best_score:
+                    best_score = score
+                    best = photo
+
+            if not best:
+                best = photos[0]
+
+            return best["src"].get("large", best["src"]["medium"])
     except Exception as e:
         logger.error("Pexels fetch error for '%s': %s", query, e)
         return None
