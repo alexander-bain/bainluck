@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, sports, health, futures, admin, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges
+from app.routes import events, sports, health, futures, admin, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -188,6 +188,7 @@ app.include_router(predictions.router)
 app.include_router(feedback.router)
 app.include_router(notifications.router)
 app.include_router(challenges.router, prefix="/api/challenges", tags=["Challenges"])
+app.include_router(unsubscribe.router)
 app.include_router(og_image.router)
 
 

@@ -258,12 +258,20 @@ class FavoriteItem(BaseModel):
     source: str
 
 
+class EmailPreferencesResponse(BaseModel):
+    """Email opt-in preferences (CAN-SPAM compliant, all default False)."""
+    digest: bool = False
+    bug_updates: bool = False
+    market_alerts: bool = False
+
+
 class PreferencesResponse(BaseModel):
     """Full preferences + favorites for the current user."""
     home_location: Optional[str]
     sport_affinities: dict[str, float]  # Compressed (user-friendly keys)
     onboarding_completed: bool
     favorites: list[FavoriteItem]
+    email_preferences: EmailPreferencesResponse = EmailPreferencesResponse()
 
 
 # =============================================================================
@@ -556,11 +564,20 @@ async def get_preferences(
     raw_affinities = prefs.sport_affinities if prefs and prefs.sport_affinities else {}
     compressed = _compress_sport_affinities(raw_affinities)
 
+    # Build email preferences from User.email_preferences JSONB
+    raw_email_prefs = user.email_preferences if isinstance(user.email_preferences, dict) else {}
+    email_prefs = EmailPreferencesResponse(
+        digest=bool(raw_email_prefs.get("digest", False)),
+        bug_updates=bool(raw_email_prefs.get("bug_updates", False)),
+        market_alerts=bool(raw_email_prefs.get("market_alerts", False)),
+    )
+
     return PreferencesResponse(
         home_location=prefs.home_location if prefs else None,
         sport_affinities=compressed,
         onboarding_completed=prefs.onboarding_completed if prefs else False,
         favorites=favorites,
+        email_preferences=email_prefs,
     )
 
 
@@ -985,6 +1002,73 @@ async def update_sport_affinities(
 
     logger.info(f"Updated sport affinities for user={user.id}: {len(expanded)} keys")
     return {"status": "updated"}
+
+
+# =============================================================================
+# Email preferences (CAN-SPAM compliant)
+# =============================================================================
+
+class UpdateEmailPreferencesRequest(BaseModel):
+    """Update email opt-in preferences."""
+    digest: Optional[bool] = None
+    bug_updates: Optional[bool] = None
+    market_alerts: Optional[bool] = None
+
+
+@router.patch("/preferences/email")
+async def update_email_preferences(
+    body: UpdateEmailPreferencesRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Update email preferences. Only provided fields are changed.
+
+    All email types default to False (opt-in required per CAN-SPAM).
+    """
+    from app.utils.email_compliance import (
+        EMAIL_PREF_KEYS,
+        generate_unsubscribe_token,
+        merge_email_preferences,
+    )
+
+    # Build updates dict from provided (non-None) fields
+    updates: dict[str, bool] = {}
+    if body.digest is not None:
+        updates["digest"] = body.digest
+    if body.bug_updates is not None:
+        updates["bug_updates"] = body.bug_updates
+    if body.market_alerts is not None:
+        updates["market_alerts"] = body.market_alerts
+
+    if not updates:
+        return {"status": "no_changes"}
+
+    # Read current preferences
+    current = user.email_preferences if isinstance(user.email_preferences, dict) else {}
+    new_prefs = merge_email_preferences(current, updates)
+
+    # If any preference is now True and user has no unsubscribe token, generate one
+    values: dict = {"email_preferences": new_prefs}
+    if any(new_prefs.values()) and not user.unsubscribe_token:
+        values["unsubscribe_token"] = generate_unsubscribe_token(user.id)
+
+    # Use Core update to avoid JSONB ORM assignment issues (Gotcha #4)
+    from sqlalchemy import update as sa_update
+    await db.execute(
+        sa_update(User)
+        .where(User.id == user.id)
+        .values(**values)
+    )
+    await db.flush()
+
+    logger.info(
+        "Updated email preferences for user=%d: %s",
+        user.id, new_prefs,
+    )
+    return {
+        "status": "updated",
+        "email_preferences": new_prefs,
+    }
 
 
 # =============================================================================

@@ -419,6 +419,16 @@ class User(Base):
     photo_url: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # Email compliance (CAN-SPAM) — per-type opt-in, all default False
+    # Shape: {"digest": false, "bug_updates": false, "market_alerts": false}
+    email_preferences: Mapped[Optional[dict]] = mapped_column(
+        JSONB, server_default="{}"
+    )
+    # HMAC-signed unsubscribe token — unique per user, generated on first email send
+    unsubscribe_token: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, index=True
+    )
+
     # Relationships
     favorites: Mapped[list["UserFavorite"]] = relationship(back_populates="user")
     preferences: Mapped[Optional["UserPreference"]] = relationship(
@@ -1452,7 +1462,54 @@ class RankingJudgment(Base):
     quality_class_at_review: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     headline_at_review: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     feed_request_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    label_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     reviewer: Mapped[str] = mapped_column(String(100), default="alex")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DiscoverLabelEvalRun(Base):
+    """Persisted offline eval runs for human-labeled Discover ranking data."""
+
+    __tablename__ = "discover_label_eval_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, index=True)
+    eval_name: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="discover_label_gold_set"
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ok", index=True)
+    input_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dataset_window_start: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dataset_window_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    surface: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    reviewer: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tapworthy_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    boring_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duplicate_family_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unclear_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bad_explanation_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bad_image_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    broad_appeal_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fixable_interest_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tapworthy_recall_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    metric_summary: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    category_breakdowns: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    notable_regressions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    eval_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        Index("ix_discover_label_eval_name_captured", "eval_name", "captured_at"),
+        Index("ix_discover_label_eval_status_captured", "status", "captured_at"),
     )
