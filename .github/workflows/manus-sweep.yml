@@ -24,15 +24,21 @@ jobs:
       - name: Install httpx
         run: pip install httpx
 
-      - name: Run Manus sweep
+      - name: Verify MANUS_API_KEY is set
         env:
           MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
         run: |
           if [ -z "$MANUS_API_KEY" ]; then
-            echo "MANUS_API_KEY not set — skipping"
-            exit 0
+            echo "::error::MANUS_API_KEY secret is not set. Add it at Settings > Secrets > Actions."
+            exit 1
           fi
-          python3 backend/scripts/manus_health_suite.py
+          echo "MANUS_API_KEY is configured."
+
+      - name: Run Manus sweep
+        id: sweep
+        env:
+          MANUS_API_KEY: ${{ secrets.MANUS_API_KEY }}
+        run: python3 backend/scripts/manus_health_suite.py
         timeout-minutes: 45
 
       - name: Update latest symlink
@@ -65,7 +71,7 @@ jobs:
           for name, t in tasks.items():
               s = t.get('status', '?')
               c = t.get('credits', 0)
-              icon = '✅' if s == 'complete' else '❌'
+              icon = '✅' if s == 'complete' else ('⚠️' if s == 'collection_failed' else '❌')
               print(f'| {name} | {icon} {s} | {c:,} |')
           "
             } >> "$GITHUB_STEP_SUMMARY"
@@ -89,3 +95,34 @@ jobs:
             git commit -m "Manus sweep $TODAY — automated" || echo "No changes to commit"
             git push || echo "Push failed — results saved in workflow artifacts"
           fi
+
+      - name: Create issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          MANIFEST="Manus/audit_results/$TODAY/manifest.json"
+          BODY="The Manus health sweep failed on $TODAY."
+          if [ -f "$MANIFEST" ]; then
+            DETAIL=$(python3 -c "
+          import json
+          m = json.load(open('$MANIFEST'))
+          tasks = m.get('tasks', {})
+          failed = [f'- **{n}**: {t[\"status\"]}' for n, t in tasks.items() if t.get('status') != 'complete']
+          if failed:
+              print('### Failed modules')
+              print('\n'.join(failed))
+          else:
+              print('All modules completed but the workflow still failed (commit/push issue?).')
+          " 2>/dev/null || echo "Could not parse manifest.")
+            BODY="$BODY
+
+          $DETAIL
+
+          **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+          gh issue create \
+            --title "Manus sweep failed — $TODAY" \
+            --body "$BODY" \
+            --label "area:infra,type:ops,alert-intake"

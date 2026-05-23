@@ -137,8 +137,29 @@ def get_task_status(task_id: str) -> dict | None:
         return None
 
 
+def _ts() -> str:
+    """Return a compact timestamp for log lines."""
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _collect_messages(task_id: str) -> dict:
+    """Fetch final messages from a completed task. Raises on failure."""
+    resp = httpx.get(
+        f"{BASE}/task.listMessages",
+        params={"task_id": task_id, "order": "asc", "limit": 100},
+        headers={"x-manus-api-key": API_KEY},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
-    """Poll a Manus task until completion. Returns final messages."""
+    """Poll a Manus task until completion. Returns final messages.
+
+    Collection phase retries up to 3 times with 30s delay if the task
+    completed but message retrieval fails.
+    """
     max_polls = timeout_seconds // 15
     for i in range(max_polls):
         try:
@@ -148,15 +169,23 @@ def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
                 credits = task.get("credit_usage", 0)
 
                 if status == "stopped":
-                    full = httpx.get(
-                        f"{BASE}/task.listMessages",
-                        params={"task_id": task_id, "order": "asc", "limit": 100},
-                        headers={"x-manus-api-key": API_KEY},
-                        timeout=30,
-                    ).json()
-                    full["_credit_usage"] = credits
-                    return full
+                    # Task completed — collect messages with retry
+                    for attempt in range(1, 4):
+                        try:
+                            print(f"    [{_ts()}] Task stopped — collecting results (attempt {attempt}/3)...")
+                            full = _collect_messages(task_id)
+                            full["_credit_usage"] = credits
+                            return full
+                        except Exception as collect_err:
+                            print(f"    [{_ts()}] Collection attempt {attempt}/3 failed: {collect_err}")
+                            if attempt < 3:
+                                print(f"    [{_ts()}] Retrying in 30s...")
+                                time.sleep(30)
+                    # All 3 collection attempts failed
+                    print(f"    [{_ts()}] All collection attempts failed for {task_id}")
+                    return {"error": True, "collection_failed": True, "_credit_usage": credits}
                 elif status == "error":
+                    print(f"    [{_ts()}] Task errored (credits: {credits})")
                     return {"error": True, "_credit_usage": credits}
                 elif status == "waiting":
                     detail = httpx.get(
@@ -171,7 +200,7 @@ def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
                         evt_type = sd.get("waiting_for_event_type", "")
                         evt_id = sd.get("waiting_for_event_id", "")
                         if evt_type and evt_type != "messageAskUser" and evt_id:
-                            print(f"    Auto-confirming {evt_type}...")
+                            print(f"    [{_ts()}] Auto-confirming {evt_type}...")
                             httpx.post(
                                 f"{BASE}/task.confirmAction",
                                 json={"task_id": task_id, "event_id": evt_id, "input": {"accept": True}},
@@ -180,17 +209,18 @@ def poll_task(task_id: str, timeout_seconds: int = 900) -> dict | None:
                             )
                             break
                     else:
-                        print(f"    [{i+1}/{max_polls}] waiting (may need manual input)")
+                        print(f"    [{_ts()}] [{i+1}/{max_polls}] waiting (may need manual input)")
                 else:
-                    print(f"    [{i+1}/{max_polls}] running... ({credits} credits)")
+                    print(f"    [{_ts()}] [{i+1}/{max_polls}] running... ({credits} credits)")
             else:
-                print(f"    [{i+1}/{max_polls}] polling...")
+                print(f"    [{_ts()}] [{i+1}/{max_polls}] status check returned None — retrying...")
 
         except Exception as e:
-            print(f"    Poll error: {e}")
+            print(f"    [{_ts()}] Poll error: {e}")
 
         time.sleep(15)
 
+    print(f"    [{_ts()}] Timed out after {timeout_seconds}s for task {task_id}")
     return None
 
 
@@ -273,21 +303,39 @@ def run_suite(module_names: list[str]):
     print(f"\nManifest saved: {manifest_path}")
 
     # Phase 2: Poll all tasks
-    print(f"\nPhase 2: Polling {len(tasks)} tasks (15min timeout each)...")
+    # Overall phase timeout: 10 minutes. Individual per-module timeouts still apply,
+    # but if the entire polling phase exceeds this wall-clock limit we stop and
+    # report remaining tasks as timed out.
+    PHASE_TIMEOUT = 600  # 10 minutes
+    phase_start = time.monotonic()
+    print(f"\nPhase 2: Polling {len(tasks)} tasks (per-module timeouts, {PHASE_TIMEOUT}s phase limit)...")
+    print(f"  [{_ts()}] Phase 2 started")
     results = {}
     for name, task_id in tasks.items():
-        print(f"\n  Waiting for {name} ({task_id})...")
+        elapsed = time.monotonic() - phase_start
+        remaining_phase = PHASE_TIMEOUT - elapsed
+        if remaining_phase <= 0:
+            print(f"\n  [{_ts()}] PHASE TIMEOUT: skipping {name} (phase limit reached after {elapsed:.0f}s)")
+            manifest["tasks"][name]["status"] = "timeout"
+            continue
+
         module_timeout = MODULES.get(name, {}).get("timeout", 900)
-        result = poll_task(task_id, timeout_seconds=module_timeout)
+        # Clamp module timeout to remaining phase time
+        effective_timeout = min(module_timeout, int(remaining_phase))
+        print(f"\n  [{_ts()}] Waiting for {name} ({task_id}, timeout={effective_timeout}s)...")
+        result = poll_task(task_id, timeout_seconds=effective_timeout)
         credits = result.get("_credit_usage", 0) if result else 0
         if result is None:
-            print(f"  TIMEOUT: {name}")
+            print(f"  [{_ts()}] TIMEOUT: {name} — task did not complete within {effective_timeout}s")
             manifest["tasks"][name]["status"] = "timeout"
+        elif result.get("collection_failed"):
+            print(f"  [{_ts()}] COLLECTION_FAILED: {name} — task completed but results could not be retrieved")
+            manifest["tasks"][name]["status"] = "collection_failed"
         elif result.get("error"):
-            print(f"  ERROR: {name}")
+            print(f"  [{_ts()}] ERROR: {name} — task encountered an error on Manus")
             manifest["tasks"][name]["status"] = "error"
         else:
-            print(f"  COMPLETE: {name} ({credits} credits)")
+            print(f"  [{_ts()}] COMPLETE: {name} ({credits} credits)")
             manifest["tasks"][name]["status"] = "complete"
             report = extract_report(result)
             results[name] = report
@@ -308,15 +356,24 @@ def run_suite(module_names: list[str]):
                     gt_path.write_text(json.dumps(gt_data, indent=2))
                     print(f"    Ground truth JSON: {gt_path}")
                 else:
-                    print(f"    ⚠ No JSON block found in {name} report")
+                    print(f"    No JSON block found in {name} report")
         manifest["tasks"][name]["credits"] = credits
 
+    phase_elapsed = time.monotonic() - phase_start
+    print(f"\n  [{_ts()}] Phase 2 finished in {phase_elapsed:.0f}s")
+
     # Phase 3: Generate combined report
-    print("\nPhase 3: Generating combined report...")
+    print(f"\n[{_ts()}] Phase 3: Generating combined report...")
+    n_complete = sum(1 for t in manifest["tasks"].values() if t["status"] == "complete")
+    n_failed = sum(1 for t in manifest["tasks"].values() if t["status"] != "complete")
     combined = [f"# Manus Health Audit — {date_str}\n"]
     combined.append(f"**Modules run:** {len(tasks)}")
-    combined.append(f"**Completed:** {sum(1 for t in manifest['tasks'].values() if t['status'] == 'complete')}")
-    combined.append(f"**Failed/Timeout:** {sum(1 for t in manifest['tasks'].values() if t['status'] != 'complete')}")
+    combined.append(f"**Completed:** {n_complete}")
+    combined.append(f"**Failed/Timeout:** {n_failed}")
+    # List failures with reason for quick diagnosis
+    for tname, tinfo in manifest["tasks"].items():
+        if tinfo["status"] != "complete":
+            combined.append(f"- {tname}: {tinfo['status']}")
     combined.append("")
 
     for name in module_names:
@@ -353,7 +410,7 @@ def check_status(date_str: str):
     print(f"Suite: {manifest['date']}")
     for name, info in manifest["tasks"].items():
         status = info["status"]
-        icon = {"running": "...", "complete": "OK", "error": "ERR", "timeout": "T/O"}.get(status, "?")
+        icon = {"running": "...", "complete": "OK", "error": "ERR", "timeout": "T/O", "collection_failed": "CFail"}.get(status, "?")
         print(f"  [{icon:3s}] {name:25s} {info['task_id']}")
         if status == "running":
             print(f"        View: https://manus.im/app/{info['task_id']}")
