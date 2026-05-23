@@ -1375,202 +1375,22 @@ async def calibration_time_horizon(
     resolution. Only includes non-event markets (elections, economics, etc.)
     that have resolution_date set and sufficient snapshot history.
 
-    Cached for 1 hour.
+    Precomputed by a Celery task every 6 hours; served from Redis cache.
     """
-    now = time.time()
-    # Use cache only when no filters are applied
-    cache_key = f"{source}:{category}"
-    if not bust and cache_key == "None:None" and _th_cache["data"] and (now - _th_cache["timestamp"]) < CACHE_TTL:
-        return _th_cache["data"]
+    import json as _json
 
-    horizons_result: dict = {}
+    # Serve from Redis cache (precomputed by compute_time_horizon_calibration task)
+    try:
+        from app.tasks.redis_state import get_redis_client
+        rc = get_redis_client()
+        cached = rc.get("bainluck:calibration:time_horizon")
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
 
-    for label, days in _HORIZONS:
-        # Build the snapshot cutoff expression:
-        # T-0: last snapshot before resolution_date
-        # T-N: last snapshot before (resolution_date - N days)
-        if days == 0:
-            cutoff_expr = "eo.resolution_date"
-        else:
-            cutoff_expr = "eo.resolution_date - make_interval(days => :days)"
-
-        horizon_sql = text(f"""
-            WITH eligible_outcomes AS (
-                SELECT fo.id AS outcome_id,
-                       fo.is_winner,
-                       fm.resolution_date,
-                       fm.source,
-                       COALESCE(fm.llm_sport_category, 'uncategorized') AS category
-                FROM futures_outcomes fo
-                JOIN futures_markets fm ON fm.id = fo.market_id
-                WHERE fm.status = 'resolved'
-                  AND fm.event_id IS NULL
-                  AND fm.resolution_date IS NOT NULL
-                  AND fo.opening_probability IS NOT NULL
-                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
-                  AND (fo.resolution_source IS NULL
-                       OR fo.resolution_source NOT IN ('pass2_guess', 'pass3_threshold'))
-                  AND (:source IS NULL OR fm.source = :source)
-                  AND (:category IS NULL OR COALESCE(fm.llm_sport_category, 'uncategorized') = :category)
-            ),
-            horizon_snap AS (
-                SELECT DISTINCT ON (eo.outcome_id)
-                    eo.outcome_id,
-                    eo.is_winner,
-                    eo.source,
-                    eo.category,
-                    fos.probability AS horizon_prob
-                FROM eligible_outcomes eo
-                JOIN futures_odds_snapshots fos ON fos.outcome_id = eo.outcome_id
-                WHERE fos.captured_at <= {cutoff_expr}
-                  AND fos.probability > 0 AND fos.probability < 1
-                ORDER BY eo.outcome_id, fos.captured_at DESC
-            ),
-            bucketed AS (
-                SELECT *,
-                    LEAST(FLOOR(horizon_prob * 10)::int, 9) AS bucket_idx
-                FROM horizon_snap
-            )
-            SELECT bucket_idx, source, category,
-                COUNT(*) AS n,
-                SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
-                AVG(horizon_prob) AS avg_prob,
-                SUM(horizon_prob::float) AS sum_prob,
-                SUM((horizon_prob::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
-            FROM bucketed
-            GROUP BY bucket_idx, source, category
-            ORDER BY bucket_idx, source, category
-        """)
-
-        params: dict = {"source": source, "category": category}
-        if days > 0:
-            params["days"] = days
-
-        result = await db.execute(horizon_sql, params)
-        rows = result.all()
-
-        bucket_dicts = []
-        for r in rows:
-            ci_lo, ci_hi = wilson_ci(r.winners, r.n)
-            bucket_dicts.append({
-                "bucket_idx": r.bucket_idx,
-                "source": r.source,
-                "category": r.category,
-                "n": r.n,
-                "winners": r.winners,
-                "avg_prob": round(float(r.avg_prob), 4),
-                "sum_prob": round(float(r.sum_prob), 4),
-                "sum_sq_err": round(float(r.sum_sq_err), 4),
-                "ci_lower": round(ci_lo, 4),
-                "ci_upper": round(ci_hi, 4),
-            })
-
-        total_n = sum(b["n"] for b in bucket_dicts)
-        total_winners = sum(b["winners"] for b in bucket_dicts)
-
-        if total_n < _MIN_OUTCOMES_PER_HORIZON:
-            horizons_result[label] = {
-                "buckets": bucket_dicts,
-                "total_outcomes": total_n,
-                "total_winners": total_winners,
-                "mce": None,
-                "mce_ci_lower": None,
-                "mce_ci_upper": None,
-                "skipped": True,
-                "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
-            }
-            continue
-
-        # Aggregate for MCE
-        agg: dict[int, dict] = {}
-        for b in bucket_dicts:
-            idx = b["bucket_idx"]
-            if idx not in agg:
-                agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-            agg[idx]["n"] += b["n"]
-            agg[idx]["winners"] += b["winners"]
-            agg[idx]["sum_prob"] += b["sum_prob"]
-
-        mce = _compute_horizon_mce([
-            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-            for v in agg.values()
-        ])
-
-        # Bootstrap CI
-        agg_list = [
-            {"n": v["n"], "winners": v["winners"],
-             "avg_prob": v["sum_prob"] / v["n"]}
-            for v in agg.values() if v["n"] > 0
-        ]
-        mce_ci_lo, mce_ci_hi = bootstrap_mce_ci(agg_list)
-
-        # Per-source MCE
-        by_source: dict[str, dict[int, dict]] = {}
-        for b in bucket_dicts:
-            src = b["source"]
-            idx = b["bucket_idx"]
-            if src not in by_source:
-                by_source[src] = {}
-            if idx not in by_source[src]:
-                by_source[src][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-            by_source[src][idx]["n"] += b["n"]
-            by_source[src][idx]["winners"] += b["winners"]
-            by_source[src][idx]["sum_prob"] += b["sum_prob"]
-        mce_by_source = {}
-        for src, src_agg in by_source.items():
-            src_total = sum(v["n"] for v in src_agg.values())
-            if src_total >= _MIN_OUTCOMES_PER_HORIZON:
-                mce_by_source[src] = _compute_horizon_mce([
-                    {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-                    for v in src_agg.values()
-                ])
-
-        # Per-category MCE
-        by_cat: dict[str, dict[int, dict]] = {}
-        for b in bucket_dicts:
-            cat = b["category"]
-            idx = b["bucket_idx"]
-            if cat not in by_cat:
-                by_cat[cat] = {}
-            if idx not in by_cat[cat]:
-                by_cat[cat][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-            by_cat[cat][idx]["n"] += b["n"]
-            by_cat[cat][idx]["winners"] += b["winners"]
-            by_cat[cat][idx]["sum_prob"] += b["sum_prob"]
-        mce_by_category = {}
-        for cat, cat_agg in by_cat.items():
-            cat_total = sum(v["n"] for v in cat_agg.values())
-            if cat_total >= _MIN_OUTCOMES_PER_HORIZON:
-                mce_by_category[cat] = _compute_horizon_mce([
-                    {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-                    for v in cat_agg.values()
-                ])
-
-        horizons_result[label] = {
-            "buckets": bucket_dicts,
-            "total_outcomes": total_n,
-            "total_winners": total_winners,
-            "mce": mce,
-            "mce_ci_lower": round(mce_ci_lo * 100, 2),
-            "mce_ci_upper": round(mce_ci_hi * 100, 2),
-            "mce_by_source": mce_by_source,
-            "mce_by_category": mce_by_category,
-        }
-
-    response = {
-        "horizons": horizons_result,
-        "description": (
-            "Calibration at multiple time horizons for non-event markets "
-            "(elections, economics, entertainment, etc.). Each horizon shows "
-            "prediction accuracy using the last available snapshot N days "
-            "before market resolution."
-        ),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+    # Not yet computed — tell caller to check back
+    return {
+        "status": "computing",
+        "message": "Results being computed. Check back in 60 seconds.",
     }
-
-    # Only cache unfiltered responses
-    if cache_key == "None:None":
-        _th_cache["data"] = response
-        _th_cache["timestamp"] = now
-
-    return response

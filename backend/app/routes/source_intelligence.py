@@ -1583,44 +1583,25 @@ async def fair_fight_comparison(
     MCE on only those shared markets. This eliminates the selection bias
     where a source that only covers easy markets looks artificially accurate.
 
-    Returns overall and per-category MCE comparisons.
+    Precomputed by a Celery task every 6 hours; served from Redis cache.
     """
+    import json as _json
 
-    now = time.time()
-    if not refresh and _fair_fight_cache["data"] and (now - _fair_fight_cache["timestamp"]) < _FAIR_FIGHT_TTL:
-        return _fair_fight_cache["data"]
-
-    await _set_timeout(db)
-
-    # Futures: Kalshi vs Polymarket on shared questions
+    # Serve from Redis cache (precomputed by compute_fair_fight_comparison task)
     try:
-        futures_pairs = await _query_futures_fair_fight(db)
+        from app.tasks.redis_state import get_redis_client
+        rc = get_redis_client()
+        cached = rc.get("bainluck:calibration:fair_fight")
+        if cached:
+            return _json.loads(cached)
     except Exception:
-        logger.exception("fair-fight: futures query failed")
-        futures_pairs = []
+        pass
 
-    # Sports: prediction markets vs Odds API on shared events
-    try:
-        sports_pairs = await _query_sports_fair_fight(db)
-    except Exception:
-        logger.exception("fair-fight: sports query failed")
-        sports_pairs = []
-
-    response = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "methodology": (
-            "Paired MCE comparison: for each source pair, only markets/events "
-            "covered by BOTH sources are evaluated. This controls for difficulty "
-            "— a source covering only easy markets cannot look artificially accurate."
-        ),
-        "min_shared_threshold": _MIN_SHARED,
-        "pairs": futures_pairs + sports_pairs,
+    # Not yet computed — tell caller to check back
+    return {
+        "status": "computing",
+        "message": "Results being computed. Check back in 60 seconds.",
     }
-
-    _fair_fight_cache["data"] = response
-    _fair_fight_cache["timestamp"] = now
-
-    return response
 
 
 @router.get("/source-intelligence")
