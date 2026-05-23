@@ -300,7 +300,7 @@ class TestOnboardingRoutes:
 
     @pytest.mark.asyncio
     async def test_submit_onboarding_persists_and_returns_category_interests(self):
-        user = SimpleNamespace(id=42, email_preferences={})
+        user = SimpleNamespace(id=42, email_preferences={}, push_preferences={})
         db = _FakeOnboardingDb()
         body = OnboardingRequest(
             home_location="Boston",

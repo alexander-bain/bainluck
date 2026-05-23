@@ -1051,6 +1051,20 @@ def send_big_move_alerts(self):
     return _tracked_run("big_move_alerts", _send_big_move_alerts())
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_time_horizon_calibration")
+def compute_time_horizon_calibration(self):
+    """Precompute time-horizon calibration and cache in Redis (every 6h)."""
+    from app.tasks.precompute_calibration import _compute_time_horizon_calibration
+    return _tracked_run("compute_time_horizon_calibration", _compute_time_horizon_calibration())
+
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.compute_fair_fight_comparison")
+def compute_fair_fight_comparison(self):
+    """Precompute fair-fight source comparison and cache in Redis (every 6h)."""
+    from app.tasks.precompute_calibration import _compute_fair_fight_comparison
+    return _tracked_run("compute_fair_fight_comparison", _compute_fair_fight_comparison())
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -1432,6 +1446,16 @@ celery_app.conf.beat_schedule = {
     "big-move-alerts": {
         "task": "app.tasks.send_big_move_alerts",
         "schedule": crontab(minute="*/30"),  # Every 30 minutes
+        "options": {"queue": "background"},
+    },
+    "compute-time-horizon-calibration": {
+        "task": "app.tasks.compute_time_horizon_calibration",
+        "schedule": crontab(minute=0, hour="1,7,13,19"),  # Every 6 hours
+        "options": {"queue": "background"},
+    },
+    "compute-fair-fight-comparison": {
+        "task": "app.tasks.compute_fair_fight_comparison",
+        "schedule": crontab(minute=15, hour="1,7,13,19"),  # Every 6 hours, offset 15min
         "options": {"queue": "background"},
     },
 }

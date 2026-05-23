@@ -223,6 +223,8 @@ class TestBeatScheduleCompleteness:
         "export-engagement-nightly",
         "daily-challenge-push",
         "big-move-alerts",
+        "compute-time-horizon-calibration",
+        "compute-fair-fight-comparison",
     }
 
     def test_no_missing_entries(self):

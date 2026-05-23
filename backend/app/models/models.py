@@ -1422,6 +1422,15 @@ class DiscoverPairwiseLabel(Base):
     choice: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # 'a', 'b', 'both', 'neither', 'skip'
+    pair_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    pair_strategy: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    surface: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    batch_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    ranking_error: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    card_a_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    card_b_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
