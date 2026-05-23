@@ -18,9 +18,11 @@ final class DiscoverViewModel: ObservableObject {
 
     @MainActor
     func load() async {
-        loading = items.isEmpty
-        error = nil
-        for attempt in 1...2 {
+        if items.isEmpty {
+            loading = true
+            error = nil
+        }
+        for attempt in 1...3 {
             do {
                 let response = try await APIClient.shared.fetchFeed(limit: 200, eventPct: 0.15, cacheTTL: nil)
                 items = Self.interleave(response.items)
@@ -36,13 +38,14 @@ final class DiscoverViewModel: ObservableObject {
                 loading = false
                 return
             } catch {
-                print("DiscoverView load error (attempt \(attempt)): \(error)")
-                if attempt < 2 {
-                    try? await Task.sleep(for: .seconds(1))
-                } else if items.isEmpty {
-                    self.error = "Couldn't load feed"
+                print("DiscoverView load error (attempt \(attempt)/3): \(error)")
+                if attempt < 3 {
+                    try? await Task.sleep(for: .seconds(1.5))
                 }
             }
+        }
+        if items.isEmpty {
+            error = "Couldn't load feed"
         }
         loading = false
     }
