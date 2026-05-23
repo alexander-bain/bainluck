@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import type { DebugItem } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -21,12 +22,19 @@ interface Card {
   hook_description: string | null;
   outcomes: CardOutcome[];
   score: number;
+  rank?: number | null;
+  story_key?: string | null;
+  family_key?: string | null;
+  group_id?: string | null;
+  snapshot?: Record<string, unknown>;
 }
 
 interface PairResponse {
   card_a: Card;
   card_b: Card;
   pair_id: string;
+  pair_strategy?: string;
+  batch_id?: string;
 }
 
 interface LabelStats {
@@ -46,6 +54,10 @@ interface RecentLabel {
   card_a_score: number | null;
   card_b_score: number | null;
   choice: string;
+  pair_id?: string | null;
+  pair_strategy?: string | null;
+  surface?: string | null;
+  ranking_error?: boolean | null;
   created_at: string | null;
 }
 
@@ -72,11 +84,117 @@ const CHOICE_COLORS: Record<string, string> = {
   skip: "bg-gray-300 text-gray-700 hover:bg-gray-400",
 };
 
+function createBatchId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `pairwise-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function itemProbability(item: DebugItem) {
+  if (typeof item.rendered_probability === "number") return item.rendered_probability;
+  const values = (item.top_outcomes || [])
+    .map((outcome) => outcome.probability ?? outcome.current_probability)
+    .filter((value): value is number => typeof value === "number");
+  return values.length ? Math.max(...values) : null;
+}
+
+function snapshotForItem(item: DebugItem, batchId: string): Record<string, unknown> {
+  return {
+    schema_version: "discover-pairwise-card-v1",
+    batch_id: batchId,
+    rank: item.rank,
+    item_type: item.type,
+    item_id: item.id,
+    market_id: item.type === "futures" ? item.id : null,
+    name: item.name,
+    source: item.source,
+    category: item.category,
+    archetype: item.archetype,
+    quality_class: item.quality_class,
+    headline: item.headline,
+    reason: item.reason,
+    context: item.context || item.reason,
+    hook_description: item.hook_description || null,
+    image_url: item.image_url || null,
+    story_key: item.story_key,
+    family_key: item.family_key,
+    group_id: item.group_id,
+    score: item.score,
+    rendered_probability: itemProbability(item),
+    top_outcomes: item.top_outcomes || [],
+    reasons: item.reasons || [],
+  };
+}
+
+function cardFromDebugItem(item: DebugItem, batchId: string): Card {
+  return {
+    market_id: item.id || 0,
+    name: item.name,
+    category: item.category,
+    probability: itemProbability(item),
+    image_url: item.image_url || null,
+    hook_description: item.hook_description || item.reason,
+    outcomes: (item.top_outcomes || []).slice(0, 3).map((outcome) => ({
+      name: outcome.name || "Outcome",
+      probability: outcome.probability ?? outcome.current_probability ?? null,
+    })),
+    score: Math.round(item.score * 100) / 100,
+    rank: item.rank,
+    story_key: item.story_key,
+    family_key: item.family_key,
+    group_id: item.group_id,
+    snapshot: snapshotForItem(item, batchId),
+  };
+}
+
+function buildFeedContextPairs(items: DebugItem[], batchId: string): PairResponse[] {
+  const futures = items.filter((item) => item.type === "futures" && item.id);
+  const pairs: PairResponse[] = [];
+  const seen = new Set<string>();
+  const addPair = (left: DebugItem, right: DebugItem, strategy: string) => {
+    if (!left.id || !right.id || left.id === right.id) return;
+    const key = [left.id, right.id].sort().join(":");
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairs.push({
+      card_a: cardFromDebugItem(left, batchId),
+      card_b: cardFromDebugItem(right, batchId),
+      pair_id: `${strategy}:${batchId}:${left.id}:${right.id}`,
+      pair_strategy: strategy,
+      batch_id: batchId,
+    });
+  };
+
+  for (let idx = 0; idx < Math.min(futures.length - 1, 20); idx += 1) {
+    addPair(futures[idx], futures[idx + 1], "adjacent_rank");
+  }
+
+  const byFamily = new Map<string, DebugItem[]>();
+  for (const item of futures) {
+    const key = item.story_key || item.group_id || item.family_key;
+    if (!key) continue;
+    byFamily.set(key, [...(byFamily.get(key) || []), item]);
+  }
+  for (const rows of byFamily.values()) {
+    if (rows.length >= 2) addPair(rows[0], rows[1], "same_story_or_family");
+  }
+
+  const highRankLowScore = futures.find((item) => item.rank <= 15 && item.score < 50);
+  const lowRankHighScore = futures.find((item) => item.rank > 15 && item.score >= 70);
+  if (highRankLowScore && lowRankHighScore) {
+    addPair(highRankLowScore, lowRankHighScore, "score_rank_tension");
+  }
+
+  return pairs;
+}
+
 // --- Page ---
 
-export default function PairwiseTab() {
+export default function PairwiseTab({ debugItems = [] }: { debugItems?: DebugItem[] }) {
   const { secret: submittedSecret } = useAdminAuth();
   const [reviewer] = useState("alex");
+  const [batchId] = useState(createBatchId);
   const [pair, setPair] = useState<PairResponse | null>(null);
   const [stats, setStats] = useState<LabelStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,6 +202,10 @@ export default function PairwiseTab() {
   const [error, setError] = useState<string | null>(null);
   const [labelCount, setLabelCount] = useState(0);
   const [lastChoice, setLastChoice] = useState<string | null>(null);
+  const feedPairs = useMemo(
+    () => buildFeedContextPairs(debugItems, batchId),
+    [debugItems, batchId]
+  );
 
   // Fetch next pair
   const fetchPair = useCallback(async () => {
@@ -92,6 +214,10 @@ export default function PairwiseTab() {
     setError(null);
     setLastChoice(null);
     try {
+      if (feedPairs.length) {
+        setPair(feedPairs[labelCount % feedPairs.length]);
+        return;
+      }
       const res = await fetch(
         `${API_URL}/api/admin/pairwise/next?secret=${encodeURIComponent(submittedSecret)}`
       );
@@ -107,7 +233,7 @@ export default function PairwiseTab() {
     } finally {
       setLoading(false);
     }
-  }, [submittedSecret]);
+  }, [feedPairs, labelCount, submittedSecret]);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
@@ -150,6 +276,18 @@ export default function PairwiseTab() {
             card_b_score: pair.card_b.score,
             choice,
             reviewer: reviewer.trim(),
+            pair_id: pair.pair_id,
+            pair_strategy: pair.pair_strategy || "legacy_random",
+            surface: "discover_quality",
+            batch_id: pair.batch_id || batchId,
+            confidence: "medium",
+            ranking_error: (
+              choice === "a" ? pair.card_a.score < pair.card_b.score
+              : choice === "b" ? pair.card_b.score < pair.card_a.score
+              : null
+            ),
+            card_a_snapshot: pair.card_a.snapshot || null,
+            card_b_snapshot: pair.card_b.snapshot || null,
           }),
         }
       );
@@ -206,6 +344,16 @@ export default function PairwiseTab() {
         {/* Pair comparison */}
         {pair && !loading && submittedSecret && (
           <>
+            {pair.pair_strategy && (
+              <div className="mb-3 flex items-center gap-2 text-xs text-text-muted">
+                <span className="rounded-full border border-surface-border bg-surface-elevated px-2 py-0.5">
+                  {pair.pair_strategy.replaceAll("_", " ")}
+                </span>
+                {pair.card_a.rank && pair.card_b.rank && (
+                  <span>#{pair.card_a.rank} vs #{pair.card_b.rank}</span>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
               {/* Card A */}
               <div

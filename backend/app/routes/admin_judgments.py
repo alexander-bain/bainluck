@@ -1,39 +1,400 @@
 """API endpoints for ranking judgments (Discover feed review)."""
 
 import csv
+import hashlib
 import io
+import json
 import logging
-import os
-from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, desc
+from pydantic import BaseModel
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import RankingJudgment
-from fastapi import Depends
+from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
 
 router = APIRouter(prefix="/admin/ranking-judgments", tags=["admin-judgments"])
 logger = logging.getLogger(__name__)
 
 
-from app.routes.admin_utils import _check_admin_secret
+class RankingJudgmentCreate(BaseModel):
+    secret: str | None = None
+    surface: str | None = None
+    rank_seen: int | None = None
+    item_type: str | None = None
+    market_id: int | None = None
+    event_id: int | None = None
+    market_name: str | None = None
+    label: str | None = None
+    reason_tags: list[str] | str | None = None
+    better_than: str | None = None
+    worse_than: str | None = None
+    notes: str | None = None
+    score_at_review: float | None = None
+    category_at_review: str | None = None
+    archetype_at_review: str | None = None
+    quality_class_at_review: str | None = None
+    headline_at_review: str | None = None
+    feed_request_id: str | None = None
+    card_snapshot: dict[str, Any] | None = None
+    label_metadata: dict[str, Any] | None = None
+    would_be_interesting_if: str | None = None
+    fixable_interest_score: int | None = None
+    fix_type: str | None = None
+    desired_entity_or_variant: str | None = None
+    current_entity_or_variant: str | None = None
+    create_issue_candidate: bool | None = None
+    reviewer: str | None = None
+
+
+class FixableInterestClusterTriage(BaseModel):
+    secret: str | None = None
+    status: str
+    github_issue_url: str | None = None
+    github_issue_number: int | None = None
+    experiment_key: str | None = None
+    notes: str | None = None
+    owner: str | None = None
+
+
+def _merged_value(
+    body: dict[str, Any],
+    key: str,
+    query_value: Any,
+    default: Any = None,
+) -> Any:
+    if query_value is not None:
+        return query_value
+    if key in body:
+        return body[key]
+    return default
+
+
+def _normalize_reason_tags(value: list[str] | str | None) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        raw_tags = value.split(",")
+    else:
+        raw_tags = value
+    return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+
+
+def _serialize_judgment(judgment: RankingJudgment) -> dict[str, Any]:
+    metadata = judgment.label_metadata or {}
+    return {
+        "id": judgment.id,
+        "date": str(judgment.date) if judgment.date else None,
+        "surface": judgment.surface,
+        "rank_seen": judgment.rank_seen,
+        "item_type": judgment.item_type,
+        "market_id": judgment.market_id,
+        "event_id": judgment.event_id,
+        "market_name": judgment.market_name,
+        "label": judgment.label,
+        "reason_tags": judgment.reason_tags or [],
+        "better_than": judgment.better_than,
+        "worse_than": judgment.worse_than,
+        "notes": judgment.notes,
+        "score_at_review": judgment.score_at_review,
+        "category_at_review": judgment.category_at_review,
+        "archetype_at_review": judgment.archetype_at_review,
+        "quality_class_at_review": judgment.quality_class_at_review,
+        "headline_at_review": judgment.headline_at_review,
+        "feed_request_id": judgment.feed_request_id,
+        "label_metadata": metadata,
+        "card_snapshot": metadata.get("card_snapshot") if isinstance(metadata, dict) else None,
+        "reviewer": judgment.reviewer,
+        "created_at": judgment.created_at.isoformat() if judgment.created_at else None,
+    }
+
+
+def _metadata_dict(judgment: RankingJudgment) -> dict[str, Any]:
+    return judgment.label_metadata if isinstance(judgment.label_metadata, dict) else {}
+
+
+def _fixable_interest(metadata: dict[str, Any]) -> dict[str, Any]:
+    fixable = metadata.get("fixable_interest")
+    return fixable if isinstance(fixable, dict) else {}
+
+
+def _card_snapshot(metadata: dict[str, Any]) -> dict[str, Any]:
+    snapshot = metadata.get("card_snapshot")
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _has_fixable_interest(fixable: dict[str, Any]) -> bool:
+    return any(
+        fixable.get(key) not in (None, "", False)
+        for key in (
+            "would_be_interesting_if",
+            "fixable_interest_score",
+            "fix_type",
+            "desired_entity_or_variant",
+            "current_entity_or_variant",
+            "create_issue_candidate",
+        )
+    )
+
+
+def _cluster_identity(judgment: RankingJudgment) -> dict[str, str]:
+    metadata = _metadata_dict(judgment)
+    fixable = _fixable_interest(metadata)
+    snapshot = _card_snapshot(metadata)
+    item_key = (
+        snapshot.get("group_id")
+        or snapshot.get("story_key")
+        or snapshot.get("family_key")
+        or f"{judgment.item_type}:{judgment.market_id or judgment.event_id or judgment.id}"
+    )
+    return {
+        "fix_type": str(fixable.get("fix_type") or "unspecified"),
+        "item_key": str(item_key or "unknown"),
+        "desired_entity_or_variant": str(fixable.get("desired_entity_or_variant") or ""),
+        "current_entity_or_variant": str(fixable.get("current_entity_or_variant") or ""),
+    }
+
+
+def _cluster_id(identity: dict[str, str]) -> str:
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return "fix_" + hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _triage_status(fixable: dict[str, Any]) -> str:
+    triage = fixable.get("triage")
+    if isinstance(triage, dict) and triage.get("status"):
+        return str(triage["status"])
+    return "open"
+
+
+def _serialize_fixable_cluster(cluster_id: str, rows: list[RankingJudgment]) -> dict[str, Any]:
+    rows = sorted(rows, key=lambda row: row.created_at or row.date, reverse=True)
+    representative = rows[0]
+    metadata = _metadata_dict(representative)
+    fixable = _fixable_interest(metadata)
+    snapshot = _card_snapshot(metadata)
+    identity = _cluster_identity(representative)
+
+    status_counts: dict[str, int] = {}
+    categories: set[str] = set()
+    labels: set[str] = set()
+    market_ids: set[int] = set()
+    affected_ranks: list[int] = []
+    issue_candidates = 0
+    max_score: int | None = None
+    latest_triage: dict[str, Any] | None = None
+
+    for row in rows:
+        row_metadata = _metadata_dict(row)
+        row_fixable = _fixable_interest(row_metadata)
+        status = _triage_status(row_fixable)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        row_snapshot = _card_snapshot(row_metadata)
+        if row.category_at_review:
+            categories.add(row.category_at_review)
+        elif row_snapshot.get("category"):
+            categories.add(str(row_snapshot["category"]))
+        if row.label:
+            labels.add(row.label)
+        if row.market_id is not None:
+            market_ids.add(row.market_id)
+        if row.rank_seen is not None:
+            affected_ranks.append(row.rank_seen)
+        if row_fixable.get("create_issue_candidate"):
+            issue_candidates += 1
+        try:
+            score = int(row_fixable.get("fixable_interest_score"))
+            max_score = score if max_score is None else max(max_score, score)
+        except (TypeError, ValueError):
+            pass
+        triage = row_fixable.get("triage")
+        if isinstance(triage, dict) and triage.get("status") != "open":
+            latest_triage = triage
+
+    if status_counts and status_counts.get("open", 0) == len(rows):
+        status = "open"
+    elif "linked" in status_counts:
+        status = "linked"
+    elif "experiment" in status_counts:
+        status = "experiment"
+    elif "dismissed" in status_counts and status_counts["dismissed"] == len(rows):
+        status = "dismissed"
+    else:
+        status = max(status_counts.items(), key=lambda item: item[1])[0]
+
+    return {
+        "cluster_id": cluster_id,
+        "status": status,
+        "triage": latest_triage or {},
+        "triage_counts": status_counts,
+        "fix_type": identity["fix_type"],
+        "item_key": identity["item_key"],
+        "story_key": snapshot.get("story_key"),
+        "family_key": snapshot.get("family_key"),
+        "group_id": snapshot.get("group_id"),
+        "desired_entity_or_variant": fixable.get("desired_entity_or_variant") or "",
+        "current_entity_or_variant": fixable.get("current_entity_or_variant") or "",
+        "would_be_interesting_if": fixable.get("would_be_interesting_if") or "",
+        "count": len(rows),
+        "issue_candidate_count": issue_candidates,
+        "max_fixable_interest_score": max_score,
+        "latest_created_at": representative.created_at.isoformat() if representative.created_at else None,
+        "categories": sorted(categories),
+        "labels": sorted(labels),
+        "affected_ranks": sorted(set(affected_ranks)),
+        "market_ids": sorted(market_ids),
+        "examples": [_serialize_fixable_example(row) for row in rows[:3]],
+    }
+
+
+def _serialize_fixable_example(judgment: RankingJudgment) -> dict[str, Any]:
+    metadata = _metadata_dict(judgment)
+    fixable = _fixable_interest(metadata)
+    snapshot = _card_snapshot(metadata)
+    return {
+        "judgment_id": judgment.id,
+        "created_at": judgment.created_at.isoformat() if judgment.created_at else None,
+        "market_id": judgment.market_id,
+        "event_id": judgment.event_id,
+        "market_name": judgment.market_name,
+        "snapshot_name": snapshot.get("name"),
+        "label": judgment.label,
+        "rank_seen": judgment.rank_seen,
+        "score_at_review": judgment.score_at_review,
+        "would_be_interesting_if": fixable.get("would_be_interesting_if") or "",
+        "notes": judgment.notes,
+        "card_snapshot": snapshot,
+    }
+
+
+def _build_fixable_clusters(rows: list[RankingJudgment]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[RankingJudgment]] = {}
+    for row in rows:
+        metadata = _metadata_dict(row)
+        fixable = _fixable_interest(metadata)
+        if not _has_fixable_interest(fixable):
+            continue
+        cluster_id = _cluster_id(_cluster_identity(row))
+        grouped.setdefault(cluster_id, []).append(row)
+    clusters = [
+        _serialize_fixable_cluster(cluster_id, cluster_rows)
+        for cluster_id, cluster_rows in grouped.items()
+    ]
+    clusters.sort(
+        key=lambda cluster: (
+            cluster["status"] != "open",
+            -(cluster["max_fixable_interest_score"] or 0),
+            -cluster["issue_candidate_count"],
+            -cluster["count"],
+            cluster["latest_created_at"] or "",
+        )
+    )
+    return clusters
+
+
+def _structured_label_metadata(
+    body: dict[str, Any],
+    explicit_metadata: Any,
+) -> dict[str, Any] | None:
+    metadata = dict(explicit_metadata) if isinstance(explicit_metadata, dict) else {}
+    card_snapshot = body.get("card_snapshot")
+    if card_snapshot is None:
+        card_snapshot = metadata.pop("card_snapshot", None)
+    if isinstance(card_snapshot, dict):
+        metadata["card_snapshot"] = _normalize_card_snapshot(card_snapshot)
+
+    fixable_keys = [
+        "would_be_interesting_if",
+        "fixable_interest_score",
+        "fix_type",
+        "desired_entity_or_variant",
+        "current_entity_or_variant",
+        "create_issue_candidate",
+    ]
+    top_level_fixable = {
+        key: metadata.pop(key)
+        for key in list(metadata.keys())
+        if key in fixable_keys and metadata[key] not in (None, "")
+    }
+    fixable = {
+        key: body[key]
+        for key in fixable_keys
+        if key in body and body[key] not in (None, "")
+    }
+    if top_level_fixable:
+        fixable = {**top_level_fixable, **fixable}
+    if fixable:
+        existing = metadata.get("fixable_interest")
+        if isinstance(existing, dict):
+            fixable = {**existing, **fixable}
+        metadata["fixable_interest"] = fixable
+    return metadata or None
+
+
+def _normalize_card_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Keep a compact, stable copy of the card state the reviewer saw."""
+
+    allowed_keys = [
+        "batch_id",
+        "feed_request_id",
+        "rank",
+        "item_type",
+        "item_id",
+        "market_id",
+        "event_id",
+        "name",
+        "source",
+        "category",
+        "archetype",
+        "quality_class",
+        "headline",
+        "reason",
+        "context",
+        "hook_description",
+        "image_url",
+        "story_key",
+        "family_key",
+        "group_id",
+        "score",
+        "rendered_probability",
+        "top_outcomes",
+        "reasons",
+        "has_hook",
+        "has_image",
+        "explanation_ok",
+    ]
+    normalized: dict[str, Any] = {}
+    for key in allowed_keys:
+        value = snapshot.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            normalized[key] = value
+        elif key in {"top_outcomes", "reasons"} and isinstance(value, list):
+            normalized[key] = value[:5] if key == "top_outcomes" else value[:12]
+        elif isinstance(value, dict):
+            normalized[key] = value
+    normalized["schema_version"] = snapshot.get("schema_version") or "discover-card-v1"
+    return normalized
 
 
 @router.post("")
 async def create_judgment(
+    payload: RankingJudgmentCreate | None = Body(None),
     db: AsyncSession = Depends(get_db_rw),
-    secret: str = Query(...),
-    surface: str = Query("discover"),
+    secret: str | None = Query(None),
+    surface: str | None = Query(None),
     rank_seen: int | None = Query(None),
-    item_type: str = Query("futures"),
+    item_type: str | None = Query(None),
     market_id: int | None = Query(None),
     event_id: int | None = Query(None),
     market_name: str | None = Query(None),
-    label: str = Query(...),
-    reason_tags: str = Query(""),
+    label: str | None = Query(None),
+    reason_tags: str | None = Query(None),
     better_than: str | None = Query(None),
     worse_than: str | None = Query(None),
     notes: str | None = Query(None),
@@ -43,37 +404,51 @@ async def create_judgment(
     quality_class_at_review: str | None = Query(None),
     headline_at_review: str | None = Query(None),
     feed_request_id: str | None = Query(None),
-    reviewer: str = Query("alex"),
+    reviewer: str | None = Query(None),
 ):
-    if not _check_admin_secret(secret):
-        return {"error": "unauthorized"}
+    body = payload.model_dump(exclude_unset=True) if payload else {}
+    secret_value = _merged_value(body, "secret", secret)
+    if not _check_admin_secret(secret_value):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    tags = [t.strip() for t in reason_tags.split(",") if t.strip()] if reason_tags else []
+    label_value = _merged_value(body, "label", label)
+    if not label_value:
+        raise HTTPException(status_code=400, detail="label is required")
 
     judgment = RankingJudgment(
-            surface=surface,
-            rank_seen=rank_seen,
-            item_type=item_type,
-            market_id=market_id,
-            event_id=event_id,
-            market_name=market_name,
-            label=label,
-            reason_tags=tags,
-            better_than=better_than,
-            worse_than=worse_than,
-            notes=notes,
-            score_at_review=score_at_review,
-            category_at_review=category_at_review,
-            archetype_at_review=archetype_at_review,
-            quality_class_at_review=quality_class_at_review,
-            headline_at_review=headline_at_review,
-            feed_request_id=feed_request_id,
-            reviewer=reviewer,
-        )
+        surface=_merged_value(body, "surface", surface, "discover"),
+        rank_seen=_merged_value(body, "rank_seen", rank_seen),
+        item_type=_merged_value(body, "item_type", item_type, "futures"),
+        market_id=_merged_value(body, "market_id", market_id),
+        event_id=_merged_value(body, "event_id", event_id),
+        market_name=_merged_value(body, "market_name", market_name),
+        label=label_value,
+        reason_tags=_normalize_reason_tags(
+            _merged_value(body, "reason_tags", reason_tags)
+        ),
+        better_than=_merged_value(body, "better_than", better_than),
+        worse_than=_merged_value(body, "worse_than", worse_than),
+        notes=_merged_value(body, "notes", notes),
+        score_at_review=_merged_value(body, "score_at_review", score_at_review),
+        category_at_review=_merged_value(body, "category_at_review", category_at_review),
+        archetype_at_review=_merged_value(
+            body, "archetype_at_review", archetype_at_review
+        ),
+        quality_class_at_review=_merged_value(
+            body, "quality_class_at_review", quality_class_at_review
+        ),
+        headline_at_review=_merged_value(body, "headline_at_review", headline_at_review),
+        feed_request_id=_merged_value(body, "feed_request_id", feed_request_id),
+        label_metadata=_structured_label_metadata(
+            body,
+            _merged_value(body, "label_metadata", None),
+        ),
+        reviewer=_merged_value(body, "reviewer", reviewer, "alex"),
+    )
     db.add(judgment)
     await db.commit()
     await db.refresh(judgment)
-    return {"id": judgment.id, "label": judgment.label}
+    return {"status": "ok", "id": judgment.id, "label": judgment.label}
 
 
 @router.get("")
@@ -86,121 +461,198 @@ async def list_judgments(
     surface: str | None = Query(None),
 ):
     if not _check_admin_secret(secret):
-        return {"error": "unauthorized"}
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-        q = select(RankingJudgment).order_by(desc(RankingJudgment.created_at))
-        count_q = select(func.count(RankingJudgment.id))
+    q = select(RankingJudgment).order_by(desc(RankingJudgment.created_at))
+    count_q = select(func.count(RankingJudgment.id))
 
-        if label:
-            q = q.where(RankingJudgment.label == label)
-            count_q = count_q.where(RankingJudgment.label == label)
-        if surface:
-            q = q.where(RankingJudgment.surface == surface)
-            count_q = count_q.where(RankingJudgment.surface == surface)
+    if label:
+        q = q.where(RankingJudgment.label == label)
+        count_q = count_q.where(RankingJudgment.label == label)
+    if surface:
+        q = q.where(RankingJudgment.surface == surface)
+        count_q = count_q.where(RankingJudgment.surface == surface)
 
-        total = (await db.execute(count_q)).scalar() or 0
-        rows = (await db.execute(q.limit(limit).offset(offset))).scalars().all()
+    total = (await db.execute(count_q)).scalar() or 0
+    rows = (await db.execute(q.limit(limit).offset(offset))).scalars().all()
 
-        # Summary counts
-        summary_q = select(
-            RankingJudgment.label,
-            func.count(RankingJudgment.id),
-        ).group_by(RankingJudgment.label)
-        summary_rows = (await db.execute(summary_q)).all()
-        summary = {row[0]: row[1] for row in summary_rows}
+    summary_q = select(
+        RankingJudgment.label,
+        func.count(RankingJudgment.id),
+    ).group_by(RankingJudgment.label)
+    summary_rows = (await db.execute(summary_q)).all()
+    summary = {row[0]: row[1] for row in summary_rows}
 
-        return {
-            "total": total,
-            "summary": summary,
-            "judgments": [
-                {
-                    "id": j.id,
-                    "date": str(j.date) if j.date else None,
-                    "surface": j.surface,
-                    "rank_seen": j.rank_seen,
-                    "item_type": j.item_type,
-                    "market_id": j.market_id,
-                    "market_name": j.market_name,
-                    "label": j.label,
-                    "reason_tags": j.reason_tags or [],
-                    "better_than": j.better_than,
-                    "worse_than": j.worse_than,
-                    "notes": j.notes,
-                    "score_at_review": j.score_at_review,
-                    "category_at_review": j.category_at_review,
-                    "reviewer": j.reviewer,
-                    "created_at": j.created_at.isoformat() if j.created_at else None,
-                }
-                for j in rows
-            ],
-        }
+    return {
+        "total": total,
+        "summary": summary,
+        "judgments": [_serialize_judgment(judgment) for judgment in rows],
+    }
 
 
 @router.get("/summary")
 async def judgment_summary(db: AsyncSession = Depends(get_db), secret: str = Query(...)):
     if not _check_admin_secret(secret):
-        return {"error": "unauthorized"}
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-        # Label distribution
-        label_q = select(
-            RankingJudgment.label,
-            func.count(RankingJudgment.id),
-        ).group_by(RankingJudgment.label)
-        label_rows = (await db.execute(label_q)).all()
+    label_q = select(
+        RankingJudgment.label,
+        func.count(RankingJudgment.id),
+    ).group_by(RankingJudgment.label)
+    label_rows = (await db.execute(label_q)).all()
 
-        # Category breakdown
-        cat_q = select(
-            RankingJudgment.category_at_review,
-            RankingJudgment.label,
-            func.count(RankingJudgment.id),
-        ).group_by(RankingJudgment.category_at_review, RankingJudgment.label)
-        cat_rows = (await db.execute(cat_q)).all()
+    cat_q = select(
+        RankingJudgment.category_at_review,
+        RankingJudgment.label,
+        func.count(RankingJudgment.id),
+    ).group_by(RankingJudgment.category_at_review, RankingJudgment.label)
+    cat_rows = (await db.execute(cat_q)).all()
 
-        # Score by label
-        score_q = select(
+    score_q = (
+        select(
             RankingJudgment.label,
             func.avg(RankingJudgment.score_at_review),
             func.min(RankingJudgment.score_at_review),
             func.max(RankingJudgment.score_at_review),
             func.count(RankingJudgment.id),
-        ).where(RankingJudgment.score_at_review.isnot(None)).group_by(RankingJudgment.label)
-        score_rows = (await db.execute(score_q)).all()
+        )
+        .where(RankingJudgment.score_at_review.isnot(None))
+        .group_by(RankingJudgment.label)
+    )
+    score_rows = (await db.execute(score_q)).all()
 
-        # Pairwise count
-        pairwise_count = (await db.execute(
+    pairwise_count = (
+        await db.execute(
             select(func.count(RankingJudgment.id)).where(
-                (RankingJudgment.better_than.isnot(None)) | (RankingJudgment.worse_than.isnot(None))
+                (RankingJudgment.better_than.isnot(None))
+                | (RankingJudgment.worse_than.isnot(None))
             )
-        )).scalar() or 0
+        )
+    ).scalar() or 0
 
-        total = sum(r[1] for r in label_rows)
+    by_category: dict[str, dict[str, int]] = {}
+    for category, row_label, count in cat_rows:
+        category_key = category or "uncategorized"
+        by_category.setdefault(category_key, {})[row_label] = count
 
-        return {
-            "total": total,
-            "labels": {r[0]: r[1] for r in label_rows},
-            "pairwise_count": pairwise_count,
-            "score_by_label": [
-                {
-                    "label": r[0],
-                    "avg_score": round(r[1], 1) if r[1] else None,
-                    "min_score": round(r[2], 1) if r[2] else None,
-                    "max_score": round(r[3], 1) if r[3] else None,
-                    "count": r[4],
-                }
-                for r in score_rows
-            ],
-            "by_category": {},
-        }
+    return {
+        "total": sum(row[1] for row in label_rows),
+        "labels": {row[0]: row[1] for row in label_rows},
+        "pairwise_count": pairwise_count,
+        "score_by_label": [
+            {
+                "label": row[0],
+                "avg_score": round(row[1], 1) if row[1] is not None else None,
+                "min_score": round(row[2], 1) if row[2] is not None else None,
+                "max_score": round(row[3], 1) if row[3] is not None else None,
+                "count": row[4],
+            }
+            for row in score_rows
+        ],
+        "by_category": by_category,
+    }
+
+
+@router.get("/fixable-interest/clusters")
+async def fixable_interest_clusters(
+    db: AsyncSession = Depends(get_db),
+    secret: str = Query(...),
+    status: str = Query("open"),
+    limit: int = Query(50),
+    row_limit: int = Query(1000),
+):
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    rows = (
+        await db.execute(
+            select(RankingJudgment)
+            .where(RankingJudgment.label_metadata.isnot(None))
+            .order_by(desc(RankingJudgment.created_at))
+            .limit(row_limit)
+        )
+    ).scalars().all()
+    clusters = _build_fixable_clusters(list(rows))
+    if status != "all":
+        clusters = [cluster for cluster in clusters if cluster["status"] == status]
+    return {
+        "status": status,
+        "total": len(clusters),
+        "clusters": clusters[:limit],
+    }
+
+
+@router.post("/fixable-interest/clusters/{cluster_id}/triage")
+async def triage_fixable_interest_cluster(
+    cluster_id: str,
+    payload: FixableInterestClusterTriage | None = Body(None),
+    db: AsyncSession = Depends(get_db_rw),
+    secret: str | None = Query(None),
+):
+    body = payload.model_dump(exclude_unset=True) if payload else {}
+    secret_value = _merged_value(body, "secret", secret)
+    if not _check_admin_secret(secret_value):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    status = str(body.get("status") or "").strip()
+    if status not in {"open", "dismissed", "linked", "experiment"}:
+        raise HTTPException(status_code=400, detail="Unsupported triage status")
+
+    rows = (
+        await db.execute(
+            select(RankingJudgment)
+            .where(RankingJudgment.label_metadata.isnot(None))
+            .order_by(desc(RankingJudgment.created_at))
+            .limit(5000)
+        )
+    ).scalars().all()
+    matched: list[RankingJudgment] = []
+    triage = {
+        "status": status,
+        "github_issue_url": body.get("github_issue_url"),
+        "github_issue_number": body.get("github_issue_number"),
+        "experiment_key": body.get("experiment_key"),
+        "notes": body.get("notes"),
+        "owner": body.get("owner"),
+    }
+    triage = {key: value for key, value in triage.items() if value not in (None, "")}
+
+    for row in rows:
+        metadata = _metadata_dict(row)
+        fixable = _fixable_interest(metadata)
+        if not _has_fixable_interest(fixable):
+            continue
+        if _cluster_id(_cluster_identity(row)) != cluster_id:
+            continue
+        next_metadata = dict(metadata)
+        next_fixable = dict(fixable)
+        next_fixable["triage"] = triage
+        next_metadata["fixable_interest"] = next_fixable
+        row.label_metadata = next_metadata
+        matched.append(row)
+
+    if not matched:
+        raise HTTPException(status_code=404, detail="Fixable-interest cluster not found")
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "cluster_id": cluster_id,
+        "updated_count": len(matched),
+        "triage_status": status,
+    }
 
 
 @router.get("/export")
 async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Query(...)):
     if not _check_admin_secret(secret):
-        return {"error": "unauthorized"}
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-        rows = (await db.execute(
+    rows = (
+        await db.execute(
             select(RankingJudgment).order_by(RankingJudgment.created_at)
-        )).scalars().all()
+        )
+    ).scalars().all()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -208,7 +660,8 @@ async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Que
         "date", "surface", "rank_seen", "item_type", "market_id",
         "market_name", "label", "reason_tags", "better_than", "worse_than",
         "notes", "score_at_review", "category_at_review", "archetype_at_review",
-        "quality_class_at_review", "headline_at_review", "feed_request_id", "reviewer",
+        "quality_class_at_review", "headline_at_review", "feed_request_id",
+        "label_metadata", "card_snapshot", "reviewer",
     ])
     for j in rows:
         writer.writerow([
@@ -216,7 +669,10 @@ async def export_judgments(db: AsyncSession = Depends(get_db), secret: str = Que
             j.market_name, j.label, ",".join(j.reason_tags or []),
             j.better_than, j.worse_than, j.notes, j.score_at_review,
             j.category_at_review, j.archetype_at_review, j.quality_class_at_review,
-            j.headline_at_review, j.feed_request_id, j.reviewer,
+            j.headline_at_review, j.feed_request_id,
+            json.dumps(j.label_metadata or {}, sort_keys=True),
+            json.dumps((j.label_metadata or {}).get("card_snapshot") or {}, sort_keys=True),
+            j.reviewer,
         ])
 
     output.seek(0)

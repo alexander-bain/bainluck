@@ -8,6 +8,9 @@ import type {
   DiscoverDiagnosticRunsResponse,
   DiscoverDiagnosticTrendsResponse,
   DiscoverDiagnosticRowsResponse,
+  DiscoverLabelEvalRunsResponse,
+  DiscoverLabelEvalTrendsResponse,
+  DiscoverFixableInterestClustersResponse,
   ExternalCuratorGroundTruthStatus,
   GroundTruthHealthResponse,
   DiscoverRuntimeConfig,
@@ -106,6 +109,63 @@ export async function triggerDiscoverDiagnosticSnapshot(secret: string): Promise
     { method: "POST" }
   );
   if (!res.ok) throw new Error(`Diagnostic snapshot trigger failed: ${res.status}`);
+}
+
+export async function fetchDiscoverLabelEvalRuns(secret: string): Promise<DiscoverLabelEvalRunsResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-label-eval/runs?secret=${encodeURIComponent(secret)}&limit=8`
+  );
+  if (!res.ok) throw new Error(`Label eval runs API error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchDiscoverLabelEvalTrends(secret: string): Promise<DiscoverLabelEvalTrendsResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-label-eval/trends?secret=${encodeURIComponent(secret)}&limit=8`
+  );
+  if (!res.ok) throw new Error(`Label eval trends API error: ${res.status}`);
+  return res.json();
+}
+
+export async function triggerDiscoverLabelEvalSnapshot(secret: string): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/discover-label-eval/snapshot?secret=${encodeURIComponent(secret)}&days=30&top_k=20&limit=5000`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error(`Label eval snapshot trigger failed: ${res.status}`);
+}
+
+export async function fetchDiscoverFixableInterestClusters(
+  secret: string,
+  status = "open"
+): Promise<DiscoverFixableInterestClustersResponse> {
+  const res = await fetch(
+    `${API_URL}/api/admin/ranking-judgments/fixable-interest/clusters?secret=${encodeURIComponent(secret)}&status=${encodeURIComponent(status)}&limit=20`
+  );
+  if (!res.ok) throw new Error(`Fixable-interest clusters API error: ${res.status}`);
+  return res.json();
+}
+
+export async function triageDiscoverFixableInterestCluster(
+  secret: string,
+  clusterId: string,
+  payload: {
+    status: "open" | "dismissed" | "linked" | "experiment";
+    github_issue_url?: string;
+    github_issue_number?: number;
+    experiment_key?: string;
+    notes?: string;
+  }
+): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/api/admin/ranking-judgments/fixable-interest/clusters/${encodeURIComponent(clusterId)}/triage?secret=${encodeURIComponent(secret)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) throw new Error(`Fixable-interest triage failed: ${res.status}`);
 }
 
 export async function fetchExternalCuratorGroundTruthStatus(secret: string): Promise<ExternalCuratorGroundTruthStatus> {

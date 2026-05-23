@@ -20,6 +20,7 @@ from app.models.models import (
     BugReport,
     DiscoverGroundTruthDiagnostic,
     DiscoverInteraction,
+    DiscoverLabelEvalRun,
     DiscoverReviewDecision,
     ExternalCuratorGroundTruthItem,
 )
@@ -43,6 +44,7 @@ from app.utils.persisted_external_curator_ground_truth import (
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
 )
+from app.utils.discover_label_eval_runs import serialize_eval_run
 
 import logging
 logger = logging.getLogger(__name__)
@@ -54,6 +56,124 @@ router = APIRouter()
 _BUG_FIXED_EMAIL_STATUSES = {"fixed", "actioned"}
 _BUG_FIXED_EMAIL_TASK_NAME = "app.tasks.send_bug_fixed_email"
 _VALID_BUG_CATEGORIES = {"ui", "data_quality", "performance", "feature_request", "ios", "other"}
+
+
+@router.get("/discover-label-eval/runs")
+async def list_discover_label_eval_runs(
+    secret: str = Query(...),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent persisted Discover human-label eval runs."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        select(DiscoverLabelEvalRun)
+        .order_by(DiscoverLabelEvalRun.captured_at.desc())
+        .limit(limit)
+    )
+    return {
+        "runs": [
+            serialize_eval_run(run, include_details=False)
+            for run in result.scalars().all()
+        ]
+    }
+
+
+@router.get("/discover-label-eval/trends")
+async def list_discover_label_eval_trends(
+    secret: str = Query(...),
+    limit: int = Query(12, ge=2, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent label eval runs with run-over-run metric deltas."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        select(DiscoverLabelEvalRun)
+        .order_by(DiscoverLabelEvalRun.captured_at.desc())
+        .limit(limit)
+    )
+    runs = [serialize_eval_run(run, include_details=False) for run in result.scalars().all()]
+    metric_keys = [
+        "tapworthy_at_k",
+        "boring_rate_at_k",
+        "duplicate_family_rate_at_k",
+        "unclear_rate_at_k",
+        "bad_explanation_rate_at_k",
+        "bad_image_rate_at_k",
+        "broad_appeal_at_k",
+        "fixable_interest_rate_at_k",
+        "tapworthy_recall_at_k",
+    ]
+    for index, run in enumerate(runs):
+        previous = runs[index + 1] if index + 1 < len(runs) else None
+        deltas = {}
+        if previous:
+            for key in metric_keys:
+                current = run.get(key)
+                old = previous.get(key)
+                if current is not None and old is not None:
+                    deltas[key] = round(float(current) - float(old), 6)
+        run["deltas"] = deltas
+    return {"runs": runs}
+
+
+@router.get("/discover-label-eval/runs/{run_id}")
+async def get_discover_label_eval_run(
+    run_id: str,
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return full details for one persisted Discover human-label eval run."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(
+        select(DiscoverLabelEvalRun).where(DiscoverLabelEvalRun.run_id == run_id)
+    )
+    run = result.scalars().first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    return serialize_eval_run(run, include_details=True)
+
+
+@router.post("/discover-label-eval/snapshot")
+async def trigger_discover_label_eval_snapshot(
+    secret: str = Query(...),
+    days: int = Query(30, ge=1, le=365),
+    top_k: int = Query(20, ge=1, le=100),
+    limit: int = Query(5000, ge=1, le=50000),
+    surface: str | None = Query(None),
+    reviewer: str | None = Query(None),
+):
+    """Queue a persisted Discover human-label eval snapshot."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    task = celery_app.send_task(
+        "app.tasks.snapshot_discover_label_eval_run",
+        kwargs={
+            "days": days,
+            "top_k": top_k,
+            "limit": limit,
+            "surface": surface,
+            "reviewer": reviewer,
+        },
+    )
+    return {
+        "queued": True,
+        "task_id": task.id,
+        "days": days,
+        "top_k": top_k,
+        "limit": limit,
+        "surface": surface,
+        "reviewer": reviewer,
+    }
 
 
 class ExternalCuratorGroundTruthImportRequest(BaseModel):

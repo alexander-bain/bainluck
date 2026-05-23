@@ -29,12 +29,23 @@ export interface DebugItem {
   source: string;
   headline: string | null;
   reason: string | null;
+  context?: string | null;
+  hook_description?: string | null;
+  image_url?: string | null;
   hook: boolean;
   image: boolean;
   explanation_ok: boolean;
   quality_class: string;
   family_key: string;
   story_key: string | null;
+  group_id?: string | null;
+  rendered_probability?: number | null;
+  top_outcomes?: Array<{
+    name?: string | null;
+    probability?: number | null;
+    current_probability?: number | null;
+    probability_change_24h?: number | null;
+  }>;
   ladder: boolean;
   reasons: string[];
   ground_truth: boolean;
@@ -202,6 +213,104 @@ export interface DiscoverDiagnosticRowsResponse {
   rows: DiscoverDiagnosticRow[];
 }
 
+export type DiscoverLabelEvalMetricKey =
+  | "tapworthy_at_k"
+  | "boring_rate_at_k"
+  | "duplicate_family_rate_at_k"
+  | "unclear_rate_at_k"
+  | "bad_explanation_rate_at_k"
+  | "bad_image_rate_at_k"
+  | "broad_appeal_at_k"
+  | "fixable_interest_rate_at_k"
+  | "tapworthy_recall_at_k";
+
+export interface DiscoverLabelEvalRegression {
+  metric: DiscoverLabelEvalMetricKey | string;
+  previous: number | null;
+  current: number | null;
+  delta: number | null;
+}
+
+export interface DiscoverLabelEvalRun {
+  run_id: string;
+  eval_name: string;
+  status: string;
+  surface: string | null;
+  reviewer: string | null;
+  top_k: number;
+  row_count: number;
+  captured_at: string | null;
+  dataset_window_start: string | null;
+  dataset_window_end: string | null;
+  tapworthy_at_k: number | null;
+  boring_rate_at_k: number | null;
+  duplicate_family_rate_at_k: number | null;
+  unclear_rate_at_k: number | null;
+  bad_explanation_rate_at_k: number | null;
+  bad_image_rate_at_k: number | null;
+  broad_appeal_at_k: number | null;
+  fixable_interest_rate_at_k: number | null;
+  tapworthy_recall_at_k: number | null;
+  notable_regressions: DiscoverLabelEvalRegression[];
+}
+
+export interface DiscoverLabelEvalTrendRun extends DiscoverLabelEvalRun {
+  deltas: Partial<Record<DiscoverLabelEvalMetricKey, number>>;
+}
+
+export interface DiscoverLabelEvalRunsResponse {
+  runs: DiscoverLabelEvalRun[];
+}
+
+export interface DiscoverLabelEvalTrendsResponse {
+  runs: DiscoverLabelEvalTrendRun[];
+}
+
+export interface DiscoverFixableInterestExample {
+  judgment_id: number;
+  created_at: string | null;
+  market_id: number | null;
+  event_id: number | null;
+  market_name: string | null;
+  snapshot_name: string | null;
+  label: string;
+  rank_seen: number | null;
+  score_at_review: number | null;
+  would_be_interesting_if: string;
+  notes: string | null;
+  card_snapshot: Record<string, unknown>;
+}
+
+export interface DiscoverFixableInterestCluster {
+  cluster_id: string;
+  status: string;
+  triage: Record<string, unknown>;
+  triage_counts: Record<string, number>;
+  fix_type: string;
+  item_key: string;
+  story_key: string | null;
+  family_key: string | null;
+  group_id: string | null;
+  desired_entity_or_variant: string;
+  current_entity_or_variant: string;
+  would_be_interesting_if: string;
+  count: number;
+  issue_candidate_count: number;
+  max_fixable_interest_score: number | null;
+  latest_created_at: string | null;
+  categories: string[];
+  labels: string[];
+  affected_ranks: number[];
+  market_ids: number[];
+  examples: DiscoverFixableInterestExample[];
+}
+
+export interface DiscoverFixableInterestClustersResponse {
+  status: string;
+  total: number;
+  clusters: DiscoverFixableInterestCluster[];
+}
+
 export interface ExternalCuratorGroundTruthStatus {
   metadata: {
     configured: boolean;
@@ -262,6 +371,7 @@ export interface GroundTruthHealthResponse {
 }
 
 export interface FeedDebugResponse {
+  feed_request_id?: string | null;
   debug_summary: DebugSummary;
   debug_items: DebugItem[];
   missing_ground_truth: MissingGroundTruthItem[];

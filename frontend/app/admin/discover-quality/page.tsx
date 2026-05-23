@@ -69,6 +69,10 @@ import {
   fetchDiscoverDiagnosticTrends,
   fetchDiscoverDiagnosticRows,
   triggerDiscoverDiagnosticSnapshot,
+  fetchDiscoverLabelEvalTrends,
+  triggerDiscoverLabelEvalSnapshot,
+  fetchDiscoverFixableInterestClusters,
+  triageDiscoverFixableInterestCluster,
   fetchExternalCuratorGroundTruthStatus,
   fetchGroundTruthHealth,
   triggerExternalCuratorGroundTruthImport,
@@ -85,13 +89,17 @@ import ScoreBucketList from "@/components/admin/discover/ScoreBucketList";
 import LaunchHealthTrendPanel from "@/components/admin/discover/LaunchHealthTrendPanel";
 import EngagementReviewTab from "@/components/admin/discover/EngagementReviewTab";
 import ReviewTab from "@/components/admin/discover/ReviewTab";
+import PairwiseTab from "@/components/admin/discover/PairwiseTab";
 import DenominatorTooltip from "@/components/admin/DenominatorTooltip";
 import DiagnosticRunsPanel from "@/components/admin/discover/DiagnosticRunsPanel";
 import EngagementPanel from "@/components/admin/discover/EngagementPanel";
 import RuntimeActionButton from "@/components/admin/discover/RuntimeActionButton";
 import EngagementList from "@/components/admin/discover/EngagementList";
 import LaunchHealthList from "@/components/admin/discover/LaunchHealthList";
+import LabelEvalTrendPanel from "@/components/admin/discover/LabelEvalTrendPanel";
+import FixableInterestPanel, { issueNumberFromUrl } from "@/components/admin/discover/FixableInterestPanel";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function DiscoverQualityPage() {
   usePageTracking({
@@ -102,7 +110,7 @@ export default function DiscoverQualityPage() {
   useEngagementTime({ pageType: "admin_discover_quality" });
 
   const { secret: submittedSecret } = useAdminAuth();
-  const [activeTab, setActiveTab] = useState<"quality" | "engagement" | "review">("quality");
+  const [activeTab, setActiveTab] = useState<"quality" | "engagement" | "review" | "pairwise">("quality");
   const [category, setCategory] = useState("all");
   const [archetype, setArchetype] = useState("all");
   const [quality, setQuality] = useState("all");
@@ -112,6 +120,8 @@ export default function DiscoverQualityPage() {
   const [search, setSearch] = useState("");
   const [triggering, setTriggering] = useState(false);
   const [triggeringDiagnostics, setTriggeringDiagnostics] = useState(false);
+  const [triggeringLabelEval, setTriggeringLabelEval] = useState(false);
+  const [updatingFixableClusterId, setUpdatingFixableClusterId] = useState<string | null>(null);
   const [triggeringCuratorImport, setTriggeringCuratorImport] = useState(false);
   const [engagementDays, setEngagementDays] = useState(7);
   const [selectedDiagnosticRunId, setSelectedDiagnosticRunId] = useState("");
@@ -131,6 +141,8 @@ export default function DiscoverQualityPage() {
   const launchHealthTrendsKey = ["discover-launch-health-trends", submittedSecret];
   const diagnosticRunsKey = ["discover-diagnostic-runs", submittedSecret];
   const diagnosticTrendsKey = ["discover-diagnostic-trends", submittedSecret];
+  const labelEvalTrendsKey = ["discover-label-eval-trends", submittedSecret];
+  const fixableInterestKey = ["discover-fixable-interest", submittedSecret];
   const externalCuratorStatusKey = ["external-curator-ground-truth-status", submittedSecret];
   const groundTruthHealthKey = ["ground-truth-health", submittedSecret];
   const diagnosticRowsKey = selectedDiagnosticRunId
@@ -178,6 +190,18 @@ export default function DiscoverQualityPage() {
   const { data: diagnosticTrendsData } = useSWR(
     diagnosticTrendsKey,
     () => fetchDiscoverDiagnosticTrends(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: labelEvalTrendsData } = useSWR(
+    labelEvalTrendsKey,
+    () => fetchDiscoverLabelEvalTrends(submittedSecret!),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: fixableInterestData } = useSWR(
+    fixableInterestKey,
+    () => fetchDiscoverFixableInterestClusters(submittedSecret!, "open"),
     { refreshInterval: 60000 }
   );
 
@@ -401,6 +425,19 @@ export default function DiscoverQualityPage() {
     }
   };
 
+  const triggerLabelEvalSnapshot = async () => {
+    if (!submittedSecret) return;
+    setTriggeringLabelEval(true);
+    try {
+      await triggerDiscoverLabelEvalSnapshot(submittedSecret);
+      setTimeout(() => {
+        mutate(labelEvalTrendsKey);
+      }, 5000);
+    } finally {
+      setTriggeringLabelEval(false);
+    }
+  };
+
   const triggerCuratorImport = async () => {
     if (!submittedSecret) return;
     setTriggeringCuratorImport(true);
@@ -416,6 +453,49 @@ export default function DiscoverQualityPage() {
     }
   };
 
+  const dismissFixableCluster = async (clusterId: string) => {
+    if (!submittedSecret) return;
+    setUpdatingFixableClusterId(clusterId);
+    try {
+      await triageDiscoverFixableInterestCluster(submittedSecret, clusterId, {
+        status: "dismissed",
+        notes: "Dismissed from Discover Quality fixable-interest queue",
+      });
+      await mutate(fixableInterestKey);
+    } finally {
+      setUpdatingFixableClusterId(null);
+    }
+  };
+
+  const linkFixableClusterIssue = async (clusterId: string, issueUrl: string) => {
+    if (!submittedSecret) return;
+    setUpdatingFixableClusterId(clusterId);
+    try {
+      await triageDiscoverFixableInterestCluster(submittedSecret, clusterId, {
+        status: "linked",
+        github_issue_url: issueUrl,
+        github_issue_number: issueNumberFromUrl(issueUrl),
+      });
+      await mutate(fixableInterestKey);
+    } finally {
+      setUpdatingFixableClusterId(null);
+    }
+  };
+
+  const markFixableClusterExperiment = async (clusterId: string, experimentKey: string) => {
+    if (!submittedSecret) return;
+    setUpdatingFixableClusterId(clusterId);
+    try {
+      await triageDiscoverFixableInterestCluster(submittedSecret, clusterId, {
+        status: "experiment",
+        experiment_key: experimentKey,
+      });
+      await mutate(fixableInterestKey);
+    } finally {
+      setUpdatingFixableClusterId(null);
+    }
+  };
+
   const refreshAdminView = async () => {
     await Promise.all([
       debugKey ? mutate(debugKey) : Promise.resolve(),
@@ -424,6 +504,8 @@ export default function DiscoverQualityPage() {
       launchHealthTrendsKey ? mutate(launchHealthTrendsKey) : Promise.resolve(),
       diagnosticRunsKey ? mutate(diagnosticRunsKey) : Promise.resolve(),
       diagnosticTrendsKey ? mutate(diagnosticTrendsKey) : Promise.resolve(),
+      labelEvalTrendsKey ? mutate(labelEvalTrendsKey) : Promise.resolve(),
+      fixableInterestKey ? mutate(fixableInterestKey) : Promise.resolve(),
       externalCuratorStatusKey ? mutate(externalCuratorStatusKey) : Promise.resolve(),
       groundTruthHealthKey ? mutate(groundTruthHealthKey) : Promise.resolve(),
       diagnosticRowsKey ? mutate(diagnosticRowsKey) : Promise.resolve(),
@@ -522,7 +604,7 @@ export default function DiscoverQualityPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-4 border-b border-surface-border pb-px">
-        {(["quality", "engagement", "review"] as const).map((tab) => (
+        {(["quality", "engagement", "review", "pairwise"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -532,13 +614,15 @@ export default function DiscoverQualityPage() {
                 : "text-text-muted hover:text-text-secondary"
             }`}
           >
-            {tab === "quality" ? "Quality" : tab === "engagement" ? "Engagement Review" : "Review"}
+            {tab === "quality" ? "Quality" : tab === "engagement" ? "Engagement Review" : tab === "pairwise" ? "Pairwise" : "Review"}
           </button>
         ))}
       </div>
 
       {activeTab === "review" ? (
         <ReviewTab />
+      ) : activeTab === "pairwise" ? (
+        <PairwiseTab debugItems={data.debug_items || []} />
       ) : activeTab === "engagement" ? (
         <EngagementReviewTab />
       ) : (
@@ -817,6 +901,19 @@ export default function DiscoverQualityPage() {
           </div>
 
           <div id="diagnostics" className="scroll-mt-20 space-y-3">
+            <LabelEvalTrendPanel
+              runs={labelEvalTrendsData?.runs || []}
+              onTrigger={triggerLabelEvalSnapshot}
+              triggering={triggeringLabelEval}
+            />
+            <FixableInterestPanel
+              clusters={fixableInterestData?.clusters || []}
+              total={fixableInterestData?.total || 0}
+              onDismiss={dismissFixableCluster}
+              onLinkIssue={linkFixableClusterIssue}
+              onMarkExperiment={markFixableClusterExperiment}
+              updatingClusterId={updatingFixableClusterId}
+            />
             <DiagnosticTrendsPanel runs={diagnosticTrendsData?.runs || []} />
             <DiagnosticRunsPanel
               runs={diagnosticRunsData?.runs || []}

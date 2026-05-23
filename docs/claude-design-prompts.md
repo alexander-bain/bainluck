@@ -12,6 +12,66 @@ Then paste any prompt below. Each prompt is self-contained but references the im
 
 ---
 
+## Prompt 0: Human Labeling UI
+
+Design a human-labeling workflow for Bain Luck's Discover ranking review tools.
+
+Context: Bain Luck is a prediction-market discovery platform. Discover is a
+probability-first feed where users swipe/tap prediction cards across sports,
+politics, economics, entertainment, weather, culture, and world events. We are
+building an internal/friends-and-family labeling loop so humans can judge which
+cards are tapworthy, boring, stale, duplicate, unclear, or promising but flawed.
+Those labels become gold-set ranking evals, LLM-judge calibration, and later
+offline reranker training.
+
+Import these repo files before designing:
+- `docs/claude-design-context.md`
+- `docs/design-system.md`
+- `docs/discover-labeling.md`
+- `frontend/components/admin/discover/ReviewTab.tsx`
+- `frontend/app/admin/discover-quality/page.tsx`
+- Optionally `ios/Bain Luck/Bain Luck/Views/DiscoverView.swift`
+
+Design goals:
+- A reviewer can label 50 cards in under 15 minutes.
+- Primary interaction should be fast: choose `Love`, `Fine`, `Bad`, or `Kill`;
+  pick reason chips; submit/next.
+- Pairwise review should let a reviewer choose A, B, both, neither, or skip.
+- Fixable-interest feedback must be first-class: reviewers need a quick way to
+  say "this is bad as shown, but would be interesting if..." Examples:
+  stale card, #2 Netflix movie instead of #1, wrong market variant, missing
+  context, bad image, wrong category, duplicate sibling.
+- The UI should collect structured fields without feeling like a slow form:
+  `fix_type`, `fixable_interest_score`, current/desired variant, optional note,
+  and issue-candidate flag.
+- It should support converting repeated fixable-interest clusters into GitHub
+  issues or ranking experiments, but the label UI itself should not feel like a
+  project-management tool.
+- Web admin is the first implementation. Also advise whether native should have
+  any labeling/review surface now, or whether native should only send richer
+  TestFlight/rage-shake context into the same backend labels.
+
+Design constraints:
+- Light mode only.
+- Use existing design tokens from `globals.css`; no raw dark-mode Tailwind.
+- Keep admin tooling dense, calm, and operational. Do not create a marketing
+  landing page.
+- Use familiar controls: segmented controls, chips, checkboxes/toggles, selects,
+  compact inputs, keyboard shortcuts, and clear submitted/skipped states.
+- Avoid burying reviewers in explanatory text. Labels and controls should be
+  self-evident.
+
+Deliverables:
+- Web layout for single-card review.
+- Web layout for pairwise review.
+- Fixable-interest interaction pattern.
+- Summary/trends panel for label counts and fixable-interest clusters.
+- Native parity recommendation, including what should be captured from iOS/macOS
+  Discover and rage-shake flows.
+- Implementation notes for the existing React admin components.
+
+---
+
 ## Prompt 1: Weather Page
 
 Design a weather probability page for bainluck.com. See the imported `weather-market-inventory.md` for the REAL market data — every example below is a real market that exists right now.

@@ -372,6 +372,20 @@ def _ground_truth_probably_resolved(probability: str | None) -> bool:
     return len(vals) >= 2 and all(v <= 5 or v >= 95 for v in vals)
 
 
+def _leader_probability(outcomes: list[dict[str, Any]]) -> float | None:
+    values: list[float] = []
+    for outcome in outcomes:
+        value = outcome.get("probability")
+        if value is None:
+            value = outcome.get("current_probability")
+        try:
+            if value is not None:
+                values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return max(values) if values else None
+
+
 def _triage_missing_ground_truth(
     *,
     name: str,
@@ -725,6 +739,11 @@ def diagnose_feed_items(
                 "headline": headline,
                 "reason": item.get("reason"),
                 "context": context,
+                "hook_description": hook,
+                "image_url": data.get("image_url"),
+                "group_id": data.get("group_id"),
+                "top_outcomes": outcomes[:5],
+                "rendered_probability": _leader_probability(outcomes),
                 "snippet_issues": _snippet_quality_issues(name, context),
                 "hook": bool(hook),
                 "image": bool(data.get("image_url")),

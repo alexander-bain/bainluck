@@ -36,6 +36,46 @@ const FIX_TYPES = [
   { value: "other", label: "Other" },
 ];
 
+function createBatchId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function buildCardSnapshot(current: DebugItem, batchId: string, feedRequestId?: string | null) {
+  return {
+    schema_version: "discover-card-v1",
+    batch_id: batchId,
+    feed_request_id: feedRequestId || null,
+    rank: current.rank,
+    item_type: current.type || "futures",
+    item_id: current.id,
+    market_id: current.type === "futures" ? current.id : null,
+    event_id: current.type === "event" ? current.id : null,
+    name: current.name,
+    source: current.source,
+    category: current.category,
+    archetype: current.archetype,
+    quality_class: current.quality_class,
+    headline: current.headline,
+    reason: current.reason,
+    context: current.context || current.reason,
+    hook_description: current.hook_description || null,
+    image_url: current.image_url || null,
+    story_key: current.story_key,
+    family_key: current.family_key,
+    group_id: current.group_id || null,
+    score: current.score,
+    rendered_probability: current.rendered_probability ?? null,
+    top_outcomes: current.top_outcomes || [],
+    reasons: current.reasons || [],
+    has_hook: current.hook,
+    has_image: current.image,
+    explanation_ok: current.explanation_ok,
+  };
+}
+
 interface JudgmentSummary {
   total: number;
   labels: Record<string, number>;
@@ -58,6 +98,7 @@ export default function ReviewTab() {
   const [submitting, setSubmitting] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const [sessionLabels, setSessionLabels] = useState<Record<string, number>>({});
+  const [batchId] = useState(createBatchId);
 
   const { data, isLoading } = useSWR<FeedDebugResponse>(
     ["review-feed", secret],
@@ -74,7 +115,11 @@ export default function ReviewTab() {
       const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
       const res = await fetch(`${API_URL}/api/feed?${params}`, { headers });
       if (!res.ok) throw new Error(`Feed error: ${res.status}`);
-      return res.json();
+      const body = await res.json();
+      return {
+        ...body,
+        feed_request_id: res.headers.get("X-Request-ID"),
+      };
     },
     { revalidateOnFocus: false }
   );
@@ -125,6 +170,7 @@ export default function ReviewTab() {
         headline_at_review: current.headline || "",
         reviewer: "alex",
       });
+      if (data?.feed_request_id) params.set("feed_request_id", data.feed_request_id);
       if (current.id) params.set("market_id", String(current.id));
       if (betterThanPrev && prevItem) params.set("better_than", prevItem.name);
       if (worseThanNext && nextItem) params.set("worse_than", nextItem.name);
@@ -144,14 +190,13 @@ export default function ReviewTab() {
 
       await fetch(`${API_URL}/api/admin/ranking-judgments?${params}`, {
         method: "POST",
-        ...(hasLabelMetadata
-          ? {
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                label_metadata: { fixable_interest: labelMetadata },
-              }),
-            }
-          : {}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          card_snapshot: buildCardSnapshot(current, batchId, data?.feed_request_id),
+          ...(hasLabelMetadata
+            ? { label_metadata: { fixable_interest: labelMetadata } }
+            : {}),
+        }),
       });
       setSessionCount((c) => c + 1);
       setSessionLabels((prev) => ({ ...prev, [selectedLabel]: (prev[selectedLabel] || 0) + 1 }));
@@ -170,12 +215,14 @@ export default function ReviewTab() {
     prevItem,
     nextItem,
     secret,
+    data?.feed_request_id,
     wouldBeInterestingIf,
     fixableInterestScore,
     fixType,
     desiredEntityOrVariant,
     currentEntityOrVariant,
     createIssueCandidate,
+    batchId,
   ]);
 
   const toggleTag = (tag: string) => {

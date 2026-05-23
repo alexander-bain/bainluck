@@ -650,6 +650,15 @@ class PairwiseLabelBody(BaseModel):
     card_b_score: Optional[float] = None
     choice: str = Field(..., pattern=r"^(a|b|both|neither|skip)$")
     reviewer: str
+    pair_id: Optional[str] = None
+    pair_strategy: Optional[str] = None
+    surface: Optional[str] = None
+    batch_id: Optional[str] = None
+    confidence: Optional[str] = None
+    ranking_error: Optional[bool] = None
+    notes: Optional[str] = None
+    card_a_snapshot: Optional[dict] = None
+    card_b_snapshot: Optional[dict] = None
 
 
 @router.get("/pairwise/next")
@@ -798,6 +807,15 @@ async def pairwise_label(
         card_a_score=body.card_a_score,
         card_b_score=body.card_b_score,
         choice=body.choice,
+        pair_id=body.pair_id,
+        pair_strategy=body.pair_strategy,
+        surface=body.surface,
+        batch_id=body.batch_id,
+        confidence=body.confidence,
+        ranking_error=body.ranking_error,
+        notes=body.notes,
+        card_a_snapshot=body.card_a_snapshot,
+        card_b_snapshot=body.card_b_snapshot,
     )
     db.add(label)
     await db.commit()
@@ -918,6 +936,10 @@ async def pairwise_stats(
             "card_a_score": lbl.card_a_score,
             "card_b_score": lbl.card_b_score,
             "choice": lbl.choice,
+            "pair_id": lbl.pair_id,
+            "pair_strategy": lbl.pair_strategy,
+            "surface": lbl.surface,
+            "ranking_error": lbl.ranking_error,
             "created_at": lbl.created_at.isoformat() if lbl.created_at else None,
         }
         for lbl in recent
