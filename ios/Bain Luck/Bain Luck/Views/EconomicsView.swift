@@ -2,29 +2,41 @@ import SwiftUI
 
 // MARK: - Constants
 
-private let econPurple = Color(red: 0.38, green: 0.22, blue: 0.78)
-private let econIndigo = Color(red: 0.25, green: 0.32, blue: 0.85)
+private let econGreen = DS.emerald
+private let econGreenDark = DS.emeraldDark
+private let tickerDark = Color(red: 0.06, green: 0.09, blue: 0.16)   // #0F172A
+private let tickerMuted = Color(red: 0.58, green: 0.64, blue: 0.72)  // #94A3B8
 
-private let themeEmoji: [String: String] = [
-    "fed_side": "🏦", "inflation": "📊", "jobs": "💼",
-    "recession": "📉", "markets": "📈", "energy": "⛽",
-    "housing": "🏠", "trade": "🚢", "government": "🏛",
+private let themeKicker: [String: String] = [
+    "fed_side": "FEDERAL RESERVE",
+    "inflation": "INFLATION & CONSUMER PRICES",
+    "jobs": "JOBS & EMPLOYMENT",
+    "recession": "GDP & RECESSION",
+    "markets": "MARKETS & INDICES",
+    "energy": "ENERGY & COMMODITIES",
+    "housing": "HOUSING & MORTGAGES",
+    "trade": "TRADE & TARIFFS",
+    "government": "GOVERNMENT & FISCAL",
 ]
 
-private let themeLabel: [String: String] = [
-    "fed_side": "Fed Side Markets", "inflation": "Inflation / CPI",
-    "jobs": "Jobs & Employment", "recession": "GDP & Recession",
-    "markets": "Markets & Indices", "energy": "Energy",
-    "housing": "Housing", "trade": "Trade & Tariffs",
-    "government": "Government & Fiscal",
+private let themeTitle: [String: String] = [
+    "fed_side": "Fed Side Markets",
+    "inflation": "Related Inflation Markets",
+    "jobs": "Monthly reports. Weekly claims.",
+    "recession": "The big macro question",
+    "markets": "Daily close. Weekly range.",
+    "energy": "Gas, oil, and the price at the pump",
+    "housing": "Rates, prices, and the American dream",
+    "trade": "The economic story of 2026",
+    "government": "Shutdowns, debt, DOGE",
 ]
 
 // MARK: - Theme Info
 
 private struct ThemeInfo: Identifiable {
     let id: String
-    let label: String
-    let emoji: String
+    let kicker: String
+    let title: String
     let count: Int
     let markets: [EconomicsMarket]
 }
@@ -33,14 +45,17 @@ private struct ThemeInfo: Identifiable {
 
 struct EconomicsView: View {
     @StateObject private var viewModel = EconomicsViewModel()
-    @State private var selectedTheme: String?
 
     var body: some View {
         Group {
             if viewModel.loading {
                 ProgressView("Loading economics data...")
             } else if let error = viewModel.error, viewModel.data == nil {
-                ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(error))
+                ContentUnavailableView(
+                    "Error",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
             } else if let data = viewModel.data {
                 economicsContent(data)
             }
@@ -54,81 +69,193 @@ struct EconomicsView: View {
         .refreshable { await viewModel.load() }
     }
 
+    // MARK: - Main Content
+
     private func economicsContent(_ data: EconomicsResponse) -> some View {
         let themes = buildThemes(data.themes)
         return ScrollView {
             VStack(spacing: 32) {
-                pageHeader(data)
+                heroSection(data)
 
                 if let fed = data.themes.fed, let meetings = fed.fomcMeetings, !meetings.isEmpty {
-                    fomcSection(meetings)
+                    fedSection(meetings, sideMarkets: fed.sideMarkets ?? [])
                 }
 
                 if let inf = data.themes.inflation, let cpi = inf.cpiReleases, !cpi.isEmpty {
-                    cpiSection(cpi)
+                    cpiSection(cpi, sideMarkets: inf.sideMarkets ?? [])
                 }
 
                 ForEach(themes) { theme in
                     themeSection(theme)
                 }
 
-                footer(data)
+                footerSection(data)
             }
             .padding(.vertical)
         }
+        .background(DS.surface)
     }
 
-    // MARK: - Page Header
+    // MARK: - Hero Section
 
-    private func pageHeader(_ data: EconomicsResponse) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Probabilities for Fed policy, inflation, jobs, markets, and the broader economy.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Label("\(data.totalMarkets) markets", systemImage: "chart.bar")
-                Label("2 sources", systemImage: "arrow.triangle.branch")
+    private func heroSection(_ data: EconomicsResponse) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Live pill + count
+            HStack(spacing: 10) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(DS.kalshiGreen)
+                        .frame(width: 8, height: 8)
+                    Text("Economics markets")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Live")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(Color(red: 0.02, green: 0.47, blue: 0.34))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(Color(red: 0.93, green: 0.99, blue: 0.96))
+                .clipShape(Capsule())
+
+                Text("\(data.totalMarkets) active")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
             }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+            .padding(.horizontal)
+
+            // Headline
+            VStack(alignment: .leading, spacing: 6) {
+                (Text("What do markets think about ")
+                    .foregroundStyle(DS.textPrimary) +
+                Text("the economy")
+                    .foregroundStyle(econGreen) +
+                Text("?")
+                    .foregroundStyle(DS.textPrimary))
+                    .font(.system(size: 28, weight: .semibold))
+                    .tracking(-0.5)
+                    .lineSpacing(2)
+
+                Text("Economic prediction markets from Kalshi and Polymarket translated into plain probabilities. Rates, inflation, jobs, GDP -- no odds, just percentages.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineSpacing(3)
+            }
+            .padding(.horizontal)
+
+            // Ticker strip
+            tickerStrip(data)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    econIndigo.opacity(0.06),
-                    econPurple.opacity(0.06)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            econIndigo.opacity(0.15),
-                            econPurple.opacity(0.15)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 0.5
-                )
-        )
+    }
+
+    private func tickerStrip(_ data: EconomicsResponse) -> some View {
+        // Gather highlight markets from various themes for the ticker
+        let tickerItems = gatherTickerItems(data)
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(Array(tickerItems.enumerated()), id: \.offset) { _, item in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(item.src == "kalshi" ? DS.kalshiGreen : DS.blue)
+                            .frame(width: 5, height: 5)
+
+                        Text(item.q)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(tickerMuted)
+                            .textCase(.uppercase)
+                            .tracking(0.5)
+                            .lineLimit(1)
+
+                        Text(item.prob.truncatingRemainder(dividingBy: 1) == 0
+                            ? "\(Int(item.prob))%"
+                            : String(format: "%.1f%%", item.prob))
+                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+
+                        if let delta = item.delta, abs(delta) >= 0.5 {
+                            HStack(spacing: 2) {
+                                Text(delta > 0 ? "^" : "v")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(String(format: "%.1f", abs(delta)) + "pp")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundStyle(delta > 0
+                                ? Color(red: 0.29, green: 0.87, blue: 0.50)
+                                : Color(red: 0.97, green: 0.44, blue: 0.44))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .overlay(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.08))
+                            .frame(width: 1)
+                    }
+                }
+            }
+        }
+        .background(tickerDark)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(DS.kalshiGreen)
+                    .frame(width: 5, height: 5)
+                Text("LIVE")
+                    .font(.system(size: 9, weight: .heavy))
+                    .tracking(1)
+                    .foregroundStyle(DS.kalshiGreen)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
         .padding(.horizontal)
     }
 
-    // MARK: - FOMC Meetings
+    private func gatherTickerItems(_ data: EconomicsResponse) -> [EconomicsMarket] {
+        var items: [EconomicsMarket] = []
+        // Grab a few from each theme for the ticker
+        let themeArrays: [[EconomicsMarket]?] = [
+            data.themes.fed?.sideMarkets,
+            data.themes.inflation?.sideMarkets,
+            data.themes.jobs?.markets,
+            data.themes.recession?.markets ?? data.themes.recession?.sideMarkets,
+            data.themes.markets?.markets ?? data.themes.markets?.sideMarkets,
+            data.themes.energy?.markets ?? data.themes.energy?.sideMarkets,
+        ]
+        for arr in themeArrays {
+            if let arr, let first = arr.first {
+                items.append(first)
+            }
+        }
+        // Pad to at least 4 if we can
+        if items.count < 4 {
+            if let extra = data.themes.trade?.markets {
+                items.append(contentsOf: extra.prefix(2))
+            }
+        }
+        return items
+    }
 
-    private func fomcSection(_ meetings: [FOMCMeeting]) -> some View {
+    // MARK: - Fed Section
+
+    private func fedSection(_ meetings: [FOMCMeeting], sideMarkets: [EconomicsMarket]) -> some View {
         let upcoming = meetings.filter { !$0.resolved }
-        return VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(emoji: "🏦", title: "Federal Reserve", count: upcoming.count)
+        return VStack(alignment: .leading, spacing: 16) {
+            // Section header
+            VStack(alignment: .leading, spacing: 4) {
+                SectionKicker(text: "Federal Reserve")
+                SectionTitle(
+                    title: "Rate Path",
+                    count: upcoming.count
+                )
+                Text("Market-implied probability at every FOMC meeting")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal)
 
+            // FOMC meeting cards — horizontal scroll
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(upcoming) { meeting in
@@ -137,85 +264,127 @@ struct EconomicsView: View {
                 }
                 .padding(.horizontal)
             }
+
+            // Side markets in a grid below
+            if !sideMarkets.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Related Fed Markets")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .padding(.horizontal)
+
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 260, maximum: 400))],
+                        spacing: 12
+                    ) {
+                        ForEach(sideMarkets.prefix(6)) { market in
+                            NavigationLink(value: Route.futuresDetail(id: market.marketId ?? 0)) {
+                                DSMarketCard(
+                                    question: market.q,
+                                    probability: market.prob,
+                                    source: market.src,
+                                    delta: market.delta
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
         }
     }
 
     private func fomcCard(_ meeting: FOMCMeeting) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        SectionCard {
+            // Header
             HStack {
                 Text(meeting.mo)
-                    .font(.title3)
-                    .fontWeight(.bold)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(DS.textPrimary)
                 Spacer()
                 Text("FOMC")
                     .font(.system(size: 9, weight: .heavy))
-                    .foregroundColor(econPurple)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(econPurple.opacity(0.08))
+                    .tracking(0.5)
+                    .foregroundStyle(econGreenDark)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(econGreen.opacity(0.10))
                     .clipShape(Capsule())
             }
 
             Text(meeting.date)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(DS.textMuted)
+                .padding(.top, 2)
 
             Divider()
-                .padding(.vertical, 2)
+                .padding(.vertical, 6)
 
-            ForEach(Array(meeting.dist.prefix(4).enumerated()), id: \.offset) { idx, pair in
-                if pair.count >= 2, let prob = pair[0].doubleValue, let rate = pair[1].stringValue, prob >= 1 {
-                    HStack(spacing: 6) {
-                        Text(rate)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .frame(width: 50, alignment: .leading)
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.secondary.opacity(0.08))
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [econIndigo.opacity(0.4), econPurple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .frame(width: max(2, geo.size.width * min(prob / 100, 1)))
-                            }
-                        }
-                        .frame(height: 14)
-                        Text("\(Int(prob))%")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundColor(prob > 50 ? econPurple : .secondary)
-                            .frame(width: 32, alignment: .trailing)
+            // Rate distribution bars
+            VStack(spacing: 6) {
+                ForEach(Array(meeting.dist.prefix(5).enumerated()), id: \.offset) { _, pair in
+                    if pair.count >= 2,
+                       let prob = pair[0].doubleValue,
+                       let rate = pair[1].stringValue,
+                       prob >= 1 {
+                        fomcDistRow(rate: rate, prob: prob)
                     }
                 }
             }
+
+            FooterNote(
+                left: "Resolves post-FOMC",
+                right: "Kalshi"
+            )
         }
-        .padding(14)
         #if os(macOS)
-        .frame(width: 320)
+        .frame(width: 300)
         #else
-        .frame(width: 240)
+        .frame(width: 260)
         #endif
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
     }
 
-    // MARK: - CPI Releases
+    private func fomcDistRow(rate: String, prob: Double) -> some View {
+        HStack(spacing: 8) {
+            Text(rate)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 65, alignment: .leading)
 
-    private func cpiSection(_ releases: [CPIRelease]) -> some View {
+            DSProbabilityBar(
+                value: prob,
+                height: 10,
+                color: prob > 50 ? econGreen : DS.purple.opacity(0.5)
+            )
+
+            Text("\(Int(prob))%")
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(prob > 50 ? econGreen : DS.textMuted)
+                .frame(width: 36, alignment: .trailing)
+        }
+    }
+
+    // MARK: - CPI / Inflation Section
+
+    private func cpiSection(_ releases: [CPIRelease], sideMarkets: [EconomicsMarket]) -> some View {
         let upcoming = releases.filter { $0.upcoming == true }
         return Group {
             if !upcoming.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    sectionHeader(emoji: "📊", title: "Inflation / CPI", count: upcoming.count)
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionKicker(text: "Inflation & Consumer Prices")
+                        SectionTitle(
+                            title: "CPI Releases",
+                            count: upcoming.count
+                        )
+                        Text("Modal outcome per month from Kalshi bracket markets")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    .padding(.horizontal)
 
+                    // CPI release cards — horizontal scroll
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(upcoming) { release in
@@ -224,245 +393,300 @@ struct EconomicsView: View {
                         }
                         .padding(.horizontal)
                     }
+
+                    // Side markets
+                    if !sideMarkets.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Related Inflation Markets")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DS.textSecondary)
+                                .padding(.horizontal)
+
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 260, maximum: 400))],
+                                spacing: 12
+                            ) {
+                                ForEach(sideMarkets.prefix(6)) { market in
+                                    NavigationLink(value: Route.futuresDetail(id: market.marketId ?? 0)) {
+                                        DSMarketCard(
+                                            question: market.q,
+                                            probability: market.prob,
+                                            source: market.src,
+                                            delta: market.delta
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
                 }
             }
         }
     }
 
     private func cpiCard(_ release: CPIRelease) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        SectionCard {
+            // Header
             HStack {
                 Text(release.mo)
-                    .font(.title3)
-                    .fontWeight(.bold)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(DS.textPrimary)
                 Spacer()
+                if release.upcoming == true {
+                    Text("NEXT")
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.5)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(DS.kalshiGreen)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
                 Text("CPI")
                     .font(.system(size: 9, weight: .heavy))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.08))
+                    .tracking(0.5)
+                    .foregroundStyle(DS.amber)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(DS.amber.opacity(0.10))
                     .clipShape(Capsule())
             }
 
-            if let brackets = release.brackets, let peakIdx = release.peakIs,
-               peakIdx < brackets.count, let label = brackets[peakIdx][1].stringValue {
+            // Peak bucket label
+            if let brackets = release.brackets,
+               let peakIdx = release.peakIs,
+               peakIdx < brackets.count,
+               let label = brackets[peakIdx][1].stringValue,
+               let prob = brackets[peakIdx][0].doubleValue {
                 HStack(spacing: 4) {
                     Image(systemName: "chart.line.uptrend.xyaxis")
                         .font(.system(size: 9))
-                        .foregroundColor(.orange)
+                        .foregroundStyle(DS.amber)
                     Text("Most likely: \(label)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.textSecondary)
+                    Spacer()
+                    ProbabilityNumber(value: prob, size: 22)
                 }
+                .padding(.top, 4)
             }
 
+            // Mini histogram bars
             if let brackets = release.brackets, !brackets.isEmpty {
                 Divider()
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
 
-                ForEach(Array(brackets.prefix(4).enumerated()), id: \.offset) { _, pair in
-                    if pair.count >= 2, let prob = pair[0].doubleValue, let label = pair[1].stringValue, prob >= 1 {
-                        HStack(spacing: 6) {
-                            Text(label)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .frame(width: 60, alignment: .leading)
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    Capsule()
-                                        .fill(Color.secondary.opacity(0.08))
-                                    Capsule()
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [Color.orange.opacity(0.4), Color.orange],
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                        )
-                                        .frame(width: max(2, geo.size.width * min(prob / 100, 1)))
-                                }
+                cpiHistogram(brackets: brackets, peakIdx: release.peakIs)
+            }
+
+            FooterNote(
+                left: "Resolves on release day",
+                right: "Kalshi"
+            )
+        }
+        #if os(macOS)
+        .frame(width: 300)
+        #else
+        .frame(width: 260)
+        #endif
+    }
+
+    private func cpiHistogram(brackets: [[WeatherAnyCodable]], peakIdx: Int?) -> some View {
+        let maxProb = brackets.compactMap { $0.first?.doubleValue }.max() ?? 1
+
+        return VStack(spacing: 4) {
+            // Bars
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(Array(brackets.enumerated()), id: \.offset) { idx, pair in
+                    if let prob = pair.first?.doubleValue {
+                        let isPeak = idx == peakIdx
+                        let barHeight = maxProb > 0 ? max(2, CGFloat(prob / maxProb) * 50) : 2
+
+                        VStack(spacing: 2) {
+                            if isPeak {
+                                Text("\(Int(prob))%")
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(DS.textPrimary)
                             }
-                            .frame(height: 14)
-                            Text("\(Int(prob))%")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundColor(prob > 50 ? .orange : .secondary)
-                                .frame(width: 32, alignment: .trailing)
+
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(DS.amber.opacity(isPeak ? 1 : 0.3 + (prob / maxProb) * 0.4))
+                                .frame(height: barHeight)
                         }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .frame(height: 70)
+
+            // Labels
+            HStack(spacing: 3) {
+                ForEach(Array(brackets.enumerated()), id: \.offset) { _, pair in
+                    if let label = pair.count > 1 ? pair[1].stringValue : nil {
+                        Text(label)
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(maxWidth: .infinity)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
                 }
             }
         }
-        .padding(14)
-        #if os(macOS)
-        .frame(width: 320)
-        #else
-        .frame(width: 240)
-        #endif
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 4)
     }
 
     // MARK: - Generic Theme Sections
 
     private func buildThemes(_ themes: EconomicsThemes) -> [ThemeInfo] {
         var result: [ThemeInfo] = []
-        if let t = themes.jobs { result.append(ThemeInfo(id: "jobs", label: "Jobs & Employment", emoji: "💼", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.inflation { result.append(ThemeInfo(id: "inflation", label: "Inflation / CPI", emoji: "📊", count: t.count, markets: t.sideMarkets ?? [])) }
-        if let t = themes.recession { result.append(ThemeInfo(id: "recession", label: "GDP & Recession", emoji: "📉", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
-        if let t = themes.markets { result.append(ThemeInfo(id: "markets", label: "Markets & Indices", emoji: "📈", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
-        if let t = themes.energy { result.append(ThemeInfo(id: "energy", label: "Energy", emoji: "⛽", count: t.count, markets: t.markets ?? t.sideMarkets ?? [])) }
-        if let t = themes.housing { result.append(ThemeInfo(id: "housing", label: "Housing", emoji: "🏠", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.trade { result.append(ThemeInfo(id: "trade", label: "Trade & Tariffs", emoji: "🚢", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.government { result.append(ThemeInfo(id: "government", label: "Government & Fiscal", emoji: "🏛", count: t.count, markets: t.markets ?? [])) }
-        if let t = themes.fed { result.append(ThemeInfo(id: "fed_side", label: "Fed Side Markets", emoji: "🏦", count: t.sideMarkets?.count ?? 0, markets: t.sideMarkets ?? [])) }
+        if let t = themes.jobs {
+            result.append(ThemeInfo(
+                id: "jobs",
+                kicker: themeKicker["jobs"] ?? "JOBS",
+                title: themeTitle["jobs"] ?? "Jobs",
+                count: t.count,
+                markets: t.markets ?? []
+            ))
+        }
+        if let t = themes.inflation {
+            result.append(ThemeInfo(
+                id: "inflation",
+                kicker: themeKicker["inflation"] ?? "INFLATION",
+                title: themeTitle["inflation"] ?? "Inflation",
+                count: t.sideMarkets?.count ?? t.count,
+                markets: t.sideMarkets ?? []
+            ))
+        }
+        if let t = themes.recession {
+            result.append(ThemeInfo(
+                id: "recession",
+                kicker: themeKicker["recession"] ?? "RECESSION",
+                title: themeTitle["recession"] ?? "Recession",
+                count: t.count,
+                markets: t.markets ?? t.sideMarkets ?? []
+            ))
+        }
+        if let t = themes.markets {
+            result.append(ThemeInfo(
+                id: "markets",
+                kicker: themeKicker["markets"] ?? "MARKETS",
+                title: themeTitle["markets"] ?? "Markets",
+                count: t.count,
+                markets: t.markets ?? t.sideMarkets ?? []
+            ))
+        }
+        if let t = themes.energy {
+            result.append(ThemeInfo(
+                id: "energy",
+                kicker: themeKicker["energy"] ?? "ENERGY",
+                title: themeTitle["energy"] ?? "Energy",
+                count: t.count,
+                markets: t.markets ?? t.sideMarkets ?? []
+            ))
+        }
+        if let t = themes.housing {
+            result.append(ThemeInfo(
+                id: "housing",
+                kicker: themeKicker["housing"] ?? "HOUSING",
+                title: themeTitle["housing"] ?? "Housing",
+                count: t.count,
+                markets: t.markets ?? []
+            ))
+        }
+        if let t = themes.trade {
+            result.append(ThemeInfo(
+                id: "trade",
+                kicker: themeKicker["trade"] ?? "TRADE",
+                title: themeTitle["trade"] ?? "Trade",
+                count: t.count,
+                markets: t.markets ?? []
+            ))
+        }
+        if let t = themes.government {
+            result.append(ThemeInfo(
+                id: "government",
+                kicker: themeKicker["government"] ?? "GOVERNMENT",
+                title: themeTitle["government"] ?? "Government",
+                count: t.count,
+                markets: t.markets ?? []
+            ))
+        }
+        if let t = themes.fed {
+            result.append(ThemeInfo(
+                id: "fed_side",
+                kicker: themeKicker["fed_side"] ?? "FED",
+                title: themeTitle["fed_side"] ?? "Fed Side Markets",
+                count: t.sideMarkets?.count ?? 0,
+                markets: t.sideMarkets ?? []
+            ))
+        }
         return result.filter { !$0.markets.isEmpty }
     }
 
     private func themeSection(_ theme: ThemeInfo) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(emoji: theme.emoji, title: theme.label, count: theme.count)
+            VStack(alignment: .leading, spacing: 4) {
+                SectionKicker(text: theme.kicker)
+                SectionTitle(title: theme.title, count: theme.count)
+            }
+            .padding(.horizontal)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 400))], spacing: 12) {
-                #if os(macOS)
-                ForEach(theme.markets.prefix(12)) { market in
-                #else
-                ForEach(theme.markets.prefix(8)) { market in
-                #endif
+            #if os(macOS)
+            let limit = 12
+            #else
+            let limit = 8
+            #endif
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 260, maximum: 400))],
+                spacing: 12
+            ) {
+                ForEach(Array(theme.markets.prefix(limit))) { market in
                     NavigationLink(value: Route.futuresDetail(id: market.marketId ?? 0)) {
-                        marketCard(market)
+                        DSMarketCard(
+                            question: market.q,
+                            probability: market.prob,
+                            source: market.src,
+                            delta: market.delta
+                        )
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal)
 
-            #if os(macOS)
-            if theme.markets.count > 12 {
-                Text("+\(theme.markets.count - 12) more")
-            #else
-            if theme.markets.count > 8 {
-                Text("+\(theme.markets.count - 8) more")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            if theme.markets.count > limit {
+                Text("+\(theme.markets.count - limit) more")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.textMuted)
                     .padding(.horizontal)
             }
-            #endif
         }
     }
 
-    // MARK: - Market Card (Discover-style)
+    // MARK: - Footer
 
-    private func marketCard(_ market: EconomicsMarket) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(market.q)
-                .font(.subheadline).fontWeight(.semibold)
-                .lineLimit(2)
-                .foregroundStyle(.primary)
+    private func footerSection(_ data: EconomicsResponse) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(DS.border)
+                .frame(height: 0.5)
+                .padding(.horizontal)
 
-            Spacer(minLength: 0)
-
-            // Probability bar
             HStack(spacing: 6) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.secondary.opacity(0.08))
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(
-                                LinearGradient(
-                                    colors: [econIndigo.opacity(0.5), econPurple],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: max(4, geo.size.width * market.prob / 100))
-                    }
-                }
-                .frame(height: 6)
-
-                Text(market.prob.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(market.prob))%" : String(format: "%.1f%%", market.prob))
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(market.prob > 50 ? .primary : .secondary)
-            }
-
-            HStack(spacing: 4) {
-                if let delta = market.delta, abs(delta) >= 1 {
-                    HStack(spacing: 2) {
-                        Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.system(size: 7, weight: .bold))
-                        Text("\(abs(delta), specifier: "%.1f")%")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundColor(delta > 0 ? .green : .red)
-                    .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background((delta > 0 ? Color.green : Color.red).opacity(0.08), in: Capsule())
-                }
-
+                Image(systemName: "info.circle")
+                    .font(.system(size: 10))
+                Text("Data from Kalshi & Polymarket")
                 Spacer()
-
-                sourceChip(market.src, color: market.src == "kalshi" ? .green : .blue)
+                Text("Not financial advice")
             }
+            .font(.system(size: 11))
+            .foregroundStyle(DS.textMuted)
+            .padding(.horizontal)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 110)
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
-    }
-
-    // MARK: - Shared Components
-
-    private func sectionHeader(emoji: String, title: String, count: Int?) -> some View {
-        HStack {
-            Text("\(emoji) \(title)")
-                .font(.title3).fontWeight(.bold)
-            Spacer()
-            if let count {
-                HStack(spacing: 2) {
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                    Text("markets")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .padding(.horizontal)
-    }
-
-    private func sourceChip(_ label: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-                .overlay(Circle().stroke(color.opacity(0.3), lineWidth: 2))
-            Text(label.capitalized)
-                .foregroundStyle(.primary.opacity(0.7))
-        }
-        .font(.system(size: 10, weight: .semibold))
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(color.opacity(0.08))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(color.opacity(0.12), lineWidth: 0.5))
-    }
-
-    private func footer(_ data: EconomicsResponse) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 10))
-            Text("Data from Kalshi & Polymarket \u{00B7} Not financial advice")
-        }
-        .font(.caption2).foregroundStyle(.tertiary)
-        .padding(.horizontal)
-        .padding(.bottom, 8)
     }
 }
