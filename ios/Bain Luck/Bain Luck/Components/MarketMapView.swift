@@ -73,7 +73,13 @@ struct MarketMapView: View {
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
     private var hasTotals: Bool { !(gameMarkets.totals ?? []).isEmpty }
-    private var useColumns: Bool { sizeClass == .regular }
+    private var useColumns: Bool {
+        #if os(macOS)
+        return true
+        #else
+        return sizeClass == .regular
+        #endif
+    }
 
     var body: some View {
         if !hasSpreads && !hasTotals { EmptyView() }

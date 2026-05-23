@@ -63,7 +63,7 @@ struct EventDetailView: View {
         #if os(macOS)
         return 1200
         #else
-        return isIPad ? 900 : 700
+        return isIPad ? 1100 : 700
         #endif
     }
 

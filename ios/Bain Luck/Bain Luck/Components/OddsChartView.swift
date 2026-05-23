@@ -686,8 +686,8 @@ struct OddsChartView: View {
             AxisMarks(values: .stride(by: .minute, count: strideMinutes)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
-                    .font(.caption2)
+                AxisValueLabel(format: .dateTime.hour().minute().period(.abbreviated), anchor: .top)
+                    .font(.system(size: 9))
             }
         }
         .chartXSelection(value: $selectedDate)
