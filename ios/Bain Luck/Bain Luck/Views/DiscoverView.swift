@@ -372,7 +372,7 @@ struct DiscoverView: View {
     }
 
     private var filteredItems: [FeedItem] {
-        vm.items.filter { !isStale($0) && !dismissed.contains(itemId($0)) }
+        vm.items.filter { !dismissed.contains(itemId($0)) }
     }
 
     private var groupedItems: [DiscoverGroupedItem] {
