@@ -1167,6 +1167,74 @@ async def public_calibration(
     mce_closing_line = _cohort_mce(bucket_dicts, True)
     mce_opening_price = _cohort_mce(bucket_dicts, False)
 
+    # ------------------------------------------------------------------
+    # Per-category MCE breakdown
+    # ------------------------------------------------------------------
+    cat_agg: dict[str, dict[int, dict]] = {}
+    cat_outcomes: dict[str, int] = {}
+    for b in bucket_dicts:
+        cat = b["category"]
+        idx = b["bucket_idx"]
+        if cat not in cat_agg:
+            cat_agg[cat] = {}
+            cat_outcomes[cat] = 0
+        if idx not in cat_agg[cat]:
+            cat_agg[cat][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        cat_agg[cat][idx]["n"] += b["n"]
+        cat_agg[cat][idx]["winners"] += b["winners"]
+        cat_agg[cat][idx]["sum_prob"] += b["sum_prob"]
+        cat_outcomes[cat] += b["n"]
+
+    by_category = []
+    for cat, buckets_by_idx in sorted(cat_agg.items()):
+        total_n = cat_outcomes[cat]
+        if total_n == 0:
+            continue
+        cat_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in buckets_by_idx.values()
+        ])
+        by_category.append({
+            "category": cat,
+            "mce": cat_mce,
+            "outcomes": total_n,
+        })
+    by_category.sort(key=lambda x: x["outcomes"], reverse=True)
+
+    # ------------------------------------------------------------------
+    # Per-source MCE breakdown
+    # ------------------------------------------------------------------
+    src_agg: dict[str, dict[int, dict]] = {}
+    src_outcomes: dict[str, int] = {}
+    for b in bucket_dicts:
+        src = b["source"]
+        idx = b["bucket_idx"]
+        if src not in src_agg:
+            src_agg[src] = {}
+            src_outcomes[src] = 0
+        if idx not in src_agg[src]:
+            src_agg[src][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        src_agg[src][idx]["n"] += b["n"]
+        src_agg[src][idx]["winners"] += b["winners"]
+        src_agg[src][idx]["sum_prob"] += b["sum_prob"]
+        src_outcomes[src] += b["n"]
+
+    by_source = []
+    for src, buckets_by_idx in sorted(src_agg.items()):
+        total_n = src_outcomes[src]
+        if total_n == 0:
+            continue
+        src_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in buckets_by_idx.values()
+        ])
+        by_source.append({
+            "source": src,
+            "mce": src_mce,
+            "outcomes": total_n,
+        })
+    by_source.sort(key=lambda x: x["outcomes"], reverse=True)
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
@@ -1174,6 +1242,8 @@ async def public_calibration(
             "total": closing_row.total_completed,
         },
         "buckets": bucket_dicts,
+        "by_category": by_category,
+        "by_source": by_source,
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,

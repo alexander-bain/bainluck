@@ -188,6 +188,8 @@ class TestCalibrationPublicEndpoint:
         assert set(body) == {
             "closing_line_coverage",
             "buckets",
+            "by_category",
+            "by_source",
             "total_markets",
             "total_outcomes",
             "total_winners",
@@ -314,6 +316,8 @@ class TestCalibrationBucketShape:
         body = resp.json()
 
         assert body["buckets"] == []
+        assert body["by_category"] == []
+        assert body["by_source"] == []
         assert body["total_markets"] == 0
         assert body["total_outcomes"] == 0
         assert body["total_winners"] == 0
@@ -406,6 +410,185 @@ class TestCalibrationBucketShape:
         assert buckets[1]["price_moved"] is False
         assert buckets[2]["source"] == "odds_api"
         assert buckets[2]["price_moved"] is None
+
+
+class TestCalibrationByCategory:
+    """GET /api/calibration — by_category breakdown."""
+
+    async def test_by_category_present(self, client):
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert "by_category" in body
+        assert isinstance(body["by_category"], list)
+
+    async def test_by_category_empty_when_no_data(self, client, mock_db):
+        _set_public_calibration_results(mock_db)
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert body["by_category"] == []
+
+    async def test_by_category_item_shape(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=5, source="kalshi", category="politics",
+                            n=10, winners=6, avg_prob=0.55, sum_prob=5.5, sum_sq_err=2.0),
+            ],
+            event_rows=[
+                _event_bucket_row(bucket_idx=7, category="basketball_nba",
+                                  n=20, winners=15, avg_prob=0.74, sum_prob=14.8, sum_sq_err=3.0),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        cats = body["by_category"]
+        assert len(cats) == 2
+        for item in cats:
+            assert "category" in item
+            assert "mce" in item
+            assert "outcomes" in item
+            assert isinstance(item["category"], str)
+            assert isinstance(item["outcomes"], int)
+            assert item["outcomes"] > 0
+            assert item["mce"] is not None
+
+    async def test_by_category_sorted_by_outcomes_desc(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=3, source="kalshi", category="politics",
+                            n=5, winners=3, avg_prob=0.35, sum_prob=1.75, sum_sq_err=0.5),
+                _bucket_row(bucket_idx=6, source="polymarket", category="tech",
+                            n=20, winners=12, avg_prob=0.65, sum_prob=13.0, sum_sq_err=3.0),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        cats = body["by_category"]
+        assert len(cats) == 2
+        assert cats[0]["category"] == "tech"
+        assert cats[0]["outcomes"] == 20
+        assert cats[1]["category"] == "politics"
+        assert cats[1]["outcomes"] == 5
+
+    async def test_by_category_aggregates_across_sources(self, client, mock_db):
+        """Same category from different sources should be aggregated."""
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=5, source="kalshi", category="politics",
+                            n=10, winners=6, avg_prob=0.55, sum_prob=5.5, sum_sq_err=2.0),
+                _bucket_row(bucket_idx=5, source="polymarket", category="politics",
+                            n=8, winners=5, avg_prob=0.53, sum_prob=4.24, sum_sq_err=1.5),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        cats = body["by_category"]
+        assert len(cats) == 1
+        assert cats[0]["category"] == "politics"
+        assert cats[0]["outcomes"] == 18
+
+
+class TestCalibrationBySource:
+    """GET /api/calibration — by_source breakdown."""
+
+    async def test_by_source_present(self, client):
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert "by_source" in body
+        assert isinstance(body["by_source"], list)
+
+    async def test_by_source_empty_when_no_data(self, client, mock_db):
+        _set_public_calibration_results(mock_db)
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert body["by_source"] == []
+
+    async def test_by_source_item_shape(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=5, source="kalshi", category="politics",
+                            n=10, winners=6, avg_prob=0.55, sum_prob=5.5, sum_sq_err=2.0),
+            ],
+            event_rows=[
+                _event_bucket_row(bucket_idx=7, category="basketball_nba",
+                                  n=20, winners=15, avg_prob=0.74, sum_prob=14.8, sum_sq_err=3.0),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        sources = body["by_source"]
+        assert len(sources) == 2
+        for item in sources:
+            assert "source" in item
+            assert "mce" in item
+            assert "outcomes" in item
+            assert isinstance(item["source"], str)
+            assert isinstance(item["outcomes"], int)
+            assert item["outcomes"] > 0
+            assert item["mce"] is not None
+
+    async def test_by_source_sorted_by_outcomes_desc(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=3, source="kalshi", category="politics",
+                            n=5, winners=3, avg_prob=0.35, sum_prob=1.75, sum_sq_err=0.5),
+                _bucket_row(bucket_idx=6, source="polymarket", category="tech",
+                            n=20, winners=12, avg_prob=0.65, sum_prob=13.0, sum_sq_err=3.0),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        sources = body["by_source"]
+        assert len(sources) == 2
+        assert sources[0]["source"] == "polymarket"
+        assert sources[0]["outcomes"] == 20
+        assert sources[1]["source"] == "kalshi"
+        assert sources[1]["outcomes"] == 5
+
+    async def test_by_source_aggregates_across_categories(self, client, mock_db):
+        """Same source from different categories should be aggregated."""
+        _set_public_calibration_results(
+            mock_db,
+            futures_rows=[
+                _bucket_row(bucket_idx=5, source="kalshi", category="politics",
+                            n=10, winners=6, avg_prob=0.55, sum_prob=5.5, sum_sq_err=2.0),
+                _bucket_row(bucket_idx=5, source="kalshi", category="economics",
+                            n=8, winners=4, avg_prob=0.52, sum_prob=4.16, sum_sq_err=1.8),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        sources = body["by_source"]
+        assert len(sources) == 1
+        assert sources[0]["source"] == "kalshi"
+        assert sources[0]["outcomes"] == 18
+
+    async def test_by_source_includes_odds_api_from_events(self, client, mock_db):
+        """odds_api source from events query should appear in by_source."""
+        _set_public_calibration_results(
+            mock_db,
+            event_rows=[
+                _event_bucket_row(bucket_idx=7, category="basketball_nba",
+                                  n=30, winners=22, avg_prob=0.74, sum_prob=22.2, sum_sq_err=5.0),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        sources = body["by_source"]
+        assert len(sources) == 1
+        assert sources[0]["source"] == "odds_api"
+        assert sources[0]["outcomes"] == 30
 
 
 class TestCalibrationBucketValueRanges:
