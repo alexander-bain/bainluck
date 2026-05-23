@@ -27,7 +27,7 @@ struct WeatherView: View {
 
     private var weatherContent: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 28) {
                 pageHeader
 
                 if !viewModel.featured.isEmpty {
@@ -47,16 +47,21 @@ struct WeatherView: View {
 
     private var pageHeader: some View {
         let totalCount = viewModel.featured.count + viewModel.cities.count
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionKicker(text: "Weather")
+            Text("What do markets think about the weather?")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(DS.textPrimary)
+                .tracking(-0.3)
             Text("Live temperature and weather probabilities from prediction markets.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondary)
             HStack(spacing: 12) {
                 Label("\(totalCount) markets", systemImage: "chart.bar")
                 Label("Kalshi", systemImage: "arrow.triangle.branch")
             }
             .font(.caption2)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(DS.textMuted)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
