@@ -133,4 +133,11 @@ The top 15 gotchas are in CLAUDE.md. This file contains the full list for deep-d
 
 90. **Never close a bug until you have proof the fix works in production** — Don't close issues when you deploy the fix. Close them when you have measured evidence that the fix worked: linkage rates improved, polling increased, snapshots are dense. If verification requires waiting (e.g., 24h of data), leave the issue open with a "blocked: awaiting verification" label and a specific check to run. #548 was closed after deploying a one-line cascade fix, but the Celery worker never restarted with the new code — the fix was never active. The issue sat "closed" while the problem continued for days.
 
-91. **Always move issues to In Progress on the project board before starting work** — When an agent or subagent starts on an issue, move the project board card to In Progress FIRST. When work completes, move to Review/Verify (not Done) unless you have proof the fix works. Only move to Done after measured verification. The board is the single source of truth for what's being worked on — if it's not In Progress, another session might start the same work.
+91. **GitHub issue management is mandatory, not optional** — The project board is the single source of truth. Follow this workflow for EVERY issue:
+   1. **Before starting**: Move card to In Progress. Add `in-progress` label. Comment with what you're doing.
+   2. **When subagent launches**: Move to In Progress immediately, not after it completes.
+   3. **When code ships**: Move to Review/Verify. Add a comment with what was built and how to verify.
+   4. **Only move to Done**: After measured proof the fix works (link the evidence).
+   5. **Create sub-issues**: For any work that takes more than one commit or spans multiple files.
+   6. **Never batch board updates**: Update the board AS you go, not in a cleanup pass later.
+   If the board doesn't reflect reality, the user can't trust it and work gets lost.
