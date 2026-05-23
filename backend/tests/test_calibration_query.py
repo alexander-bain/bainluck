@@ -287,3 +287,20 @@ async def test_public_calibration_builds_bucket_output_shape_from_futures_and_ev
             "ci_upper": 0.7848,
         },
     ]
+
+    # Verify spreads_summary and totals_summary sections
+    spreads = response["spreads_summary"]
+    assert spreads["outcomes"] == 10
+    assert spreads["winners"] == 5
+    assert spreads["mce"] is not None
+    assert len(spreads["by_sport"]) == 1
+    assert spreads["by_sport"][0]["sport"] == "basketball_nba"
+    assert spreads["by_sport"][0]["outcomes"] == 10
+
+    totals = response["totals_summary"]
+    assert totals["outcomes"] == 8
+    assert totals["winners"] == 4
+    assert totals["mce"] is not None
+    assert len(totals["by_sport"]) == 1
+    assert totals["by_sport"][0]["sport"] == "basketball_nba"
+    assert totals["by_sport"][0]["outcomes"] == 8

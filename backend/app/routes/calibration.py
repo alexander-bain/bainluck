@@ -1235,6 +1235,70 @@ async def public_calibration(
         })
     by_source.sort(key=lambda x: x["outcomes"], reverse=True)
 
+    # ------------------------------------------------------------------
+    # Spread / Total summaries — per-sport MCE for each market type
+    # ------------------------------------------------------------------
+    def _source_summary(source_key: str) -> dict:
+        """Build a per-sport MCE summary for buckets of a given source."""
+        sport_agg: dict[str, dict[int, dict]] = {}
+        sport_outcomes: dict[str, int] = {}
+        total_n = 0
+        total_w = 0
+        for b in bucket_dicts:
+            if b["source"] != source_key:
+                continue
+            sport = b["category"]
+            idx = b["bucket_idx"]
+            if sport not in sport_agg:
+                sport_agg[sport] = {}
+                sport_outcomes[sport] = 0
+            if idx not in sport_agg[sport]:
+                sport_agg[sport][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            sport_agg[sport][idx]["n"] += b["n"]
+            sport_agg[sport][idx]["winners"] += b["winners"]
+            sport_agg[sport][idx]["sum_prob"] += b["sum_prob"]
+            sport_outcomes[sport] += b["n"]
+            total_n += b["n"]
+            total_w += b["winners"]
+
+        by_sport = []
+        for sport, buckets_by_idx in sorted(sport_agg.items()):
+            sn = sport_outcomes[sport]
+            if sn == 0:
+                continue
+            sport_mce = _compute_horizon_mce([
+                {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+                for v in buckets_by_idx.values()
+            ])
+            by_sport.append({"sport": sport, "mce": sport_mce, "outcomes": sn})
+        by_sport.sort(key=lambda x: x["outcomes"], reverse=True)
+
+        # Aggregate MCE across all sports for this source
+        all_agg: dict[int, dict] = {}
+        for b in bucket_dicts:
+            if b["source"] != source_key:
+                continue
+            idx = b["bucket_idx"]
+            if idx not in all_agg:
+                all_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+            all_agg[idx]["n"] += b["n"]
+            all_agg[idx]["winners"] += b["winners"]
+            all_agg[idx]["sum_prob"] += b["sum_prob"]
+        overall_mce = _compute_horizon_mce([
+            {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+            for v in all_agg.values()
+        ])
+
+        return {
+            "mce": overall_mce,
+            "outcomes": total_n,
+            "winners": total_w,
+            "by_sport": by_sport,
+        }
+
+    spreads_summary = _source_summary("odds_api_spreads")
+    totals_summary = _source_summary("odds_api_totals")
+
     response = {
         "closing_line_coverage": {
             "has_closing": closing_row.has_closing,
@@ -1244,6 +1308,8 @@ async def public_calibration(
         "buckets": bucket_dicts,
         "by_category": by_category,
         "by_source": by_source,
+        "spreads_summary": spreads_summary,
+        "totals_summary": totals_summary,
         "total_markets": total_markets,
         "total_outcomes": total_outcomes,
         "total_winners": total_winners,

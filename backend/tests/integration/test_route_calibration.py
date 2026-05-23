@@ -190,6 +190,8 @@ class TestCalibrationPublicEndpoint:
             "buckets",
             "by_category",
             "by_source",
+            "spreads_summary",
+            "totals_summary",
             "total_markets",
             "total_outcomes",
             "total_winners",
@@ -318,6 +320,18 @@ class TestCalibrationBucketShape:
         assert body["buckets"] == []
         assert body["by_category"] == []
         assert body["by_source"] == []
+        assert body["spreads_summary"] == {
+            "mce": None,
+            "outcomes": 0,
+            "winners": 0,
+            "by_sport": [],
+        }
+        assert body["totals_summary"] == {
+            "mce": None,
+            "outcomes": 0,
+            "winners": 0,
+            "by_sport": [],
+        }
         assert body["total_markets"] == 0
         assert body["total_outcomes"] == 0
         assert body["total_winners"] == 0
@@ -589,6 +603,111 @@ class TestCalibrationBySource:
         assert len(sources) == 1
         assert sources[0]["source"] == "odds_api"
         assert sources[0]["outcomes"] == 30
+
+
+class TestCalibrationSpreadsTotalsSummary:
+    """GET /api/calibration — spreads_summary and totals_summary."""
+
+    async def test_spreads_summary_present(self, client):
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert "spreads_summary" in body
+        assert isinstance(body["spreads_summary"], dict)
+
+    async def test_totals_summary_present(self, client):
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert "totals_summary" in body
+        assert isinstance(body["totals_summary"], dict)
+
+    async def test_summary_shape_keys(self, client):
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        expected_keys = {"mce", "outcomes", "winners", "by_sport"}
+        for key in ["spreads_summary", "totals_summary"]:
+            assert set(body[key].keys()) == expected_keys
+
+    async def test_spreads_summary_with_data(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            spreads_rows=[
+                _bucket_row(
+                    bucket_idx=4,
+                    source="odds_api_spreads",
+                    category="basketball_nba",
+                    n=100,
+                    winners=52,
+                    avg_prob=0.52,
+                    sum_prob=52.0,
+                    sum_sq_err=24.96,
+                ),
+                _bucket_row(
+                    bucket_idx=5,
+                    source="odds_api_spreads",
+                    category="americanfootball_nfl",
+                    n=80,
+                    winners=42,
+                    avg_prob=0.524,
+                    sum_prob=41.92,
+                    sum_sq_err=20.0,
+                ),
+            ],
+            total_markets=5,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        summary = body["spreads_summary"]
+        assert summary["outcomes"] == 180
+        assert summary["winners"] == 94
+        assert summary["mce"] is not None
+        assert len(summary["by_sport"]) == 2
+        # Sorted by outcomes descending
+        assert summary["by_sport"][0]["sport"] == "basketball_nba"
+        assert summary["by_sport"][0]["outcomes"] == 100
+        assert summary["by_sport"][0]["mce"] is not None
+        assert summary["by_sport"][1]["sport"] == "americanfootball_nfl"
+
+    async def test_totals_summary_with_data(self, client, mock_db):
+        _set_public_calibration_results(
+            mock_db,
+            totals_rows=[
+                _bucket_row(
+                    bucket_idx=5,
+                    source="odds_api_totals",
+                    category="baseball_mlb",
+                    n=120,
+                    winners=58,
+                    avg_prob=0.48,
+                    sum_prob=57.6,
+                    sum_sq_err=30.0,
+                ),
+            ],
+            total_markets=3,
+        )
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        summary = body["totals_summary"]
+        assert summary["outcomes"] == 120
+        assert summary["winners"] == 58
+        assert summary["mce"] is not None
+        assert len(summary["by_sport"]) == 1
+        assert summary["by_sport"][0]["sport"] == "baseball_mlb"
+
+    async def test_spreads_empty_when_no_data(self, client, mock_db):
+        _set_public_calibration_results(mock_db)
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert body["spreads_summary"]["outcomes"] == 0
+        assert body["spreads_summary"]["mce"] is None
+        assert body["spreads_summary"]["by_sport"] == []
+
+    async def test_totals_empty_when_no_data(self, client, mock_db):
+        _set_public_calibration_results(mock_db)
+        resp = await client.get("/api/calibration?bust=1")
+        body = resp.json()
+        assert body["totals_summary"]["outcomes"] == 0
+        assert body["totals_summary"]["mce"] is None
+        assert body["totals_summary"]["by_sport"] == []
 
 
 class TestCalibrationBucketValueRanges:
