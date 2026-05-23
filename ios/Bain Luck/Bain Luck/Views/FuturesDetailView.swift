@@ -83,17 +83,21 @@ struct FuturesDetailView: View {
                         // Hero section (matches Discover card visual quality)
                         heroSection(market)
 
-                        VStack(spacing: 16) {
+                        VStack(spacing: 20) {
                             // Hook description (journalist-style blurb)
                             if let hook = market.hookDescription, !hook.isEmpty {
                                 Text(hook)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineSpacing(3)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(DS.textSecondary)
+                                    .lineSpacing(4)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding()
-                                    .background(Color.cardBackground)
+                                    .padding(16)
+                                    .background(DS.cardBg)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(DS.border, lineWidth: 0.5)
+                                    )
                             }
 
                             // Market metadata (status, outcomes, dates, bookmakers)
@@ -228,13 +232,13 @@ struct FuturesDetailView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(.green.opacity(0.6), in: Capsule())
+                            .background(DS.emerald.opacity(0.6), in: Capsule())
                     }
                 }
 
-                // Market name
+                // Market name — larger and bolder
                 Text(market.name)
-                    .font(.headline.weight(.bold))
+                    .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
@@ -302,7 +306,7 @@ struct FuturesDetailView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background((up ? Color.green : Color.red).opacity(0.5))
+            .background((up ? DS.emerald : DS.danger).opacity(0.5))
             .clipShape(Capsule())
         }
     }
@@ -321,99 +325,171 @@ struct FuturesDetailView: View {
     private func metadataSection(_ market: FuturesMarketDetail) -> some View {
         let isResolved = market.status == "resolved"
 
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 12) {
             if let desc = market.description, !desc.isEmpty {
                 Text(desc)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondary)
             }
 
-            // Info strip
-            HStack(spacing: 12) {
-                if let status = market.status, !isResolved {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(status == "active" || status == "open" ? .green : .secondary)
-                            .frame(width: 6, height: 6)
+            // Info rows — structured vertical layout for clarity
+            VStack(alignment: .leading, spacing: 8) {
+                // Status row
+                if let status = market.status {
+                    HStack(spacing: 6) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .foregroundStyle(
+                                isResolved ? DS.textMuted :
+                                (status == "active" || status == "open") ? DS.emerald : DS.textMuted
+                            )
+                        Text("Status")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
                         Text(status.capitalized)
-                            .font(.caption2)
-                            .fontWeight(.medium)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(
+                                isResolved ? DS.textMuted :
+                                (status == "active" || status == "open") ? DS.emerald : DS.textSecondary
+                            )
                     }
-                    .foregroundStyle(status == "active" || status == "open" ? .green : .secondary)
                 }
-                HStack(spacing: 4) {
+
+                // Source row
+                if let source = market.source {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Source")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        SourceChip(source: source)
+                    }
+                }
+
+                // Outcomes count
+                HStack(spacing: 6) {
                     Image(systemName: "list.bullet")
                         .font(.system(size: 9))
-                    Text("\(market.outcomes.count) outcomes")
-                        .font(.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 6, alignment: .center)
+                    Text("Outcomes")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
+                    Text("\(market.outcomes.count)")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(DS.textSecondary)
                 }
-                .foregroundStyle(.secondary)
 
+                // Commence time
                 if let commence = market.commenceTime, let date = commence.asDate {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 6) {
                         Image(systemName: "calendar")
                             .font(.system(size: 9))
-                        Text("Starts \(date, style: .date)")
-                            .font(.caption2)
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Starts")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        Text(date, format: .dateTime.month(.abbreviated).day().year())
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.textSecondary)
                     }
-                    .foregroundStyle(.secondary)
                 }
 
-                if let resolution = market.resolutionDate {
-                    RelativeTimeText(dateString: resolution)
+                // Resolution date
+                if let resolution = market.resolutionDate, let date = resolution.asDate {
+                    HStack(spacing: 6) {
+                        Image(systemName: "flag.checkered")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Resolves")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        Text(date, format: .dateTime.month(.abbreviated).day().year())
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.textSecondary)
+                    }
+                } else if let resolution = market.resolutionDate {
+                    // Fallback: show the RelativeTimeText if asDate parsing fails
+                    HStack(spacing: 6) {
+                        Image(systemName: "flag.checkered")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Resolves")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        RelativeTimeText(dateString: resolution)
+                    }
                 }
-            }
 
-            if let updatedAt = market.updatedAt, let date = updatedAt.asDate {
-                Text("Updated \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                // Last updated
+                if let updatedAt = market.updatedAt, let date = updatedAt.asDate {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Updated")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                }
             }
 
             // Bookmakers
             if let bookmakers = market.bookmakers, !bookmakers.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Divider()
+                        .overlay(DS.border)
                     Text("Probabilities from \(bookmakers.count) sportsbook\(bookmakers.count != 1 ? "s" : "")")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textMuted)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(bookmakers, id: \.self) { bk in
                                 Text(formatBookmaker(bk))
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 10, weight: .medium))
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 3)
-                                    .background(Color.secondary.opacity(0.08))
+                                    .background(DS.trackBg)
                                     .clipShape(Capsule())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DS.textSecondary)
                             }
                         }
                     }
                 }
             }
         }
-        .padding()
-        .background(Color.cardBackground)
+        .padding(16)
+        .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
     }
 
     // MARK: - Category Color
 
     private func categoryColor(_ market: FuturesMarketDetail) -> Color {
         switch market.llmSportCategory?.lowercased() {
-        case "basketball": return .orange
-        case "football": return .brown
-        case "baseball": return .red
-        case "hockey": return .cyan
-        case "soccer": return .green
-        case "golf": return .mint
-        case "tennis": return .yellow
-        case "mma", "boxing": return .red
-        case "politics": return .purple
-        case "entertainment": return .pink
-        case "crypto": return Color(hex: "#f59e0b")
-        default: return .blue
+        case "basketball": return DS.amber
+        case "football": return DS.emerald
+        case "baseball": return DS.danger
+        case "hockey": return DS.blue
+        case "soccer": return DS.emerald
+        case "golf": return DS.emerald
+        case "tennis": return DS.amber
+        case "mma", "boxing": return DS.danger
+        case "politics": return DS.purple
+        case "entertainment": return Color(red: 0.75, green: 0.15, blue: 0.83)
+        case "crypto": return DS.amber
+        default: return DS.blue
         }
     }
 
@@ -425,14 +501,14 @@ struct FuturesDetailView: View {
         let displayed = showAllOutcomes ? sorted : Array(sorted.prefix(25))
         let hasMore = sorted.count > 25
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textMuted)
                 Text("All Outcomes")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DS.textPrimary)
                 Spacer()
                 if hasMore {
                     Button(showAllOutcomes ? "Show less" : "Show all \(sorted.count)") {
@@ -440,8 +516,8 @@ struct FuturesDetailView: View {
                             showAllOutcomes.toggle()
                         }
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.blue)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.emerald)
                 }
             }
 
@@ -458,6 +534,7 @@ struct FuturesDetailView: View {
                 outcomeRow(outcome, rank: index + 1, color: color, leaderId: sorted.first?.id)
                 if index < displayed.count - 1 {
                     Divider()
+                        .overlay(DS.border)
                 }
             }
 
@@ -468,17 +545,21 @@ struct FuturesDetailView: View {
                     }
                 } label: {
                     Text("Show \(sorted.count - 25) more outcomes")
-                        .font(.caption)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DS.textSecondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 10)
                 }
-                .foregroundStyle(.secondary)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(DS.border, lineWidth: 1)
+                )
             }
         }
-        .padding()
-        .background(Color.cardBackground)
+        .padding(16)
+        .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
     }
 
     private func sortChip(_ field: FuturesSortField) -> some View {
@@ -493,8 +574,7 @@ struct FuturesDetailView: View {
         } label: {
             HStack(spacing: 3) {
                 Text(field.rawValue)
-                    .font(.caption2)
-                    .fontWeight(.medium)
+                    .font(.system(size: 11, weight: .medium))
                 if isActive {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8, weight: .bold))
@@ -502,8 +582,8 @@ struct FuturesDetailView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(isActive ? Color.primary.opacity(0.12) : Color.secondary.opacity(0.08))
-            .foregroundStyle(isActive ? .primary : .secondary)
+            .background(isActive ? DS.emerald.opacity(0.12) : DS.trackBg)
+            .foregroundStyle(isActive ? DS.emerald : DS.textSecondary)
             .clipShape(Capsule())
         }
     }
@@ -549,14 +629,15 @@ struct FuturesDetailView: View {
 
     private func outcomeRow(_ outcome: FuturesOutcome, rank: Int, color: Color, leaderId: Int?) -> some View {
         let isLeader = outcome.id == leaderId
+        let probPct = (outcome.probability ?? 0) * 100
 
-        return VStack(spacing: 4) {
+        return VStack(spacing: 6) {
             HStack(alignment: .top) {
+                // Rank number
                 Text("#\(rank)")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(isLeader ? .orange : .secondary)
-                    .frame(width: 28, alignment: .leading)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isLeader ? DS.amber : DS.textMuted)
+                    .frame(width: 30, alignment: .leading)
 
                 // Rank change indicator
                 if let rankChange = outcome.rankChange24h, rankChange != 0 {
@@ -564,39 +645,42 @@ struct FuturesDetailView: View {
                         Image(systemName: rankChange < 0 ? "arrow.up" : "arrow.down")
                             .font(.system(size: 7))
                         Text("\(abs(rankChange))")
-                            .font(.system(size: 9))
+                            .font(.system(size: 9, weight: .medium))
                     }
-                    .foregroundStyle(rankChange < 0 ? .green : .red)
-                    .frame(width: 22, alignment: .leading)
+                    .foregroundStyle(rankChange < 0 ? DS.emerald : DS.danger)
+                    .frame(width: 24, alignment: .leading)
                 } else {
-                    Spacer().frame(width: 22)
+                    Spacer().frame(width: 24)
                 }
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(outcome.name)
-                            .font(.subheadline)
-                            .fontWeight(isLeader ? .semibold : .medium)
+                            .font(.system(size: 15, weight: isLeader ? .semibold : .medium))
+                            .foregroundStyle(DS.textPrimary)
                         if outcome.isWinner == true {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
+                                .font(.system(size: 13))
+                                .foregroundStyle(DS.emerald)
                         }
                     }
 
                     HStack(spacing: 8) {
                         if let odds = outcome.americanOdds {
                             Text(odds > 0 ? "+\(odds)" : "\(odds)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(DS.textMuted)
                         }
-                        changeIndicator(outcome)
+                        // 24h movement via DeltaBadge
+                        if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
+                            DeltaBadge(value: change * 100)
+                        }
                         if let opening = outcome.openingProbability, let current = outcome.probability {
                             let diff = current - opening
                             if abs(diff) >= 0.005 {
                                 Text("from \(formatProbability(opening))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(DS.textMuted)
                             }
                         }
                     }
@@ -604,42 +688,29 @@ struct FuturesDetailView: View {
 
                 Spacer()
 
+                // Lead probability via ProbabilityNumber
                 if let prob = outcome.probability {
-                    Text(formatProbability(prob))
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
-                }
-            }
-
-            // Mini probability bar
-            if let prob = outcome.probability {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.barTrack)
-                        Capsule()
-                            .fill(color.opacity(isLeader ? 0.7 : 0.4))
-                            .frame(width: geo.size.width * prob)
+                    if isLeader {
+                        ProbabilityNumber(value: prob * 100, size: 28, color: DS.probColor(prob * 100))
+                    } else {
+                        Text(formatProbability(prob))
+                            .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.probColor(probPct))
                     }
                 }
-                .frame(height: 4)
             }
-        }
-        .padding(.vertical, 4)
-    }
 
-    @ViewBuilder
-    private func changeIndicator(_ outcome: FuturesOutcome) -> some View {
-        if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
-            HStack(spacing: 1) {
-                Image(systemName: change > 0 ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 8))
-                Text(formatProbability(abs(change)))
-                    .font(.caption2)
+            // Probability bar via DSProbabilityBar
+            if outcome.probability != nil {
+                DSProbabilityBar(
+                    value: probPct,
+                    maxValue: 100,
+                    height: 5,
+                    color: isLeader ? color : color.opacity(0.6)
+                )
             }
-            .foregroundStyle(change > 0 ? .green : .red)
         }
+        .padding(.vertical, 6)
     }
 
     // MARK: - Golf Tournament Dates

@@ -108,7 +108,13 @@ struct OddsChartView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var chartHeight: CGFloat {
-        sizeClass == .regular ? 380 : 260
+        guard sizeClass == .regular else { return 260 }
+        // Medium breakpoint (~320pt) for iPad Air landscape / split-view
+        #if os(iOS)
+        let bounds = UIScreen.main.bounds
+        if bounds.width > bounds.height { return 320 }
+        #endif
+        return 380
     }
 
     private var gameStartDate: Date? {
@@ -559,7 +565,7 @@ struct OddsChartView: View {
         } else {
             chartDuration = 3600
         }
-        let minSpacing = max(chartDuration * 0.03, 120) // At least 2 minutes
+        let minSpacing = max(chartDuration * 0.03, 180) // At least 3 minutes (prevents Q3/Q4 overlap)
 
         var deduped: [(label: String, date: Date)] = []
         for item in sorted {
@@ -594,9 +600,52 @@ struct OddsChartView: View {
 
     // MARK: - Chart
 
-    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo], periodMarkers: [PeriodMarker]) -> some View {
-        let uniqueSources = Set(dataPoints.map(\.source)).sorted()
+    // MARK: - Chart Content Builder (extracted to reduce type-checker load)
 
+    @ChartContentBuilder
+    private func chartContent(
+        dataPoints: [ChartDataPoint],
+        sources: [String: WinProbSourceInfo],
+        visibleMarkers: [PeriodMarker]
+    ) -> some ChartContent {
+        // 50% reference line (at delta = 0)
+        RuleMark(y: .value("Even", 0.0))
+            .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+            .foregroundStyle(.gray.opacity(0.4))
+
+        // Selection indicator
+        if let selectedDate {
+            RuleMark(x: .value("Selected", selectedDate))
+                .lineStyle(StrokeStyle(lineWidth: 1.0))
+                .foregroundStyle(.primary.opacity(0.4))
+        }
+
+        // Data lines
+        ForEach(Set(dataPoints.map(\.source)).sorted(), id: \.self) { source in
+            let points = dataPoints.filter { $0.source == source }
+            let color = colorForSource(source, sources: sources)
+            let stroke = strokeStyleForSource(source, sources: sources)
+            ForEach(points) { point in
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Delta", point.delta),
+                    series: .value("Source", source)
+                )
+                .foregroundStyle(color)
+                .lineStyle(stroke)
+                .interpolationMethod(.monotone)
+            }
+        }
+
+        // Period markers — light vertical gridlines at inning/quarter boundaries
+        ForEach(visibleMarkers) { marker in
+            RuleMark(x: .value("Period", marker.date))
+                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                .foregroundStyle(.secondary.opacity(0.25))
+        }
+    }
+
+    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo], periodMarkers: [PeriodMarker]) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -612,39 +661,7 @@ struct OddsChartView: View {
         let yTicks: [Double] = [-0.50, -0.40, -0.30, -0.20, -0.10, 0, 0.10, 0.20, 0.30, 0.40, 0.50]
 
         return Chart {
-            // 50% reference line (at delta = 0)
-            RuleMark(y: .value("Even", 0.0))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
-                .foregroundStyle(.gray.opacity(0.4))
-
-            // Selection indicator
-            if let selectedDate {
-                RuleMark(x: .value("Selected", selectedDate))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0))
-                    .foregroundStyle(.primary.opacity(0.4))
-            }
-
-            // Data lines
-            ForEach(uniqueSources, id: \.self) { source in
-                let points = dataPoints.filter { $0.source == source }
-                ForEach(points) { point in
-                    LineMark(
-                        x: .value("Time", point.date),
-                        y: .value("Delta", point.delta),
-                        series: .value("Source", source)
-                    )
-                    .foregroundStyle(colorForSource(source, sources: sources))
-                    .lineStyle(strokeStyleForSource(source, sources: sources))
-                    .interpolationMethod(.monotone)
-                }
-            }
-
-            // Period markers — light vertical gridlines at inning/quarter boundaries
-            ForEach(visibleMarkers) { marker in
-                RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    .foregroundStyle(.secondary.opacity(0.25))
-            }
+            chartContent(dataPoints: dataPoints, sources: sources, visibleMarkers: visibleMarkers)
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: xAxisDomain(for: dataPoints))
@@ -686,7 +703,7 @@ struct OddsChartView: View {
             AxisMarks(values: .stride(by: .minute, count: strideMinutes)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute().period(.abbreviated), anchor: .top)
+                AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
                     .font(.system(size: 9))
             }
         }
