@@ -188,6 +188,7 @@ struct Bain_LuckApp: App {
             do {
                 let feed = try await APIClient.shared.fetchFeed(
                     limit: 10,
+                    myTeamsOnly: true,
                     includeFutures: false
                 )
                 let liveEvents = feed.items
