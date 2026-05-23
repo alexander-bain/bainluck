@@ -265,6 +265,12 @@ class EmailPreferencesResponse(BaseModel):
     market_alerts: bool = False
 
 
+class PushPreferencesResponse(BaseModel):
+    """Push notification preferences (all default True — opt-out model)."""
+    daily_challenge: bool = True
+    big_moves: bool = True
+
+
 class PreferencesResponse(BaseModel):
     """Full preferences + favorites for the current user."""
     home_location: Optional[str]
@@ -272,6 +278,7 @@ class PreferencesResponse(BaseModel):
     onboarding_completed: bool
     favorites: list[FavoriteItem]
     email_preferences: EmailPreferencesResponse = EmailPreferencesResponse()
+    push_preferences: PushPreferencesResponse = PushPreferencesResponse()
 
 
 # =============================================================================
@@ -572,12 +579,20 @@ async def get_preferences(
         market_alerts=bool(raw_email_prefs.get("market_alerts", False)),
     )
 
+    # Build push preferences from User.push_preferences JSONB (default True)
+    raw_push_prefs = user.push_preferences if isinstance(user.push_preferences, dict) else {}
+    push_prefs = PushPreferencesResponse(
+        daily_challenge=bool(raw_push_prefs.get("daily_challenge", True)),
+        big_moves=bool(raw_push_prefs.get("big_moves", True)),
+    )
+
     return PreferencesResponse(
         home_location=prefs.home_location if prefs else None,
         sport_affinities=compressed,
         onboarding_completed=prefs.onboarding_completed if prefs else False,
         favorites=favorites,
         email_preferences=email_prefs,
+        push_preferences=push_prefs,
     )
 
 
@@ -1068,6 +1083,66 @@ async def update_email_preferences(
     return {
         "status": "updated",
         "email_preferences": new_prefs,
+    }
+
+
+# =============================================================================
+# Push notification preferences
+# =============================================================================
+
+PUSH_PREF_KEYS = frozenset({"daily_challenge", "big_moves"})
+
+
+class UpdatePushPreferencesRequest(BaseModel):
+    """Update push notification preferences."""
+    daily_challenge: Optional[bool] = None
+    big_moves: Optional[bool] = None
+
+
+@router.patch("/preferences/push")
+async def update_push_preferences(
+    body: UpdatePushPreferencesRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Update push notification preferences. Only provided fields are changed.
+
+    Push types default to True (opt-out model — users get notifications
+    unless they explicitly disable them).
+    """
+    # Build updates dict from provided (non-None) fields
+    updates: dict[str, bool] = {}
+    if body.daily_challenge is not None:
+        updates["daily_challenge"] = body.daily_challenge
+    if body.big_moves is not None:
+        updates["big_moves"] = body.big_moves
+
+    if not updates:
+        return {"status": "no_changes"}
+
+    # Read current preferences (default True for all keys)
+    current = user.push_preferences if isinstance(user.push_preferences, dict) else {}
+    new_prefs = {key: current.get(key, True) for key in sorted(PUSH_PREF_KEYS)}
+    for key, value in updates.items():
+        if key in PUSH_PREF_KEYS:
+            new_prefs[key] = value
+
+    # Use Core update to avoid JSONB ORM assignment issues (Gotcha #4)
+    from sqlalchemy import update as sa_update
+    await db.execute(
+        sa_update(User)
+        .where(User.id == user.id)
+        .values(push_preferences=new_prefs)
+    )
+    await db.flush()
+
+    logger.info(
+        "Updated push preferences for user=%d: %s",
+        user.id, new_prefs,
+    )
+    return {
+        "status": "updated",
+        "push_preferences": new_prefs,
     }
 
 

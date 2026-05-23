@@ -618,6 +618,41 @@ def snapshot_discover_ground_truth_diagnostics(self, limit: int = 50):
     }
 
 
+@celery_app.task(bind=True, name="app.tasks.snapshot_discover_label_eval_run")
+def snapshot_discover_label_eval_run(
+    self,
+    days: int = 30,
+    top_k: int = 20,
+    limit: int = 5000,
+    surface: str | None = None,
+    reviewer: str | None = None,
+):
+    """Persist advisory Discover human-label eval metrics."""
+    from app.services.database import async_session_maker
+    from app.utils.discover_label_eval_runs import (
+        snapshot_discover_label_eval_run as _snapshot_label_eval_run,
+    )
+
+    async def _snapshot():
+        async with async_session_maker() as db:
+            run = await _snapshot_label_eval_run(
+                db,
+                days=days,
+                top_k=top_k,
+                limit=limit,
+                surface=surface,
+                reviewer=reviewer,
+            )
+            return {
+                "status": run.status,
+                "run_id": run.run_id,
+                "row_count": run.row_count,
+                "top_k": run.top_k,
+            }
+
+    return _tracked_run("discover_label_eval_snapshot", _snapshot())
+
+
 @celery_app.task(bind=True, name="app.tasks.import_external_curator_ground_truth")
 def import_external_curator_ground_truth(self):
     """Persist configured reviewed external-curator/social ground truth."""
@@ -1000,6 +1035,22 @@ def export_engagement(self):
     return _tracked_run("export_engagement", _export_engagement_impl())
 
 
+# --- Push Notifications ---
+
+@celery_app.task(bind=True, name="app.tasks.send_daily_challenge_push")
+def send_daily_challenge_push(self):
+    """Send daily challenge push notification to all opted-in device tokens."""
+    from app.tasks.push_notifications import _send_daily_challenge_push
+    return _tracked_run("daily_challenge_push", _send_daily_challenge_push())
+
+
+@celery_app.task(bind=True, name="app.tasks.send_big_move_alerts")
+def send_big_move_alerts(self):
+    """Send push alerts for futures markets with >15pp movement to users who pinned them."""
+    from app.tasks.push_notifications import _send_big_move_alerts
+    return _tracked_run("big_move_alerts", _send_big_move_alerts())
+
+
 @celery_app.task(name="app.tasks.heartbeat")
 def heartbeat():
     """Write a heartbeat timestamp to Redis for health monitoring."""
@@ -1371,6 +1422,16 @@ celery_app.conf.beat_schedule = {
     "export-engagement-nightly": {
         "task": "app.tasks.export_engagement",
         "schedule": crontab(hour=2, minute=0),  # 2:00 AM UTC
+        "options": {"queue": "background"},
+    },
+    "daily-challenge-push": {
+        "task": "app.tasks.send_daily_challenge_push",
+        "schedule": crontab(hour=14, minute=0),  # 2:00 PM UTC (10am ET / 7am PT)
+        "options": {"queue": "background"},
+    },
+    "big-move-alerts": {
+        "task": "app.tasks.send_big_move_alerts",
+        "schedule": crontab(minute="*/30"),  # Every 30 minutes
         "options": {"queue": "background"},
     },
 }

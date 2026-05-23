@@ -221,6 +221,8 @@ class TestBeatScheduleCompleteness:
         "backfill-historical-links",
         "update-max-movement",
         "export-engagement-nightly",
+        "daily-challenge-push",
+        "big-move-alerts",
     }
 
     def test_no_missing_entries(self):

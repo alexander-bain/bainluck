@@ -424,6 +424,12 @@ class User(Base):
     email_preferences: Mapped[Optional[dict]] = mapped_column(
         JSONB, server_default="{}"
     )
+    # Push notification preferences — per-type opt-in, all default True
+    # Shape: {"daily_challenge": true, "big_moves": true}
+    push_preferences: Mapped[Optional[dict]] = mapped_column(
+        JSONB, server_default="{}"
+    )
+
     # HMAC-signed unsubscribe token — unique per user, generated on first email send
     unsubscribe_token: Mapped[Optional[str]] = mapped_column(
         String(255), unique=True, index=True
