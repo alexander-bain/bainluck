@@ -809,6 +809,71 @@ def send_bug_fixed_email_task(self, report_id: int):
         raise self.retry(exc=exc, countdown=60)
 
 
+# --- Bug Report → GitHub Issue ---
+
+@celery_app.task(bind=True, max_retries=2, name="app.tasks.create_github_issue_for_bug_report")
+def create_github_issue_for_bug_report_task(self, report_id: int):
+    """Create a GitHub Issue from a rage-shake bug report."""
+
+    async def _create():
+        from app.tasks.base import get_task_session
+        from app.tasks.bug_report_github import (
+            GITHUB_TOKEN, build_labels, compute_severity,
+            create_github_issue, format_issue_body, format_issue_title,
+            add_to_project_board,
+        )
+        from app.models.models import BugReport
+        from sqlalchemy import update as sa_update
+
+        if not GITHUB_TOKEN:
+            logger.warning("GITHUB_TOKEN not set — skipping issue creation for report #%d", report_id)
+            return None
+
+        async with get_task_session() as db:
+            report = await db.get(BugReport, report_id)
+            if not report:
+                logger.error("Bug report #%d not found", report_id)
+                return None
+
+            if report.backlog_ref:
+                logger.info("Bug report #%d already linked to %s — skipping", report_id, report.backlog_ref)
+                return None
+
+            if not report.description and not report.screenshot_base64:
+                logger.info("Bug report #%d has no description and no screenshot — skipping", report_id)
+                return None
+
+            severity = compute_severity(report.description)
+            title = format_issue_title(report.description)
+            body = format_issue_body(
+                report_id=report.id,
+                description=report.description,
+                category=report.category,
+                app_state=report.app_state,
+                has_screenshot=bool(report.screenshot_base64),
+            )
+            labels = build_labels(report.category, severity)
+
+            issue_number, issue_node_id = create_github_issue(title, body, labels)
+
+            await db.execute(
+                sa_update(BugReport).where(BugReport.id == report_id).values(backlog_ref=f"#{issue_number}")
+            )
+            logger.info("Created GitHub issue #%d for bug report #%d", issue_number, report_id)
+
+            try:
+                add_to_project_board(issue_node_id)
+            except Exception:
+                logger.warning("Failed to add issue #%d to project board (non-fatal)", issue_number, exc_info=True)
+
+            return {"issue_number": issue_number, "report_id": report_id}
+
+    try:
+        return run_async(_create())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")

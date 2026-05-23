@@ -230,4 +230,7 @@ async def submit_bug_report(
         (body.description or "")[:50],
     )
 
+    from app.celery_app import celery_app
+    celery_app.send_task("app.tasks.create_github_issue_for_bug_report", args=[report.id])
+
     return {"status": "ok", "id": report.id, "category": report.category}
