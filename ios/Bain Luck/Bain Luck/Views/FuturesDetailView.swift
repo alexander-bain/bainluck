@@ -113,7 +113,11 @@ struct FuturesDetailView: View {
                         }
                         .padding()
                     }
+                    #if os(macOS)
+                    .frame(maxWidth: 1000)
+                    #else
                     .frame(maxWidth: 700)
+                    #endif
                     .frame(maxWidth: .infinity)
                 }
             }
