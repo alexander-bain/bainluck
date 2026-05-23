@@ -157,7 +157,7 @@ export default function EventCard({
   const awayShort = event.away_team.split(" ").pop() || event.away_team;
 
   return (
-    <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick}>
+    <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick} aria-label={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}>
       <motion.div
         variants={fadeIn}
         initial="hidden"
@@ -309,7 +309,7 @@ export default function EventCard({
                 />
                 {/* Inline live score */}
                 {isLive && event.home_score !== null && (
-                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.home_score}</span>
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.home_team} score: ${event.home_score}`}>{event.home_score}</span>
                 )}
               </div>
               {!isLive && (
@@ -377,7 +377,7 @@ export default function EventCard({
                 />
                 {/* Inline live score */}
                 {isLive && event.away_score !== null && (
-                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.away_score}</span>
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.away_team} score: ${event.away_score}`}>{event.away_score}</span>
                 )}
               </div>
               {!isLive && (

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { fetchTeamPage } from "@/lib/api";
 import type { TeamPageResponse, ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
 import TeamNameLink from "@/components/TeamNameLink";
 
 export default function TeamPage() {
@@ -51,9 +52,8 @@ export default function TeamPage() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-        <div className="text-4xl mb-4 animate-pulse">...</div>
-        <p className="text-text-secondary">Loading team...</p>
+      <div className="max-w-7xl mx-auto px-4">
+        <LoadingState message="Loading team..." />
       </div>
     );
   }
@@ -61,16 +61,23 @@ export default function TeamPage() {
   if (error || !data) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-        <h1 className="text-title-2 text-text-primary mb-2">Team Not Found</h1>
-        <p className="text-text-secondary">
-          No team found for &quot;{teamSlug}&quot;
+        <p className="text-text-secondary text-sm mb-3">
+          {error || `No team found for "${teamSlug}"`}
         </p>
-        <Link
-          href={`/sport/${sport}/${league}`}
-          className="mt-4 inline-block text-sm text-accent-brand hover:underline"
-        >
-          Back to {league.toUpperCase()}
-        </Link>
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={() => window.location.reload()}
+            className="text-sm text-accent-brand hover:underline transition-colors"
+          >
+            Try again
+          </button>
+          <Link
+            href={`/sport/${sport}/${league}`}
+            className="text-sm text-text-muted hover:text-text-primary transition-colors"
+          >
+            Back to {league.toUpperCase()}
+          </Link>
+        </div>
       </div>
     );
   }

@@ -22,7 +22,7 @@ export default function MoversRibbon({ movers, gridHref }: MoversRibbonProps) {
     .slice(0, 6);
 
   return (
-    <section>
+    <section aria-label="Biggest odds movers in the last 24 hours">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">
           Biggest Movers (24h)

@@ -23,9 +23,10 @@ export default function MobileSearchTrigger() {
             to_page: "/search",
           });
         }}
-        className="flex items-center gap-2 w-full bg-surface-elevated/80 rounded-full px-3 py-1.5 text-sm text-text-muted transition-colors active:bg-surface-elevated"
+        aria-label="Open search" className="flex items-center gap-2 w-full bg-surface-elevated/80 rounded-full px-3 py-1.5 text-sm text-text-muted transition-colors active:bg-surface-elevated"
       >
         <svg
+          aria-hidden="true"
           width="14"
           height="14"
           viewBox="0 0 24 24"

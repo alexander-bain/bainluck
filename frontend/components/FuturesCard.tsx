@@ -106,7 +106,7 @@ export default function FuturesCard({
   };
 
   return (
-    <Link href={`/futures/${market.id}`} className="h-full">
+    <Link href={`/futures/${market.id}`} className="h-full" aria-label={`${market.name}${isResolved ? " - Resolved" : ""}`}>
       <motion.div
         variants={fadeIn}
         initial="hidden"
@@ -283,7 +283,7 @@ function OutcomeRow({
           )}
         </div>
         {/* Mini probability bar */}
-        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden">
+        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
           <motion.div
             className="h-full rounded-full"
             style={{

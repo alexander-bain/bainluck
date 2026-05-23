@@ -255,7 +255,7 @@ export default function SearchBar({
   };
 
   return (
-    <div className="relative">
+    <div className="relative" role="search" aria-label="Site search">
       <div className="relative">
         <input
           ref={inputRef}
@@ -269,6 +269,11 @@ export default function SearchBar({
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          aria-label="Search teams, games, and futures"
+          aria-autocomplete="list"
+          aria-expanded={isOpen || showRecent}
+          role="combobox"
+          autoComplete="off"
           className={`w-full bg-surface-elevated border border-surface-border rounded-full text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30 focus:border-accent-brand/40 transition-colors ${
             compact ? "px-4 py-1.5 text-sm pr-16" : "px-5 py-2.5 text-base pr-20"
           }`}
@@ -296,6 +301,8 @@ export default function SearchBar({
         <div
           ref={dropdownRef}
           className="absolute z-50 w-full min-w-[360px] sm:min-w-[480px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
+          role="listbox"
+          aria-label="Search suggestions"
         >
           {recentSearches.length > 0 && (
             <>
@@ -349,6 +356,8 @@ export default function SearchBar({
         <div
           ref={dropdownRef}
           className="absolute z-50 w-full min-w-[360px] sm:min-w-[480px] right-0 mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
+          role="listbox"
+          aria-label="Search results"
         >
           {didYouMean && (
             <button
@@ -366,6 +375,8 @@ export default function SearchBar({
               key={`${suggestion.type}-${suggestion.text}-${idx}`}
               onClick={() => selectSuggestion(suggestion)}
               onMouseEnter={() => setSelectedIndex(idx)}
+              role="option"
+              aria-selected={idx === selectedIndex}
               className={`w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors ${
                 idx === selectedIndex ? "bg-surface-elevated" : "hover:bg-surface-elevated/50"
               }`}

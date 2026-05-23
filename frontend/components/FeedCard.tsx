@@ -348,7 +348,7 @@ function EventFeedCard({
     : displayAwayProb;
 
   return (
-    <Link href={`/events/${data.id}`} onClick={() => {
+    <Link href={`/events/${data.id}`} aria-label={`${data.away_team} at ${data.home_team}${isLive ? " - Live" : isFinished ? "- Final" : ""}`} onClick={() => {
       track('event_card_click', {
         event_id: data.id,
         sport: data.sport || 'unknown',
@@ -581,7 +581,7 @@ function FuturesFeedCard({
   const { track } = useAnalyticsContext();
 
   return (
-    <Link href={`/futures/${data.id}`} onClick={() => {
+    <Link href={`/futures/${data.id}`} aria-label={`${data.name}`} onClick={() => {
       track('futures_card_click', {
         market_id: data.id,
         category: data.llm_sport_category || 'unknown',
@@ -687,7 +687,7 @@ function FuturesFeedCard({
                 <span className={`text-[11px] w-20 truncate shrink-0 ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
                   {outcome.name.split(" ").pop()}
                 </span>
-                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden">
+                <div className="flex-1 h-1.5 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((outcome.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
                     style={{ width: `${(outcome.probability ?? 0) * 100}%` }}

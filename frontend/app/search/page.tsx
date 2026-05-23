@@ -9,16 +9,13 @@ import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, use
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import CategoryBrowser from "@/components/CategoryBrowser";
+import LoadingState from "@/components/LoadingState";
+import ErrorState from "@/components/ErrorState";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
 
 function SearchLoading() {
-  return (
-    <div className="text-center py-12">
-      <div className="text-4xl mb-4 animate-pulse">🔍</div>
-      <p className="text-text-secondary">Loading search...</p>
-    </div>
-  );
+  return <LoadingState message="Loading search..." />;
 }
 
 function SuggestionChips({ suggestions }: { suggestions: SearchSuggestion[] }) {
@@ -203,21 +200,15 @@ function SearchContent() {
   }
 
   if (isLoading) {
-    return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4 animate-pulse">🔍</div>
-        <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
-      </div>
-    );
+    return <LoadingState message={`Searching for "${query}"...`} />;
   }
 
   if (error) {
     return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4">⚠️</div>
-        <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
-        <p className="text-text-secondary">{error}</p>
-      </div>
+      <ErrorState
+        message={error}
+        onRetry={() => window.location.reload()}
+      />
     );
   }
 

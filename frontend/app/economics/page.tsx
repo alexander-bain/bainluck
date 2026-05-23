@@ -8,6 +8,7 @@ import {
   ProbNum, ProbBar, Histogram, Delta, probColor,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
+import LoadingState from "@/components/LoadingState";
 import { fetchEconomics } from "@/lib/api";
 import type { EconData } from "@/lib/api";
 
@@ -122,15 +123,13 @@ export default function EconomicsPage() {
 
   if (error) return (
     <div className="max-w-7xl mx-auto">
-      <ErrorState message="Failed to load economics data" />
+      <ErrorState message="Failed to load economics data" onRetry={() => window.location.reload()} />
     </div>
   );
 
   if (!data) return (
-    <div className="max-w-7xl mx-auto py-20 text-center">
-      <div className="animate-pulse text-text-muted text-sm">
-        Loading economics markets...
-      </div>
+    <div className="max-w-7xl mx-auto">
+      <LoadingState message="Loading economics markets..." />
     </div>
   );
 

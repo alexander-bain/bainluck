@@ -59,14 +59,14 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50" ref={browseRef}>
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50" ref={browseRef} aria-label="Mobile navigation">
       {browseOpen && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 z-40"
+            className="fixed inset-0 bg-black/20 z-40" aria-hidden="true"
             onClick={() => setBrowseOpen(false)}
           />
-          <div className="relative z-50 mx-4 mb-2 bg-surface-card rounded-2xl border border-surface-border shadow-lg overflow-hidden">
+          <div className="relative z-50 mx-4 mb-2 bg-surface-card rounded-2xl border border-surface-border shadow-lg overflow-hidden" role="menu" aria-label="Browse categories">
             {browsePages.map((page) => (
               <Link
                 key={page.href}
@@ -109,6 +109,8 @@ export default function BottomNav() {
                     });
                   }
                 }}
+                aria-current={tab.isActive ? "page" : undefined}
+                aria-label={tab.label}
                 className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
                   tab.isActive
                     ? "text-accent-brand"
@@ -133,7 +135,7 @@ export default function BottomNav() {
                     });
                   }
                 }}
-                className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
+                aria-expanded={browseOpen} aria-label="Browse categories" className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
                   tab.isActive || browseOpen
                     ? "text-accent-brand"
                     : "text-text-muted hover:text-text-secondary"
@@ -155,6 +157,7 @@ export default function BottomNav() {
 function FeedIcon({ active }: { active: boolean }) {
   return (
     <svg
+      aria-hidden="true"
       width="22"
       height="22"
       viewBox="0 0 24 24"
@@ -175,6 +178,7 @@ function FeedIcon({ active }: { active: boolean }) {
 function DiscoverIcon({ active }: { active: boolean }) {
   return (
     <svg
+      aria-hidden="true"
       width="22"
       height="22"
       viewBox="0 0 24 24"
@@ -193,6 +197,7 @@ function DiscoverIcon({ active }: { active: boolean }) {
 function BrowseIcon({ active }: { active: boolean }) {
   return (
     <svg
+      aria-hidden="true"
       width="22"
       height="22"
       viewBox="0 0 24 24"
@@ -213,6 +218,7 @@ function BrowseIcon({ active }: { active: boolean }) {
 function UserIcon({ active }: { active: boolean }) {
   return (
     <svg
+      aria-hidden="true"
       width="22"
       height="22"
       viewBox="0 0 24 24"

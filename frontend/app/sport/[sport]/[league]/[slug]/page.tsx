@@ -15,6 +15,7 @@ import type {
 } from "@/lib/types";
 import { EvolutionView } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
 
 // ============================================================================
 // Evolution chart with fallback — tries market IDs in order
@@ -468,7 +469,7 @@ export default function SportEventDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-text-muted">Loading...</div>
+        <LoadingState message="Loading tournament..." />
       </div>
     );
   }
@@ -476,14 +477,22 @@ export default function SportEventDetailPage() {
   if (error || !tournament) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-text-muted mb-4">{error || "Tournament not found"}</p>
-          <Link
-            href={`/sport/${sportSlug}/${leagueSlug}`}
-            className="text-accent-brand hover:underline"
-          >
-            Back to {league?.name || leagueSlug}
-          </Link>
+        <div className="text-center max-w-md mx-auto px-4">
+          <p className="text-text-secondary text-sm mb-3">{error || "Tournament not found"}</p>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="text-sm text-accent-brand hover:underline transition-colors"
+            >
+              Try again
+            </button>
+            <Link
+              href={`/sport/${sportSlug}/${leagueSlug}`}
+              className="text-sm text-text-muted hover:text-text-primary transition-colors"
+            >
+              Back to {league?.name || leagueSlug}
+            </Link>
+          </div>
         </div>
       </div>
     );

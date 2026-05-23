@@ -106,9 +106,9 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
   const showRecent = !query && recentSearches.length > 0;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-surface-deep flex flex-col">
+    <div className="fixed inset-0 z-[100] bg-surface-deep flex flex-col" role="dialog" aria-label="Search" aria-modal="true">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 pt-safe-top pb-3 border-b border-surface-border bg-surface-card">
+      <div className="flex items-center gap-3 px-4 pt-safe-top pb-3 border-b border-surface-border bg-surface-card" role="search">
         <div className="flex-1 relative">
           <input
             ref={inputRef}
@@ -121,6 +121,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
               }
             }}
             placeholder="Search teams, games, futures..."
+            aria-label="Search teams, games, and futures"
             className="w-full bg-surface-elevated border border-surface-border rounded-full px-4 py-2.5 text-base text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30"
             autoComplete="off"
             autoCapitalize="off"
@@ -132,6 +133,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
         </div>
         <button
           onClick={onClose}
+          aria-label="Close search"
           className="text-sm font-medium text-text-secondary hover:text-text-primary px-1"
         >
           Cancel

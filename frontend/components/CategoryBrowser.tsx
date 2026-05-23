@@ -107,6 +107,8 @@ export default function CategoryBrowser() {
           <button
             key={cat.key}
             onClick={() => toggleCategory(cat.key)}
+            aria-expanded={expandedCategory === cat.key}
+            aria-label={`Browse ${formatCategoryName(cat.key)} markets (${cat.count})`}
             className={`flex items-center gap-2 p-3 rounded-card border transition-all text-left ${
               expandedCategory === cat.key
                 ? "bg-accent-brand/10 border-accent-brand/30 ring-1 ring-accent-brand/20"
@@ -184,9 +186,10 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
         </h3>
         <button
           onClick={onClose}
+          aria-label="Close category"
           className="text-text-muted hover:text-text-primary transition-colors p-1"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+          <svg width="16" height="16" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
@@ -198,6 +201,7 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
         value={searchQuery}
         onChange={(e) => handleSearch(e.target.value)}
         placeholder={`Search ${category}...`}
+        aria-label={`Search within ${category}`}
         className="w-full px-3 py-1.5 text-xs border border-surface-border rounded-lg bg-surface-deep focus:outline-none focus:border-accent-brand/40 transition-colors mb-3"
       />
 
@@ -223,6 +227,7 @@ function CategoryMarkets({ category, onClose }: { category: string; onClose: () 
       {data?.has_more && !isLoading && (
         <button
           onClick={handleLoadMore}
+          aria-label={`Load more ${category} markets`}
           className="w-full mt-3 py-2 text-xs font-medium text-text-secondary hover:text-text-primary border border-surface-border rounded-lg hover:bg-surface-elevated transition-colors"
         >
           Load more ({data.total - allItems.length} remaining)

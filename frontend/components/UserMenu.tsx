@@ -52,13 +52,16 @@ export default function UserMenu() {
             preloadFirebaseAuth();
           }}
           disabled={signingIn}
+          aria-expanded={showProviders}
+          aria-haspopup="true"
+          aria-label={signingIn ? "Signing in" : "Sign in"}
           className="text-sm text-text-secondary hover:text-text-primary transition-colors"
         >
           {signingIn ? "Signing in..." : "Sign in"}
         </button>
 
         {showProviders && !signingIn && (
-          <div className="absolute right-0 mt-2 w-56 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50">
+          <div className="absolute right-0 mt-2 w-56 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50" role="menu" aria-label="Sign in options">
             <button
               onClick={async () => {
                 setShowProviders(false);
@@ -69,6 +72,7 @@ export default function UserMenu() {
                   setSigningIn(false);
                 }
               }}
+              role="menuitem"
               className="w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-3"
             >
               <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0" aria-hidden="true">
@@ -102,6 +106,7 @@ export default function UserMenu() {
                   setSigningIn(false);
                 }
               }}
+              role="menuitem"
               className="w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-3"
             >
               <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0 fill-current" aria-hidden="true">
@@ -136,6 +141,8 @@ export default function UserMenu() {
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2"
         aria-label="User menu"
+        aria-expanded={isOpen}
+        aria-haspopup="true"
       >
         {user?.photoURL && !imgError ? (
           <img
@@ -153,7 +160,7 @@ export default function UserMenu() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50">
+        <div className="absolute right-0 mt-2 w-48 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50" role="menu" aria-label="User options">
           <div className="px-4 py-2 border-b border-surface-border">
             <p className="text-sm font-medium text-text-primary truncate">
               {user?.displayName || "User"}

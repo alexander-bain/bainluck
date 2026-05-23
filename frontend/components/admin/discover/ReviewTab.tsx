@@ -22,6 +22,20 @@ const REASON_TAGS = [
   "needs_context", "wrong_category", "too_high", "too_low", "ladder", "no_context",
 ];
 
+const FIX_TYPES = [
+  { value: "", label: "Fix type" },
+  { value: "staleness", label: "Staleness" },
+  { value: "wrong_entity_rank", label: "Wrong entity rank" },
+  { value: "missing_context", label: "Missing context" },
+  { value: "bad_image", label: "Bad image" },
+  { value: "wrong_market_variant", label: "Wrong market variant" },
+  { value: "duplicate_variant", label: "Duplicate variant" },
+  { value: "category_mismatch", label: "Category mismatch" },
+  { value: "data_bug", label: "Data bug" },
+  { value: "ranking_rule", label: "Ranking rule" },
+  { value: "other", label: "Other" },
+];
+
 interface JudgmentSummary {
   total: number;
   labels: Record<string, number>;
@@ -35,6 +49,12 @@ export default function ReviewTab() {
   const [betterThanPrev, setBetterThanPrev] = useState(false);
   const [worseThanNext, setWorseThanNext] = useState(false);
   const [notes, setNotes] = useState("");
+  const [wouldBeInterestingIf, setWouldBeInterestingIf] = useState("");
+  const [fixableInterestScore, setFixableInterestScore] = useState("");
+  const [fixType, setFixType] = useState("");
+  const [desiredEntityOrVariant, setDesiredEntityOrVariant] = useState("");
+  const [currentEntityOrVariant, setCurrentEntityOrVariant] = useState("");
+  const [createIssueCandidate, setCreateIssueCandidate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
   const [sessionLabels, setSessionLabels] = useState<Record<string, number>>({});
@@ -78,6 +98,12 @@ export default function ReviewTab() {
     setBetterThanPrev(false);
     setWorseThanNext(false);
     setNotes("");
+    setWouldBeInterestingIf("");
+    setFixableInterestScore("");
+    setFixType("");
+    setDesiredEntityOrVariant("");
+    setCurrentEntityOrVariant("");
+    setCreateIssueCandidate(false);
   };
 
   const submit = useCallback(async () => {
@@ -104,7 +130,29 @@ export default function ReviewTab() {
       if (worseThanNext && nextItem) params.set("worse_than", nextItem.name);
       if (notes.trim()) params.set("notes", notes.trim());
 
-      await fetch(`${API_URL}/api/admin/ranking-judgments?${params}`, { method: "POST" });
+      const labelMetadata = {
+        would_be_interesting_if: wouldBeInterestingIf.trim() || null,
+        fixable_interest_score: fixableInterestScore ? Number(fixableInterestScore) : null,
+        fix_type: fixType || null,
+        desired_entity_or_variant: desiredEntityOrVariant.trim() || null,
+        current_entity_or_variant: currentEntityOrVariant.trim() || null,
+        create_issue_candidate: createIssueCandidate,
+      };
+      const hasLabelMetadata = Object.entries(labelMetadata).some(([key, value]) => (
+        key === "create_issue_candidate" ? value === true : value !== null
+      ));
+
+      await fetch(`${API_URL}/api/admin/ranking-judgments?${params}`, {
+        method: "POST",
+        ...(hasLabelMetadata
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                label_metadata: { fixable_interest: labelMetadata },
+              }),
+            }
+          : {}),
+      });
       setSessionCount((c) => c + 1);
       setSessionLabels((prev) => ({ ...prev, [selectedLabel]: (prev[selectedLabel] || 0) + 1 }));
       resetForm();
@@ -112,7 +160,23 @@ export default function ReviewTab() {
     } finally {
       setSubmitting(false);
     }
-  }, [current, selectedLabel, selectedTags, betterThanPrev, worseThanNext, notes, prevItem, nextItem, secret]);
+  }, [
+    current,
+    selectedLabel,
+    selectedTags,
+    betterThanPrev,
+    worseThanNext,
+    notes,
+    prevItem,
+    nextItem,
+    secret,
+    wouldBeInterestingIf,
+    fixableInterestScore,
+    fixType,
+    desiredEntityOrVariant,
+    currentEntityOrVariant,
+    createIssueCandidate,
+  ]);
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => {
@@ -140,7 +204,7 @@ export default function ReviewTab() {
           <div className="flex gap-1">
             {Object.entries(sessionLabels).map(([label, count]) => (
               <StatusPill key={label} tone={label === "love" ? "ok" : label === "kill" ? "warn" : "muted"}>
-                {count} {label}
+                {`${count} ${label}`}
               </StatusPill>
             ))}
           </div>
@@ -260,6 +324,68 @@ export default function ReviewTab() {
                     Should lose to #{currentIdx + 2} below
                   </button>
                 )}
+              </div>
+
+              {/* Structured fixable-interest feedback */}
+              <div className="mb-3 rounded-lg border border-surface-border bg-surface-elevated p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-text-primary">Fixable interest</div>
+                  <label className="flex items-center gap-2 text-xs text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={createIssueCandidate}
+                      onChange={(e) => setCreateIssueCandidate(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-surface-border text-accent-brand focus:ring-accent-brand/40"
+                    />
+                    Issue candidate
+                  </label>
+                </div>
+                <div className="grid gap-2 md:grid-cols-[1fr_120px_150px]">
+                  <input
+                    type="text"
+                    value={wouldBeInterestingIf}
+                    onChange={(e) => setWouldBeInterestingIf(e.target.value)}
+                    placeholder="Would be interesting if..."
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                  />
+                  <select
+                    value={fixableInterestScore}
+                    onChange={(e) => setFixableInterestScore(e.target.value)}
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                  >
+                    <option value="">Score</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5 - very fixable</option>
+                  </select>
+                  <select
+                    value={fixType}
+                    onChange={(e) => setFixType(e.target.value)}
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                  >
+                    {FIX_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <input
+                    type="text"
+                    value={currentEntityOrVariant}
+                    onChange={(e) => setCurrentEntityOrVariant(e.target.value)}
+                    placeholder="Current entity or variant"
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                  />
+                  <input
+                    type="text"
+                    value={desiredEntityOrVariant}
+                    onChange={(e) => setDesiredEntityOrVariant(e.target.value)}
+                    placeholder="Desired entity or variant"
+                    className="rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/40"
+                  />
+                </div>
               </div>
 
               {/* Notes */}

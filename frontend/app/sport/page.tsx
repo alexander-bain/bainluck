@@ -5,6 +5,8 @@ import Link from "next/link";
 import { fetchSportHierarchy } from "@/lib/api";
 import type { SportHierarchy } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
+import ErrorState from "@/components/ErrorState";
 
 // Sport display metadata
 const SPORT_META: Record<string, { icon: string; description: string }> = {
@@ -32,22 +34,37 @@ const SPORT_COLORS: Record<string, string> = {
 export default function SportsIndexPage() {
   const [sports, setSports] = useState<SportHierarchy[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   usePageTracking({ pageType: "sport_hub", pageTitle: "All Sports - BainLuck" });
   useScrollDepth({ pageType: "sport_hub" });
   useEngagementTime({ pageType: "sport_hub" });
 
-  useEffect(() => {
+  const loadData = () => {
+    setLoading(true);
+    setError(false);
     fetchSportHierarchy()
       .then((data) => setSports(data.sports))
-      .catch(() => {})
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-text-muted">Loading...</div>
+        <LoadingState message="Loading sports..." />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <ErrorState message="Failed to load sports" onRetry={loadData} />
       </div>
     );
   }

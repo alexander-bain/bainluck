@@ -36,7 +36,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     : `Track ${data.name} on Bain Luck.`;
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
+    <article className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow" aria-label={`${data.name}`}>
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
@@ -81,7 +81,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               {data.top_outcomes.slice(0, showContext ? undefined : 3).map((o, i) => (
                 <div key={o.id} className="flex items-center gap-2">
                   <span className={`text-xs w-32 truncate shrink-0 ${i === 0 ? "font-semibold" : "text-text-secondary"}`} title={o.name}>{o.name}</span>
-                  <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden">
+                  <div className="flex-1 h-2 rounded-full bg-surface-border overflow-hidden" role="progressbar" aria-valuenow={Math.round((o.probability ?? 0) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${o.name} probability`}>
                     <div className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`} style={{ width: `${(o.probability ?? 0) * 100}%` }} />
                   </div>
                   <span className="font-mono tabular-nums text-xs font-semibold w-9 text-right">{Math.round((o.probability ?? 0) * 100)}%</span>
@@ -108,7 +108,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           onShare={onShare}
         />
       </div>
-    </div>
+    </article>
   );
 }
 

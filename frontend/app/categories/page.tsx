@@ -6,6 +6,7 @@ import { fetchTagCounts } from "@/lib/api";
 import { SPORT_CATEGORIES, getCategoryByKey } from "@/lib/sportCategories";
 import Link from "next/link";
 import { SkeletonGrid } from "@/components/SkeletonCard";
+import ErrorState from "@/components/ErrorState";
 import {
   usePageTracking,
   useScrollDepth,
@@ -22,7 +23,7 @@ export default function CategoriesIndexPage() {
   useScrollDepth({ pageType: "category_index" });
   useEngagementTime({ pageType: "category_index" });
 
-  const { data, isLoading } = useSWR("tag-counts", fetchTagCounts, {
+  const { data, isLoading, error } = useSWR("tag-counts", fetchTagCounts, {
     refreshInterval: 60000,
   });
 
@@ -47,6 +48,10 @@ export default function CategoriesIndexPage() {
       </div>
 
       {isLoading && <SkeletonGrid count={12} />}
+
+      {error && !isLoading && (
+        <ErrorState message="Failed to load categories" onRetry={() => window.location.reload()} />
+      )}
 
       {!isLoading &&
         groups.map((group) => (

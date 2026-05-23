@@ -49,7 +49,7 @@ export default function DesktopNav() {
   ];
 
   return (
-    <nav className="hidden md:flex items-center gap-1">
+    <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
       {tabs.slice(0, 2).map((tab) => (
         <Link
           key={tab.href}
@@ -78,6 +78,9 @@ export default function DesktopNav() {
         <button
           onClick={() => setBrowseOpen(!browseOpen)}
           onMouseEnter={() => setBrowseOpen(true)}
+          aria-expanded={browseOpen}
+          aria-haspopup="true"
+          aria-label="Browse categories"
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
             isBrowseActive
               ? "text-accent-brand bg-accent-brand/10"
@@ -85,13 +88,13 @@ export default function DesktopNav() {
           }`}
         >
           Browse
-          <svg className={`w-3 h-3 transition-transform ${browseOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+          <svg aria-hidden="true" className={`w-3 h-3 transition-transform ${browseOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
           </svg>
         </button>
         {browseOpen && (
           <div
-            className="absolute top-full left-0 mt-1 w-48 bg-surface-card border border-surface-border rounded-xl shadow-lg py-1 z-50"
+            className="absolute top-full left-0 mt-1 w-48 bg-surface-card border border-surface-border rounded-xl shadow-lg py-1 z-50" role="menu" aria-label="Browse categories"
             onMouseLeave={() => setBrowseOpen(false)}
           >
             {browsePages.map((page) => (

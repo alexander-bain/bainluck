@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import LoadingState from "@/components/LoadingState";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -304,7 +305,7 @@ export default function LeagueShowcasePage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-text-muted">Loading...</div>
+        <LoadingState message="Loading league..." />
       </div>
     );
   }
@@ -312,11 +313,19 @@ export default function LeagueShowcasePage() {
   if (error || !league) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-text-muted mb-4">{error || "League not found"}</p>
-          <Link href={`/sport/${sportSlug}`} className="text-accent-brand hover:underline">
-            Back to {hierarchy?.name || sportSlug}
-          </Link>
+        <div className="text-center max-w-md mx-auto px-4">
+          <p className="text-text-secondary text-sm mb-3">{error || "League not found"}</p>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="text-sm text-accent-brand hover:underline transition-colors"
+            >
+              Try again
+            </button>
+            <Link href={`/sport/${sportSlug}`} className="text-sm text-text-muted hover:text-text-primary transition-colors">
+              Back to {hierarchy?.name || sportSlug}
+            </Link>
+          </div>
         </div>
       </div>
     );

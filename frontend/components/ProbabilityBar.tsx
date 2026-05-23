@@ -94,6 +94,11 @@ export default function ProbabilityBar({
     <div
       className={`flex w-full gap-[1.5px] ${className ?? ""}`}
       style={{ height: `${barHeight}px` }}
+      role="meter"
+      aria-valuenow={Math.round(homeProb * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label="Win probability"
     >
       {animated ? (
         <>

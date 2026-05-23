@@ -23,6 +23,8 @@ import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import TournamentCard from "@/components/TournamentCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
+import ErrorState from "@/components/ErrorState";
 
 // ============================================================================
 // Evolution Chart with market fallback — tries market IDs in order until
@@ -334,17 +336,14 @@ export default function GolfPage() {
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-10">
         {loading && (
-          <div className="text-center py-16">
-            <div className="animate-pulse space-y-6 max-w-md mx-auto">
-              <div className="h-8 bg-surface-card rounded w-48 mx-auto" />
-              <div className="h-24 bg-surface-card/50 rounded-xl" />
-              <div className="h-64 bg-surface-card/30 rounded-xl" />
-            </div>
-          </div>
+          <LoadingState message="Loading golf data..." />
         )}
 
-        {error && (
-          <div className="text-center py-16 text-red-400">{error}</div>
+        {error && !loading && (
+          <ErrorState
+            message={error}
+            onRetry={() => window.location.reload()}
+          />
         )}
 
         {data && !loading && data.tournaments.length === 0 && (

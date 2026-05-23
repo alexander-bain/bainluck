@@ -133,8 +133,8 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
   const reason = items.find((i) => i.reason)?.reason || null;
 
   return (
-    <Link href={`/futures/${linkId}`}>
-      <div className="rounded-card border border-surface-border bg-surface-card hover:bg-surface-elevated transition-all cursor-pointer overflow-hidden">
+    <Link href={`/futures/${linkId}`} aria-label={`${primaryData.name} - ${sources.length} sources`}>
+      <article className="rounded-card border border-surface-border bg-surface-card hover:bg-surface-elevated transition-all cursor-pointer overflow-hidden">
         {/* Header */}
         <div className="px-3 pt-3 pb-2">
           <div className="flex items-center justify-between gap-2 mb-1">
@@ -242,7 +242,7 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
             +{merged.length - 5} more outcomes
           </div>
         )}
-      </div>
+      </article>
     </Link>
   );
 }

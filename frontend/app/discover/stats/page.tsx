@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
 
 interface DetailedStats {
   total: number;
@@ -98,7 +99,7 @@ export default function PredictionStatsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-deep flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
+        <LoadingState message="Loading stats..." />
       </div>
     );
   }

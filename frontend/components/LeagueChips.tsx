@@ -34,9 +34,10 @@ export default function LeagueChips({ activeSlug }: LeagueChipsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div
+    <nav
       ref={scrollRef}
       className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide -mx-1 px-1"
+      aria-label="League navigation"
     >
       {LEAGUE_CHIPS.map((chip) => {
         const isActive = activeSlug === chip.slug;
@@ -45,6 +46,7 @@ export default function LeagueChips({ activeSlug }: LeagueChipsProps) {
           <Link
             key={chip.slug}
             href={chip.path}
+            aria-current={isActive ? "page" : undefined}
             className={`
               flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
               whitespace-nowrap transition-colors shrink-0
@@ -60,6 +62,6 @@ export default function LeagueChips({ activeSlug }: LeagueChipsProps) {
           </Link>
         );
       })}
-    </div>
+    </nav>
   );
 }

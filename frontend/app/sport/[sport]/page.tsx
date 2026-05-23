@@ -7,6 +7,7 @@ import { fetchSportHierarchyDetail, fetchGolfData } from "@/lib/api";
 import type { SportHierarchy, SportLeague, SportShowcaseEvent, GolfTournament } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import LoadingState from "@/components/LoadingState";
 
 // Showcase event type groupings for display
 const SHOWCASE_TYPE_ORDER = [
@@ -120,7 +121,7 @@ export default function SportHubPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-text-muted">Loading...</div>
+        <LoadingState message="Loading sport..." />
       </div>
     );
   }
@@ -128,11 +129,19 @@ export default function SportHubPage() {
   if (error || !hierarchy) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-text-muted mb-4">{error || "Sport not found"}</p>
-          <Link href="/" className="text-accent-brand hover:underline">
-            Back to home
-          </Link>
+        <div className="text-center max-w-md mx-auto px-4">
+          <p className="text-text-secondary text-sm mb-3">{error || "Sport not found"}</p>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => window.location.reload()}
+              className="text-sm text-accent-brand hover:underline transition-colors"
+            >
+              Try again
+            </button>
+            <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">
+              Back to home
+            </Link>
+          </div>
         </div>
       </div>
     );

@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration, CalibrationBucket } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
+import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 
 const SPORT_KEY_MAP: Record<string, string> = {
@@ -242,16 +243,15 @@ export default function CalibrationPage() {
   if (error) {
     return (
       <div className="max-w-6xl mx-auto">
-        <ErrorState message="Failed to load calibration data" />
+        <ErrorState message="Failed to load calibration data" onRetry={() => window.location.reload()} />
       </div>
     );
   }
 
   if (!data || !normalized) {
     return (
-      <div className="max-w-6xl mx-auto py-20 text-center">
-        <div className="inline-block w-8 h-8 border-2 border-surface-border border-t-accent-brand rounded-full animate-spin" />
-        <p className="text-text-muted mt-3 text-sm">Loading calibration data...</p>
+      <div className="max-w-6xl mx-auto">
+        <LoadingState message="Loading calibration data..." />
       </div>
     );
   }
