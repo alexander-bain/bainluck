@@ -57,7 +57,7 @@ struct EconomicsView: View {
     private func economicsContent(_ data: EconomicsResponse) -> some View {
         let themes = buildThemes(data.themes)
         return ScrollView {
-            VStack(spacing: 24) {
+            VStack(spacing: 32) {
                 pageHeader(data)
 
                 if let fed = data.themes.fed, let meetings = fed.fomcMeetings, !meetings.isEmpty {
@@ -83,7 +83,7 @@ struct EconomicsView: View {
     private func pageHeader(_ data: EconomicsResponse) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Probabilities for Fed policy, inflation, jobs, markets, and the broader economy.")
-                .font(.subheadline)
+                .font(.body)
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 Label("\(data.totalMarkets) markets", systemImage: "chart.bar")
@@ -196,7 +196,11 @@ struct EconomicsView: View {
             }
         }
         .padding(14)
+        #if os(macOS)
+        .frame(width: 320)
+        #else
         .frame(width: 240)
+        #endif
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
@@ -291,7 +295,11 @@ struct EconomicsView: View {
             }
         }
         .padding(14)
+        #if os(macOS)
+        .frame(width: 320)
+        #else
         .frame(width: 240)
+        #endif
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
@@ -318,8 +326,12 @@ struct EconomicsView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader(emoji: theme.emoji, title: theme.label, count: theme.count)
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 400))], spacing: 12) {
+                #if os(macOS)
+                ForEach(theme.markets.prefix(12)) { market in
+                #else
                 ForEach(theme.markets.prefix(8)) { market in
+                #endif
                     NavigationLink(value: Route.futuresDetail(id: market.marketId ?? 0)) {
                         marketCard(market)
                     }
@@ -328,12 +340,17 @@ struct EconomicsView: View {
             }
             .padding(.horizontal)
 
+            #if os(macOS)
+            if theme.markets.count > 12 {
+                Text("+\(theme.markets.count - 12) more")
+            #else
             if theme.markets.count > 8 {
                 Text("+\(theme.markets.count - 8) more")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal)
             }
+            #endif
         }
     }
 
@@ -342,7 +359,7 @@ struct EconomicsView: View {
     private func marketCard(_ market: EconomicsMarket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(market.q)
-                .font(.caption).fontWeight(.semibold)
+                .font(.subheadline).fontWeight(.semibold)
                 .lineLimit(2)
                 .foregroundStyle(.primary)
 
@@ -393,7 +410,7 @@ struct EconomicsView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 100)
+        .frame(minHeight: 110)
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
