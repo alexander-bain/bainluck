@@ -355,6 +355,115 @@ class TestSourceIntelligenceAdminEndpoints:
 # ============================================================================
 
 
+class TestFairFightComparison:
+    """GET /api/source-intelligence/fair-fight — paired MCE comparison."""
+
+    async def test_returns_200(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        assert resp.status_code == 200
+
+    async def test_has_top_level_keys(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert "generated_at" in body
+        assert "methodology" in body
+        assert "min_shared_threshold" in body
+        assert "pairs" in body
+
+    async def test_generated_at_is_iso_string(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert isinstance(body["generated_at"], str)
+        assert "T" in body["generated_at"]
+
+    async def test_pairs_is_list(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert isinstance(body["pairs"], list)
+
+    async def test_min_shared_threshold_is_positive(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert body["min_shared_threshold"] >= 1
+
+    async def test_methodology_is_nonempty_string(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert isinstance(body["methodology"], str)
+        assert len(body["methodology"]) > 10
+
+    async def test_empty_db_returns_empty_pairs(self, client):
+        resp = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        body = resp.json()
+        assert body["pairs"] == []
+
+    async def test_rejects_post(self, client):
+        resp = await client.post("/api/source-intelligence/fair-fight")
+        assert resp.status_code == 405
+
+    async def test_cache_respects_refresh_param(self, client):
+        resp1 = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        resp2 = await client.get("/api/source-intelligence/fair-fight?refresh=true")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+
+# ============================================================================
+# Unit tests for _compute_mce helper
+# ============================================================================
+
+
+class TestComputeMCE:
+    """Unit tests for the MCE computation helper."""
+
+    def test_empty_input_returns_none(self):
+        from app.routes.source_intelligence import _compute_mce
+        assert _compute_mce([], []) is None
+
+    def test_perfect_calibration_returns_zero(self):
+        """All predictions in 90-100% bucket, all win -> MCE = 0."""
+        from app.routes.source_intelligence import _compute_mce
+        probs = [0.95, 0.96, 0.97, 0.98, 0.99]
+        outcomes = [True, True, True, True, True]
+        mce = _compute_mce(probs, outcomes)
+        assert mce is not None
+        # avg_prob ~ 0.97, actual = 1.0, error ~ 3pp
+        assert mce < 5.0
+
+    def test_terrible_calibration_is_high(self):
+        """Predict 90%+ but all lose -> high MCE."""
+        from app.routes.source_intelligence import _compute_mce
+        probs = [0.95, 0.96, 0.97, 0.98, 0.99]
+        outcomes = [False, False, False, False, False]
+        mce = _compute_mce(probs, outcomes)
+        assert mce is not None
+        assert mce > 90.0  # avg_prob ~ 0.97, actual = 0.0
+
+    def test_multiple_buckets(self):
+        """Predictions across multiple buckets."""
+        from app.routes.source_intelligence import _compute_mce
+        probs = [0.15, 0.25, 0.55, 0.75, 0.85, 0.95]
+        outcomes = [False, False, True, True, True, True]
+        mce = _compute_mce(probs, outcomes)
+        assert mce is not None
+        assert 0.0 <= mce <= 100.0
+
+    def test_returns_percentage_points(self):
+        """MCE should be in percentage points, not raw fraction."""
+        from app.routes.source_intelligence import _compute_mce
+        probs = [0.5] * 100
+        outcomes = [True] * 50 + [False] * 50
+        mce = _compute_mce(probs, outcomes)
+        assert mce is not None
+        # Perfect calibration at 50%
+        assert mce < 1.0  # should be ~0pp
+
+
+# ============================================================================
+# HTTP behavior
+# ============================================================================
+
+
 class TestSourceIntelligenceHTTPBehavior:
     """General HTTP contract checks."""
 
