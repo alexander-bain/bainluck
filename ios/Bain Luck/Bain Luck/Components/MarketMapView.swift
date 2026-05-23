@@ -469,12 +469,13 @@ struct MarketMapView: View {
                         .position(x: geo.size.width * zeroPct / 100.0, y: 48)
                 }
 
-                // Marker dots
+                // Marker dots — scale radius relative to rail width
                 ForEach(markers) { m in
                     let pct = posOnRail(m.value, min: rangeMin, max: rangeMax)
                     let xPos = geo.size.width * pct / 100.0
                     let isProj = m.type == .proj
-                    let dotSize: CGFloat = isProj ? 26 : 22
+                    let markerRadius: CGFloat = geo.size.width > 300 ? 13 : 11
+                    let dotSize: CGFloat = isProj ? markerRadius * 2 : markerRadius * 2 - 4
                     Circle()
                         .fill(isProj ? Color.cardBackground : m.type.dotColor)
                         .frame(width: dotSize, height: dotSize)
@@ -496,10 +497,17 @@ struct MarketMapView: View {
             ForEach(entries.indices, id: \.self) { i in
                 let entry = entries[i]
                 HStack(spacing: 8) {
-                    Text(entry.label)
-                        .font(.system(size: 10, weight: .heavy))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 72, alignment: .leading)
+                    // Label with team color dot for visual association
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(entry.color)
+                            .frame(width: 5, height: 5)
+                        Text(entry.label)
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 82, alignment: .leading)
                     GeometryReader { geo in
                         Capsule()
                             .fill(Color.secondary.opacity(0.08))

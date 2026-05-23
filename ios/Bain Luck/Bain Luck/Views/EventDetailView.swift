@@ -459,15 +459,16 @@ struct EventDetailView: View {
                     } else if let odds = event.currentOdds,
                               let away = odds.awayProbability,
                               let home = odds.homeProbability {
+                        let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
                         HStack(spacing: 8) {
                             Text(formatProbability(away))
-                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.away)
                             Text("\u{2013}")
                                 .font(.title3)
                                 .foregroundStyle(.secondary.opacity(0.4))
                             Text(formatProbability(home))
-                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.home)
                         }
                         // Trend indicator (change since opening)
