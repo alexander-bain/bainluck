@@ -460,7 +460,7 @@ struct PoliticsView: View {
     }
 
     private func marketGrid(_ markets: [CategoryMarketRow]) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 400))], spacing: 12) {
             ForEach(markets) { market in
                 NavigationLink(value: Route.futuresDetail(id: market.marketId ?? 0)) {
                     marketCard(market)

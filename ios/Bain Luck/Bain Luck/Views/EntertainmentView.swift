@@ -475,7 +475,7 @@ struct EntertainmentView: View {
                     .padding(.horizontal)
             }
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 400))], spacing: 12) {
                 ForEach(markets.prefix(6)) { m in
                     NavigationLink(value: Route.futuresDetail(id: m.marketId)) {
                         entMarketCard(m)
