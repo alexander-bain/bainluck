@@ -302,61 +302,66 @@ def run_suite(module_names: list[str]):
     manifest_path.write_text(json.dumps(manifest, indent=2))
     print(f"\nManifest saved: {manifest_path}")
 
-    # Phase 2: Poll all tasks
-    # Overall phase timeout: 10 minutes. Individual per-module timeouts still apply,
-    # but if the entire polling phase exceeds this wall-clock limit we stop and
-    # report remaining tasks as timed out.
-    PHASE_TIMEOUT = 600  # 10 minutes
+    # Phase 2: Poll all tasks in parallel
+    # Each task gets its own per-module timeout. Tasks are already running
+    # concurrently on Manus, so we poll them concurrently too.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     phase_start = time.monotonic()
-    print(f"\nPhase 2: Polling {len(tasks)} tasks (per-module timeouts, {PHASE_TIMEOUT}s phase limit)...")
+    print(f"\nPhase 2: Polling {len(tasks)} tasks in parallel...")
     print(f"  [{_ts()}] Phase 2 started")
     results = {}
-    for name, task_id in tasks.items():
-        elapsed = time.monotonic() - phase_start
-        remaining_phase = PHASE_TIMEOUT - elapsed
-        if remaining_phase <= 0:
-            print(f"\n  [{_ts()}] PHASE TIMEOUT: skipping {name} (phase limit reached after {elapsed:.0f}s)")
-            manifest["tasks"][name]["status"] = "timeout"
-            continue
 
+    def _poll_one(name: str, task_id: str) -> tuple[str, dict | None]:
         module_timeout = MODULES.get(name, {}).get("timeout", 900)
-        # Clamp module timeout to remaining phase time
-        effective_timeout = min(module_timeout, int(remaining_phase))
-        print(f"\n  [{_ts()}] Waiting for {name} ({task_id}, timeout={effective_timeout}s)...")
-        result = poll_task(task_id, timeout_seconds=effective_timeout)
-        credits = result.get("_credit_usage", 0) if result else 0
-        if result is None:
-            print(f"  [{_ts()}] TIMEOUT: {name} — task did not complete within {effective_timeout}s")
-            manifest["tasks"][name]["status"] = "timeout"
-        elif result.get("collection_failed"):
-            print(f"  [{_ts()}] COLLECTION_FAILED: {name} — task completed but results could not be retrieved")
-            manifest["tasks"][name]["status"] = "collection_failed"
-        elif result.get("error"):
-            print(f"  [{_ts()}] ERROR: {name} — task encountered an error on Manus")
-            manifest["tasks"][name]["status"] = "error"
-        else:
-            print(f"  [{_ts()}] COMPLETE: {name} ({credits} credits)")
-            manifest["tasks"][name]["status"] = "complete"
-            report = extract_report(result)
-            results[name] = report
+        print(f"  [{_ts()}] Polling {name} ({task_id}, timeout={module_timeout}s)...")
+        result = poll_task(task_id, timeout_seconds=module_timeout)
+        return name, result
 
-            report_path = output_dir / f"{name}.md"
-            report_path.write_text(report)
-            print(f"    Report: {report_path}")
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 5)) as pool:
+        futures = {pool.submit(_poll_one, name, tid): name for name, tid in tasks.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            task_id = tasks[name]
+            try:
+                _, result = future.result()
+            except Exception as e:
+                print(f"  [{_ts()}] EXCEPTION: {name} — {e}")
+                manifest["tasks"][name]["status"] = "error"
+                continue
 
-            # Extract structured JSON from ground truth modules
-            if name in GROUND_TRUTH_MODULES:
-                gt_data = extract_json_from_report(report)
-                if gt_data:
-                    gt_filename = {
-                        "grid_ground_truth": "grid_ground_truth.json",
-                        "event_matching": "event_matching_ground_truth.json",
-                    }.get(name, f"{name}_ground_truth.json")
-                    gt_path = output_dir / gt_filename
-                    gt_path.write_text(json.dumps(gt_data, indent=2))
-                    print(f"    Ground truth JSON: {gt_path}")
-                else:
-                    print(f"    No JSON block found in {name} report")
+            credits = result.get("_credit_usage", 0) if result else 0
+            if result is None:
+                print(f"  [{_ts()}] TIMEOUT: {name}")
+                manifest["tasks"][name]["status"] = "timeout"
+            elif result.get("collection_failed"):
+                print(f"  [{_ts()}] COLLECTION_FAILED: {name}")
+                manifest["tasks"][name]["status"] = "collection_failed"
+            elif result.get("error"):
+                print(f"  [{_ts()}] ERROR: {name}")
+                manifest["tasks"][name]["status"] = "error"
+            else:
+                print(f"  [{_ts()}] COMPLETE: {name} ({credits} credits)")
+                manifest["tasks"][name]["status"] = "complete"
+                report = extract_report(result)
+                results[name] = report
+
+                report_path = output_dir / f"{name}.md"
+                report_path.write_text(report)
+                print(f"    Report: {report_path}")
+
+                if name in GROUND_TRUTH_MODULES:
+                    gt_data = extract_json_from_report(report)
+                    if gt_data:
+                        gt_filename = {
+                            "grid_ground_truth": "grid_ground_truth.json",
+                            "event_matching": "event_matching_ground_truth.json",
+                        }.get(name, f"{name}_ground_truth.json")
+                        gt_path = output_dir / gt_filename
+                        gt_path.write_text(json.dumps(gt_data, indent=2))
+                        print(f"    Ground truth JSON: {gt_path}")
+                    else:
+                        print(f"    No JSON block found in {name} report")
         manifest["tasks"][name]["credits"] = credits
 
     phase_elapsed = time.monotonic() - phase_start
