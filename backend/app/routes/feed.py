@@ -902,6 +902,11 @@ async def get_feed(
 
     session_id = _session_id_from_request(request)
     discover_config = await _load_discover_runtime_config()
+    if debug:
+        discover_config = {
+            **discover_config,
+            "interaction_suppression_enabled": False,
+        }
 
     # --- Redis response cache (anon 15s, auth 5s, my_teams 30s) ---
     _cache_key = None
