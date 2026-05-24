@@ -3,7 +3,7 @@
 import { ExternalLink } from "lucide-react";
 
 import type { DiscoverLaunchHealthItem } from "./types";
-import { itemHref } from "./utils";
+import { formatTargetName, itemHref } from "./utils";
 import { StatusPill } from "./ui";
 
 export default function LaunchHealthList({
