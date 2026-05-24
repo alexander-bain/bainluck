@@ -18,7 +18,29 @@ def _check_admin_secret(secret: str) -> bool:
     return secret == expected
 
 
-ADMIN_USER_IDS = {364}
+DEFAULT_ADMIN_USER_IDS = {364}
+DEFAULT_ADMIN_EMAILS = {"alex.bain@gmail.com", "alex.bain@bainluck.com"}
+
+
+def _admin_user_ids() -> set[int]:
+    values = set(DEFAULT_ADMIN_USER_IDS)
+    raw = os.getenv("ADMIN_USER_IDS", "")
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            values.add(int(part))
+        except ValueError:
+            continue
+    return values
+
+
+def _admin_user_emails() -> set[str]:
+    values = set(DEFAULT_ADMIN_EMAILS)
+    raw = os.getenv("ADMIN_USER_EMAILS", "")
+    values.update(part.strip().lower() for part in raw.split(",") if part.strip())
+    return values
 
 
 async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bool:
@@ -38,7 +60,10 @@ async def _check_admin_auth(secret: str | None, request: Request, db=None) -> bo
                         select(User).where(User.firebase_uid == firebase_uid)
                     )
                     user = result.scalar_one_or_none()
-                    if user and user.id in ADMIN_USER_IDS:
+                    if user and (
+                        user.id in _admin_user_ids()
+                        or (user.email or "").lower() in _admin_user_emails()
+                    ):
                         return True
         except Exception:
             pass
