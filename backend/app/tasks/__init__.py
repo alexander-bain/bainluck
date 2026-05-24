@@ -991,6 +991,13 @@ def check_data_quality(self):
     return _tracked_run("check_data_quality", _check_data_quality())
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.run_data_quality_watchdog")
+def run_data_quality_watchdog(self):
+    """Run data quality watchdog: check freshness, coverage, sparsity; alert on failures."""
+    from app.tasks.data_quality_watchdog import _run_data_quality_watchdog
+    return _tracked_run("data_quality_watchdog", _run_data_quality_watchdog())
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -1443,6 +1450,11 @@ celery_app.conf.beat_schedule = {
     "check-data-quality-daily": {
         "task": "app.tasks.check_data_quality",
         "schedule": crontab(minute=0, hour=11),  # Daily at 11:00 AM UTC (4 AM PT)
+    },
+    "data-quality-watchdog": {
+        "task": "app.tasks.run_data_quality_watchdog",
+        "schedule": crontab(minute=45, hour="*/2"),  # Every 2 hours at :45
+        "options": {"queue": "background"},
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

@@ -227,6 +227,7 @@ class TestBeatScheduleCompleteness:
         "compute-time-horizon-calibration",
         "compute-fair-fight-comparison",
         "precompute-category-pages",
+        "data-quality-watchdog",
     }
 
     def test_no_missing_entries(self):
