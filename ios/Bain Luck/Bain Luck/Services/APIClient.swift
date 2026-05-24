@@ -665,7 +665,7 @@ actor APIClient {
         return try await fetch(
             "/api/feed",
             query: [
-                "limit": "50",
+                "limit": "100",
                 "include_events": "false",
                 "include_futures": "true",
                 "event_pct": "0.15",

@@ -252,7 +252,7 @@ struct DiscoverLabelingView: View {
             Button {
                 guard let label = selectedLabel else { return }
                 Task {
-                        await viewModel.submit(
+                    let saved = await viewModel.submit(
                         secret: adminSecret,
                         label: label,
                         reasonTags: selectedTags,
@@ -260,7 +260,9 @@ struct DiscoverLabelingView: View {
                         betterThanPrevious: betterThanPrevious,
                         worseThanNext: worseThanNext
                     )
-                    resetForm()
+                    if saved {
+                        resetForm()
+                    }
                 }
             } label: {
                 if viewModel.submitting {

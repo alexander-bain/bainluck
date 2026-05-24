@@ -14,6 +14,13 @@ final class DiscoverLabelingViewModel: ObservableObject {
     private var feedRequestId: String?
     private let batchId = "native-review-\(UUID().uuidString)"
     private let reviewer = "native"
+    private let reviewedStorageKey = "discover_labeling_reviewed_keys_v1"
+    private var reviewedItemKeys: Set<String>
+
+    init() {
+        let stored = UserDefaults.standard.stringArray(forKey: reviewedStorageKey) ?? []
+        reviewedItemKeys = Set(stored)
+    }
 
     var currentItem: DiscoverLabelingDebugItem? {
         guard currentIndex < items.count else { return nil }
@@ -33,10 +40,10 @@ final class DiscoverLabelingViewModel: ObservableObject {
         do {
             let response = try await APIClient.shared.fetchDiscoverLabelingFeed(secret: secret)
             feedRequestId = response.feedRequestId
-            items = response.debugItems
+            items = response.debugItems.filter { !reviewedItemKeys.contains(reviewKey(for: $0)) }
             currentIndex = 0
-            if response.debugItems.isEmpty {
-                error = "No debug feed items returned."
+            if items.isEmpty {
+                error = response.debugItems.isEmpty ? "No debug feed items returned." : "No new debug feed items returned."
             }
         } catch {
             self.error = error.localizedDescription
@@ -56,8 +63,8 @@ final class DiscoverLabelingViewModel: ObservableObject {
         notes: String,
         betterThanPrevious: Bool,
         worseThanNext: Bool
-    ) async {
-        guard let item = currentItem else { return }
+    ) async -> Bool {
+        guard let item = currentItem else { return false }
         submitting = true
         error = nil
         let previousName = betterThanPrevious && currentIndex > 0 ? items[currentIndex - 1].name : nil
@@ -86,13 +93,29 @@ final class DiscoverLabelingViewModel: ObservableObject {
         )
         do {
             _ = try await APIClient.shared.submitRankingJudgment(request)
+            markReviewed(item)
             submittedCount += 1
             labelCounts[label, default: 0] += 1
             currentIndex += 1
+            submitting = false
+            return true
         } catch {
             self.error = error.localizedDescription
         }
         submitting = false
+        return false
+    }
+
+    private func reviewKey(for item: DiscoverLabelingDebugItem) -> String {
+        if let id = item.id {
+            return "\(item.type):\(id)"
+        }
+        return "\(item.type):name:\(item.name.lowercased())"
+    }
+
+    private func markReviewed(_ item: DiscoverLabelingDebugItem) {
+        reviewedItemKeys.insert(reviewKey(for: item))
+        UserDefaults.standard.set(Array(Array(reviewedItemKeys).suffix(1_000)), forKey: reviewedStorageKey)
     }
 
     private func snapshot(for item: DiscoverLabelingDebugItem) -> DiscoverLabelingCardSnapshot {
