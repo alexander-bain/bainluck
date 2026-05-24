@@ -6,7 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
+import sentry_sdk
 from sqlalchemy import func, delete as sa_delete, select, text, update as sa_update
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.tasks.base import get_task_session, run_async
 
@@ -648,7 +651,7 @@ async def _poll_kalshi_markets():
                         await session.execute(snapshot_stmt)
                         stats["snapshots_created"] += 1
 
-                except Exception as e:
+                except (httpx.HTTPError, ValueError, KeyError, SQLAlchemyError) as e:
                     stats["errors"].append(f"{event.event_ticker}: {str(e)}")
                     continue
 
@@ -676,6 +679,17 @@ async def _poll_kalshi_markets():
 
     finally:
         await service.close()
+
+    # Zero-events heartbeat: alert if we fetched events but processed none
+    if stats.get("events_processed", 0) == 0 and stats.get("total_api_events", 0) > 0:
+        logger.critical(
+            "Kalshi poll processed 0/%d events — ingestion may be broken",
+            stats["total_api_events"],
+        )
+        sentry_sdk.capture_message(
+            f"Kalshi ingestion failure: 0/{stats['total_api_events']} events processed",
+            level="error",
+        )
 
     logger.info(
         "Kalshi poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",

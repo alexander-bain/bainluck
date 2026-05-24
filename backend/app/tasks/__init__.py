@@ -302,6 +302,32 @@ def poll_kalshi_markets(self):
     return _tracked_run("poll_kalshi", _poll_kalshi_markets())
 
 
+@celery_app.task(name="app.tasks.check_kalshi_freshness")
+def check_kalshi_freshness():
+    """Daily check: alert if no Kalshi markets were updated in the last 24 hours."""
+    from sqlalchemy import text as sa_text
+
+    async def _check():
+        from app.tasks.base import get_task_session
+        async with get_task_session() as session:
+            result = await session.execute(
+                sa_text(
+                    "SELECT COUNT(*) FROM futures_markets "
+                    "WHERE source = 'kalshi' AND updated_at > NOW() - INTERVAL '24 hours'"
+                )
+            )
+            count = result.scalar()
+        if count == 0:
+            logger.critical("No Kalshi markets updated in 24h — ingestion may be broken")
+            sentry_sdk.capture_message(
+                "No Kalshi markets updated in 24h — ingestion may be broken",
+                level="error",
+            )
+        return {"kalshi_updated_24h": count, "alert": count == 0}
+
+    return run_async(_check())
+
+
 # --- Polymarket ---
 
 @celery_app.task(bind=True, name="app.tasks.poll_polymarket_markets", soft_time_limit=540, time_limit=600)
@@ -1200,6 +1226,11 @@ celery_app.conf.beat_schedule = {
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
         "schedule": crontab(minute=45, hour="*/2"),  # Every 2 hours — markets created days ahead, pricing appears day-of
+    },
+    "check-kalshi-freshness-daily": {
+        "task": "app.tasks.check_kalshi_freshness",
+        "schedule": crontab(minute=0, hour=9),  # Daily at 9:00 AM UTC — alert if no updates in 24h
+        "options": {"queue": "background"},
     },
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",

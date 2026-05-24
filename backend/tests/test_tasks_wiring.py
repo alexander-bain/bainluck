@@ -159,6 +159,7 @@ class TestBeatScheduleCompleteness:
         "compute-gei-percentiles-hourly",
         "poll-futures-every-4h",
         "poll-kalshi",
+        "check-kalshi-freshness-daily",
         "poll-polymarket-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
